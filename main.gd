@@ -1,12 +1,12 @@
 extends Node3D
-## 海岛打水漂 v2 — a little tropical island with a dock; skip stones across the lagoon.
+## 海岛打水漂 v3 — a little tropical island with a dock; a straw-hat kid skips stones across the lagoon.
 
 const GRAVITY := 9.8
 const POWER_CYCLE := 1.7
 const SAVE_PATH := "user://best.cfg"
 
 enum Mode { THROW, VIEW }
-enum State { READY, AIMING, FLYING, SINKING }
+enum State { READY, AIMING, THROWING, FLYING, SINKING }
 
 var island: Island
 var mode: int = Mode.THROW
@@ -57,8 +57,8 @@ var demo_cam := false
 
 # nodes
 var player: Node3D
-var arm_pivot: Node3D
-var hand_stone: MeshInstance3D
+var boy: Boy
+var fly_t := 0.0
 var stone: MeshInstance3D
 var preview_dots: Array[MeshInstance3D] = []
 var birds: Array = []
@@ -74,6 +74,17 @@ var power_bar: ProgressBar
 var power_box: Control
 var mode_btn: Button
 var toast_timer := 0.0
+var sound_btn: Button
+var start_overlay: Control
+
+# audio
+var sfx := {}
+var amb: AudioStreamPlayer
+var sfx_players: Array[AudioStreamPlayer] = []
+var sfx_i := 0
+var last_skip := -1
+var muted := false
+var audio_started := false
 
 # demo
 var demo_mode := false
@@ -81,6 +92,12 @@ var demo_t := 0.0
 var demo_step := 0
 var demo_shots := {}
 var demo_list: Array = []
+var demo3 := false
+var demo_video := false
+var portrait_demo := false
+var shot_dir := "v2"
+var demo_release_pending := 0
+var demo_phase := 0
 
 func _ready() -> void:
 	rng.seed = 99
@@ -93,21 +110,30 @@ func _ready() -> void:
 	_build_player()
 	_build_stone()
 	_build_birds()
+	_build_audio()
 	_build_ui()
 	ripple_buf.resize(8)
 	aim_yaw = 0.0
-	cam_target = player.global_position + Vector3(0, 1.3, 0)
-	cam_yaw = 0.45
-	cam_pitch = 0.4
-	cam_dist = 9.5
+	cam_target = player.global_position + Vector3(0, 0.7, 0) + _aim_dir() * 1.4
+	cam_yaw = 0.8
+	cam_pitch = 0.22
+	cam_dist = 3.8
 	var args := OS.get_cmdline_user_args()
 	if "--sim" in args:
 		_run_sim_report()
 		get_tree().quit()
 		return
-	demo_mode = "--demo" in args
+	demo_mode = "--demo" in args or "--demo3" in args or "--video" in args
+	demo3 = "--demo3" in args
+	demo_video = "--video" in args
+	portrait_demo = "--portrait" in args
 	if demo_mode:
-		_setup_demo()
+		_start_audio()
+		if demo3 or demo_video:
+			shot_dir = "v3"
+			_setup_demo3()
+		else:
+			_setup_demo()
 	_apply_camera()
 	_update_ui()
 
@@ -164,54 +190,11 @@ func _vc_mat() -> StandardMaterial3D:
 	return m
 
 func _build_player() -> void:
-	player = Node3D.new()
-	add_child(player)
-	player.position = island.player_spot + Vector3(0, 0.04, 0)
-	var skin := Color(0.96, 0.76, 0.6)
-	var b := MeshBuilder.new()
-	var box := BoxMesh.new()
-	for lx in [-0.11, 0.11]:
-		b.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.13, 0.5, 0.13)), Vector3(lx, 0.25, 0)), skin)
-		b.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.15, 0.08, 0.22)), Vector3(lx, 0.04, -0.03)), Color(0.95, 0.9, 0.8))
-	b.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.4, 0.26, 0.25)), Vector3(0, 0.6, 0)), Color(0.2, 0.5, 0.8))
-	b.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.42, 0.5, 0.25)), Vector3(0, 0.95, 0)), Color(0.98, 0.98, 0.95))
-	b.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.43, 0.08, 0.26)), Vector3(0, 0.9, 0)), Color(0.95, 0.4, 0.3))
-	var head := SphereMesh.new()
-	head.radius = 0.19; head.height = 0.38; head.radial_segments = 8; head.rings = 5
-	b.prim(head, Transform3D(Basis.IDENTITY, Vector3(0, 1.4, 0)), skin)
-	var hair := SphereMesh.new()
-	hair.radius = 0.2; hair.height = 0.3; hair.radial_segments = 8; hair.rings = 4; hair.is_hemisphere = true
-	b.prim(hair, Transform3D(Basis.IDENTITY, Vector3(0, 1.44, 0.02)), Color(0.25, 0.16, 0.1))
-	var hat := CylinderMesh.new()
-	hat.top_radius = 0.15; hat.bottom_radius = 0.36; hat.height = 0.12; hat.radial_segments = 12
-	b.prim(hat, Transform3D(Basis.IDENTITY, Vector3(0, 1.6, 0)), Color(0.95, 0.85, 0.5))
-	var band := CylinderMesh.new()
-	band.top_radius = 0.16; band.bottom_radius = 0.17; band.height = 0.05; band.radial_segments = 12
-	b.prim(band, Transform3D(Basis.IDENTITY, Vector3(0, 1.64, 0)), Color(0.85, 0.3, 0.25))
-	b.prim(box, Transform3D(Basis(Vector3.FORWARD, -0.15).scaled(Vector3(0.1, 0.45, 0.1)), Vector3(-0.27, 0.95, 0)), skin)
-	var mi := MeshInstance3D.new()
-	mi.mesh = b.commit()
-	mi.material_override = _vc_mat()
-	player.add_child(mi)
-	arm_pivot = Node3D.new()
-	player.add_child(arm_pivot)
-	arm_pivot.position = Vector3(0.27, 1.15, 0)
-	var ab := MeshBuilder.new()
-	ab.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.1, 0.5, 0.1)), Vector3(0, -0.23, 0)), skin)
-	var arm := MeshInstance3D.new()
-	arm.mesh = ab.commit()
-	arm.material_override = _vc_mat()
-	arm_pivot.add_child(arm)
-	var sm := SphereMesh.new()
-	sm.radius = 0.08; sm.height = 0.16; sm.radial_segments = 8; sm.rings = 3
-	hand_stone = MeshInstance3D.new()
-	hand_stone.mesh = sm
-	var stm := StandardMaterial3D.new()
-	stm.albedo_color = Color(0.45, 0.47, 0.5)
-	hand_stone.material_override = stm
-	hand_stone.position = Vector3(0, -0.5, 0)
-	hand_stone.scale = Vector3(1, 0.4, 1)
-	arm_pivot.add_child(hand_stone)
+	boy = Boy.new()
+	player = boy
+	add_child(boy)
+	boy.position = island.player_spot + Vector3(0, 0.04, 0)
+	boy.released.connect(_launch)
 
 func _build_stone() -> void:
 	var sm := SphereMesh.new()
@@ -222,7 +205,7 @@ func _build_stone() -> void:
 	m.albedo_color = Color(0.45, 0.47, 0.52)
 	m.roughness = 0.5
 	stone.material_override = m
-	stone.scale = Vector3(1.5, 0.5, 1.5)
+	stone.scale = Vector3(0.7, 0.24, 0.6)
 	add_child(stone)
 	stone.visible = false
 	var dot := SphereMesh.new()
@@ -324,6 +307,24 @@ func _build_ui() -> void:
 	mode_btn.pressed.connect(_toggle_mode)
 	root.add_child(mode_btn)
 
+	sound_btn = Button.new()
+	sound_btn.add_theme_font_override("font", ui_font)
+	sound_btn.add_theme_font_size_override("font_size", 22)
+	sound_btn.anchor_left = 1.0; sound_btn.anchor_right = 1.0
+	sound_btn.offset_left = -188; sound_btn.offset_right = -16; sound_btn.offset_top = 102; sound_btn.offset_bottom = 152
+	sound_btn.focus_mode = Control.FOCUS_NONE
+	for st_name in ["normal", "hover", "pressed"]:
+		var sb2 := StyleBoxFlat.new()
+		sb2.bg_color = Color(0.05, 0.3, 0.45, 0.55)
+		sb2.set_corner_radius_all(25)
+		sb2.border_color = Color(1, 1, 1, 0.85)
+		sb2.set_border_width_all(2)
+		sound_btn.add_theme_stylebox_override(st_name, sb2)
+	for cn in ["font_color", "font_hover_color", "font_pressed_color"]:
+		sound_btn.add_theme_color_override(cn, Color(1, 1, 1))
+	sound_btn.pressed.connect(_toggle_sound)
+	root.add_child(sound_btn)
+
 	var bottom := VBoxContainer.new()
 	bottom.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	bottom.offset_left = 18; bottom.offset_right = -18; bottom.offset_bottom = -16
@@ -360,12 +361,35 @@ func _build_ui() -> void:
 
 	lbl_toast = _label(46, Color(1, 0.95, 0.55))
 	lbl_toast.anchor_left = 0.0; lbl_toast.anchor_right = 1.0
-	lbl_toast.anchor_top = 0.3; lbl_toast.anchor_bottom = 0.3
+	lbl_toast.anchor_top = 0.2; lbl_toast.anchor_bottom = 0.2
 	lbl_toast.offset_left = 10; lbl_toast.offset_right = -10
 	lbl_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl_toast.add_theme_constant_override("outline_size", 12)
 	root.add_child(lbl_toast)
+
+	# iOS / browsers only allow sound after a tap: a "tap to start" curtain unlocks the audio
+	if not audio_started:
+		start_overlay = ColorRect.new()
+		(start_overlay as ColorRect).color = Color(0.02, 0.12, 0.22, 0.5)
+		start_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+		start_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+		start_overlay.gui_input.connect(_on_start_input)
+		root.add_child(start_overlay)
+		var big := _label(64, Color(1, 0.95, 0.6))
+		big.text = "点击开始"
+		big.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		big.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		big.set_anchors_preset(Control.PRESET_FULL_RECT)
+		big.offset_bottom = -40
+		start_overlay.add_child(big)
+		var small := _label(28)
+		small.text = "轻点屏幕，开启海浪声\n右上角可以关闭声音"
+		small.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		small.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		small.set_anchors_preset(Control.PRESET_FULL_RECT)
+		small.offset_top = 110
+		start_overlay.add_child(small)
 
 func _toast(t: String, dur := 1.4) -> void:
 	lbl_toast.text = t
@@ -377,12 +401,13 @@ func _update_ui() -> void:
 	lbl_best.text = "最高纪录：弹跳 %d 次 · 最远 %.1f 米" % [best_skips, best_dist]
 	mode_btn.text = "观景" if mode == Mode.THROW else "投石"
 	mode_btn.visible = state == State.READY
+	sound_btn.text = "声音：关" if muted else "声音：开"
 	if mode == Mode.VIEW:
-		lbl_hint.text = "观景模式：单指拖动 360° 旋转，双指捏合缩放（电脑：拖动鼠标 / 滚轮）\n点右上角「投石」回到码头，会朝你现在看的方向扔"
+		lbl_hint.text = "观景模式：单指拖动 360° 旋转，双指捏合缩放（电脑：拖动鼠标 / 滚轮）\n点右上角「投石」回到码头，会朝你现在看的方向扔；「声音」可开关海浪声"
 	else:
 		match state:
 			State.READY:
-				lbl_hint.text = "按住屏幕蓄力 → 左右拖动转向（可转一整圈），上下拖动调角度 → 松手扔出\n角度低、力度大、转得快才跳得多；砸到岸边、礁石或船就结束"
+				lbl_hint.text = "按住蓄力 → 左右拖转向、上下拖调角度 → 松手扔出\n角度低、力度大才跳得多 · 右上角可开关声音"
 			State.AIMING:
 				lbl_hint.text = "看准力度条，松手投出！"
 			_:
@@ -534,8 +559,9 @@ static func water_contact(v: Vector3, s: float, jitter: float) -> Array:
 func _aim_dir() -> Vector3:
 	return Vector3(0, 0, -1).rotated(Vector3.UP, aim_yaw)
 
+## where the stone leaves the kid's hand (the release key pose, power independent)
 func _hand_pos() -> Vector3:
-	return player.global_transform * Vector3(0.35, 1.15, -0.3)
+	return player.global_transform * boy.release_local
 
 func _initial_velocity() -> Vector3:
 	var dir := _aim_dir()
@@ -545,20 +571,31 @@ func _initial_velocity() -> Vector3:
 func _throw() -> void:
 	if power < 0.04:
 		state = State.READY
+		boy.set_idle()
 		_update_ui()
 		return
+	# the swing starts now; the stone leaves the hand on the release frame (Boy.released -> _launch)
+	state = State.THROWING
+	boy.start_throw(power)
+	_play("whoosh", lerpf(-13.0, -3.0, power), lerpf(0.85, 1.15, power) * rng.randf_range(0.96, 1.04))
+	for d in preview_dots:
+		d.visible = false
+	_update_ui()
+
+func _launch() -> void:
+	if state != State.THROWING:
+		return
 	state = State.FLYING
+	fly_t = 0.0
 	stone_pos = _hand_pos()
 	throw_origin = stone_pos
 	stone_vel = _initial_velocity()
 	spin = launch_spin(power) * rng.randf_range(0.92, 1.05)
 	skips = 0
 	throw_dist = 0.0
+	stone.position = stone_pos
 	stone.visible = true
-	hand_stone.visible = false
-	throw_anim = 0.0
-	for d in preview_dots:
-		d.visible = false
+	demo_release_pending = 1
 	_update_ui()
 
 func _hdist(p: Vector3) -> float:
@@ -586,6 +623,7 @@ func _step_stone(dt: float) -> void:
 	if _hdist(stone_pos) > 1.0:
 		var hit := _hit_test(stone_pos)
 		if hit != "":
+			_hit_sound(hit)
 			throw_dist = _hdist(stone_pos)
 			result_text = hit + ("" if skips == 0 else "（之前漂了 %d 下）" % skips)
 			stone_vel = Vector3(0, -1.0, 0)
@@ -593,6 +631,7 @@ func _step_stone(dt: float) -> void:
 			sink_timer = 0.6
 			if stone_pos.y < 0.3:
 				_splash(Vector3(stone_pos.x, 0.0, stone_pos.z), 0.6, false, Vector3.ZERO)
+				_play("sink", -8.0, rng.randf_range(1.0, 1.15))
 			return
 	if stone_pos.y <= 0.02 and stone_vel.y < 0.0:
 		stone_pos.y = 0.02
@@ -603,18 +642,23 @@ func _step_stone(dt: float) -> void:
 			stone_vel = res[1]
 			spin = res[2]
 			_splash(stone_pos, 0.55, false, stone_vel)
+			_skip_sound(Vector2(stone_vel.x, stone_vel.z).length())
 			_float_text(stone_pos, "%d" % skips)
 			if skips == 5:
 				_toast("5 连跳！")
+				_play("combo", -6.0)
 			elif skips == 10:
 				_toast("10 连跳！太强了！")
+				_play("combo", -5.0, 1.12)
 			elif skips == 15:
 				_toast("15 连跳！水漂大师！")
+				_play("combo", -4.0, 1.26)
 			for bn in island.buoys:
 				if Vector2(stone_pos.x - bn.position.x, stone_pos.z - bn.position.z).length() < 2.0:
 					_toast("擦过浮标！")
 		else:
 			_splash(stone_pos, 1.2, true, Vector3.ZERO)
+			_play("sink", -2.0 + rng.randf_range(-1.0, 1.0), rng.randf_range(0.92, 1.06))
 			var ang: float = res[3]
 			if skips == 0:
 				result_text = ("扑通！入水角 %.0f°，太陡了，试试更低的角度和更大的力度" % ang) if ang > 20.0 else "扑通！速度不够，多蓄点力"
@@ -637,9 +681,15 @@ func _finish() -> void:
 		rec = true
 	if rec:
 		_save_best()
+		_play("record", -4.0)
 	_toast(result_text + ("\n新纪录！" if rec else "") + "\n%.1f 米" % throw_dist, 3.0)
 	state = State.READY
-	hand_stone.visible = true
+	if skips >= 5 or (rec and skips > 0):
+		boy.react("cheer")
+	elif skips == 0:
+		boy.react("oops")
+	else:
+		boy.react("")
 	finish_hold = 1.2
 	_update_ui()
 
@@ -755,17 +805,103 @@ func _update_preview() -> void:
 	for d in preview_dots:
 		(d.material_override as StandardMaterial3D).albedo_color = col
 
+# ------------------------------------------------------------------ audio
+# All sounds are synthesized by tools/synth_audio.py (no third-party recordings).
+# Plain non-positional players: compatible with the Web "Sample" playback mode used on iOS Safari.
+
+func _build_audio() -> void:
+	for n in ["skip_0", "skip_1", "skip_2", "skip_3", "sink", "whoosh", "hit_wood", "hit_rock", "hit_sand", "combo", "record"]:
+		sfx[n] = load("res://audio/%s.ogg" % n)
+	var ocean: AudioStreamOggVorbis = load("res://audio/ocean_loop.ogg")
+	ocean.loop = true
+	amb = AudioStreamPlayer.new()
+	amb.stream = ocean
+	amb.volume_db = -6.0
+	add_child(amb)
+	for i in 8:
+		var p := AudioStreamPlayer.new()
+		add_child(p)
+		sfx_players.append(p)
+
+func _on_start_input(event: InputEvent) -> void:
+	var pressed: bool = (event is InputEventMouseButton and event.pressed) or (event is InputEventScreenTouch and event.pressed)
+	if pressed and not audio_started:
+		get_viewport().set_input_as_handled()
+		_start_audio()
+
+func _start_audio() -> void:
+	if audio_started:
+		return
+	audio_started = true
+	if start_overlay:
+		start_overlay.queue_free()
+		start_overlay = null
+	amb.play()
+	amb.stream_paused = muted
+
+func _toggle_sound() -> void:
+	muted = not muted
+	AudioServer.set_bus_mute(0, muted)
+	if audio_started:
+		amb.stream_paused = muted
+		if not muted and not amb.playing:
+			amb.play()
+	if muted:
+		for p in sfx_players:
+			p.stop()
+	_update_ui()
+
+func _play(n: String, vol_db := 0.0, pitch := 1.0) -> void:
+	if muted or not audio_started or not sfx.has(n):
+		return
+	var p := sfx_players[sfx_i]
+	sfx_i = (sfx_i + 1) % sfx_players.size()
+	p.stop()
+	p.stream = sfx[n]
+	p.volume_db = vol_db
+	p.pitch_scale = clampf(pitch, 0.5, 2.0)
+	p.play()
+
+## light "pat" of a skip: louder and brighter when fast, never twice the same take in a row
+func _skip_sound(speed: float) -> void:
+	var k := clampf(speed / 18.0, 0.0, 1.0)
+	var i := rng.randi() % 4
+	if i == last_skip:
+		i = (i + 1 + rng.randi() % 3) % 4
+	last_skip = i
+	_play("skip_%d" % i, lerpf(-11.0, -2.0, k) + rng.randf_range(-1.5, 1.0), lerpf(0.86, 1.18, k) * rng.randf_range(0.94, 1.07))
+
+func _hit_sound(hit: String) -> void:
+	if hit.contains("沙滩"):
+		_play("hit_sand", -3.0, rng.randf_range(0.9, 1.1))
+	elif hit.contains("礁石") or hit.contains("灯塔"):
+		_play("hit_rock", -2.0, rng.randf_range(0.9, 1.1))
+	else:
+		_play("hit_wood", -2.0, rng.randf_range(0.9, 1.1))
+
+## ocean ambience gets quieter as the camera moves away from the shore / up into the sky
+func _update_audio(_delta: float) -> void:
+	if not audio_started or muted:
+		return
+	var cp := camera.global_position
+	var d := absf(Island.shore_d(cp.x, cp.z)) + maxf(cp.y - 2.0, 0.0) * 0.6
+	var want := lerpf(-3.0, -15.0, smoothstep(6.0, 70.0, d))
+	amb.volume_db = lerpf(amb.volume_db, want, 0.05)
+
 # ------------------------------------------------------------------ loop
 
 func _process(delta: float) -> void:
 	gt += delta
 	island.set_time(gt)
 	if demo_mode:
-		_demo_tick(delta)
+		if demo3 or demo_video:
+			_demo3_tick(delta)
+		else:
+			_demo_tick(delta)
 	var vs := get_viewport().get_visible_rect().size
 	var tall := vs.x < vs.y
 	camera.keep_aspect = Camera3D.KEEP_WIDTH if tall else Camera3D.KEEP_HEIGHT
-	camera.fov = 70.0 if tall else 55.0
+	camera.fov = 64.0 if tall else 55.0
 	for bn in island.buoys:
 		var ph: float = bn.get_meta("phase")
 		bn.position.y = sin(gt * 1.7 + ph) * 0.08
@@ -793,16 +929,16 @@ func _process(delta: float) -> void:
 			power_bar.value = power
 			var deg := wrapf(rad_to_deg(aim_yaw), -180.0, 180.0)
 			lbl_aim.text = "力度 %d%%   角度 %d°   方向 %s%d°" % [roundi(power * 100), roundi(aim_pitch), "左" if deg > 0.5 else ("右" if deg < -0.5 else ""), absi(roundi(deg))]
-			arm_pivot.rotation.x = lerp(arm_pivot.rotation.x, -0.6 - power * 0.9, 0.3)
+			boy.charge(power)
 			_update_preview()
 		State.READY:
-			arm_pivot.rotation.x = lerp(arm_pivot.rotation.x, 0.0, 0.15)
-		_:
-			throw_anim += delta
-			arm_pivot.rotation.x = lerp(arm_pivot.rotation.x, 1.4 if throw_anim < 0.35 else 0.0, 0.25)
-	if mode == Mode.THROW and state != State.FLYING and state != State.SINKING:
-		player.rotation.y = lerp_angle(player.rotation.y, aim_yaw, 0.35)
+			boy.set_idle()
+		State.FLYING, State.SINKING:
+			fly_t += delta
+	if mode == Mode.THROW and (state == State.READY or state == State.AIMING):
+		player.rotation.y = lerp_angle(player.rotation.y, aim_yaw, 1.0 - exp(-delta * 18.0))
 	_update_camera(delta)
+	_update_audio(delta)
 
 func _physics_process(delta: float) -> void:
 	if state == State.FLYING:
@@ -828,20 +964,20 @@ func _update_camera(delta: float) -> void:
 	var want_pitch: float
 	var want_dist: float
 	var k: float
-	if state == State.FLYING or state == State.SINKING:
+	if (state == State.FLYING or state == State.SINKING) and fly_t > 0.45:
 		var dir := Vector3(stone_vel.x, 0, stone_vel.z)
 		dir = dir.normalized() if dir.length() > 0.5 else _aim_dir()
 		want_t = Vector3(stone_pos.x, max(stone_pos.y * 0.5, 0.3), stone_pos.z) + dir * 2.0
 		want_yaw = atan2(-dir.x, -dir.z) + 0.35
 		want_pitch = 0.42 if tall else 0.32
 		want_dist = 11.0 if tall else 9.0
-		k = 1.0 - exp(-delta * 4.0)
+		k = 1.0 - exp(-delta * 4.0 * smoothstep(0.45, 1.1, fly_t))
 	elif mode == Mode.VIEW:
 		if not dragging:
 			view_yaw += orbit_vel.x * delta
 			view_pitch = clamp(view_pitch + orbit_vel.y * delta, 0.06, 1.42)
 			orbit_vel *= exp(-delta * 3.5)
-		var head := player.global_position + Vector3(0, 1.2, 0)
+		var head := player.global_position + Vector3(0, 0.8, 0)
 		want_t = head.lerp(Vector3(0, 1.5, -2.0), smoothstep(10.0, 45.0, view_dist))
 		want_yaw = view_yaw
 		want_pitch = view_pitch
@@ -850,12 +986,15 @@ func _update_camera(delta: float) -> void:
 	else:
 		var hold := finish_hold > 0.0
 		finish_hold -= delta
+		# rear-right three-quarter view: the kid in front, the sea and the aim line beyond
 		var dir := _aim_dir()
-		want_t = player.global_position + Vector3(0, 1.3, 0) + dir * 3.0
-		want_yaw = aim_yaw + 0.45
-		want_pitch = 0.5 if tall else 0.38
-		want_dist = 11.0 if tall else 9.5
-		k = 1.0 - exp(-delta * (1.2 if hold else 3.0))
+		want_t = player.global_position + Vector3(0, 1.05 if tall else 0.7, 0) + dir * (0.7 if tall else 1.4)
+		want_yaw = aim_yaw + (0.55 if tall else 0.8)
+		want_pitch = 0.1 if tall else 0.22
+		want_dist = 3.0 if tall else 3.8
+		if (state == State.THROWING or state == State.FLYING) and not tall:
+			want_dist += 0.4
+		k = 1.0 - exp(-delta * (2.2 if hold else 3.0))
 	cam_target = cam_target.lerp(want_t, k)
 	cam_yaw = lerp_angle(cam_yaw, want_yaw, k)
 	cam_pitch = lerp(cam_pitch, want_pitch, k)
@@ -864,6 +1003,18 @@ func _update_camera(delta: float) -> void:
 
 func _apply_camera() -> void:
 	var off := Vector3(sin(cam_yaw) * cos(cam_pitch), sin(cam_pitch), cos(cam_yaw) * cos(cam_pitch)) * cam_dist
+	# tiny spring arm: pull the camera in front of dock props instead of clipping through them
+	if cam_dist < 20.0:
+		for i in range(1, 25):
+			var q := cam_target + off * (i / 24.0)
+			var blocked := false
+			for bl in island.cam_blockers:
+				if q.distance_to(bl[0]) < float(bl[1]):
+					blocked = true
+					break
+			if blocked:
+				off *= maxf((i - 1) / 24.0, 1.3 / cam_dist)
+				break
 	var pos := cam_target + off
 	var floor_y: float = max(Island.ground_h(pos.x, pos.z), 0.0) + 0.5
 	if pos.y < floor_y:
@@ -942,7 +1093,7 @@ func _demo_shot(name: String) -> void:
 		if a.begins_with("--shotprefix="):
 			prefix = a.substr(13)
 	var img := get_viewport().get_texture().get_image()
-	var path := ProjectSettings.globalize_path("res://screenshots/v2/%s%s.png" % [prefix, name])
+	var path := ProjectSettings.globalize_path("res://screenshots/%s/%s%s.png" % [shot_dir, prefix, name])
 	img.save_png(path)
 	print("DEMO screenshot ", path)
 
@@ -977,3 +1128,122 @@ func _demo_tick(delta: float) -> void:
 		await get_tree().create_timer(0.6).timeout
 		_demo_shot("11_result")
 		get_tree().quit()
+
+# ------------------------------------------------------------------ v3 demo: character close-ups + a scripted throw
+# godot --path . --fixed-fps 30 -- --demo3 [--portrait]     (screenshots/v3)
+# godot --path . --fixed-fps 30 --write-movie x.avi -- --video
+
+func _boy_cam(name: String, yaw_off: float, pitch: float, dist: float, h: float, fwd := 0.0) -> Array:
+	return [name, player.global_position + Vector3(0, h, 0) + _aim_dir() * fwd, aim_yaw + yaw_off, pitch, dist]
+
+func _set_cam(c: Array) -> void:
+	cam_target = c[1]; cam_yaw = c[2]; cam_pitch = c[3]; cam_dist = c[4]
+
+func _setup_demo3() -> void:
+	mode = Mode.THROW
+	aim_yaw = 0.12
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--aim="):
+			aim_yaw = float(a.substr(6))
+	player.rotation.y = aim_yaw
+	demo_list = []
+	if not demo_video and not portrait_demo:
+		demo_list = [
+			_boy_cam("01_char_front", PI - 0.3, 0.1, 2.2, 0.62),
+			_boy_cam("02_char_face", PI - 0.35, 0.06, 1.05, 0.98),
+			_boy_cam("03_char_side", PI * 0.5, 0.1, 2.2, 0.62),
+			_boy_cam("04_char_back", 0.5, 0.25, 2.3, 0.62),
+		]
+	demo_cam = demo_list.size() > 0
+	demo_step = 0
+	demo_t = 0.0
+	_update_ui()
+
+func _game_cam_now() -> void:
+	var tall := get_viewport().get_visible_rect().size.x < get_viewport().get_visible_rect().size.y
+	cam_target = player.global_position + Vector3(0, 1.05 if tall else 0.7, 0) + _aim_dir() * (0.7 if tall else 1.4)
+	cam_yaw = aim_yaw + (0.55 if tall else 0.8)
+	cam_pitch = 0.1 if tall else 0.22
+	cam_dist = 3.0 if tall else 3.8
+
+func _demo3_tick(delta: float) -> void:
+	demo_t += delta
+	var close := not demo_video and not portrait_demo
+	var pre := "portrait_" if portrait_demo else ""
+	if demo_step < demo_list.size():
+		_set_cam(demo_list[demo_step])
+		if demo_t > 1.0:
+			_demo_shot(demo_list[demo_step][0])
+			demo_step += 1
+			demo_t = 0.0
+		return
+	match demo_phase:
+		0:
+			demo_cam = false
+			_game_cam_now()
+			demo_phase = 1
+			demo_t = 0.0
+		1:
+			if demo_t > (1.6 if demo_video else 0.8):
+				_begin_aim(Vector2.ZERO)
+				aim_pitch = 4.0
+				demo_phase = 2
+				demo_t = 0.0
+		2:
+			var ramp := minf(demo_t / 1.1, 1.0) * 0.86
+			charge_t = ramp * POWER_CYCLE * 0.5 - delta
+			if demo_video:
+				aim_yaw = 0.12 + sin(demo_t * 2.0) * 0.05
+			if portrait_demo and demo_t > 1.0:
+				_demo_shot("portrait_04_aim_view")
+			if demo_t > 1.5:
+				_demo_shot(pre + "05_charge_game_view")
+				if close:
+					demo_cam = true
+					_set_cam(_boy_cam("x", 1.35, 0.1, 2.6, 0.58, 0.25))
+					demo_phase = 3
+				else:
+					demo_phase = 4
+				demo_t = 0.0
+		3:
+			charge_t = 0.86 * POWER_CYCLE * 0.5 - delta
+			if demo_t > 0.5:
+				_demo_shot("06_charge_close")
+				demo_phase = 4
+				demo_t = 0.0
+		4:
+			if state == State.AIMING:
+				charge_t = 0.86 * POWER_CYCLE * 0.5 - delta
+				if demo_t > 0.1:
+					demo_release_pending = 0
+					_throw()
+			elif demo_release_pending == 1:
+				demo_release_pending = 2
+			elif demo_release_pending == 2:
+				demo_release_pending = 0
+				if not demo_video:
+					_demo_shot(pre + "07_release")
+			elif boy.anim == "throw" and boy.anim_t >= 0.44:
+				if not demo_video:
+					_demo_shot(pre + "08_follow_leg_lift")
+				demo_cam = false
+				fly_t = 0.0
+				demo_phase = 5
+				demo_t = 0.0
+		5:
+			if state == State.FLYING and skips >= 4 and not demo_video:
+				_demo_shot(pre + "09_skipping")
+			if state == State.READY:
+				demo_phase = 6
+				demo_t = 0.0
+		6:
+			if demo_video:
+				if demo_t > 4.2:
+					get_tree().quit()
+			elif demo_t > 0.75:
+				if close:
+					demo_cam = true
+					_set_cam(_boy_cam("x", PI - 0.45, 0.1, 3.0, 1.05))
+				if demo_t > 1.0:
+					_demo_shot(pre + "10_reaction")
+					get_tree().quit()

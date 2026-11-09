@@ -8,6 +8,7 @@ var R0 := 0.0
 var dock_start_z := 0.0
 var dock_end_z := 0.0
 var player_spot := Vector3.ZERO
+var cam_blockers: Array = []
 var hut_pos := Vector3.ZERO
 var lighthouse_pos := Vector3.ZERO
 var campfire_pos := Vector3.ZERO
@@ -371,6 +372,12 @@ func _build_dock() -> void:
 		box(GB, Vector3(0.18, 0.34, 0.18), lp, Vector3.ZERO, Color(1.0, 0.82, 0.45))
 	# crates, barrel, bucket, fishing rod, life ring on the platform
 	var pc = Vector3(-2.3, DECK_Y + 0.04, dock_end_z + 2.9)
+	# spheres the close throw camera must not pass through (crates, barrels, corner lanterns)
+	cam_blockers = [
+		[pc + Vector3(0.35, 0.5, 0.05), 0.95], [Vector3(2.45, DECK_Y + 0.5, dock_end_z + 2.6), 0.8],
+		[Vector3(-2.6, DECK_Y + 1.85, dock_end_z + 0.15), 0.5], [Vector3(2.6, DECK_Y + 1.85, dock_end_z + 0.15), 0.5],
+		[Vector3(-3.0, DECK_Y + 1.4, dock_end_z + 0.15), 0.35], [Vector3(3.0, DECK_Y + 1.4, dock_end_z + 0.15), 0.35],
+	]
 	_crate(pc + Vector3(0, 0.3, 0), 0.6, 0.2)
 	_crate(pc + Vector3(0.75, 0.25, 0.1), 0.5, -0.3)
 	_crate(pc + Vector3(0.15, 0.85, 0.05), 0.48, 0.6)
@@ -710,7 +717,7 @@ func _build_rocks_and_reef() -> void:
 		if path_dist(p.x, p.z) > 1.2:
 			blob(SB, p, Vector3(0.35, 0.25, 0.3) * rng.randf_range(0.6, 1.4), Color(0.55, 0.54, 0.5))
 	# coral reef patches in the lagoon
-	var coral_cols = [Color(1.0, 0.3, 0.42), Color(1.0, 0.5, 0.15), Color(0.65, 0.3, 0.9), Color(1.0, 0.82, 0.2), Color(0.95, 0.4, 0.75)]
+	var coral_cols = [Color(0.86, 0.1, 0.2), Color(0.95, 0.36, 0.04), Color(0.42, 0.1, 0.72), Color(0.95, 0.66, 0.0), Color(0.06, 0.6, 0.52), Color(0.78, 0.12, 0.48)]
 	for patch in [[-1.05, 6.0], [-0.85, 8.5], [-2.0, 6.5], [-2.25, 9.0], [0.55, 6.5], [2.4, 7.0], [-1.9, 4.5], [-1.25, 4.2]]:
 		var center = dir_at(patch[0]) * (island_R(patch[0]) + patch[1])
 		for k in 7:

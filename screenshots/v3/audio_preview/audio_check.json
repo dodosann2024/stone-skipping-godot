@@ -1,0 +1,125 @@
+{
+ "combo": {
+  "dur_s": 0.897,
+  "peak_dbfs": -8.55,
+  "clipped_samples": 0,
+  "dc": -0.0,
+  "rms_dbfs": -21.6,
+  "start_abs": 0.0053,
+  "end_abs": 0.0,
+  "kbytes": 7.5
+ },
+ "hit_rock": {
+  "dur_s": 0.297,
+  "peak_dbfs": -5.96,
+  "clipped_samples": 0,
+  "dc": -4e-05,
+  "rms_dbfs": -26.7,
+  "start_abs": 0.1023,
+  "end_abs": 0.0,
+  "kbytes": 5.3
+ },
+ "hit_sand": {
+  "dur_s": 0.347,
+  "peak_dbfs": -8.28,
+  "clipped_samples": 0,
+  "dc": -0.00066,
+  "rms_dbfs": -27.7,
+  "start_abs": 0.0015,
+  "end_abs": 0.0,
+  "kbytes": 6.5
+ },
+ "hit_wood": {
+  "dur_s": 0.447,
+  "peak_dbfs": -5.83,
+  "clipped_samples": 0,
+  "dc": 0.00034,
+  "rms_dbfs": -24.1,
+  "start_abs": 0.1062,
+  "end_abs": 0.0,
+  "kbytes": 6.0
+ },
+ "ocean_loop": {
+  "dur_s": 24.0,
+  "peak_dbfs": -4.02,
+  "clipped_samples": 0,
+  "dc": -2e-05,
+  "rms_dbfs": -22.4,
+  "start_abs": 0.2335,
+  "end_abs": 0.1949,
+  "kbytes": 302.9,
+  "seam_jump": 0.01421,
+  "p999_adjacent_jump": 0.04372,
+  "seam_rms_ratio": 1.191
+ },
+ "record": {
+  "dur_s": 0.897,
+  "peak_dbfs": -9.19,
+  "clipped_samples": 0,
+  "dc": 0.0,
+  "rms_dbfs": -21.5,
+  "start_abs": 0.0047,
+  "end_abs": 0.0,
+  "kbytes": 8.2
+ },
+ "sink": {
+  "dur_s": 1.3,
+  "peak_dbfs": -5.51,
+  "clipped_samples": 0,
+  "dc": 0.00011,
+  "rms_dbfs": -24.8,
+  "start_abs": 0.0068,
+  "end_abs": 0.0,
+  "kbytes": 14.0
+ },
+ "skip_0": {
+  "dur_s": 0.347,
+  "peak_dbfs": -6.33,
+  "clipped_samples": 0,
+  "dc": 1e-05,
+  "rms_dbfs": -28.0,
+  "start_abs": 0.0198,
+  "end_abs": 0.0,
+  "kbytes": 6.3
+ },
+ "skip_1": {
+  "dur_s": 0.347,
+  "peak_dbfs": -6.12,
+  "clipped_samples": 0,
+  "dc": 3e-05,
+  "rms_dbfs": -27.2,
+  "start_abs": 0.0268,
+  "end_abs": 0.0,
+  "kbytes": 6.2
+ },
+ "skip_2": {
+  "dur_s": 0.347,
+  "peak_dbfs": -7.54,
+  "clipped_samples": 0,
+  "dc": -1e-05,
+  "rms_dbfs": -28.0,
+  "start_abs": 0.0413,
+  "end_abs": 0.0,
+  "kbytes": 6.3
+ },
+ "skip_3": {
+  "dur_s": 0.347,
+  "peak_dbfs": -6.35,
+  "clipped_samples": 0,
+  "dc": -1e-05,
+  "rms_dbfs": -27.3,
+  "start_abs": 0.0154,
+  "end_abs": 0.0,
+  "kbytes": 6.2
+ },
+ "whoosh": {
+  "dur_s": 0.497,
+  "peak_dbfs": -7.68,
+  "clipped_samples": 0,
+  "dc": -0.0,
+  "rms_dbfs": -23.9,
+  "start_abs": 0.0001,
+  "end_abs": 0.0,
+  "kbytes": 6.4
+ }
+}
