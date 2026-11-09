@@ -1,55 +1,67 @@
 extends Node3D
-## 海岛打水漂 — a small low-poly stone skipping game.
-## Everything (terrain, props, character, UI) is generated in code.
+## 海岛打水漂 v2 — a little tropical island with a dock; skip stones across the lagoon.
 
 const GRAVITY := 9.8
-const WATER_Y := 0.0
-const DOCK_Y := 0.75
-const DOCK_END_Z := -7.0
-const THROW_ORIGIN := Vector3(0.35, DOCK_Y + 1.15, -6.4)
-const POWER_CYCLE := 1.7  # seconds for 0 -> 100% -> 0
+const POWER_CYCLE := 1.7
+const SAVE_PATH := "user://best.cfg"
 
-enum State { READY, AIMING, FLYING, SINKING, RESULT }
+enum Mode { THROW, VIEW }
+enum State { READY, AIMING, FLYING, SINKING }
 
+var island: Island
+var mode: int = Mode.THROW
 var state: int = State.READY
 var rng := RandomNumberGenerator.new()
+var gt := 0.0
 
-# aiming
+# aim
 var press_pos := Vector2.ZERO
 var charge_t := 0.0
 var power := 0.0
-var aim_yaw := 0.0      # degrees, + = left
-var aim_pitch := 7.0    # degrees above horizontal
-var pitch_at_press := 7.0
+var aim_yaw := 0.0
+var aim_pitch := 6.0
 var yaw_at_press := 0.0
+var pitch_at_press := 6.0
 
-# stone simulation
+# stone
 var stone_pos := Vector3.ZERO
 var stone_vel := Vector3.ZERO
 var spin := 0.0
 var skips := 0
 var throw_dist := 0.0
-var last_contact := Vector3.ZERO
+var throw_origin := Vector3.ZERO
 var sink_timer := 0.0
 var result_text := ""
+var finish_hold := 0.0
 var throw_anim := 0.0
-
 var best_skips := 0
 var best_dist := 0.0
-const SAVE_PATH := "user://best.cfg"
+var ripple_buf := PackedVector4Array()
+var ripple_i := 0
+
+# camera (orbit)
+var camera: Camera3D
+var cam_yaw := 0.4
+var cam_pitch := 0.4
+var cam_dist := 10.0
+var cam_target := Vector3.ZERO
+var view_yaw := 0.6
+var view_pitch := 0.55
+var view_dist := 34.0
+var orbit_vel := Vector2.ZERO
+var touches := {}
+var pinch_d := 0.0
+var mouse_drag := false
+var dragging := false
+var demo_cam := false
 
 # nodes
-var camera: Camera3D
-var stone: MeshInstance3D
 var player: Node3D
 var arm_pivot: Node3D
 var hand_stone: MeshInstance3D
+var stone: MeshInstance3D
 var preview_dots: Array[MeshInstance3D] = []
-var buoys: Array[Node3D] = []
-var water_mat: ShaderMaterial
-var cam_home_pos := Vector3(5.0, 6.6, 1.6)
-var cam_home_look := Vector3(-3.5, 0.0, -15.0)
-var cam_look := Vector3.ZERO
+var birds: Array = []
 
 # ui
 var ui_font: Font
@@ -60,442 +72,205 @@ var lbl_toast: Label
 var lbl_aim: Label
 var power_bar: ProgressBar
 var power_box: Control
+var mode_btn: Button
 var toast_timer := 0.0
 
-# demo / test
+# demo
 var demo_mode := false
 var demo_t := 0.0
+var demo_step := 0
 var demo_shots := {}
+var demo_list: Array = []
 
 func _ready() -> void:
-	rng.seed = 20261109
+	rng.seed = 99
 	ui_font = load("res://fonts/ui.otf")
 	_load_best()
 	_build_environment()
-	_build_terrain()
-	_build_water()
-	_build_props()
+	island = Island.new()
+	add_child(island)
+	island.build(ui_font)
 	_build_player()
 	_build_stone()
+	_build_birds()
 	_build_ui()
-	cam_look = cam_home_look
-	camera.global_position = cam_home_pos
-	camera.look_at(cam_look)
+	ripple_buf.resize(8)
+	aim_yaw = 0.0
+	cam_target = player.global_position + Vector3(0, 1.3, 0)
+	cam_yaw = 0.45
+	cam_pitch = 0.4
+	cam_dist = 9.5
 	var args := OS.get_cmdline_user_args()
 	if "--sim" in args:
 		_run_sim_report()
 		get_tree().quit()
 		return
 	demo_mode = "--demo" in args
+	if demo_mode:
+		_setup_demo()
+	_apply_camera()
 	_update_ui()
 
-# ------------------------------------------------------------------ world
-
-static func shore_z(x: float) -> float:
-	var l: float = min(x, 0.0)
-	var r: float = max(x, 0.0)
-	return 1.0 - 0.05 * l * l + 0.006 * r * r + 0.6 * sin(x * 0.25)
-
-func _mat(c: Color, rough := 0.85) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.roughness = rough
-	return m
-
-func _vc_mat() -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.vertex_color_use_as_albedo = true
-	m.roughness = 0.95
-	return m
-
-## Turns any primitive mesh into a flat-shaded low-poly mesh, with optional vertex jitter.
-func _flat(mesh: Mesh, jitter := 0.0, scale := Vector3.ONE) -> ArrayMesh:
-	var arrays := mesh.surface_get_arrays(0)
-	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-	var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-	var moved := {}
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var vlist: Array[Vector3] = []
-	for v in verts:
-		var key := Vector3i(roundi(v.x * 1000), roundi(v.y * 1000), roundi(v.z * 1000))
-		if not moved.has(key):
-			moved[key] = v * scale + Vector3(rng.randf_range(-jitter, jitter), rng.randf_range(-jitter, jitter), rng.randf_range(-jitter, jitter))
-		vlist.append(moved[key])
-	var n := idx.size() if idx.size() > 0 else vlist.size()
-	for i in range(0, n, 3):
-		var a: Vector3 = vlist[idx[i] if idx.size() > 0 else i]
-		var b: Vector3 = vlist[idx[i + 1] if idx.size() > 0 else i + 1]
-		var c: Vector3 = vlist[idx[i + 2] if idx.size() > 0 else i + 2]
-		var nrm := (c - a).cross(b - a).normalized()
-		if nrm.length() < 0.5:
-			continue
-		for p in [a, b, c]:
-			st.set_normal(nrm)
-			st.add_vertex(p)
-	return st.commit()
-
-func _add(mesh: Mesh, mat: Material, pos: Vector3, rot := Vector3.ZERO, scl := Vector3.ONE, parent: Node = null) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	(parent if parent else self).add_child(mi)
-	mi.position = pos
-	mi.rotation = rot
-	mi.scale = scl
-	return mi
+# ------------------------------------------------------------------ environment
 
 func _build_environment() -> void:
 	var env := Environment.new()
 	var sky := Sky.new()
 	var sm := ProceduralSkyMaterial.new()
-	sm.sky_top_color = Color(0.22, 0.52, 0.92)
-	sm.sky_horizon_color = Color(0.72, 0.88, 0.98)
-	sm.ground_horizon_color = Color(0.72, 0.88, 0.98)
-	sm.ground_bottom_color = Color(0.1, 0.35, 0.6)
-	sm.sun_angle_max = 20.0
+	sm.sky_top_color = Color(0.2, 0.46, 0.84)
+	sm.sky_horizon_color = Color(0.66, 0.83, 0.95)
+	sm.ground_horizon_color = Color(0.66, 0.83, 0.95)
+	sm.ground_bottom_color = Color(0.12, 0.36, 0.55)
+	sm.sun_angle_max = 25.0
+	sm.sky_energy_multiplier = 1.0
 	sky.sky_material = sm
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.6
+	env.ambient_light_energy = 0.55
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 0.95
+	env.tonemap_exposure = 1.0
+	env.tonemap_white = 4.0
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.72, 0.86, 0.97)
-	env.fog_density = 0.0035
+	env.fog_light_color = Color(0.68, 0.83, 0.95)
+	env.fog_density = 0.0022
 	env.fog_sky_affect = 0.0
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-52, -35, 0)
-	sun.light_energy = 1.1
-	sun.light_color = Color(1.0, 0.97, 0.9)
+	sun.rotation_degrees = Vector3(-46, 128, 0)
+	sun.light_energy = 1.05
+	sun.light_color = Color(1.0, 0.95, 0.86)
 	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 45.0
+	sun.shadow_blur = 1.5
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.directional_shadow_max_distance = 70.0
 	add_child(sun)
 	camera = Camera3D.new()
-	camera.fov = 58.0
-	camera.far = 600.0
+	camera.fov = 55.0
+	camera.near = 0.1
+	camera.far = 900.0
 	add_child(camera)
 	camera.current = true
 
-func _terrain_h(x: float, z: float) -> float:
-	var d := shore_z(x) - z
-	var bump := 0.12 * sin(x * 0.9 + z * 0.4) + 0.1 * cos(z * 1.1 - x * 0.3)
-	if d > 0.0:
-		return -min(d * 0.14, 3.0) + bump * 0.4 - 0.05
-	var h: float = min(-d * 0.16, 1.1) + bump * 0.5
-	# grassy hill on the left headland
-	var hill := Vector2(x + 26.0, z + 6.0).length()
-	h += max(0.0, 4.5 - hill * 0.32)
-	var hill2 := Vector2(x - 30.0, z - 20.0).length()
-	h += max(0.0, 3.5 - hill2 * 0.2)
-	return h
+# ------------------------------------------------------------------ actors
 
-func _terrain_color(x: float, z: float, h: float) -> Color:
-	var sand := Color(0.9, 0.8, 0.6)
-	var wet := Color(0.78, 0.67, 0.48)
-	var grass := Color(0.42, 0.72, 0.3)
-	var under := Color(0.93, 0.86, 0.66)
-	var d := shore_z(x) - z
-	var c: Color
-	if d > 0.0:
-		c = under
-	elif d > -1.2:
-		c = wet.lerp(sand, clamp(-d / 1.2, 0.0, 1.0))
-	else:
-		c = sand
-	if h > 1.15:
-		c = c.lerp(grass, clamp((h - 1.15) * 2.5, 0.0, 1.0))
-	var v := rng.randf_range(-0.03, 0.03)
-	return Color(c.r + v, c.g + v, c.b + v)
-
-func _build_terrain() -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var step := 1.6
-	var x0 := -64.0
-	var z0 := -34.0
-	var nx := 80
-	var nz := 50
-	var hs := {}
-	for i in range(nx + 1):
-		for j in range(nz + 1):
-			var x := x0 + i * step + (rng.randf_range(-0.35, 0.35) if i > 0 and i < nx else 0.0)
-			var z := z0 + j * step + (rng.randf_range(-0.35, 0.35) if j > 0 and j < nz else 0.0)
-			hs[Vector2i(i, j)] = Vector3(x, _terrain_h(x, z), z)
-	for i in range(nx):
-		for j in range(nz):
-			var a: Vector3 = hs[Vector2i(i, j)]
-			var b: Vector3 = hs[Vector2i(i + 1, j)]
-			var c: Vector3 = hs[Vector2i(i + 1, j + 1)]
-			var d: Vector3 = hs[Vector2i(i, j + 1)]
-			for tri in [[a, c, b], [a, d, c]]:
-				var n: Vector3 = (tri[1] - tri[0]).cross(tri[2] - tri[0]).normalized()
-				if n.y < 0.0:
-					n = -n
-				var ctr: Vector3 = (tri[0] + tri[1] + tri[2]) / 3.0
-				var col := _terrain_color(ctr.x, ctr.z, ctr.y)
-				for p in tri:
-					st.set_color(col)
-					st.set_normal(n)
-					st.add_vertex(p)
-	var mi := MeshInstance3D.new()
-	mi.mesh = st.commit()
-	mi.material_override = _vc_mat()
-	add_child(mi)
-	# deep seabed so the sky never shows through the water
-	var bed := PlaneMesh.new()
-	bed.size = Vector2(900, 900)
-	_add(bed, _mat(Color(0.05, 0.25, 0.45)), Vector3(0, -3.3, 0))
-
-func _build_water() -> void:
-	var pm := PlaneMesh.new()
-	pm.size = Vector2(500, 500)
-	pm.subdivide_width = 120
-	pm.subdivide_depth = 120
-	water_mat = ShaderMaterial.new()
-	water_mat.shader = load("res://water.gdshader")
-	var mi := _add(pm, water_mat, Vector3(0, WATER_Y, -120))
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-
-func _palm(pos: Vector3, lean := 0.0, yaw := 0.0, height := 5.0) -> void:
-	var root := Node3D.new()
-	add_child(root)
-	root.position = pos
-	root.rotation.y = yaw
-	var trunk_mat := _mat(Color(0.55, 0.38, 0.22))
-	var leaf_mat := _mat(Color(0.2, 0.62, 0.25))
-	leaf_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var leaf_mat2 := _mat(Color(0.3, 0.72, 0.28))
-	leaf_mat2.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var segs := 7
-	var p := Vector3.ZERO
-	var seg_h := height / segs
-	for s in range(segs):
-		var cy := CylinderMesh.new()
-		cy.top_radius = 0.17 - s * 0.012
-		cy.bottom_radius = 0.2 - s * 0.012
-		cy.height = seg_h * 1.05
-		cy.radial_segments = 6
-		cy.rings = 1
-		var t := float(s) / segs
-		var off := Vector3(lean * t * t * height * 0.35, 0, 0)
-		var nxt := Vector3(lean * pow(t + 1.0 / segs, 2) * height * 0.35, seg_h * (s + 1), 0)
-		var mid := (Vector3(off.x, seg_h * s, 0) + nxt) * 0.5
-		var mi := _add(_flat(cy), trunk_mat, mid, Vector3(0, 0, -atan2(nxt.x - off.x, seg_h)), Vector3.ONE, root)
-		mi.rotation.y = s * 0.5
-		p = nxt
-	var top := p
-	for k in range(8):
-		var leaf := PrismMesh.new()
-		leaf.size = Vector3(0.75, 0.06, 2.6)
-		var holder := Node3D.new()
-		root.add_child(holder)
-		holder.position = top
-		holder.rotation = Vector3(0, k * TAU / 8.0 + rng.randf() * 0.3, 0)
-		var lm := _add(_flat(leaf), leaf_mat if k % 2 == 0 else leaf_mat2, Vector3(0, -0.35, 1.25), Vector3(deg_to_rad(28 + rng.randf() * 18), 0, 0), Vector3.ONE, holder)
-		lm.rotation.z = rng.randf_range(-0.1, 0.1)
-	var cn := SphereMesh.new()
-	cn.radius = 0.15
-	cn.height = 0.3
-	cn.radial_segments = 6
-	cn.rings = 3
-	for k in range(3):
-		_add(_flat(cn), _mat(Color(0.45, 0.3, 0.15)), top + Vector3(cos(k * 2.1) * 0.22, -0.25, sin(k * 2.1) * 0.22), Vector3.ZERO, Vector3.ONE, root)
-
-func _rock(pos: Vector3, size: float, col := Color(0.42, 0.42, 0.44)) -> void:
-	var sm := SphereMesh.new()
-	sm.radius = 1.0
-	sm.height = 2.0
-	sm.radial_segments = 7
-	sm.rings = 4
-	var m := _flat(sm, 0.22, Vector3(1.0, 0.7, 1.0))
-	_add(m, _mat(col.lerp(Color(0.5, 0.48, 0.45), rng.randf() * 0.4)), pos, Vector3(0, rng.randf() * TAU, 0), Vector3(size, size * rng.randf_range(0.6, 1.0), size * rng.randf_range(0.8, 1.2)))
-
-func _seaweed(pos: Vector3) -> void:
-	var m := _mat(Color(0.2, 0.55, 0.3))
-	for k in range(4):
-		var c := CylinderMesh.new()
-		c.top_radius = 0.0
-		c.bottom_radius = 0.07
-		c.height = rng.randf_range(0.6, 1.3)
-		c.radial_segments = 4
-		c.rings = 1
-		_add(c, m, pos + Vector3(rng.randf_range(-0.4, 0.4), c.height * 0.5, rng.randf_range(-0.4, 0.4)), Vector3(rng.randf_range(-0.3, 0.3), 0, rng.randf_range(-0.3, 0.3)))
-
-func _box(size: Vector3, mat: Material, pos: Vector3, rot := Vector3.ZERO, parent: Node = null) -> MeshInstance3D:
-	var b := BoxMesh.new()
-	b.size = size
-	return _add(b, mat, pos, rot, Vector3.ONE, parent)
-
-func _build_props() -> void:
-	var wood := _mat(Color(0.62, 0.43, 0.26))
-	var wood2 := _mat(Color(0.52, 0.35, 0.2))
-	var wood_dark := _mat(Color(0.38, 0.25, 0.15))
-	# --- dock from the beach into the sea
-	var z := 3.0
-	while z > DOCK_END_Z - 0.2:
-		_box(Vector3(2.4, 0.1, 0.42), wood if int(z * 10) % 2 == 0 else wood2, Vector3(0, DOCK_Y, z), Vector3(0, rng.randf_range(-0.02, 0.02), 0))
-		z -= 0.48
-	for pz in [2.5, -0.5, -3.5, DOCK_END_Z + 0.2]:
-		for px in [-1.15, 1.15]:
-			var c := CylinderMesh.new()
-			c.top_radius = 0.11
-			c.bottom_radius = 0.13
-			c.height = 3.2
-			c.radial_segments = 6
-			_add(c, wood_dark, Vector3(px, DOCK_Y - 1.0, pz))
-	for px in [-1.15, 1.15]:
-		_box(Vector3(0.12, 0.12, 10.0), wood_dark, Vector3(px, DOCK_Y - 0.15, -2.0))
-	# --- beach hut on stilts (left)
-	var hut := Vector3(-11.8, _terrain_h(-11.8, shore_z(-11.8) + 4.5), shore_z(-11.8) + 4.5)
-	for dx in [-1.6, 1.6]:
-		for dz in [-1.4, 1.4]:
-			_box(Vector3(0.22, 2.2, 0.22), wood_dark, hut + Vector3(dx, 0.9, dz))
-	_box(Vector3(3.8, 0.2, 3.4), wood2, hut + Vector3(0, 1.8, 0))
-	_box(Vector3(3.4, 1.9, 3.0), wood, hut + Vector3(0, 2.85, 0))
-	_box(Vector3(0.9, 1.3, 0.05), wood_dark, hut + Vector3(0.6, 2.55, -1.52))
-	_box(Vector3(0.7, 0.6, 0.05), _mat(Color(0.35, 0.6, 0.75)), hut + Vector3(-0.9, 2.9, -1.52))
-	var roof := PrismMesh.new()
-	roof.size = Vector3(4.6, 1.5, 4.0)
-	_add(_flat(roof), _mat(Color(0.86, 0.72, 0.42)), hut + Vector3(0, 4.55, 0))
-	# --- palms (placed relative to the curved shoreline)
-	for pp in [[-5.5, 2.0, 0.9], [-8.0, 3.5, -0.8], [-10.5, 1.8, 1.0], [-13.5, 3.0, -0.6], [-16.0, 1.6, 0.8],
-			[-19.0, 3.5, 1.0], [-22.5, 2.0, -0.7], [-26.0, 4.0, 0.6], [-30.0, 2.5, -0.9], [5.0, 2.0, -1.0], [8.5, 3.0, 0.8], [-3.0, 6.5, 0.4]]:
-		var px: float = pp[0]
-		var pz: float = shore_z(px) + pp[1]
-		_palm(Vector3(px, _terrain_h(px, pz) - 0.1, pz), pp[2], rng.randf() * TAU, rng.randf_range(4.8, 6.6))
-	# --- rocks along the shore and in the shallows
-	for r in [[Vector3(-3.5, 0.2, 0.8), 0.7], [Vector3(-9.0, 0.0, -3.6), 0.8], [Vector3(-11.0, -0.1, -4.8), 0.5], [Vector3(-4.6, 0.1, 1.6), 0.45], [Vector3(3.0, 0.0, 0.2), 0.6],
-			[Vector3(-13.0, 0.0, -4.2), 1.3], [Vector3(-14.5, 0.0, -6.5), 0.9], [Vector3(-18.0, 0.2, -10.0), 1.6],
-			[Vector3(8.0, -0.3, -3.0), 0.8], [Vector3(-7.0, -0.4, -9.0), 0.7], [Vector3(12.0, -0.2, 0.5), 1.0]]:
-		_rock(r[0], r[1])
-	for p in [Vector3(-2.5, -0.5, -3.0), Vector3(2.8, -0.6, -4.5), Vector3(-5.5, -0.3, -1.2), Vector3(5.0, -0.4, -1.5), Vector3(-1.8, -0.8, -8.0)]:
-		_seaweed(p)
-	# --- beach details: umbrella and a little boat
-	var pole := CylinderMesh.new()
-	pole.top_radius = 0.04
-	pole.bottom_radius = 0.04
-	pole.height = 2.4
-	_add(pole, _mat(Color(0.95, 0.95, 0.95)), Vector3(4.0, 1.4, 3.6))
-	var umb := CylinderMesh.new()
-	umb.top_radius = 0.02
-	umb.bottom_radius = 1.4
-	umb.height = 0.55
-	umb.radial_segments = 8
-	_add(_flat(umb), _mat(Color(0.95, 0.35, 0.3)), Vector3(4.0, 2.7, 3.6))
-	# --- distant islands
-	for isl in [[Vector3(-45, 0, -95), 14.0], [Vector3(38, 0, -120), 10.0], [Vector3(5, 0, -170), 18.0]]:
-		var c := CylinderMesh.new()
-		c.top_radius = isl[1] * 0.35
-		c.bottom_radius = isl[1]
-		c.height = isl[1] * 0.35
-		c.radial_segments = 9
-		_add(_flat(c, 0.6), _mat(Color(0.4, 0.65, 0.35)), isl[0] + Vector3(0, c.height * 0.4, 0))
-		var s := CylinderMesh.new()
-		s.top_radius = isl[1]
-		s.bottom_radius = isl[1] * 1.15
-		s.height = 0.6
-		s.radial_segments = 9
-		_add(s, _mat(Color(0.97, 0.9, 0.72)), isl[0] + Vector3(0, 0.1, 0))
-	# --- clouds
-	var cloud_mat := _mat(Color(1, 1, 1))
-	cloud_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	for k in range(9):
-		var cp := Vector3(rng.randf_range(-160, 160), rng.randf_range(40, 70), rng.randf_range(-260, -120))
-		for b in range(4):
-			var sm := SphereMesh.new()
-			sm.radial_segments = 6
-			sm.rings = 3
-			var r := rng.randf_range(6, 11)
-			sm.radius = r
-			sm.height = r * 1.2
-			_add(_flat(sm), cloud_mat, cp + Vector3(b * 8.0 - 12.0, rng.randf_range(-2, 2), rng.randf_range(-3, 3)))
-	# --- distance buoys
-	for dist in [20, 40, 60]:
-		var bn := Node3D.new()
-		add_child(bn)
-		bn.position = THROW_ORIGIN * Vector3(1, 0, 1) + Vector3(0, 0, -dist)
-		bn.set_meta("phase", rng.randf() * TAU)
-		var b1 := CylinderMesh.new()
-		b1.top_radius = 0.18
-		b1.bottom_radius = 0.38
-		b1.height = 0.7
-		b1.radial_segments = 8
-		_add(_flat(b1), _mat(Color(0.95, 0.3, 0.2)), Vector3(0, 0.3, 0), Vector3.ZERO, Vector3.ONE, bn)
-		_box(Vector3(0.36, 0.12, 0.36), _mat(Color(1, 1, 1)), Vector3(0, 0.55, 0), Vector3.ZERO, bn)
-		var lbl := Label3D.new()
-		lbl.text = "%d 米" % dist
-		lbl.font = ui_font
-		lbl.font_size = 64
-		lbl.pixel_size = 0.012
-		lbl.outline_size = 14
-		lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		lbl.position = Vector3(0, 1.4, 0)
-		lbl.no_depth_test = false
-		bn.add_child(lbl)
-		buoys.append(bn)
+func _vc_mat() -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.vertex_color_use_as_albedo = true
+	m.vertex_color_is_srgb = true
+	m.roughness = 0.8
+	return m
 
 func _build_player() -> void:
 	player = Node3D.new()
 	add_child(player)
-	player.position = Vector3(0, DOCK_Y + 0.05, -6.2)
-	var skin := _mat(Color(0.96, 0.78, 0.62))
-	var shirt := _mat(Color(0.98, 0.55, 0.25))
-	var shorts := _mat(Color(0.2, 0.45, 0.75))
-	for lx in [-0.12, 0.12]:
-		_box(Vector3(0.14, 0.5, 0.14), skin, Vector3(lx, 0.25, 0), Vector3.ZERO, player)
-	_box(Vector3(0.42, 0.25, 0.26), shorts, Vector3(0, 0.6, 0), Vector3.ZERO, player)
-	_box(Vector3(0.44, 0.5, 0.26), shirt, Vector3(0, 0.95, 0), Vector3.ZERO, player)
+	player.position = island.player_spot + Vector3(0, 0.04, 0)
+	var skin := Color(0.96, 0.76, 0.6)
+	var b := MeshBuilder.new()
+	var box := BoxMesh.new()
+	for lx in [-0.11, 0.11]:
+		b.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.13, 0.5, 0.13)), Vector3(lx, 0.25, 0)), skin)
+		b.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.15, 0.08, 0.22)), Vector3(lx, 0.04, -0.03)), Color(0.95, 0.9, 0.8))
+	b.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.4, 0.26, 0.25)), Vector3(0, 0.6, 0)), Color(0.2, 0.5, 0.8))
+	b.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.42, 0.5, 0.25)), Vector3(0, 0.95, 0)), Color(0.98, 0.98, 0.95))
+	b.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.43, 0.08, 0.26)), Vector3(0, 0.9, 0)), Color(0.95, 0.4, 0.3))
 	var head := SphereMesh.new()
-	head.radius = 0.19
-	head.height = 0.38
-	head.radial_segments = 8
-	head.rings = 4
-	_add(_flat(head), skin, Vector3(0, 1.4, 0), Vector3.ZERO, Vector3.ONE, player)
+	head.radius = 0.19; head.height = 0.38; head.radial_segments = 8; head.rings = 5
+	b.prim(head, Transform3D(Basis.IDENTITY, Vector3(0, 1.4, 0)), skin)
+	var hair := SphereMesh.new()
+	hair.radius = 0.2; hair.height = 0.3; hair.radial_segments = 8; hair.rings = 4; hair.is_hemisphere = true
+	b.prim(hair, Transform3D(Basis.IDENTITY, Vector3(0, 1.44, 0.02)), Color(0.25, 0.16, 0.1))
 	var hat := CylinderMesh.new()
-	hat.top_radius = 0.16
-	hat.bottom_radius = 0.38
-	hat.height = 0.14
-	hat.radial_segments = 10
-	_add(_flat(hat), _mat(Color(0.95, 0.85, 0.5)), Vector3(0, 1.58, 0), Vector3.ZERO, Vector3.ONE, player)
-	_box(Vector3(0.1, 0.45, 0.1), skin, Vector3(-0.28, 0.95, 0), Vector3(0, 0, -0.15), player)
+	hat.top_radius = 0.15; hat.bottom_radius = 0.36; hat.height = 0.12; hat.radial_segments = 12
+	b.prim(hat, Transform3D(Basis.IDENTITY, Vector3(0, 1.6, 0)), Color(0.95, 0.85, 0.5))
+	var band := CylinderMesh.new()
+	band.top_radius = 0.16; band.bottom_radius = 0.17; band.height = 0.05; band.radial_segments = 12
+	b.prim(band, Transform3D(Basis.IDENTITY, Vector3(0, 1.64, 0)), Color(0.85, 0.3, 0.25))
+	b.prim(box, Transform3D(Basis(Vector3.FORWARD, -0.15).scaled(Vector3(0.1, 0.45, 0.1)), Vector3(-0.27, 0.95, 0)), skin)
+	var mi := MeshInstance3D.new()
+	mi.mesh = b.commit()
+	mi.material_override = _vc_mat()
+	player.add_child(mi)
 	arm_pivot = Node3D.new()
 	player.add_child(arm_pivot)
 	arm_pivot.position = Vector3(0.27, 1.15, 0)
-	_box(Vector3(0.1, 0.5, 0.1), skin, Vector3(0, -0.23, 0), Vector3.ZERO, arm_pivot)
-	var st := SphereMesh.new()
-	st.radius = 0.08
-	st.height = 0.16
-	st.radial_segments = 8
-	st.rings = 3
-	hand_stone = _add(_flat(st), _mat(Color(0.5, 0.52, 0.55)), Vector3(0, -0.5, 0), Vector3.ZERO, Vector3(1, 0.4, 1), arm_pivot)
+	var ab := MeshBuilder.new()
+	ab.prim(box, Transform3D(Basis.IDENTITY.scaled(Vector3(0.1, 0.5, 0.1)), Vector3(0, -0.23, 0)), skin)
+	var arm := MeshInstance3D.new()
+	arm.mesh = ab.commit()
+	arm.material_override = _vc_mat()
+	arm_pivot.add_child(arm)
+	var sm := SphereMesh.new()
+	sm.radius = 0.08; sm.height = 0.16; sm.radial_segments = 8; sm.rings = 3
+	hand_stone = MeshInstance3D.new()
+	hand_stone.mesh = sm
+	var stm := StandardMaterial3D.new()
+	stm.albedo_color = Color(0.45, 0.47, 0.5)
+	hand_stone.material_override = stm
+	hand_stone.position = Vector3(0, -0.5, 0)
+	hand_stone.scale = Vector3(1, 0.4, 1)
+	arm_pivot.add_child(hand_stone)
 
 func _build_stone() -> void:
 	var sm := SphereMesh.new()
-	sm.radius = 0.12
-	sm.height = 0.24
-	sm.radial_segments = 9
-	sm.rings = 4
-	stone = _add(_flat(sm), _mat(Color(0.5, 0.52, 0.56), 0.6), Vector3.ZERO, Vector3.ZERO, Vector3(1.5, 0.5, 1.5))
+	sm.radius = 0.12; sm.height = 0.24; sm.radial_segments = 9; sm.rings = 4
+	stone = MeshInstance3D.new()
+	stone.mesh = sm
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.45, 0.47, 0.52)
+	m.roughness = 0.5
+	stone.material_override = m
+	stone.scale = Vector3(1.5, 0.5, 1.5)
+	add_child(stone)
 	stone.visible = false
 	var dot := SphereMesh.new()
-	dot.radius = 0.09
-	dot.height = 0.18
-	dot.radial_segments = 6
-	dot.rings = 3
-	for i in range(16):
-		var m := StandardMaterial3D.new()
-		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		m.albedo_color = Color(1, 1, 1, 0.85)
-		var d := _add(dot, m, Vector3.ZERO)
-		d.visible = false
+	dot.radius = 0.08; dot.height = 0.16; dot.radial_segments = 6; dot.rings = 3
+	for i in 18:
+		var dm := StandardMaterial3D.new()
+		dm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		dm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		dm.albedo_color = Color(1, 1, 1, 0.85)
+		var d := MeshInstance3D.new()
+		d.mesh = dot
+		d.material_override = dm
 		d.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		d.visible = false
+		add_child(d)
 		preview_dots.append(d)
+
+func _build_birds() -> void:
+	var white := StandardMaterial3D.new()
+	white.albedo_color = Color(0.97, 0.97, 0.95)
+	var grey := StandardMaterial3D.new()
+	grey.albedo_color = Color(0.75, 0.77, 0.8)
+	grey.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for i in 6:
+		var root := Node3D.new()
+		add_child(root)
+		var body := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.12; sm.height = 0.24; sm.radial_segments = 6; sm.rings = 3
+		body.mesh = sm
+		body.scale = Vector3(0.8, 0.7, 2.0)
+		body.material_override = white
+		root.add_child(body)
+		var wings: Array = []
+		for sgn in [-1.0, 1.0]:
+			var piv := Node3D.new()
+			root.add_child(piv)
+			piv.position = Vector3(0.06 * sgn, 0.03, 0)
+			var w := MeshInstance3D.new()
+			var pm := PrismMesh.new()
+			pm.size = Vector3(0.55, 0.02, 0.28)
+			w.mesh = pm
+			w.material_override = grey
+			w.position = Vector3(0.28 * sgn, 0, 0)
+			w.rotation = Vector3(0, 0, 0)
+			piv.add_child(w)
+			wings.append([piv, sgn])
+		birds.append({"node": root, "wings": wings, "c": Vector3(rng.randf_range(-15, 15), rng.randf_range(9, 16), rng.randf_range(-25, 10)), "r": rng.randf_range(8, 18), "sp": rng.randf_range(0.25, 0.45) * (1.0 if i % 2 == 0 else -1.0), "ph": rng.randf() * TAU})
 
 # ------------------------------------------------------------------ UI
 
@@ -504,8 +279,8 @@ func _label(size: int, col := Color.WHITE) -> Label:
 	l.add_theme_font_override("font", ui_font)
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", col)
-	l.add_theme_color_override("font_outline_color", Color(0.05, 0.2, 0.35, 0.85))
-	l.add_theme_constant_override("outline_size", 8)
+	l.add_theme_color_override("font_outline_color", Color(0.04, 0.18, 0.32, 0.9))
+	l.add_theme_constant_override("outline_size", 9)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
@@ -518,24 +293,40 @@ func _build_ui() -> void:
 	layer.add_child(root)
 	var top := VBoxContainer.new()
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	top.offset_left = 18
-	top.offset_top = 14
-	top.offset_right = -18
+	top.offset_left = 18; top.offset_top = 14; top.offset_right = -200
 	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(top)
 	var title := _label(26, Color(1, 0.95, 0.7))
 	title.text = "海岛打水漂"
 	top.add_child(title)
-	lbl_stats = _label(38)
+	lbl_stats = _label(36)
 	top.add_child(lbl_stats)
-	lbl_best = _label(27, Color(0.9, 0.97, 1))
+	lbl_best = _label(25, Color(0.9, 0.97, 1))
 	top.add_child(lbl_best)
+
+	mode_btn = Button.new()
+	mode_btn.add_theme_font_override("font", ui_font)
+	mode_btn.add_theme_font_size_override("font_size", 30)
+	mode_btn.custom_minimum_size = Vector2(170, 76)
+	mode_btn.anchor_left = 1.0; mode_btn.anchor_right = 1.0
+	mode_btn.offset_left = -188; mode_btn.offset_right = -16; mode_btn.offset_top = 16; mode_btn.offset_bottom = 92
+	mode_btn.focus_mode = Control.FOCUS_NONE
+	for st_name in ["normal", "hover", "pressed"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(1, 1, 1, 0.82) if st_name != "pressed" else Color(0.85, 0.95, 1, 0.95)
+		sb.set_corner_radius_all(38)
+		sb.border_color = Color(0.1, 0.45, 0.65)
+		sb.set_border_width_all(3)
+		mode_btn.add_theme_stylebox_override(st_name, sb)
+	mode_btn.add_theme_color_override("font_color", Color(0.05, 0.35, 0.55))
+	mode_btn.add_theme_color_override("font_hover_color", Color(0.05, 0.35, 0.55))
+	mode_btn.add_theme_color_override("font_pressed_color", Color(0.05, 0.35, 0.55))
+	mode_btn.pressed.connect(_toggle_mode)
+	root.add_child(mode_btn)
 
 	var bottom := VBoxContainer.new()
 	bottom.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	bottom.offset_left = 18
-	bottom.offset_right = -18
-	bottom.offset_bottom = -16
+	bottom.offset_left = 18; bottom.offset_right = -18; bottom.offset_bottom = -16
 	bottom.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	bottom.alignment = BoxContainer.ALIGNMENT_END
 	bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -562,19 +353,15 @@ func _build_ui() -> void:
 	power_bar.add_theme_stylebox_override("fill", fg)
 	power_box.add_child(power_bar)
 	power_box.visible = false
-	lbl_hint = _label(27, Color(1, 1, 1, 0.95))
+	lbl_hint = _label(26, Color(1, 1, 1, 0.96))
 	lbl_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	bottom.add_child(lbl_hint)
 
 	lbl_toast = _label(46, Color(1, 0.95, 0.55))
-	lbl_toast.set_anchors_preset(Control.PRESET_CENTER)
-	lbl_toast.anchor_left = 0.0
-	lbl_toast.anchor_right = 1.0
-	lbl_toast.anchor_top = 0.33
-	lbl_toast.anchor_bottom = 0.33
-	lbl_toast.offset_left = 10
-	lbl_toast.offset_right = -10
+	lbl_toast.anchor_left = 0.0; lbl_toast.anchor_right = 1.0
+	lbl_toast.anchor_top = 0.3; lbl_toast.anchor_bottom = 0.3
+	lbl_toast.offset_left = 10; lbl_toast.offset_right = -10
 	lbl_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl_toast.add_theme_constant_override("outline_size", 12)
@@ -588,56 +375,136 @@ func _toast(t: String, dur := 1.4) -> void:
 func _update_ui() -> void:
 	lbl_stats.text = "弹跳 %d 次   距离 %.1f 米" % [skips, throw_dist]
 	lbl_best.text = "最高纪录：弹跳 %d 次 · 最远 %.1f 米" % [best_skips, best_dist]
-	match state:
-		State.READY:
-			lbl_hint.text = "按住屏幕蓄力 → 左右拖动调方向，上下拖动调角度 → 松开扔出石头\n诀窍：角度放低、力度大，石头转得快才会多跳几下"
-		State.AIMING:
-			lbl_hint.text = "看准力度条，松手投出！"
-		State.FLYING, State.SINKING:
-			lbl_hint.text = ""
-		State.RESULT:
-			lbl_hint.text = "点击屏幕再扔一次"
+	mode_btn.text = "观景" if mode == Mode.THROW else "投石"
+	mode_btn.visible = state == State.READY
+	if mode == Mode.VIEW:
+		lbl_hint.text = "观景模式：单指拖动 360° 旋转，双指捏合缩放（电脑：拖动鼠标 / 滚轮）\n点右上角「投石」回到码头，会朝你现在看的方向扔"
+	else:
+		match state:
+			State.READY:
+				lbl_hint.text = "按住屏幕蓄力 → 左右拖动转向（可转一整圈），上下拖动调角度 → 松手扔出\n角度低、力度大、转得快才跳得多；砸到岸边、礁石或船就结束"
+			State.AIMING:
+				lbl_hint.text = "看准力度条，松手投出！"
+			_:
+				lbl_hint.text = ""
 	power_box.visible = state == State.AIMING
+
+func _toggle_mode() -> void:
+	if state != State.READY:
+		return
+	touches.clear()
+	orbit_vel = Vector2.ZERO
+	if mode == Mode.THROW:
+		mode = Mode.VIEW
+		view_yaw = cam_yaw
+		view_pitch = clamp(cam_pitch + 0.15, 0.1, 1.4)
+		view_dist = max(cam_dist * 1.6, 16.0)
+	else:
+		mode = Mode.THROW
+		aim_yaw = wrapf(cam_yaw, -PI, PI)  # throw toward where you were looking
+		if not _open_sea(aim_yaw):
+			for k in range(1, 19):
+				if _open_sea(aim_yaw + k * 0.17):
+					aim_yaw += k * 0.17
+					break
+				if _open_sea(aim_yaw - k * 0.17):
+					aim_yaw -= k * 0.17
+					break
+			_toast("已转向最近的开阔海面", 1.6)
+	_update_ui()
+
+func _open_sea(yaw: float) -> bool:
+	var o := player.global_position
+	var d := Vector3(0, 0, -1).rotated(Vector3.UP, yaw)
+	for i in range(2, 30):
+		var p := o + d * (i * 1.5)
+		if Island.ground_h(p.x, p.z) > -0.3:
+			return false
+		for ob in island.obstacles:
+			var c: Vector2 = ob[0]
+			if float(ob[2]) > 0.0 and Vector2(p.x - c.x, p.z - c.y).length() < float(ob[1]) + 0.6:
+				return false
+	return true
 
 # ------------------------------------------------------------------ input
 
 func _unhandled_input(event: InputEvent) -> void:
 	if demo_mode:
 		return
+	if mode == Mode.VIEW:
+		_view_input(event)
+	else:
+		_throw_input(event)
+
+func _view_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		if event.pressed:
+			touches[event.index] = event.position
+			orbit_vel = Vector2.ZERO
+		else:
+			touches.erase(event.index)
+		if touches.size() == 2:
+			var ps: Array = touches.values()
+			pinch_d = (ps[0] - ps[1]).length()
+		dragging = touches.size() > 0
+	elif event is InputEventScreenDrag:
+		var prev: Vector2 = touches.get(event.index, event.position)
+		touches[event.index] = event.position
+		if touches.size() == 1:
+			_orbit_by(event.position - prev)
+		elif touches.size() >= 2:
+			var ps: Array = touches.values()
+			var d: float = (ps[0] - ps[1]).length()
+			if pinch_d > 1.0 and d > 1.0:
+				view_dist = clamp(view_dist * pinch_d / d, 4.0, 95.0)
+			pinch_d = d
+	elif event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION:
+		if event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT:
+			mouse_drag = event.pressed
+			dragging = event.pressed
+			if event.pressed:
+				orbit_vel = Vector2.ZERO
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+			view_dist = clamp(view_dist * 0.88, 4.0, 95.0)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+			view_dist = clamp(view_dist * 1.13, 4.0, 95.0)
+	elif event is InputEventMouseMotion and event.device != InputEvent.DEVICE_ID_EMULATION and mouse_drag:
+		_orbit_by(event.relative)
+	elif event is InputEventMagnifyGesture:
+		view_dist = clamp(view_dist / event.factor, 4.0, 95.0)
+
+func _orbit_by(rel: Vector2) -> void:
+	var vs := get_viewport().get_visible_rect().size
+	var k: float = 5.0 / max(min(vs.x, vs.y), 200.0)
+	var dy: float = -rel.x * k
+	var dp: float = rel.y * k * 0.7
+	view_yaw += dy
+	view_pitch = clamp(view_pitch + dp, 0.06, 1.42)
+	var dt: float = max(get_process_delta_time(), 1.0 / 120.0)
+	orbit_vel = orbit_vel.lerp(Vector2(dy, dp) / dt, 0.5)
+
+func _throw_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			if state == State.READY:
 				_begin_aim(event.position)
-			elif state == State.RESULT:
-				_reset_round()
 		else:
 			if state == State.AIMING:
 				_throw()
 	elif event is InputEventMouseMotion and state == State.AIMING:
-		_drag_to(event.position)
+		var vs := get_viewport().get_visible_rect().size
+		var unit: float = min(vs.x, vs.y)
+		var d: Vector2 = event.position - press_pos
+		aim_yaw = yaw_at_press - d.x / unit * 2.2
+		aim_pitch = clamp(pitch_at_press - d.y / unit * 30.0, -3.0, 30.0)
 
 func _begin_aim(p: Vector2) -> void:
 	state = State.AIMING
 	press_pos = p
 	charge_t = 0.0
 	power = 0.0
-	pitch_at_press = aim_pitch
 	yaw_at_press = aim_yaw
-	_update_ui()
-
-func _drag_to(p: Vector2) -> void:
-	var vs := get_viewport().get_visible_rect().size
-	var unit: float = min(vs.x, vs.y)
-	var d := p - press_pos
-	aim_yaw = clamp(yaw_at_press - d.x / unit * 45.0, -30.0, 30.0)
-	aim_pitch = clamp(pitch_at_press - d.y / unit * 30.0, -3.0, 30.0)
-
-func _reset_round() -> void:
-	state = State.READY
-	skips = 0
-	throw_dist = 0.0
-	stone.visible = false
-	hand_stone.visible = true
+	pitch_at_press = aim_pitch
 	_update_ui()
 
 # ------------------------------------------------------------------ physics
@@ -649,9 +516,8 @@ static func launch_spin(p: float) -> float:
 	return clamp(0.35 + 0.65 * p, 0.0, 1.0)
 
 static func crit_angle(s: float) -> float:
-	return 13.0 + 15.0 * s  # degrees: steeper hits than this sink
+	return 13.0 + 15.0 * s
 
-## One water contact. Returns [skipped:bool, new_velocity:Vector3, new_spin:float, entry_angle_deg:float]
 static func water_contact(v: Vector3, s: float, jitter: float) -> Array:
 	var h := Vector2(v.x, v.z)
 	var hs := h.length()
@@ -662,15 +528,19 @@ static func water_contact(v: Vector3, s: float, jitter: float) -> Array:
 	var keep: float = clamp(0.95 - 0.75 * sa - (1.0 - s) * 0.05, 0.55, 0.95)
 	var e := 0.5 + 0.2 * s
 	var nh := h * keep
-	var nv := Vector3(nh.x, -v.y * e, nh.y)
-	nv.y = max(nv.y, 0.55)  # minimum hop so short skips still read on screen
+	var nv := Vector3(nh.x, max(-v.y * e, 0.55), nh.y)
 	return [true, nv, s * (0.9 + 0.04 * jitter), ang]
 
+func _aim_dir() -> Vector3:
+	return Vector3(0, 0, -1).rotated(Vector3.UP, aim_yaw)
+
+func _hand_pos() -> Vector3:
+	return player.global_transform * Vector3(0.35, 1.15, -0.3)
+
 func _initial_velocity() -> Vector3:
-	var sp := launch_speed(power)
-	var dir := Vector3(0, 0, -1).rotated(Vector3.UP, deg_to_rad(aim_yaw))
+	var dir := _aim_dir()
 	dir = dir.rotated(dir.cross(Vector3.UP).normalized(), deg_to_rad(aim_pitch))
-	return dir * sp
+	return dir * launch_speed(power)
 
 func _throw() -> void:
 	if power < 0.04:
@@ -678,12 +548,12 @@ func _throw() -> void:
 		_update_ui()
 		return
 	state = State.FLYING
-	stone_pos = player.global_position + Vector3(0.35, 1.15, -0.3)
+	stone_pos = _hand_pos()
+	throw_origin = stone_pos
 	stone_vel = _initial_velocity()
 	spin = launch_spin(power) * rng.randf_range(0.92, 1.05)
 	skips = 0
 	throw_dist = 0.0
-	last_contact = stone_pos
 	stone.visible = true
 	hand_stone.visible = false
 	throw_anim = 0.0
@@ -691,30 +561,48 @@ func _throw() -> void:
 		d.visible = false
 	_update_ui()
 
-func _horizontal_dist(p: Vector3) -> float:
-	var o := player.global_position
-	return Vector2(p.x - o.x, p.z - o.z).length()
+func _hdist(p: Vector3) -> float:
+	return Vector2(p.x - throw_origin.x, p.z - throw_origin.z).length()
+
+func _hit_test(p: Vector3) -> String:
+	var gh := Island.ground_h(p.x, p.z)
+	if gh > -0.05 and p.y <= gh + 0.06:
+		return "石头落在沙滩上了"
+	# dock deck
+	if p.y < Island.DECK_Y + 0.06 and p.y > Island.DECK_Y - 0.25:
+		if (absf(p.x) < 1.2 and p.z < island.dock_start_z and p.z > island.dock_end_z) or (absf(p.x) < 3.1 and p.z < island.dock_end_z + 3.9 and p.z > island.dock_end_z - 0.1):
+			return "咚！砸到码头上了"
+	for o in island.obstacles:
+		var c: Vector2 = o[0]
+		if p.y < float(o[2]) and p.y > float(o[4]) - 0.5 and Vector2(p.x - c.x, p.z - c.y).length() < float(o[1]) + 0.08:
+			return "砰！撞到了%s" % o[3]
+	return ""
 
 func _step_stone(dt: float) -> void:
-	var prev := stone_pos
 	stone_vel.y -= GRAVITY * dt
 	stone_pos += stone_vel * dt
 	stone.position = stone_pos
 	stone.rotate_y(spin * 40.0 * dt)
-	if stone_pos.y <= WATER_Y + 0.02 and stone_vel.y < 0.0:
-		stone_pos.y = WATER_Y + 0.02
-		var on_land := shore_z(stone_pos.x) - stone_pos.z < 0.0
-		if on_land:
-			_end_throw("石头落到沙滩上了")
+	if _hdist(stone_pos) > 1.0:
+		var hit := _hit_test(stone_pos)
+		if hit != "":
+			throw_dist = _hdist(stone_pos)
+			result_text = hit + ("" if skips == 0 else "（之前漂了 %d 下）" % skips)
+			stone_vel = Vector3(0, -1.0, 0)
+			state = State.SINKING
+			sink_timer = 0.6
+			if stone_pos.y < 0.3:
+				_splash(Vector3(stone_pos.x, 0.0, stone_pos.z), 0.6, false, Vector3.ZERO)
 			return
+	if stone_pos.y <= 0.02 and stone_vel.y < 0.0:
+		stone_pos.y = 0.02
 		var res := water_contact(stone_vel, spin, rng.randf_range(-1, 1))
+		throw_dist = _hdist(stone_pos)
 		if res[0]:
 			skips += 1
 			stone_vel = res[1]
 			spin = res[2]
-			last_contact = stone_pos
-			throw_dist = _horizontal_dist(stone_pos)
-			_splash(stone_pos, 0.5 + 0.12 * Vector2(stone_vel.x, stone_vel.z).length() * 0.1, false)
+			_splash(stone_pos, 0.55, false, stone_vel)
 			_float_text(stone_pos, "%d" % skips)
 			if skips == 5:
 				_toast("5 连跳！")
@@ -722,33 +610,23 @@ func _step_stone(dt: float) -> void:
 				_toast("10 连跳！太强了！")
 			elif skips == 15:
 				_toast("15 连跳！水漂大师！")
-			_check_buoys(prev, stone_pos)
+			for bn in island.buoys:
+				if Vector2(stone_pos.x - bn.position.x, stone_pos.z - bn.position.z).length() < 2.0:
+					_toast("擦过浮标！")
 		else:
-			throw_dist = _horizontal_dist(stone_pos)
-			_splash(stone_pos, 1.2, true)
+			_splash(stone_pos, 1.2, true, Vector3.ZERO)
 			var ang: float = res[3]
 			if skips == 0:
-				result_text = "扑通！入水角 %.0f°，太陡了，试试更低的角度和更大的力度" % ang if ang > 20 else "扑通！速度不够，多蓄点力"
+				result_text = ("扑通！入水角 %.0f°，太陡了，试试更低的角度和更大的力度" % ang) if ang > 20.0 else "扑通！速度不够，多蓄点力"
 			else:
 				result_text = "漂了 %d 下！" % skips
 			state = State.SINKING
 			sink_timer = 0.0
-	throw_dist = max(throw_dist, _horizontal_dist(Vector3(stone_pos.x, 0, stone_pos.z)) if state == State.FLYING and skips > 0 else throw_dist)
+	elif state == State.FLYING and skips > 0:
+		throw_dist = max(throw_dist, _hdist(stone_pos))
 	_update_ui()
 
-func _check_buoys(_a: Vector3, b: Vector3) -> void:
-	for bn in buoys:
-		var p := bn.global_position
-		if Vector2(b.x - p.x, b.z - p.z).length() < 2.0:
-			_toast("擦过浮标！")
-
-func _end_throw(msg: String) -> void:
-	result_text = msg
-	state = State.SINKING
-	sink_timer = 1.0
-
 func _finish() -> void:
-	state = State.RESULT
 	stone.visible = false
 	var rec := false
 	if skips > best_skips:
@@ -760,59 +638,73 @@ func _finish() -> void:
 	if rec:
 		_save_best()
 	_toast(result_text + ("\n新纪录！" if rec else "") + "\n%.1f 米" % throw_dist, 3.0)
+	state = State.READY
+	hand_stone.visible = true
+	finish_hold = 1.2
 	_update_ui()
 
-func _splash(p: Vector3, strength: float, big: bool) -> void:
-	var ps := CPUParticles3D.new()
+func _add_ripple(p: Vector3, strength: float, delay := 0.0) -> void:
+	ripple_buf[ripple_i] = Vector4(p.x, p.z, gt + delay, strength)
+	ripple_i = (ripple_i + 1) % 8
+	island.water_mat.set_shader_parameter("ripples", ripple_buf)
+
+func _splash(p: Vector3, strength: float, big: bool, vel: Vector3) -> void:
 	var dm := SphereMesh.new()
-	dm.radius = 0.05
-	dm.height = 0.1
-	dm.radial_segments = 4
-	dm.rings = 2
+	dm.radius = 0.04; dm.height = 0.08; dm.radial_segments = 4; dm.rings = 2
 	var m := StandardMaterial3D.new()
-	m.albedo_color = Color(0.92, 0.98, 1.0)
+	m.albedo_color = Color(0.93, 0.98, 1.0)
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	dm.material = m
-	ps.mesh = dm
-	ps.amount = 40 if big else 18
-	ps.one_shot = true
-	ps.explosiveness = 0.95
-	ps.lifetime = 0.9 if big else 0.6
-	ps.direction = Vector3(0, 1, 0)
-	ps.spread = 30.0 if big else 50.0
-	ps.initial_velocity_min = 2.0 * strength
-	ps.initial_velocity_max = 4.0 * strength
-	ps.gravity = Vector3(0, -9.8, 0)
-	ps.scale_amount_min = 0.6
-	ps.scale_amount_max = 1.6 if big else 1.1
-	ps.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
-	ps.emission_sphere_radius = 0.15
-	add_child(ps)
-	ps.global_position = p
-	ps.emitting = true
-	get_tree().create_timer(2.0).timeout.connect(ps.queue_free)
-	for k in range(2 if big else 1):
-		_ripple(p, 0.25 * k, big)
-
-func _ripple(p: Vector3, delay: float, big: bool) -> void:
-	var tm := TorusMesh.new()
-	tm.inner_radius = 0.92
-	tm.outer_radius = 1.0
-	tm.rings = 24
-	tm.ring_segments = 3
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.albedo_color = Color(1, 1, 1, 0.85)
-	var r := _add(tm, m, p + Vector3(0, 0.04, 0), Vector3.ZERO, Vector3(0.15, 0.05, 0.15))
-	r.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	var target := 2.8 if big else 1.8
-	var tw := create_tween()
-	tw.tween_interval(delay)
-	tw.set_parallel(true)
-	tw.tween_property(r, "scale", Vector3(target, 0.05, target), 1.8).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
-	tw.tween_property(m, "albedo_color:a", 0.0, 1.8)
-	tw.chain().tween_callback(r.queue_free)
+	var crown := CPUParticles3D.new()
+	crown.mesh = dm
+	crown.amount = 46 if big else 22
+	crown.one_shot = true
+	crown.explosiveness = 0.92
+	crown.lifetime = 0.9 if big else 0.6
+	crown.direction = Vector3(0, 1, 0)
+	crown.spread = 28.0 if big else 42.0
+	crown.initial_velocity_min = 2.0 * strength
+	crown.initial_velocity_max = 4.2 * strength
+	crown.gravity = Vector3(0, -9.8, 0)
+	crown.damping_min = 0.5
+	crown.damping_max = 1.5
+	crown.scale_amount_min = 0.5
+	crown.scale_amount_max = 1.7 if big else 1.2
+	var curve := Curve.new()
+	curve.add_point(Vector2(0, 1))
+	curve.add_point(Vector2(1, 0.2))
+	crown.scale_amount_curve = curve
+	crown.emission_shape = CPUParticles3D.EMISSION_SHAPE_RING
+	crown.emission_ring_axis = Vector3.UP
+	crown.emission_ring_radius = 0.18 if big else 0.1
+	crown.emission_ring_inner_radius = 0.05
+	crown.emission_ring_height = 0.02
+	add_child(crown)
+	crown.global_position = p
+	crown.emitting = true
+	get_tree().create_timer(2.0).timeout.connect(crown.queue_free)
+	if vel.length() > 0.5:
+		var spray := CPUParticles3D.new()
+		spray.mesh = dm
+		spray.amount = 14
+		spray.one_shot = true
+		spray.explosiveness = 0.95
+		spray.lifetime = 0.5
+		var fwd := Vector3(vel.x, 0, vel.z).normalized()
+		spray.direction = (fwd + Vector3.UP * 0.9).normalized()
+		spray.spread = 22.0
+		spray.initial_velocity_min = 1.5
+		spray.initial_velocity_max = 3.0
+		spray.gravity = Vector3(0, -9.8, 0)
+		spray.scale_amount_min = 0.4
+		spray.scale_amount_max = 0.9
+		add_child(spray)
+		spray.global_position = p
+		spray.emitting = true
+		get_tree().create_timer(1.5).timeout.connect(spray.queue_free)
+	_add_ripple(p, 1.0 if big else 0.75)
+	if big:
+		_add_ripple(p, 0.6, 0.35)
 
 func _float_text(p: Vector3, t: String) -> void:
 	var l := Label3D.new()
@@ -833,55 +725,63 @@ func _float_text(p: Vector3, t: String) -> void:
 	tw.chain().tween_callback(l.queue_free)
 
 func _update_preview() -> void:
-	var p := player.global_position + Vector3(0.35, 1.15, -0.3)
+	var p := _hand_pos()
 	var v := _initial_velocity()
 	var s := launch_spin(power)
-	var t := 0.0
 	var dt := 0.06
 	var placed := 0
-	var hit_ok := true
-	var hit := false
+	var ok := true
 	while placed < preview_dots.size():
 		v.y -= GRAVITY * dt
 		p += v * dt
-		t += dt
-		if p.y <= 0.02:
+		var stop := false
+		if _hit_test(p) != "" and Vector2(p.x - player.position.x, p.z - player.position.z).length() > 1.0:
+			ok = false
+			stop = true
+		elif p.y <= 0.02:
 			var ang := rad_to_deg(atan2(-v.y, Vector2(v.x, v.z).length()))
-			hit_ok = ang <= crit_angle(s) and Vector2(v.x, v.z).length() >= 2.2
-			hit = true
+			ok = ang <= crit_angle(s) and Vector2(v.x, v.z).length() >= 2.2
 			p.y = 0.02
+			stop = true
 		var d := preview_dots[placed]
 		d.visible = true
 		d.global_position = p
 		placed += 1
-		if hit:
+		if stop:
 			break
 	for i in range(placed, preview_dots.size()):
 		preview_dots[i].visible = false
-	var col := Color(0.5, 1.0, 0.6, 0.9) if hit_ok else Color(1.0, 0.45, 0.35, 0.9)
+	var col := Color(0.5, 1.0, 0.6, 0.9) if ok else Color(1.0, 0.45, 0.35, 0.9)
 	for d in preview_dots:
 		(d.material_override as StandardMaterial3D).albedo_color = col
 
-# ------------------------------------------------------------------ main loop
+# ------------------------------------------------------------------ loop
 
 func _process(delta: float) -> void:
+	gt += delta
+	island.set_time(gt)
 	if demo_mode:
 		_demo_tick(delta)
 	var vs := get_viewport().get_visible_rect().size
-	if vs.x < vs.y:
-		camera.keep_aspect = Camera3D.KEEP_WIDTH
-		camera.fov = 72.0
-		cam_home_pos = Vector3(3.6, 7.6, 2.6)
-		cam_home_look = Vector3(-2.0, 0.0, -11.0)
-	else:
-		camera.keep_aspect = Camera3D.KEEP_HEIGHT
-		camera.fov = 58.0
-		cam_home_pos = Vector3(5.0, 6.6, 1.6)
-		cam_home_look = Vector3(-3.5, 0.0, -15.0)
-	var tsec := Time.get_ticks_msec() / 1000.0
-	for bn in buoys:
-		bn.position.y = sin(tsec * 1.7 + float(bn.get_meta("phase"))) * 0.08
-		bn.rotation.z = sin(tsec * 1.3 + float(bn.get_meta("phase"))) * 0.08
+	var tall := vs.x < vs.y
+	camera.keep_aspect = Camera3D.KEEP_WIDTH if tall else Camera3D.KEEP_HEIGHT
+	camera.fov = 70.0 if tall else 55.0
+	for bn in island.buoys:
+		var ph: float = bn.get_meta("phase")
+		bn.position.y = sin(gt * 1.7 + ph) * 0.08
+		bn.rotation.z = sin(gt * 1.3 + ph) * 0.08
+	for b in birds:
+		var a: float = b["ph"] + gt * b["sp"]
+		var c: Vector3 = b["c"]
+		var r: float = b["r"]
+		var node: Node3D = b["node"]
+		node.position = c + Vector3(cos(a) * r, sin(gt * 0.7 + b["ph"]) * 1.2, sin(a) * r)
+		var tangent := Vector3(-sin(a), 0, cos(a)) * signf(b["sp"])
+		node.look_at(node.position + tangent, Vector3.UP)
+		node.rotation.z = -0.35 * signf(b["sp"])
+		var flap := sin(gt * 7.0 + b["ph"]) * 0.55 if fmod(gt + b["ph"], 6.0) < 3.0 else 0.08
+		for w in b["wings"]:
+			(w[0] as Node3D).rotation.z = flap * float(w[1])
 	if toast_timer > 0.0:
 		toast_timer -= delta
 		if toast_timer < 0.5:
@@ -891,26 +791,25 @@ func _process(delta: float) -> void:
 			charge_t += delta
 			power = pingpong(charge_t / (POWER_CYCLE * 0.5), 1.0)
 			power_bar.value = power
-			lbl_aim.text = "力度 %d%%   角度 %d°   方向 %s%d°" % [roundi(power * 100), roundi(aim_pitch), "左" if aim_yaw > 0.5 else ("右" if aim_yaw < -0.5 else ""), absi(roundi(aim_yaw))]
+			var deg := wrapf(rad_to_deg(aim_yaw), -180.0, 180.0)
+			lbl_aim.text = "力度 %d%%   角度 %d°   方向 %s%d°" % [roundi(power * 100), roundi(aim_pitch), "左" if deg > 0.5 else ("右" if deg < -0.5 else ""), absi(roundi(deg))]
 			arm_pivot.rotation.x = lerp(arm_pivot.rotation.x, -0.6 - power * 0.9, 0.3)
-			player.rotation.y = deg_to_rad(aim_yaw)
 			_update_preview()
-		State.READY, State.RESULT:
+		State.READY:
 			arm_pivot.rotation.x = lerp(arm_pivot.rotation.x, 0.0, 0.15)
-			if state == State.READY:
-				player.rotation.y = deg_to_rad(aim_yaw)
-		State.FLYING, State.SINKING:
+		_:
 			throw_anim += delta
 			arm_pivot.rotation.x = lerp(arm_pivot.rotation.x, 1.4 if throw_anim < 0.35 else 0.0, 0.25)
+	if mode == Mode.THROW and state != State.FLYING and state != State.SINKING:
+		player.rotation.y = lerp_angle(player.rotation.y, aim_yaw, 0.35)
 	_update_camera(delta)
 
 func _physics_process(delta: float) -> void:
 	if state == State.FLYING:
-		var sub := 4
-		for i in range(sub):
+		for i in 4:
 			if state != State.FLYING:
 				break
-			_step_stone(delta / sub)
+			_step_stone(delta / 4.0)
 	elif state == State.SINKING:
 		sink_timer += delta
 		stone_pos += Vector3(stone_vel.x, 0, stone_vel.z) * delta * max(0.0, 0.3 - sink_timer)
@@ -920,21 +819,57 @@ func _physics_process(delta: float) -> void:
 			_finish()
 
 func _update_camera(delta: float) -> void:
-	var want_pos := cam_home_pos
-	var want_look := cam_home_look
-	if state == State.FLYING or state == State.SINKING or state == State.RESULT:
-		var flat := Vector3(stone_pos.x, 0.0, stone_pos.z)
-		var back := Vector3(stone_vel.x, 0, stone_vel.z)
-		var dir := back.normalized() if back.length() > 0.5 else Vector3(0, 0, -1)
-		var tall := get_viewport().get_visible_rect().size.x < get_viewport().get_visible_rect().size.y
-		want_pos = flat - dir * (7.5 if tall else 6.5) + Vector3(1.5, 5.2 if tall else 3.2, 0)
-		want_look = flat + dir * 5.0
-		if want_pos.z > cam_home_pos.z:
-			want_pos = cam_home_pos
-	var k: float = 1.0 - exp(-delta * (4.0 if state == State.FLYING else 2.5))
-	camera.global_position = camera.global_position.lerp(want_pos, k)
-	cam_look = cam_look.lerp(want_look, k)
-	camera.look_at(cam_look)
+	if demo_cam:
+		_apply_camera()
+		return
+	var tall := get_viewport().get_visible_rect().size.x < get_viewport().get_visible_rect().size.y
+	var want_t: Vector3
+	var want_yaw: float
+	var want_pitch: float
+	var want_dist: float
+	var k: float
+	if state == State.FLYING or state == State.SINKING:
+		var dir := Vector3(stone_vel.x, 0, stone_vel.z)
+		dir = dir.normalized() if dir.length() > 0.5 else _aim_dir()
+		want_t = Vector3(stone_pos.x, max(stone_pos.y * 0.5, 0.3), stone_pos.z) + dir * 2.0
+		want_yaw = atan2(-dir.x, -dir.z) + 0.35
+		want_pitch = 0.42 if tall else 0.32
+		want_dist = 11.0 if tall else 9.0
+		k = 1.0 - exp(-delta * 4.0)
+	elif mode == Mode.VIEW:
+		if not dragging:
+			view_yaw += orbit_vel.x * delta
+			view_pitch = clamp(view_pitch + orbit_vel.y * delta, 0.06, 1.42)
+			orbit_vel *= exp(-delta * 3.5)
+		var head := player.global_position + Vector3(0, 1.2, 0)
+		want_t = head.lerp(Vector3(0, 1.5, -2.0), smoothstep(10.0, 45.0, view_dist))
+		want_yaw = view_yaw
+		want_pitch = view_pitch
+		want_dist = view_dist
+		k = 1.0 - exp(-delta * 9.0)
+	else:
+		var hold := finish_hold > 0.0
+		finish_hold -= delta
+		var dir := _aim_dir()
+		want_t = player.global_position + Vector3(0, 1.3, 0) + dir * 3.0
+		want_yaw = aim_yaw + 0.45
+		want_pitch = 0.5 if tall else 0.38
+		want_dist = 11.0 if tall else 9.5
+		k = 1.0 - exp(-delta * (1.2 if hold else 3.0))
+	cam_target = cam_target.lerp(want_t, k)
+	cam_yaw = lerp_angle(cam_yaw, want_yaw, k)
+	cam_pitch = lerp(cam_pitch, want_pitch, k)
+	cam_dist = lerp(cam_dist, want_dist, k)
+	_apply_camera()
+
+func _apply_camera() -> void:
+	var off := Vector3(sin(cam_yaw) * cos(cam_pitch), sin(cam_pitch), cos(cam_yaw) * cos(cam_pitch)) * cam_dist
+	var pos := cam_target + off
+	var floor_y: float = max(Island.ground_h(pos.x, pos.z), 0.0) + 0.5
+	if pos.y < floor_y:
+		pos.y = floor_y
+	camera.global_position = pos
+	camera.look_at(cam_target, Vector3.UP)
 
 # ------------------------------------------------------------------ save
 
@@ -945,6 +880,8 @@ func _load_best() -> void:
 		best_dist = float(cf.get_value("best", "dist", 0.0))
 
 func _save_best() -> void:
+	if demo_mode:
+		return
 	var cf := ConfigFile.new()
 	cf.set_value("best", "skips", best_skips)
 	cf.set_value("best", "dist", best_dist)
@@ -953,60 +890,90 @@ func _save_best() -> void:
 # ------------------------------------------------------------------ test hooks
 
 func _run_sim_report() -> void:
-	for pw in [0.3, 0.5, 0.7, 0.85, 1.0]:
-		for pitch in [0.0, 5.0, 10.0, 18.0]:
+	for pw in [0.5, 0.7, 0.85, 1.0]:
+		for pitch in [0.0, 5.0, 10.0]:
 			power = pw
 			aim_pitch = pitch
 			aim_yaw = 0.0
-			var p := Vector3(0.35, DOCK_Y + 1.2, -6.5)
+			var p := _hand_pos()
 			var v := _initial_velocity()
 			var s := launch_spin(pw)
 			var n := 0
-			var first_ang := -1.0
-			for i in range(20000):
+			for i in 20000:
 				v.y -= GRAVITY * 0.004
 				p += v * 0.004
 				if p.y <= 0.02 and v.y < 0:
 					p.y = 0.02
 					var r := water_contact(v, s, 0.0)
-					if first_ang < 0:
-						first_ang = r[3]
 					if not r[0]:
 						break
 					n += 1
 					v = r[1]
 					s = r[2]
-			print("SIM power=%.2f pitch=%4.1f first_angle=%5.1f skips=%2d dist=%5.1f" % [pw, pitch, first_ang, n, Vector2(p.x - 0.35, p.z + 6.5).length()])
+			print("SIM power=%.2f pitch=%4.1f skips=%2d end=(%.1f, %.1f)" % [pw, pitch, n, p.x, p.z])
+	print("SIM obstacles=%d palms=%d" % [island.obstacles.size(), island.palm_spots.size()])
+
+func _setup_demo() -> void:
+	var dock_mid := Vector3(0, 1.0, (island.dock_start_z + island.dock_end_z) * 0.5)
+	var shore_th := -0.95
+	var sp := island.shore_pt(shore_th, -1.5)
+	var out := Island.dir_at(shore_th)
+	var palm_c: Vector3 = island.palm_spots[min(4, island.palm_spots.size() - 1)]
+	var po := Vector3(palm_c.x, 0, palm_c.z).normalized()
+	var hut_out := Vector3(island.hut_pos.x, 0, island.hut_pos.z).normalized()
+	demo_list = [
+		["01_island_overview", Vector3(0, 1, -5), 0.55, 0.92, 80.0],
+		["02_dock_closeup", dock_mid + Vector3(0, 0, -4), 2.35, 0.3, 13.0],
+		["03_shore_foam_seabed", sp, atan2(out.x, out.z) + 0.25, 0.62, 8.0],
+		["04_palms_closeup", palm_c + Vector3(0, -1.5, 0), atan2(po.x, po.z) + 0.3, 0.12, 9.0],
+		["05_other_side", Vector3(0, 2, 0), PI + 0.5, 0.42, 50.0],
+		["06_fishing_hut", island.hut_pos + Vector3(0, 2.0, 0), atan2(hut_out.x, hut_out.z) + 0.45, 0.25, 12.0],
+		["07_lighthouse_hill", island.lighthouse_pos + Vector3(0, 2.5, 0), 1.0, 0.3, 17.0],
+		["08_lagoon_reef", island.shore_pt(-1.0, -7.0), 0.9, 0.85, 12.0],
+	]
+	demo_cam = true
 
 func _demo_shot(name: String) -> void:
 	if demo_shots.has(name):
 		return
 	demo_shots[name] = true
-	var img := get_viewport().get_texture().get_image()
 	var prefix := ""
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shotprefix="):
 			prefix = a.substr(13)
-	var path := ProjectSettings.globalize_path("res://screenshots/%s%s.png" % [prefix, name])
+	var img := get_viewport().get_texture().get_image()
+	var path := ProjectSettings.globalize_path("res://screenshots/v2/%s%s.png" % [prefix, name])
 	img.save_png(path)
 	print("DEMO screenshot ", path)
 
 func _demo_tick(delta: float) -> void:
 	demo_t += delta
-	if demo_t > 1.5 and state == State.READY and not demo_shots.has("01_aim"):
+	if demo_step < demo_list.size():
+		var s: Array = demo_list[demo_step]
+		cam_target = s[1]; cam_yaw = s[2]; cam_pitch = s[3]; cam_dist = s[4]
+		if demo_t > 1.2:
+			_demo_shot(s[0])
+			demo_step += 1
+			demo_t = 0.0
+		return
+	demo_cam = false
+	if demo_step == demo_list.size():
+		demo_step += 1
+		demo_t = 0.0
+		mode = Mode.THROW
+		aim_yaw = 0.12
+		_update_ui()
+	if demo_t > 1.6 and state == State.READY and not demo_shots.has("09_throw_aim"):
 		_begin_aim(Vector2.ZERO)
 		aim_pitch = 4.0
-		aim_yaw = 3.0
 	if state == State.AIMING:
-		charge_t = POWER_CYCLE * 0.5 * 0.88 - delta  # hold the bar at ~88%
-		if demo_t > 3.0:
-			_demo_shot("01_aim")
+		charge_t = POWER_CYCLE * 0.5 * 0.88 - delta
+		if demo_t > 3.4:
+			_demo_shot("09_throw_aim")
 			_throw()
-	if state == State.FLYING and skips >= 3:
-		_demo_shot("02_skipping")
-	if state == State.FLYING and skips >= 7:
-		_demo_shot("03_far_skips")
-	if state == State.RESULT and not demo_shots.has("04_result"):
-		await get_tree().create_timer(0.4).timeout
-		_demo_shot("04_result")
+	if state == State.FLYING and skips >= 4:
+		_demo_shot("10_skipping")
+	if demo_shots.has("10_skipping") and state == State.READY and not demo_shots.has("11_result"):
+		await get_tree().create_timer(0.6).timeout
+		_demo_shot("11_result")
 		get_tree().quit()
