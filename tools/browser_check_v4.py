@@ -7,6 +7,7 @@ throws, and leaves the dock. Usage: browser_check_v4.py URL OUTPREFIX"""
 import sys, asyncio, json, math
 from playwright.async_api import async_playwright
 URL, OUT = sys.argv[1], sys.argv[2]
+HOLD = int(sys.argv[3]) if len(sys.argv) > 3 else 700   # ms to keep charging (the power bar ping-pongs every 1.7 s)
 W, H = 390, 844
 INIT = """
 (() => {
@@ -122,7 +123,7 @@ async def main():
         await touch(cdp, "touchStart", [(195, 520)])
         for i in range(1, 6):
             await touch(cdp, "touchMove", [(195, 520 + i * 2)]); await page.wait_for_timeout(60)
-        await page.wait_for_timeout(700)
+        await page.wait_for_timeout(HOLD)
         await page.screenshot(path=OUT + "_8_crouch_charge.png")
         s1 = (await page.evaluate("window.__t.realStarts"))
         await touch(cdp, "touchEnd", [])
