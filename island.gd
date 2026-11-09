@@ -9,6 +9,13 @@ var dock_start_z := 0.0
 var dock_end_z := 0.0
 var player_spot := Vector3.ZERO
 var cam_blockers: Array = []
+var walk_blockers: Array = []   # [Vector2 centre, radius] extra things the boy can't walk through
+var hammock_a := Vector3.ZERO
+var hammock_b := Vector3.ZERO
+var hammock_node: Node3D
+var towel_pos := Vector3.ZERO
+var towel_dir := Vector3.FORWARD   # towel long axis, pointing out to sea (feet end)
+var umbrella_pos := Vector3.ZERO
 var hut_pos := Vector3.ZERO
 var lighthouse_pos := Vector3.ZERO
 var campfire_pos := Vector3.ZERO
@@ -378,6 +385,9 @@ func _build_dock() -> void:
 		[Vector3(-2.6, DECK_Y + 1.85, dock_end_z + 0.15), 0.5], [Vector3(2.6, DECK_Y + 1.85, dock_end_z + 0.15), 0.5],
 		[Vector3(-3.0, DECK_Y + 1.4, dock_end_z + 0.15), 0.35], [Vector3(3.0, DECK_Y + 1.4, dock_end_z + 0.15), 0.35],
 	]
+	walk_blockers.append([Vector2(pc.x + 0.35, pc.z + 0.05), 0.72])
+	walk_blockers.append([Vector2(2.47, dock_end_z + 2.6), 0.62])
+	walk_blockers.append([Vector2(1.8, dock_end_z + 3.3), 0.2])
 	_crate(pc + Vector3(0, 0.3, 0), 0.6, 0.2)
 	_crate(pc + Vector3(0.75, 0.25, 0.1), 0.5, -0.3)
 	_crate(pc + Vector3(0.15, 0.85, 0.05), 0.48, 0.6)
@@ -612,6 +622,11 @@ func _build_lighthouse() -> void:
 
 func _build_campfire() -> void:
 	var c = campfire_pos
+	walk_blockers.append([Vector2(c.x, c.z), 0.85])
+	for a0 in [0.6, 2.7, 4.8]:
+		walk_blockers.append([Vector2(c.x + cos(a0) * 1.7, c.z + sin(a0) * 1.7), 0.4])
+	for a1 in [1.5, -1.6]:
+		walk_blockers.append([Vector2(c.x + cos(a1) * 2.6, c.z + sin(a1) * 2.6), 0.08])
 	for i in 9:
 		var a = TAU * i / 9.0
 		blob(SB, c + Vector3(cos(a) * 0.65, 0.08, sin(a) * 0.65), Vector3(0.17, 0.12, 0.15), Color(0.5, 0.48, 0.45))
@@ -642,6 +657,8 @@ func _build_beach_life() -> void:
 	_boat(bp + Vector3(0, 0.12, 0), atan2(dir_at(bth).x, dir_at(bth).z) + 0.3, Color(0.9, 0.45, 0.25), 0.14)
 	# umbrella + towel + deck chair
 	var up = shore_pt(-0.15, 4.0)
+	umbrella_pos = up
+	walk_blockers.append([Vector2(up.x, up.z), 0.12])
 	tube(SB, up, up + Vector3(0, 2.3, 0), 0.03, 0.03, 5, Color(0.95, 0.95, 0.95))
 	for i in 8:
 		var a0 = TAU * i / 8.0
@@ -653,12 +670,20 @@ func _build_beach_life() -> void:
 	var out = dir_at(-0.15)
 	var tyaw = atan2(out.x, out.z)
 	var tw = up + out * 1.2
+	towel_pos = Vector3(tw.x, ground_h(tw.x, tw.z) + 0.03, tw.z)
+	towel_dir = out
 	for s in 5:
-		var col = Color(0.3, 0.6, 0.85) if s % 2 == 0 else Color(0.98, 0.9, 0.4)
-		box(SB, Vector3(0.9, 0.02, 0.36), Vector3(tw.x, ground_h(tw.x, tw.z) + 0.02, tw.z) + Vector3(0, 0, 0).rotated(Vector3.UP, tyaw) + (Basis(Vector3.UP, tyaw) * Vector3(0, 0, (s - 2) * 0.36)), Vector3(0, tyaw, 0), col)
-	var cp = up + out.rotated(Vector3.UP, 1.2) * 1.4
+		var col = Color(0.3, 0.6, 0.85) if s % 2 == 0 else Color(0.98, 0.5, 0.35)
+		var sc = tw + Basis(Vector3.UP, tyaw) * Vector3(0, 0, (s - 2) * 0.36)
+		# follow the beach slope: each stripe tilted to the sand under it
+		var g0 = ground_h(sc.x - out.x * 0.18, sc.z - out.z * 0.18)
+		var g1 = ground_h(sc.x + out.x * 0.18, sc.z + out.z * 0.18)
+		var tilt = atan2(g0 - g1, 0.36)
+		boxb(SB, Vector3(0.9, 0.03, 0.37), Transform3D(Basis(Vector3.UP, tyaw) * Basis(Vector3.RIGHT, tilt), Vector3(sc.x, (g0 + g1) * 0.5 + 0.03, sc.z)), col)
+	var cp = tw + out.cross(Vector3.UP).normalized() * 1.15 + out * 0.1
 	cp.y = ground_h(cp.x, cp.z)
 	var cxf = Transform3D(Basis(Vector3.UP, tyaw), cp)
+	walk_blockers.append([Vector2(cp.x, cp.z), 0.55])
 	boxb(SB, Vector3(0.6, 0.05, 1.0), cxf * Transform3D(Basis(Vector3.RIGHT, 0.1), Vector3(0, 0.3, 0)), Color(0.3, 0.55, 0.85))
 	boxb(SB, Vector3(0.6, 0.05, 0.7), cxf * Transform3D(Basis(Vector3.RIGHT, -0.9), Vector3(0, 0.55, -0.6)), Color(0.3, 0.55, 0.85))
 	for lx in [-0.28, 0.28]:
@@ -890,16 +915,20 @@ func _build_palms() -> void:
 			continue
 		var crown = palm(FB, p, s[1], s[2], s[3], s[4], rng.randf_range(0.85, 1.1))
 		palm_spots.append(crown)
-	# hammock between the hut pair
+	# hammock between the hut pair: its own node so it can swing about the a-b axis
 	var a = h1 + Vector3(0, 1.4, 0)
 	var b = h2 + Vector3(0, 1.4, 0)
+	hammock_a = a
+	hammock_b = b
+	var mid = (a + b) * 0.5
+	var HB = MeshBuilder.new()
 	var ab = b - a
 	var side = ab.cross(Vector3.UP).normalized() * 0.4
 	for s in 10:
 		var t0 = s / 10.0
 		var t1 = (s + 1) / 10.0
-		var p0 = a + ab * t0 + Vector3(0, -0.6 * sin(PI * t0), 0)
-		var p1 = a + ab * t1 + Vector3(0, -0.6 * sin(PI * t1), 0)
+		var p0 = a + ab * t0 + Vector3(0, -0.6 * sin(PI * t0), 0) - mid
+		var p1 = a + ab * t1 + Vector3(0, -0.6 * sin(PI * t1), 0) - mid
 		var w0 = side * sin(PI * clamp(t0 * 1.2 - 0.1, 0.0, 1.0)) + side * 0.05
 		var w1 = side * sin(PI * clamp(t1 * 1.2 - 0.1, 0.0, 1.0)) + side * 0.05
 		for st in 3:
@@ -910,10 +939,42 @@ func _build_palms() -> void:
 			var B = p0 + w0 * u1 + Vector3(0, -0.12 * (1.0 - u1 * u1), 0)
 			var C = p1 + w1 * u1 + Vector3(0, -0.12 * (1.0 - u1 * u1), 0)
 			var D = p1 + w1 * u0 + Vector3(0, -0.12 * (1.0 - u0 * u0), 0)
-			SB.face(A, B, C, col, col, col, Vector3.UP)
-			SB.face(A, C, D, col, col, col, Vector3.UP)
-			SB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
-			SB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
+			HB.face(A, B, C, col, col, col, Vector3.UP)
+			HB.face(A, C, D, col, col, col, Vector3.UP)
+			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
+			HB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
+	# end ropes to the trunks
+	for e in [a, b]:
+		var q = e.lerp(mid, 0.08) + Vector3(0, -0.06, 0)
+		tube(HB, e - mid, q - mid, 0.02, 0.02, 4, Color(0.85, 0.75, 0.55))
+	var hsm = StandardMaterial3D.new()
+	hsm.vertex_color_use_as_albedo = true
+	hsm.vertex_color_is_srgb = true
+	hsm.roughness = 0.9
+	hsm.cull_mode = BaseMaterial3D.CULL_DISABLED
+	hammock_node = Node3D.new()
+	hammock_node.position = mid
+	add_child(hammock_node)
+	var hmi = MeshInstance3D.new()
+	hmi.mesh = HB.commit()
+	hmi.material_override = hsm
+	hammock_node.add_child(hmi)
+	# the hanging bed blocks walking (a few circles along it)
+	for k in 5:
+		var q2 = a.lerp(b, 0.2 + 0.15 * k)
+		walk_blockers.append([Vector2(q2.x, q2.z), 0.32])
+
+## lowest point of the hammock bed (world, at rest)
+func hammock_bed() -> Vector3:
+	return (hammock_a + hammock_b) * 0.5 + Vector3(0, -0.72, 0)
+
+func swing_hammock(ang: float) -> Transform3D:
+	var mid = (hammock_a + hammock_b) * 0.5
+	var axis = (hammock_b - hammock_a).normalized()
+	var xf = Transform3D(Basis(axis, ang), mid)
+	hammock_node.transform = xf
+	# transform from rest-world to swung-world
+	return xf * Transform3D(Basis.IDENTITY, -mid)
 
 # ------------------------------------------------------------------ vegetation
 

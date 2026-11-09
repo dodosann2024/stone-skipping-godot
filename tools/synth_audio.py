@@ -160,7 +160,51 @@ def chime(notes=(1046.5, 1318.5, 1568.0), gap=0.085):
         y += np.sin(2 * np.pi * 2 * f * (t - t0)) * env_exp(t, 0.12, t0, 0.003) * 0.12
     return fades(norm(y, -6.0), 0.001, 0.15)
 
+# ---------------------------------------------------------------- footsteps (v4)
+def step_sand(seed):
+    r = np.random.default_rng(seed); t = t_axis(0.22); n = len(t)
+    crunch = bp(white(n), 900, 5000) * env_exp(t, r.uniform(0.035, 0.05), 0.0, 0.006)
+    grit = np.zeros(n)
+    for _ in range(18):
+        t0 = r.uniform(0.0, 0.06)
+        grit += bp(white(n), 3000, 9000) * env_exp(t, 0.004, t0, 0.0005) * r.uniform(0.05, 0.2)
+    thump = lp(white(n), 250) * env_exp(t, 0.03, 0.0, 0.003) * 0.8
+    return fades(norm(crunch * 0.6 + grit + thump, -6.0), 0.001, 0.05)
+
+def step_wood(seed):
+    r = np.random.default_rng(seed)
+    f = r.uniform(0.92, 1.08)
+    y = modal([150 * f, 390 * f, 720 * f, 1210 * f], [1, 0.5, 0.3, 0.15], [0.05, 0.035, 0.025, 0.015], 0.25, (600, 3500), 0.006, 0.6)
+    return fades(norm(y, -5.0), 0.0005, 0.05)
+
+def step_grass(seed):
+    r = np.random.default_rng(seed); t = t_axis(0.25); n = len(t)
+    rustle = np.zeros(n)
+    for _ in range(10):
+        t0 = r.uniform(0.0, 0.08)
+        rustle += bp(white(n), 1500, 7000) * env_exp(t, r.uniform(0.01, 0.025), t0, 0.004) * r.uniform(0.2, 0.5)
+    thump = lp(white(n), 200) * env_exp(t, 0.035, 0.0, 0.004) * 0.7
+    return fades(norm(rustle + thump, -7.0), 0.002, 0.06)
+
+def step_water(seed):
+    r = np.random.default_rng(seed); t = t_axis(0.4); n = len(t)
+    slosh = lp(white(n), 1800) * env_exp(t, 0.06, 0.0, 0.01)
+    spray = bp(white(n), 2000, 8000) * env_exp(t, 0.08, 0.01, 0.01) * 0.3
+    f0 = r.uniform(380, 600)
+    gl = chirp(t, f0, f0 * 1.6, 0.05, 0.02) * env_exp(t, 0.05, 0.02, 0.003) * 0.35
+    return fades(norm(slosh + spray + gl, -6.0), 0.002, 0.1)
+
+def write_steps():
+    for i in range(2):
+        write(f"step_sand_{i}", step_sand(300 + i))
+        write(f"step_wood_{i}", step_wood(310 + i))
+        write(f"step_grass_{i}", step_grass(320 + i))
+        write(f"step_water_{i}", step_water(330 + i))
+
 if __name__ == "__main__":
+    import sys
+    if "--steps" in sys.argv:
+        os.makedirs(PREV, exist_ok=True); write_steps(); print("steps done"); sys.exit(0)
     os.makedirs(OUT, exist_ok=True); os.makedirs(PREV, exist_ok=True)
     write("ocean_loop", ocean_loop(), q=3)
     for i in range(4):
@@ -172,4 +216,5 @@ if __name__ == "__main__":
     write("hit_sand", sand_thud())
     write("combo", chime())
     write("record", chime((1046.5, 1318.5, 1568.0, 2093.0), 0.09))
+    write_steps()
     print("done")

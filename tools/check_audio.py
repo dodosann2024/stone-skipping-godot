@@ -7,7 +7,7 @@ def decode(p):
     raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", p, "-f", "f32le", "-ac", "2", "-ar", "44100", "-"], capture_output=True, check=True).stdout
     return np.frombuffer(raw, dtype="<f4").reshape(-1, 2)
 report = {}
-fig, axes = plt.subplots(5, 3, figsize=(15, 16)); axes = axes.ravel()
+fig, axes = plt.subplots(7, 3, figsize=(15, 22)); axes = axes.ravel()
 for i, p in enumerate(sorted(glob.glob(os.path.join(ROOT, "audio", "*.ogg")))):
     name = os.path.basename(p)[:-4]; x = decode(p); m = x.mean(1)
     r = {"dur_s": round(len(x) / 44100, 3), "peak_dbfs": round(float(20 * np.log10(np.abs(x).max() + 1e-9)), 2),

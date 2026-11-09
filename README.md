@@ -1,62 +1,88 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v3 草帽小男孩 + 海浪声
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v4 岛上自由走动 + 半蹲投掷 + 吊床 / 晒太阳
 
-低多边形热带海岛上的打水漂小游戏。场景、角色、道具全部由 GDScript 代码生成，水面为自写着色器，所有声音均为代码合成。
+低多边形热带海岛小游戏。场景、角色、道具全部由 GDScript 代码生成，水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
 
-## v3 角色：草帽小男孩（`boy.gd`）
-- 大头可爱比例（身高约 1.3 米含草帽）：编织纹草帽（帽檐、帽冠、红色帽带）、红色背心（白色滚边、肩带、胸前小图案）、黄色沙滩裤（小花图案、腰带、白色抽绳）、晒黑的皮肤、蓝色人字拖、短发、眼睛（会眨眼）、腮红、微笑。
-- 关节层级：骨盆 → 脊柱 → 头 / 草帽；左右上臂、前臂、手（双骨 IK）；左右大腿、小腿、脚（双骨 IK，脚掌贴地不滑步，换站姿时抬脚迈步）。右手捏着一块扁平石头。
-- 待机：呼吸、轻微摇摆、时不时转头看海。
-- 投掷（侧抛打水漂）：
-  - 蓄力：屈膝下蹲、上身向右后扭转、右臂向后拉到与水面平行、左臂前伸保持平衡；力度越大蹲得越低、扭得越多（按住时实时变化）。
-  - 出手（约 0.1 秒）：以左脚为轴、髋部快速前转、右臂侧摆、手腕一甩；石头在出手那一帧从手的位置飞出。
-  - 随挥：身体前倾、右臂甩过身前、右腿向后抬起（力度越大抬得越高），草帽随惯性晃动；之后站稳目送石头。
-  - 反应：跳得多 / 破纪录时双手举高欢呼；直接沉下去时抱头。
-- 投石视角为右后方 3/4 镜头，先拍小男孩的动作，约 0.45 秒后再跟随石头；竖屏有单独的机位。
+## v4 改动
+### 1. 声音（iPhone 没声音）
+- 最可能的原因：iOS Safari 的 Web Audio 默认使用 “ambient” 音频会话，**iPhone 侧边静音开关打开时网页游戏完全没有声音**（音乐 App 不受影响，所以很容易误以为是游戏坏了）。另一个次要原因：iOS 只把 `touchend` / `click` 算作“用户激活”，`touchstart` 时恢复 AudioContext 可能无效。
+- 修复（`export_presets.cfg` 的 `html/head_include`，源码见 `web/audio_unlock.js`）：
+  - 在每次 `touchend / pointerup / mouseup / click / keydown`（捕获阶段）以及页面切回前台（`visibilitychange` / `pageshow`）时：
+    - 设置 `navigator.audioSession.type = 'playback'`（Safari 17+，让网页声音不受静音开关影响）；
+    - 旧版 iOS 没有 audioSession 时，在同一手势里播放一个循环的静音 `<audio playsinline>`（把会话切到 playback）；
+    - 对页面里所有 AudioContext（挂钩构造函数收集）调用 `resume()`，并播放一个 1 采样的空 buffer。
+  - 「点击开始」改为**松手时**开始（touchend），开始后先响一声短“叮”，确认有声音。
+  - 网页版开始后显示可关闭的提示：「没声音？请关闭 iPhone 侧边静音开关并调高音量」。
+  - 之后每次点屏幕都会再尝试恢复音频（防止来电 / 切 App 后被系统挂起）。
+- 音频文件仍为 OGG：Godot Web 在 wasm 里自己解码 OGG 再交给 Web Audio 播放，不依赖 Safari 的 OGG 支持。
 
-## 声音（全部为 `tools/synth_audio.py` 用 numpy/scipy 合成，无任何第三方录音）
+### 2. 小男孩新形象（`boy_mesh.gd`）
+- 去掉粉色腮红、圆脸、小嘴、齐耳短发：改为略方的脸型与下颌、草帽下露出刺刺的短碎发和鬓角、粗眉、大而有高光的眼睛、小鼻子、露牙的大笑、雀斑、左脸一张创可贴、晒黑的皮肤。
+- 表情：待机微笑；蓄力 / 出手咬牙使劲；欢呼时张嘴大笑；失手时“哦”；睡觉闭眼；晒太阳戴墨镜、闭嘴微笑。
+- 红色马甲：不再是圆筒。改为敞开的无袖马甲：前襟 V 形敞开露出白色内衬背心，宽袖口、粗肩带，下摆略微外扩且左右不齐，有口袋和纽扣、白色滚边；左右前片随身体运动轻微摆动。
+- 草帽不再投下大片阴影，脸更亮。
+
+### 3. 半蹲投掷
+- 投掷模式右上角「姿势：站立 / 半蹲」切换。
+- 半蹲：右膝跪在码头上、左脚在前，身体压低前倾；蓄力时更低更扭身，出手点贴近水面，随挥时右臂甩过身前。
+- 物理：半蹲出手点更低、出手角度低 1°、最大力度为站立的 92%（打得更平，但略近）。
+
+### 4. 岛上自由走动 / 跑步
+- 手机：左下角浮动虚拟摇杆（手指在左下区域任意位置按下即出现），轻推走路、推到底跑步；单指在其它区域拖动转视角，双指捏合缩放。
+- 电脑：WASD / 方向键走路，按住 Shift 跑步；鼠标拖动转视角，滚轮缩放。
+- 走路 / 跑步为程序化步态：步频、步幅随速度变化，支撑脚与地面同速后移（不滑步），摆臂、身体前倾、上下起伏、骨盆扭转；跑步时腾空、屈臂。
+- 跟随地形高度（沙滩、山坡、码头木板、码头台阶处可上下），碰撞椰子树、小屋、灯塔、礁石、木桩、木箱、篝火、躺椅、吊床等；不能走进深水，浅水可以蹚水（变慢、溅水花）。
+- 脚步声随地面不同：沙地、木板、草地、浅水。
+- 第三人称跟随相机：走动时慢慢转到身后，手指拖动可自由旋转；有简单的“弹簧臂”，相机不会穿进树干 / 小屋 / 道具。
+- 右上角「观景」仍可进入 360° 观景模式。
+
+### 5. 互动
+- 椰子树间的吊床：走近后点「睡觉」→ 走到吊床边、转身坐下、躺进去；吊床轻轻摇晃，闭眼、呼吸起伏，草帽放在胸口，头上冒出「z Z z」。点屏幕或「起来」醒来。
+- 沙滩毛巾（遮阳伞旁）：点「晒太阳」→ 坐下再躺倒，双手枕在脑后、脚踝交叉、戴墨镜、轻轻呼吸，草帽放在头边。
+- 码头尽头（T 形平台）：点「打水漂」进入投掷模式（小男孩会走到平台前沿的空位）。**只有在这里才能扔石子**，岛上其它地方没有投掷按钮。
+- 投掷模式里方向仍可任意调整（只会自动避开正对障碍物的方向）；扔完可以继续扔，或点「离开码头」回到自由走动。
+
+### 6. 界面
+- 竖屏和横屏分别布局：左下摇杆、右下动作按钮、右上「观景 / 声音 / 姿势 / 离开码头」。
+- 竖屏使用单独的相机距离和视角，小男孩在画面里更大。
+
+## 声音文件（全部为 `tools/synth_audio.py` 用 numpy/scipy 合成，无任何第三方录音）
 | 文件 | 内容 |
 |---|---|
-| `audio/ocean_loop.ogg` | 24 秒无缝循环海浪环境声（涌浪隆隆声、6 次碎浪、退潮泡沫声、码头拍岸、微风）。音量随相机离海岸的距离变化 |
-| `audio/whoosh.ogg` | 挥臂破风声（力度越大音调越高、越响） |
-| `audio/skip_0..3.ogg` | 每次弹跳的“啪/啦”轻拍水声，4 个变体轮换，音量音调随速度变化并带随机 |
+| `audio/ocean_loop.ogg` | 24 秒无缝循环海浪环境声，音量随相机离海岸的距离变化 |
+| `audio/whoosh.ogg` | 挥臂破风声 |
+| `audio/skip_0..3.ogg` | 每次弹跳的轻拍水声（4 个变体） |
 | `audio/sink.ogg` | 最后入水的“咕咚” |
-| `audio/hit_wood.ogg` / `hit_rock.ogg` / `hit_sand.ogg` | 撞到木头（码头、木桩、小船、小屋、路牌、椰子树）/ 石头（礁石、灯塔）/ 沙滩 |
-| `audio/combo.ogg` / `record.ogg` | 5/10/15 连跳提示音、新纪录提示音 |
-- 网页 / iPhone：浏览器必须点一下才允许出声，所以开场有「点击开始」遮罩，点一下即开启海浪声。
-- 右上角「声音：开/关」按钮可随时静音。
-- 客观检查：`tools/check_audio.py` 解码每个 OGG 并统计峰值、削波、直流偏移、循环接缝跳变，输出频谱图（`screenshots/v3/audio_preview/`）。
+| `audio/hit_wood.ogg` / `hit_rock.ogg` / `hit_sand.ogg` | 撞到木头 / 石头 / 沙滩 |
+| `audio/combo.ogg` / `record.ogg` | 连跳 / 新纪录提示音（开始游戏时的“叮”也用它） |
+| `audio/step_sand_*.ogg` / `step_wood_*` / `step_grass_*` / `step_water_*` | v4 脚步声：沙地、木板、草地、蹚水 |
 
-## 场景（v2）
-整座低多边形热带小岛：中央山丘与红白灯塔、长椅；沙土小路与护栏；南侧 T 形木码头（灯笼、木箱、木桶、鱼竿、救生圈、系泊小船）；
-西南钓鱼小屋（茅草顶、门廊、吉他、长凳、晾渔网、吊床）；北侧篝火与火把；东侧礁石群；泻湖里的珊瑚（v3 调得更鲜艳）、海草、贝壳、海星；海鸥、远岛、云。
-
-## 玩法
-- 第一次进入先点「点击开始」（开启声音）。
-- 按住屏幕（或鼠标左键）开始蓄力，力度条会来回摆动，小男孩随之下蹲扭身。
-- 按住时左右拖动调方向，上下拖动调出手角度（向上 = 抬高）。
-- 松开扔出石头。预览弧线：绿色 = 入水角合适，红色 = 太陡或太慢会直接沉。
-- 角度放低、力度大（石头转得更快）才能多跳几次。浮标标出 20/40/60 米。
-- 右上角「观景/投石」切换：观景模式单指拖动 360° 旋转、双指捏合缩放（电脑鼠标拖动 + 滚轮），带惯性。
-- 右上角「声音：开/关」开关所有声音。
-- 石头砸到沙滩、礁石、码头、小船、小屋等会直接结束（显示原因，并播放对应撞击声）。
-- 最高纪录保存在浏览器本地存储中。
+## 玩法速览
+1. 点「点击开始」（松手时开启声音；iPhone 请关闭侧边静音开关）。
+2. 用左下摇杆走到码头尽头，点「打水漂」。
+3. 按住屏幕蓄力，左右拖转向、上下拖调角度，松手扔出；角度低、力度大才跳得多。右上角可切换站立 / 半蹲。
+4. 「离开码头」后可以去吊床睡觉、去沙滩毛巾晒太阳。
 
 ## 目录
-- `main.gd`：游戏逻辑、相机、UI、声音；`boy.gd`：小男孩模型与程序化动画；`island.gd`：整岛程序化生成；`mesh_builder.gd`；`shaders/`。
-- `audio/`：合成好的音效；`tools/synth_audio.py`：音效合成脚本；`tools/check_audio.py`：音频客观检查；`tools/make_font.py`：重建中文字体子集。
-- `dev/boy_view.gd`：角色关键姿势检查（不会被导出）。
+- `main.gd`：模式（自由走动 / 投掷 / 观景 / 休息）、移动与碰撞、相机、UI、声音、演示脚本。
+- `boy.gd`：小男孩骨架与程序化动画（待机、站立 / 半蹲投掷、走 / 跑步态、反应、坐 / 躺）；`boy_mesh.gd`：小男孩模型（脸、表情、马甲等）。
+- `joystick.gd`：虚拟摇杆；`island.gd`：整岛程序化生成（含可摇晃的吊床、毛巾、行走碰撞体）；`mesh_builder.gd`；`shaders/`。
+- `web/audio_unlock.js`：iOS 音频解锁脚本（压缩后写在 `export_presets.cfg` 的 head_include 中）。
+- `tools/`：音效合成 / 检查、字体子集、浏览器（模拟 iPhone）测试脚本。
+- `dev/boy_view.gd`：角色姿势检查（不会被导出）。
 - `docs/`：Web 导出结果（GitHub Pages 从这里发布）。
 
 ## 命令
 ```bash
 godot --headless --path . --import
-godot --headless --path . -- --sim                                   # 打印物理参数表
-python3 tools/synth_audio.py && python3 tools/check_audio.py          # 重新合成并检查音效
-xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 -- --demo3              # 角色特写 + 投掷截图
-xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --write-movie t.avi -- --video   # 投掷视频
-xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . -s res://dev/boy_view.gd                # 角色姿势图
-godot --headless --path . --export-release "Web" build/web/game_v3.html
+godot --headless --path . -- --sim                                    # 站立 / 半蹲物理参数表
+python3 tools/synth_audio.py && python3 tools/check_audio.py           # 重新合成并检查音效
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4            # v4 截图
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 585x1266 -- --demo4 --portrait # 竖屏截图
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --write-movie w.avi -- --video4=walk     # 视频片段 walk/throw/sleep/sun
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . -s res://dev/boy_view.gd -- --out=/tmp/pose            # 角色姿势图
+godot --headless --path . --export-release "Web" build/web/game_v4.html
+python3 tools/browser_check_v4.py "https://dodosann2024.github.io/stone-skipping-godot/?v=4" /tmp/web   # 模拟 iPhone 测试（含真实出声检测）
 ```
 
 ## 素材与许可
