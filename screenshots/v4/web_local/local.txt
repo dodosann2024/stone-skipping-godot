@@ -1,0 +1,79 @@
+{
+ "before_tap": {
+  "ctx": [
+   {
+    "state": "running",
+    "rate": 48000,
+    "t": 30.3
+   }
+  ],
+  "starts": 0,
+  "realStarts": 0,
+  "unlocked": true,
+  "chime": 0,
+  "session": "n/a"
+ },
+ "before_tap_rms": [
+  0,
+  null
+ ],
+ "after_tap": {
+  "ctx": [
+   {
+    "state": "running",
+    "rate": 48000,
+    "t": 41.1
+   }
+  ],
+  "starts": 3,
+  "realStarts": 2,
+  "unlocked": true,
+  "chime": 1,
+  "session": "n/a"
+ },
+ "after_tap_rms": [
+  0.05969,
+  -24.5
+ ],
+ "walk_starts": 13,
+ "after_run": {
+  "ctx": [
+   {
+    "state": "running",
+    "rate": 48000,
+    "t": 96.5
+   }
+  ],
+  "starts": 40,
+  "realStarts": 39,
+  "unlocked": true,
+  "chime": 1,
+  "session": "n/a"
+ },
+ "after_run_rms": [
+  0.05453,
+  -25.3
+ ],
+ "throw_starts": 10,
+ "after_throw_rms": [
+  0.09431,
+  -20.5
+ ],
+ "end": {
+  "ctx": [
+   {
+    "state": "running",
+    "rate": 48000,
+    "t": 171.1
+   }
+  ],
+  "starts": 56,
+  "realStarts": 55,
+  "unlocked": true,
+  "chime": 1,
+  "session": "n/a"
+ }
+}
+[log] Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+[log] Build configuration: Emscripten 4.0.20, single-threaded, no GDExtension support.
+RESPONSES: 200 game_v4.html, 200 game_v4.png, 200 game_v4.js, 200 game_v4.wasm, 200 game_v4.pck, 200 game_v4.icon.png
