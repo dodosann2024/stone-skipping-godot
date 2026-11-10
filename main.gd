@@ -185,6 +185,7 @@ func _ready() -> void:
 	_build_birds()
 	_build_audio()
 	_build_ui()
+	_build_reflection()
 	ripple_buf.resize(8)
 	print_buf.resize(PRINTS)
 	print_wash.resize(PRINTS)
@@ -197,7 +198,7 @@ func _ready() -> void:
 		get_tree().quit()
 		return
 	portrait_demo = "--portrait" in args
-	if "--night" in args:
+	if _opt("night") == "1":
 		night_on = true
 		night_k = 1.0
 		_update_night(0.0, true)
@@ -1897,6 +1898,7 @@ func _process(delta: float) -> void:
 		for w in b["wings"]:
 			(w[0] as Node3D).rotation.z = flap * float(w[1])
 	_update_wade_ring(delta)
+	_watch_fps(delta)
 	_update_night(delta)
 	night_fx.apply(night_k, camera.global_position, sun.global_basis.z.normalized(), delta)
 	if toast_timer > 0.0:
@@ -2110,6 +2112,94 @@ func _apply_camera() -> void:
 		pos.y = floor_y
 	camera.global_position = pos
 	camera.look_at(cam_target, Vector3.UP)
+	if refl:
+		refl.update()
+
+# ------------------------------------------------------------------ water reflection
+
+var refl: WaterReflection
+var refl_level := 0      # 0 full, 1 lighter (smaller, every other frame), 2 off (the shader's approximations)
+var refl_auto := true
+var fps_t := 0.0
+var fps_n := 0
+var fps_avg := 0.0
+var lbl_fps: Label
+var url_opts := {}
+
+## ?name=value in the page URL (web) or --name=value on the command line
+func _opt(name: String, def := "") -> String:
+	if url_opts.is_empty():
+		url_opts["_"] = true
+		if is_web:
+			var q := str(JavaScriptBridge.eval("location.search", true)).trim_prefix("?")
+			for kv in q.split("&", false):
+				var p := kv.split("=")
+				url_opts[p[0]] = p[1] if p.size() > 1 else "1"
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--"):
+				var p := a.substr(2).split("=")
+				url_opts[p[0]] = p[1] if p.size() > 1 else "1"
+	return str(url_opts.get(name, def))
+
+func _build_reflection() -> void:
+	island.water_mi.layers = WaterReflection.WATER_LAYER
+	wade_ring.layers = WaterReflection.WATER_LAYER
+	refl = WaterReflection.new()
+	add_child(refl)
+	refl.setup(camera, sun)
+	island.water_mat.set_shader_parameter("refl_tex", refl.texture())
+	var want := _opt("refl", "auto")
+	refl_auto = want == "auto"
+	_set_refl_level({"0": 2, "low": 1}.get(want, 0))
+	# lights whose glitter streaks across the waves at night: the campfire, the lighthouse, then the lamps
+	var pos := PackedVector4Array()
+	var col := PackedVector4Array()
+	pos.append(Vector4(island.campfire_pos.x, island.campfire_pos.y + 0.45, island.campfire_pos.z, 2.2))
+	col.append(Vector4(1.0, 0.55, 0.2, 1.0))
+	pos.append(Vector4(island.beacon_pos.x, island.beacon_pos.y, island.beacon_pos.z, 6.0))
+	col.append(Vector4(1.0, 0.86, 0.58, 1.0))
+	for l: Array in island.lamps:
+		if pos.size() >= 12:
+			break
+		var lp: Vector3 = l[0]
+		pos.append(Vector4(lp.x, lp.y, lp.z, 0.9 if l[1] == "path" else 1.4))
+		col.append(Vector4(1.0, 0.72, 0.38, 1.0))
+	while pos.size() < 12:
+		pos.append(Vector4.ZERO)
+		col.append(Vector4.ZERO)
+	island.water_mat.set_shader_parameter("lamp_pos", pos)
+	island.water_mat.set_shader_parameter("lamp_col", col)
+	if _opt("fps") != "":
+		lbl_fps = _label(18, Color(1, 1, 0.8))
+		lbl_fps.position = Vector2(18, 120)
+		ui_root.add_child(lbl_fps)
+
+func _set_refl_level(l: int) -> void:
+	refl_level = l
+	refl.scale = 0.35 if l == 0 else 0.25
+	refl.every = 1 if l == 0 else 2
+	refl.set_enabled(l < 2)
+	island.water_mat.set_shader_parameter("refl_on", 1.0 if l < 2 else 0.0)
+
+## a phone that cannot keep up drops the reflection to the lighter setting, then to the approximations
+func _watch_fps(delta: float) -> void:
+	fps_t += delta
+	fps_n += 1
+	if fps_t < 2.0:
+		return
+	fps_avg = fps_n / fps_t
+	fps_t = 0.0
+	fps_n = 0
+	if refl_auto and not demo_mode and gt > 5.0 and fps_avg < 26.0 and refl_level < 2:
+		_set_refl_level(refl_level + 1)
+	if lbl_fps:
+		lbl_fps.text = "%.0f fps · 倒影 %s" % [fps_avg, ["高", "低", "关"][refl_level]]
+		var dc := Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME
+		var vt := Viewport.RENDER_INFO_TYPE_VISIBLE
+		print("FPS %.1f refl %d night %d draws %d+%d size %s" % [fps_avg, refl_level, int(night_on),
+			get_viewport().get_render_info(vt, dc), refl.vp.get_render_info(vt, dc) if refl_level < 2 else 0,
+			str(refl.vp.size)])
+
 # ------------------------------------------------------------------ save
 
 func _load_best() -> void:
@@ -2549,8 +2639,29 @@ func _v9_sequence(pre: String, part: String) -> void:
 		_toggle_night()
 		await _wait(2.8)
 
-## v11 stills: the ground round the campfire logs. part "" = all, or logs
+## v11 stills: the ground round the campfire logs, the water reflection. part "" = all, logs or refl
 func _v11_sequence(pre: String, part: String) -> void:
+	if part == "" or part == "refl":
+		for night in [false, true]:
+			var tag := "night" if night else "day"
+			if night:
+				_toggle_night()
+				await _wait(2.9)
+			_fixed_cam(Vector3(0, 1.0, island.dock_start_z - 2.0), 2.6, 0.32, 26.0)
+			await _wait(0.4)
+			_shot(pre + "61_%s_wide" % tag)
+			_fixed_cam(island.beacon_pos + Vector3(0, -3.0, 0), 1.9, 0.12, 18.0)
+			await _wait(0.4)
+			_shot(pre + "62_%s_lighthouse" % tag)
+			_fixed_cam(Vector3(0, 1.5, island.dock_start_z - 4.0), PI + 0.15, 0.07, 30.0)
+			await _wait(0.4)
+			_shot(pre + "63_%s_low_from_sea" % tag)
+			_fixed_cam(island.campfire_pos + Vector3(0, 0.5, 0), 0.9, 0.1, 16.0)
+			await _wait(0.4)
+			_shot(pre + "64_%s_fire_from_shore" % tag)
+		_free_cam()
+		_toggle_night()
+		await _wait(2.8)
 	if part == "" or part == "logs":
 		var c := island.campfire_pos
 		_place(c + Vector3(6.0, 0, 6.0), 0.0)

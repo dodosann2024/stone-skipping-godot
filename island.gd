@@ -28,6 +28,7 @@ var lamps: Array = []
 var glow_mat: ShaderMaterial
 var cloud_mat: ShaderMaterial
 var campfire_pos := Vector3.ZERO
+var water_mi: MeshInstance3D
 var campfire: Campfire
 var sign_board: MeshInstance3D
 ## places to sit: {name, top (seat surface under the pelvis), face (where the sitter looks), approach, hint}
@@ -420,8 +421,8 @@ func _build_water() -> void:
 	var arr = PackedVector4Array()
 	arr.resize(8)
 	water_mat.set_shader_parameter("ripples", arr)
-	var mi = _mi(pm, water_mat)
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	water_mi = _mi(pm, water_mat)
+	water_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 func _bake_obstacle_foam() -> ImageTexture:
 	var size = 256

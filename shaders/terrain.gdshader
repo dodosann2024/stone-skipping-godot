@@ -1,6 +1,7 @@
 shader_type spatial;
 render_mode cull_back, diffuse_lambert, specular_disabled;
 #include "res://shaders/common.gdshaderinc"
+#include "res://shaders/refl_clip.gdshaderinc"
 
 uniform float game_time = 0.0;
 uniform vec4 prints[48];          // footprints: x, z, heading angle, time stamped
@@ -48,6 +49,9 @@ void vertex() {
 }
 
 void fragment() {
+	if (!IN_SHADOW_PASS && refl_pass(CAMERA_POSITION_WORLD) && wpos.y < 0.0) {
+		discard;
+	}
 	vec3 c = pow(COLOR.rgb, vec3(2.2));
 	float t = game_time;
 	vec2 p = wpos.xz;

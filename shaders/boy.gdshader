@@ -14,6 +14,7 @@ uniform float eye_open = 1.0;     // 0 closed (blink / asleep) .. 1 open
 uniform int mouth = 0;            // 0 smile, 1 laugh, 2 oops, 3 grit, 4 sleepy
 uniform float blush = 0.35;
 #include "res://shaders/underwater.gdshaderinc"
+#include "res://shaders/refl_clip.gdshaderinc"
 
 varying vec2 fuv;
 varying float ao;
@@ -93,6 +94,9 @@ vec3 face(vec3 c, vec2 p) {
 }
 
 void fragment() {
+	if (!IN_SHADOW_PASS && refl_pass(CAMERA_POSITION_WORLD) && (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y < 0.0) {
+		discard;
+	}
 	vec3 c = albedo;
 	if (kind == 0 && fmask > 0.5) {
 		c = face(c, fuv);
