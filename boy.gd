@@ -1,135 +1,188 @@
 class_name Boy
 extends Node3D
-## The straw-hat boy (v5). Procedural skeleton: pelvis / spine / head, 2-bone IK arms and legs.
-## Feet are anchored in world space: a planted foot never slides, also while turning or accelerating.
-## Animations: idle (breathing, weight shifts), walk / run gait cycle (stride matched to ground speed),
-## standing / half-kneeling sidearm throw with a kinetic chain and recovery step, reactions (cheer hops),
-## and "activity" poses (sit / lie) driven by main.gd for the hammock and the beach towel.
-## Faces -Z, right hand = +X, root at the feet.
+## v6 boy: a skinned MakeHuman-based teen (boy/boy.glb, built and animated by art/boy/*.py in Blender)
+## driven by an AnimationTree that is used as a mixer: every clip is seeked explicitly each frame.
+##  - locomotion: idle / walk / run, the gait phase advances with the distance the node really moved
+##    (stride-matched, so planted feet never slide whoever moves the boy)
+##  - actions: two crossfading slots (throws, cheer / oops, resting clips)
+##  - resting poses are seeked by main.gd's progress values; their pelvis offsets come from the
+##    exported tracks so main.gd can place the boy in the same frame (activity()).
 
 signal released
 signal footstep(side: int, running: bool)
 
-const UARM := 0.17
-const FARM := 0.16
-const THIGH := 0.25
-const SHIN := 0.24
-const ANKLE_H := 0.062
-const PEL_H := 0.555
-const SHOULDER := Vector3(0.122, 0.262, 0.0)
-const HIP := Vector3(0.072, -0.025, 0.0)
-const STONE_OFF := Vector3(0.0, -0.08, -0.02)
-const T_RELEASE := 0.15
-const T_FOLLOW := 0.44
-const T_HOLD := 0.85
-const T_SETTLE := 1.55
-const IDLE_L := Vector3(-0.085, 0, -0.015)
-const IDLE_R := Vector3(0.085, 0, 0.015)
-const LEG_MAX := (THIGH + SHIN) * 0.985
+const SCALE := 0.85
+const MODEL := preload("res://boy/boy.glb")
+const META := "res://boy/boy_meta.json"
+const T_RELEASE := 0.15      # stone leaves the hand this long after start_throw()
+const RUN_FROM := 1.35       # walk -> run blend band (m/s)
+const RUN_TO := 2.2
 
 var parts := {}
-var mat: ShaderMaterial
-var blob: MeshInstance3D
-var t := 0.0
-var anim := "idle"   # idle | charge | throw | react | move | activity
+var anim := "idle"   # idle | move | charge | throw | react | activity
 var anim_t := 0.0
 var stance := "stand"   # stand | crouch (throwing stance)
+var hat_mode := "head"   # head | chest | ground
+var wading := false
+var move_speed := 0.0
 var power := 0.0
 var throw_power := 0.0
 var react_kind := ""
 var did_release := false
-var cur := {}
-var from_pose := {}
 var release_stand := Vector3.ZERO
 var release_crouch := Vector3.ZERO
-var stone_visible := true
-var expr := "smile"
-var hat_mode := "head"   # head | chest | ground
-var move_speed := 0.0
-var wading := false
-var eye_c := Vector3.ZERO
 
-# feet: world-space anchors (the truth) and their local copies for the skeleton
-var fw: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
-var fwy: Array[float] = [0.0, 0.0]
-var foot_p: Array[Vector3] = [IDLE_L, IDLE_R]
-var foot_yaw: Array[float] = [0.08, -0.08]
-var foot_pitch: Array[float] = [0.0, 0.0]
-var plant: Array[float] = [1.0, 1.0]
-var reanchor := true
-var pre_act: Array = []
-var act_frames := 0
+var release_local: Vector3:
+	get:
+		return release_crouch if stance == "crouch" else release_stand
 
-# root motion estimate
-var prev_root := Vector3.ZERO
-var prev_yaw := 0.0
-var vel_s := Vector3.ZERO
-var speed_s := 0.0
-var yaw_rate := 0.0
-var accel_f := 0.0
+var meta: Dictionary
+var clips: Dictionary
+var model: Node3D
+var skel: Skeleton3D
+var tree: AnimationTree
+var bt: AnimationNodeBlendTree
+var face_mat: ShaderMaterial
+var hat: Node3D
+var glasses: Node3D
+var stone: Node3D
+var blob: MeshInstance3D
+var hat_head_xf: Transform3D
+var hat_head_parent: Node3D
+var chest_att: BoneAttachment3D
 
-# gait
-var gait_ph := 0.0
-var gait_w := 0.0
-var leg_swing: Array[bool] = [false, false]
-var lift_w: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
-var lift_yaw: Array[float] = [0.0, 0.0]
-var arm_z: Array[float] = [0.0, 0.0]
+var t := 0.0
+var t_idle := 0.0
+var phase := 0.0
+var move_w := 0.0
 var run_k := 0.0
-
-# single steps (idle re-stance, throw stance, recovery step)
-var step_i := -1
-var step_t := 0.0
-var step_dur := 0.24
-var step_arc := 0.05
-var step_from := Vector3.ZERO
-var step_to := Vector3.ZERO
-var step_yaw0 := 0.0
-var step_yaw1 := 0.0
-
-var look_target := 0.0
-var look_timer := 3.0
+var speed_s := 0.0
+var prev_pos := Vector3.ZERO
+var has_prev := false
+var slot_clip: Array[String] = ["", ""]
+var slot_t: Array[float] = [0.0, 0.0]
+var cur_slot := 0
+var ab_w := 0.0
+var ab_rate := 10.0
+var act_w := 0.0
+var act_target := 0.0
+var act_rate := 6.0
+var stopping := false
+var act_frames := 0
+var pre_act: Array = []
+var prev_sit := 0.0
+var prev_lie := 0.0
 var blink_timer := 2.5
-var hat_ang := Vector2.ZERO
-var hat_vel := Vector2.ZERO
-var vest_ang := 0.0
-var vest_vel := 0.0
-var head_prev := Vector3.ZERO
-var head_vprev := Vector3.ZERO
-var sp_prev := Vector3.ZERO
-var sp_vprev := Vector3.ZERO
+var expr := "smile"
 var rng := RandomNumberGenerator.new()
+var frozen := false
 
 func _ready() -> void:
 	rng.seed = 7
-	mat = ShaderMaterial.new()
-	mat.shader = load("res://shaders/character.gdshader")
-	eye_c = BoyMesh.eye_c()
-	BoyMesh.build(self)
-	(parts["hat"] as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	(parts["glasses"] as Node3D).visible = false
-	for k in ["eyes", "eyes_closed", "mouth_smile", "mouth_grit", "mouth_laugh", "mouth_sleep", "mouth_oops"]:
-		(parts[k] as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	process_priority = 10   # after main.gd has moved / posed us this frame
+	meta = JSON.parse_string(FileAccess.get_file_as_string(META))
+	clips = meta["clips"]
+	model = MODEL.instantiate()
+	model.rotation.y = PI
+	model.scale = Vector3.ONE * SCALE
+	model.position.y = -float(meta["ground"]) * SCALE
+	add_child(model)
+	skel = model.find_child("Skeleton3D") as Skeleton3D
+	_setup_materials()
+	_setup_parts()
+	_setup_tree()
 	_build_blob()
-	expr = ""
-	cur = pose_idle()
-	stance = "stand"
-	release_stand = _release_point()
-	stance = "crouch"
-	release_crouch = _release_point()
-	stance = "stand"
-	_set_expr("smile")
-	_apply(_skeleton(cur, foot_p, foot_yaw, foot_pitch, false), 1.0)
+	release_stand = _probe_release("throw_stand")
+	release_crouch = _probe_release("throw_crouch")
+	_apply_mixer()
 
-func add_part(name: String, b: MeshBuilder) -> void:
-	var mi := MeshInstance3D.new()
-	mi.name = name
-	mi.mesh = b.commit()
-	mi.material_override = mat
-	add_child(mi)
-	parts[name] = mi
+# ------------------------------------------------------------------ setup
 
-## soft contact shadow on the ground under the kid (grounds him even where the shadow map is coarse)
+func _mat(col: Color, kind: int) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = preload("res://shaders/boy.gdshader")
+	m.set_shader_parameter("albedo", col)
+	m.set_shader_parameter("kind", kind)
+	return m
+
+func _setup_materials() -> void:
+	# albedo per Blender material name; kinds: 0 skin, 1 cloth, 2 hair, 3 straw, 4 props
+	var look := {
+		"skin": [Color(0.90, 0.66, 0.52), 0], "tank": [Color(0.95, 0.94, 0.90), 1],
+		"vest": [Color(0.80, 0.27, 0.22), 1], "shorts": [Color(0.96, 0.80, 0.36), 1],
+		"hair": [Color(0.30, 0.20, 0.14), 2], "sandal": [Color(0.36, 0.60, 0.64), 1],
+		"strap": [Color(0.95, 0.93, 0.88), 1], "hat": [Color(0.92, 0.80, 0.55), 3],
+		"band": [Color(0.78, 0.25, 0.20), 1], "lens": [Color(0.08, 0.09, 0.11), 4],
+		"stone": [Color(0.55, 0.56, 0.58), 4],
+	}
+	for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
+		var mesh := mi.mesh
+		for i in mesh.get_surface_count():
+			var src := mesh.surface_get_material(i)
+			var n := src.resource_name if src else ""
+			if not look.has(n):
+				continue
+			var m := _mat(look[n][0], look[n][1])
+			mi.set_surface_override_material(i, m)
+			if n == "skin":
+				face_mat = m
+		if mi.name in ["Glasses", "Stone"]:
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+func _setup_parts() -> void:
+	for att: BoneAttachment3D in skel.find_children("*", "BoneAttachment3D", false, false):
+		for c in att.get_children():
+			match String(c.name):
+				"Hat": hat = c
+				"Glasses": glasses = c
+				"Stone": stone = c
+	hat_head_parent = hat.get_parent()
+	hat_head_xf = hat.transform
+	glasses.visible = false
+	for b in ["head", "pelvis", "spine_03"]:
+		var a := BoneAttachment3D.new()
+		a.name = "att_" + b
+		a.bone_name = b
+		skel.add_child(a)
+		parts[b] = a
+	chest_att = parts["spine_03"]
+
+func _anim_node(clip: String) -> AnimationNodeAnimation:
+	var n := AnimationNodeAnimation.new()
+	n.animation = clip
+	return n
+
+func _setup_tree() -> void:
+	var ap := model.find_child("AnimationPlayer") as AnimationPlayer
+	bt = AnimationNodeBlendTree.new()
+	var x := 0.0
+	for pair in [["idle", "idle"], ["walk", "walk"], ["run", "run"], ["a", "idle"], ["b", "idle"]]:
+		bt.add_node(pair[0], _anim_node(pair[1]), Vector2(0, x))
+		bt.add_node(pair[0] + "_s", AnimationNodeTimeSeek.new(), Vector2(200, x))
+		bt.connect_node(pair[0] + "_s", 0, pair[0])
+		x += 120.0
+	bt.add_node("wr", AnimationNodeBlend2.new(), Vector2(400, 100))
+	bt.connect_node("wr", 0, "walk_s")
+	bt.connect_node("wr", 1, "run_s")
+	bt.add_node("move", AnimationNodeBlend2.new(), Vector2(600, 0))
+	bt.connect_node("move", 0, "idle_s")
+	bt.connect_node("move", 1, "wr")
+	bt.add_node("ab", AnimationNodeBlend2.new(), Vector2(400, 400))
+	bt.connect_node("ab", 0, "a_s")
+	bt.connect_node("ab", 1, "b_s")
+	bt.add_node("act", AnimationNodeBlend2.new(), Vector2(800, 200))
+	bt.connect_node("act", 0, "move")
+	bt.connect_node("act", 1, "ab")
+	bt.connect_node("output", 0, "act")
+	tree = AnimationTree.new()
+	tree.name = "Mixer"
+	model.add_child(tree)
+	tree.anim_player = tree.get_path_to(ap)
+	tree.tree_root = bt
+	tree.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+	tree.active = true
+
+## soft contact shadow on the ground under the kid
 func _build_blob() -> void:
 	blob = MeshInstance3D.new()
 	var q := QuadMesh.new()
@@ -142,831 +195,355 @@ func _build_blob() -> void:
 	blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(blob)
 
-func _release_point() -> Vector3:
-	var st := throw_stance()
-	var sk := _skeleton(pose_release(), st[0], st[1], [0.0, 0.55 if stance == "stand" else 1.25], true)
-	return (sk["hand_r"] as Transform3D) * STONE_OFF
+## stone position (boy space) on the release frame of a throw clip
+func _probe_release(clip: String) -> Vector3:
+	_set_slot(0, clip, float(clips[clip]["t_release"]))
+	act_w = 1.0
+	ab_w = 0.0
+	_apply_mixer()
+	# the stone's BoneAttachment3D sits exactly on the hand bone
+	var hand := skel.get_bone_global_pose(skel.find_bone("hand_r"))
+	act_w = 0.0
+	var centre := (stone as MeshInstance3D).get_aabb().get_center()
+	return model.transform * (hand * (stone.transform * centre))
 
-var release_local: Vector3:
-	get:
-		return release_crouch if stance == "crouch" else release_stand
+# ------------------------------------------------------------------ coordinates
+
+## Blender armature space (exported tracks) -> boy space
+func b2g(v: Array) -> Vector3:
+	return Vector3(-float(v[0]), float(v[2]) - float(meta["ground"]), float(v[1])) * SCALE
+
+func _track(clip: String, key: String, u: float) -> Vector3:
+	var arr: Array = clips[clip][key]
+	var f := clampf(u, 0.0, 1.0) * float(arr.size() - 1)
+	var i := mini(int(f), arr.size() - 2)
+	return b2g(arr[i]).lerp(b2g(arr[i + 1]), f - float(i))
 
 # ------------------------------------------------------------------ public API
 
 func set_idle() -> void:
 	if anim == "charge" or anim == "move":
-		anim = "idle"
+		_to_idle()
 
 func set_move(speed: float) -> void:
 	move_speed = speed
 	if speed > 0.05 and (anim == "idle" or anim == "react"):
-		_start_gait()
+		if anim != "move" and move_w < 0.05:
+			phase = 0.31   # passing pose: left foot under the hips, right swinging past it
+		anim = "move"
+		stopping = false
+		act_target = 0.0
+		act_rate = 8.0
 
 func charge(p: float) -> void:
 	if anim != "charge":
 		anim = "charge"
 		anim_t = 0.0
+		act_target = 1.0
+		act_rate = 6.0
+		_play(_throw_clip(), 0.0, 0.0)
 	power = p
 
 func start_throw(p: float) -> void:
 	throw_power = p
-	from_pose = cur.duplicate()
 	anim = "throw"
 	anim_t = 0.0
 	did_release = false
+	act_target = 1.0
+	_play(_throw_clip(), float(clips[_throw_clip()]["t_charge"]), 0.08, true)
 
 func react(kind: String) -> void:
 	react_kind = kind
-	from_pose = cur.duplicate()
-	anim = "react" if kind != "" else "idle"
+	if kind == "":
+		_to_idle()
+		return
+	anim = "react"
 	anim_t = 0.0
+	act_target = 1.0
+	act_rate = 5.0
+	_play("cheer" if kind == "cheer" else "oops", 0.0, 0.25)
 
 func show_stone(v: bool) -> void:
-	stone_visible = v
-	(parts["stone"] as MeshInstance3D).visible = v
-
-## stance feet for the current throwing stance: [[left, right], [yaw_l, yaw_r]]
-func throw_stance() -> Array:
-	if stance == "crouch":
-		return [[Vector3(-0.1, 0, -0.25), Vector3(0.12, 0, 0.29)], [-0.2, -0.3]]
-	return [[Vector3(-0.06, 0, -0.17), Vector3(0.17, 0, 0.13)], [-0.25, -0.7]]
-
-# ------------------------------------------------------------------ poses
-
-static func P(d: Dictionary) -> Dictionary:
-	var base := {
-		"pdy": 0.0, "pyaw": 0.0, "plean": 0.03, "proll": 0.0, "poff": Vector3.ZERO,
-		"sy": 0.0, "sl": 0.02, "sr": 0.0, "hy": 0.0, "hd": 0.0, "hr": 0.0, "wr": 0.15,
-		"rh": Vector3(0.16, -0.05, -0.04), "re": Vector3(0.3, 0.0, 1.0),
-		"lh": Vector3(-0.16, -0.05, -0.03), "le": Vector3(-0.3, 0.0, 1.0),
-		"rheel": 0.0, "lheel": 0.0, "hop": 0.0,
-		"flp": IDLE_L, "frp": IDLE_R, "fly": 0.08, "fry": -0.08,
-	}
-	for k in d:
-		base[k] = d[k]
-	return base
-
-func pose_idle() -> Dictionary:
-	return P({})
-
-func pose_charge(p: float) -> Dictionary:
-	if stance == "crouch":
-		return _mix(P({"pdy": -0.22, "pyaw": -0.22, "plean": 0.25, "proll": -0.03, "poff": Vector3(0.01, 0, 0.04),
-			"sy": -0.2, "sl": 0.2, "sr": -0.12, "hy": 0.38, "hd": 0.05, "wr": 0.4,
-			"rh": Vector3(0.27, -0.05, 0.1), "re": Vector3(0.1, -0.7, 1.0), "lh": Vector3(-0.17, 0.0, -0.2), "le": Vector3(-0.6, -1.0, 0.2), "rheel": 1.2}),
-			P({"pdy": -0.275, "pyaw": -0.45, "plean": 0.32, "proll": -0.06, "poff": Vector3(0.03, 0, 0.06),
-			"sy": -0.45, "sl": 0.3, "sr": -0.28, "hy": 0.8, "hd": 0.1, "wr": 0.75,
-			"rh": Vector3(0.33, -0.03, 0.14), "re": Vector3(0.0, -0.6, 1.0), "lh": Vector3(-0.17, 0.05, -0.27), "le": Vector3(-0.5, -1.0, 0.3), "rheel": 1.25}), p)
-	return _mix(P({"pdy": -0.045, "pyaw": -0.22, "plean": 0.1, "proll": -0.02, "poff": Vector3(0.02, 0, 0.025),
-		"sy": -0.2, "sl": 0.12, "sr": -0.08, "hy": 0.36, "hd": 0.05, "wr": 0.4,
-		"rh": Vector3(0.27, 0.0, 0.11), "re": Vector3(0.1, -0.7, 1.0), "lh": Vector3(-0.17, 0.06, -0.16), "le": Vector3(-0.6, -1.0, 0.2)}),
-		P({"pdy": -0.13, "pyaw": -0.48, "plean": 0.17, "proll": -0.06, "poff": Vector3(0.05, 0, 0.055),
-		"sy": -0.46, "sl": 0.26, "sr": -0.22, "hy": 0.82, "hd": 0.08, "wr": 0.75,
-		"rh": Vector3(0.34, 0.09, 0.13), "re": Vector3(0.0, -0.6, 1.0), "lh": Vector3(-0.18, 0.16, -0.24), "le": Vector3(-0.5, -1.0, 0.3), "lheel": -0.1}), p)
-
-func pose_release() -> Dictionary:
-	if stance == "crouch":
-		return P({"pdy": -0.255, "pyaw": 0.22, "plean": 0.36, "poff": Vector3(-0.02, 0, -0.02),
-			"sy": 0.22, "sl": 0.38, "sr": -0.2, "hy": -0.42, "hd": 0.12, "wr": -0.55,
-			"rh": Vector3(0.3, -0.07, -0.14), "re": Vector3(0.3, -0.8, 0.6), "lh": Vector3(-0.27, 0.04, 0.04), "le": Vector3(-0.6, -1.0, 0.0), "rheel": 1.25})
-	return P({"pdy": -0.1, "pyaw": 0.24, "plean": 0.2, "poff": Vector3(-0.02, 0, -0.04),
-		"sy": 0.22, "sl": 0.3, "sr": -0.16, "hy": -0.42, "hd": 0.1, "wr": -0.55,
-		"rh": Vector3(0.3, 0.02, -0.13), "re": Vector3(0.3, -0.8, 0.6), "lh": Vector3(-0.26, 0.1, 0.03), "le": Vector3(-0.6, -1.0, 0.0),
-		"rheel": 0.55})
-
-func pose_follow(p: float) -> Dictionary:
-	if stance == "crouch":
-		return P({"pdy": -0.24, "pyaw": 0.45, "plean": lerpf(0.36, 0.46, p), "proll": 0.03, "poff": Vector3(-0.03, 0, -0.06),
-			"sy": 0.38, "sl": lerpf(0.34, 0.48, p), "sr": 0.05, "hy": -0.75, "hd": -0.1, "wr": -0.3,
-			"rh": Vector3(-0.07, 0.02, -0.21), "re": Vector3(0.6, -1.0, 0.0), "lh": Vector3(-0.3, 0.12, 0.1), "le": Vector3(-0.3, -1.0, 0.5), "rheel": 1.25})
-	return P({"pdy": -0.07, "pyaw": 0.5, "plean": lerpf(0.22, 0.36, p), "proll": 0.04, "poff": Vector3(-0.045, 0, -0.1),
-		"sy": 0.4, "sl": lerpf(0.25, 0.4, p), "sr": 0.05, "hy": -0.8, "hd": -0.12, "wr": -0.3,
-		"rh": Vector3(-0.06, 0.08, -0.2), "re": Vector3(0.6, -1.0, 0.0), "lh": Vector3(-0.3, 0.16, 0.1), "le": Vector3(-0.3, -1.0, 0.5),
-		"rheel": 0.7})
-
-func pose_settle() -> Dictionary:
-	if stance == "crouch":
-		return P({"pdy": -0.2, "pyaw": 0.15, "plean": 0.25, "sy": 0.1, "sl": 0.15, "hy": -0.25, "hd": -0.05,
-			"rh": Vector3(0.17, -0.05, -0.08), "lh": Vector3(-0.17, -0.04, -0.06), "rheel": 1.2})
-	return P({"pdy": -0.015, "pyaw": 0.12, "plean": 0.08, "poff": Vector3(0.0, 0, -0.05), "sy": 0.08, "sl": 0.1, "hy": -0.2, "hd": -0.06, "wr": 0.1,
-		"rh": Vector3(0.165, -0.04, -0.05), "lh": Vector3(-0.16, -0.04, -0.04)})
-
-## settle stance after the recovery step (stand) / knee stays down (crouch)
-func settle_stance() -> Array:
-	if stance == "crouch":
-		return throw_stance()
-	return [[Vector3(-0.06, 0, -0.17), Vector3(0.09, 0, -0.1)], [-0.25, -0.3]]
-
-## jump for joy: anticipation dip, three little hops with fists in the air, then waving
-func pose_cheer(tt: float) -> Dictionary:
-	var hop := 0.0
-	var dip := 0.0
-	for n in 3:
-		var t0 := 0.22 + n * 0.46
-		var x := (tt - t0) / 0.3
-		if x > 0.0 and x < 1.0:
-			hop = 0.085 * sin(PI * x) * (1.0 - n * 0.18)
-		dip += 0.055 * exp(-pow((tt - t0 + 0.06) / 0.07, 2.0)) + 0.04 * exp(-pow((tt - t0 - 0.36) / 0.06, 2.0))
-	var w := sin(tt * 16.0) * 0.04 * smoothstep(1.4, 1.7, tt)
-	var up := smoothstep(0.08, 0.3, tt)
-	return P({"pdy": -0.03 - dip, "hop": hop, "pyaw": 0.05, "plean": -0.03 + dip * 1.5, "sl": -0.05 + dip, "sr": w * 0.8, "hd": -0.28, "hr": w * 1.5, "wr": 0.0,
-		"rh": Vector3(0.16, -0.05, -0.04).lerp(Vector3(0.3 + w, 0.55, -0.06), up), "re": Vector3(1.0, -0.3, 0.3),
-		"lh": Vector3(-0.16, -0.05, -0.03).lerp(Vector3(-0.3 + w, 0.55, -0.06), up), "le": Vector3(-1.0, -0.3, 0.3)})
-
-func pose_oops(tt: float) -> Dictionary:
-	return P({"pdy": -0.04, "plean": 0.12, "sl": 0.12, "hy": sin(tt * 7.0) * 0.18 * smoothstep(0.3, 0.5, tt), "hd": 0.22, "wr": 0.0,
-		"rh": Vector3(0.175, 0.44, 0.0), "re": Vector3(1.0, -0.4, 0.3), "lh": Vector3(-0.175, 0.44, 0.0), "le": Vector3(-1.0, -0.4, 0.3)})
-
-# lying / sitting poses (boy space; main.gd rotates the root)
-func pose_sit_edge() -> Dictionary:
-	return P({"pdy": -0.2, "plean": 0.12, "sl": 0.08, "hd": 0.05,
-		"rh": Vector3(0.2, -0.12, 0.04), "re": Vector3(0.4, 0, 1), "lh": Vector3(-0.2, -0.12, 0.04), "le": Vector3(-0.4, 0, 1),
-		"flp": Vector3(-0.09, 0.0, -0.24), "frp": Vector3(0.09, 0.02, -0.22), "fly": 0.1, "fry": -0.1})
-
-func pose_sit_edge_mid() -> Dictionary:
-	return P({"pdy": -0.13, "plean": 0.45, "sl": 0.2, "hd": -0.15,
-		"rh": Vector3(0.22, -0.2, 0.16), "re": Vector3(0.4, 0, -1), "lh": Vector3(-0.22, -0.2, 0.16), "le": Vector3(-0.4, 0, -1),
-		"flp": Vector3(-0.09, 0.0, -0.12), "frp": Vector3(0.09, 0.0, -0.1), "fly": 0.1, "fry": -0.1})
-
-func pose_sit_ground() -> Dictionary:
-	return P({"pdy": -0.45, "plean": -0.1, "sl": 0.15, "hd": 0.08,
-		"rh": Vector3(0.2, -0.18, 0.14), "re": Vector3(0.3, 0, -1), "lh": Vector3(-0.2, -0.18, 0.14), "le": Vector3(-0.3, 0, -1),
-		"flp": Vector3(-0.085, -0.02, -0.4), "frp": Vector3(0.085, -0.02, -0.42), "fly": 0.1, "fry": -0.1, "lheel": -1.2, "rheel": -1.2})
-
-func pose_sit_ground_mid() -> Dictionary:
-	return P({"pdy": -0.32, "plean": 0.5, "sl": 0.25, "hd": -0.1,
-		"rh": Vector3(0.2, -0.25, -0.12), "re": Vector3(0.4, 0, 1), "lh": Vector3(-0.2, -0.25, -0.12), "le": Vector3(-0.4, 0, 1),
-		"flp": Vector3(-0.1, 0.0, -0.12), "frp": Vector3(0.1, 0.0, -0.1), "fly": 0.15, "fry": -0.15, "lheel": 0.3, "rheel": 0.3})
-
-func pose_lie_sleep(tt: float) -> Dictionary:
-	var br := sin(tt * 1.6) * 0.02
-	return P({"pdy": -0.03, "plean": 0.2, "sl": 0.12 + br, "hd": -0.15, "hr": 0.12,
-		"rh": Vector3(0.06, 0.08, -0.13), "re": Vector3(1, 0, 0), "lh": Vector3(-0.07, 0.11, -0.12), "le": Vector3(-1, 0, 0),
-		"flp": Vector3(-0.07, 0.03, -0.12), "frp": Vector3(0.08, 0.05, -0.1), "fly": 0.25, "fry": -0.25})
-
-func pose_lie_sun(tt: float) -> Dictionary:
-	var br := sin(tt * 1.3) * 0.015
-	var tap := maxf(sin(tt * 2.2), 0.0) * 0.06
-	return P({"pdy": -0.01, "plean": 0.02, "sl": 0.03 + br, "hd": -0.2,
-		"rh": Vector3(0.085, 0.47, 0.11), "re": Vector3(1.0, 0.3, -0.2), "lh": Vector3(-0.085, 0.47, 0.11), "le": Vector3(-1.0, 0.3, -0.2),
-		"flp": Vector3(-0.045, 0.0, -0.01), "frp": Vector3(-0.03, 0.03, -0.08 - tap), "fly": 0.15, "fry": 0.3})
-
-## half-way poses while lying back: propped on the arms, legs coming up
-func pose_lie_mid(kind: String) -> Dictionary:
-	if kind == "sleep":
-		return P({"pdy": -0.12, "plean": -0.35, "sl": -0.1, "hd": 0.25,
-			"rh": Vector3(0.24, -0.2, 0.12), "re": Vector3(0.6, 0, -1), "lh": Vector3(-0.24, -0.2, 0.12), "le": Vector3(-0.6, 0, -1),
-			"flp": Vector3(-0.08, 0.1, -0.3), "frp": Vector3(0.08, 0.12, -0.28), "fly": 0.15, "fry": -0.15})
-	return P({"pdy": -0.42, "plean": -0.45, "sl": -0.15, "hd": 0.3,
-		"rh": Vector3(0.2, -0.3, 0.2), "re": Vector3(0.5, 0, -1), "lh": Vector3(-0.2, -0.3, 0.2), "le": Vector3(-0.5, 0, -1),
-		"flp": Vector3(-0.07, -0.02, -0.4), "frp": Vector3(0.07, 0.04, -0.36), "fly": 0.1, "fry": -0.1, "lheel": -1.0, "rheel": -0.6})
-
-static func _mix(a: Dictionary, b: Dictionary, k: float) -> Dictionary:
-	var o := {}
-	for key in a:
-		var va: Variant = a[key]
-		var vb: Variant = b.get(key, va)
-		if va is Vector3:
-			o[key] = (va as Vector3).lerp(vb as Vector3, k)
-		else:
-			o[key] = lerpf(float(va), float(vb), k)
-	return o
-
-## quadratic Bezier through a middle key pose
-static func _mix3(a: Dictionary, m: Dictionary, b: Dictionary, k: float) -> Dictionary:
-	return _mix(_mix(a, m, k), _mix(m, b, k), k)
-
-const G_BODY := ["pdy", "pyaw", "plean", "proll", "poff", "rheel", "lheel", "hop", "lh", "le"]
-const G_SPINE := ["sy", "sl", "sr"]
-const G_HEAD := ["hy", "hd", "hr"]
-const G_ARM := ["rh", "re", "wr"]
-
-## mix with a separate weight per body group (hips lead, then chest, then the throwing arm)
-static func _mix_chain(a: Dictionary, b: Dictionary, kb: float, ks: float, kh: float, ka: float) -> Dictionary:
-	var o := _mix(a, b, kb)
-	for grp: Array in [[G_SPINE, ks], [G_HEAD, kh], [G_ARM, ka]]:
-		var k: float = grp[1]
-		for key: String in grp[0]:
-			var va: Variant = a[key]
-			if va is Vector3:
-				o[key] = (va as Vector3).lerp(b[key] as Vector3, k)
-			else:
-				o[key] = lerpf(float(va), float(b[key]), k)
-	return o
-
-static func _ease_in(x: float) -> float:
-	return x * x
-
-static func _ease_out(x: float) -> float:
-	return 1.0 - (1.0 - x) * (1.0 - x)
-
-static func _sm(x: float) -> float:
-	return smoothstep(0.0, 1.0, x)
-
-# ------------------------------------------------------------------ activity (driven by main.gd)
+	stone.visible = v
 
 ## kind: "sleep" | "sun"; sit_k: 0 stand -> 1 seated; lie_k: 0 seated -> 1 lying. Returns the pelvis in boy space.
 func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	if anim != "activity":
-		pre_act = [cur.duplicate(), anim]
+		pre_act = [anim, act_w, act_target, slot_clip.duplicate(), slot_t.duplicate(), cur_slot, ab_w]
 		act_frames = 0
-		from_pose = cur.duplicate()
-		from_pose["flp"] = foot_p[0]; from_pose["frp"] = foot_p[1]
-		from_pose["fly"] = foot_yaw[0]; from_pose["fry"] = foot_yaw[1]
-		from_pose["lheel"] = foot_pitch[0]; from_pose["rheel"] = foot_pitch[1]
-		from_pose["hop"] = 0.0
+		prev_sit = 0.0 if sit_k < 1.0 else 1.0
+		prev_lie = 0.0
 	anim = "activity"
-	step_i = -1
-	var sit := pose_sit_edge() if kind == "sleep" else pose_sit_ground()
-	var mid := pose_sit_edge_mid() if kind == "sleep" else pose_sit_ground_mid()
-	var lie := pose_lie_sleep(tt) if kind == "sleep" else pose_lie_sun(tt)
-	var stand: Dictionary = from_pose
+	var pre := "hammock_" if kind == "sleep" else "sun_"
+	var clip: String
+	var u: float
 	if lie_k <= 0.0:
-		cur = _mix3(stand, mid, sit, _sm(sit_k)) if sit_k < 1.0 else sit
+		var down := sit_k >= prev_sit
+		clip = pre + ("sit" if down else "stand")
+		u = smoothstep(0.0, 1.0, sit_k) if down else 1.0 - smoothstep(0.0, 1.0, sit_k)
+	elif lie_k < 1.0:
+		var down2 := lie_k >= prev_lie
+		clip = pre + ("lie" if down2 else "up")
+		u = smoothstep(0.0, 1.0, lie_k) if down2 else 1.0 - smoothstep(0.0, 1.0, lie_k)
 	else:
-		cur = _mix3(sit, pose_lie_mid(kind), lie, _sm(lie_k))
+		clip = pre + ("sleep" if kind == "sleep" else "rest")
+		u = fposmod(tt, 4.0) / 4.0
+	prev_sit = sit_k
+	prev_lie = lie_k
+	var L := float(clips[clip]["length"])
+	_play(clip, u * L, 0.0)
+	act_target = 1.0
+	act_w = 1.0 if sit_k > 0.02 or lie_k > 0.0 else act_w
+	act_rate = 8.0
 	hat_mode = "head"
 	if lie_k > 0.6:
 		hat_mode = "chest" if kind == "sleep" else "ground"
-	(parts["glasses"] as Node3D).visible = kind == "sun" and lie_k > 0.5
+	glasses.visible = kind == "sun" and lie_k > 0.5
 	blob.visible = sit_k < 0.3 and lie_k <= 0.0
 	if kind == "sleep":
-		_set_expr("sleep" if lie_k > 0.7 else "smile")
+		expr = "sleep" if lie_k > 0.7 else "smile"
 	else:
-		_set_expr("relax" if lie_k > 0.5 else "smile")
+		expr = "relax" if lie_k > 0.5 else "smile"
 	show_stone(false)
-	var fp: Array = [cur["flp"], cur["frp"]]
-	var fy: Array = [float(cur["fly"]), float(cur["fry"])]
-	var fpi: Array = [float(cur["lheel"]), float(cur["rheel"])]
-	var sk := _skeleton(cur, fp, fy, fpi, false)
-	_apply(sk, 1.0)
-	return (sk["pelvis"] as Transform3D).origin
+	return _track(clip, "pelvis", u)
 
 func end_activity() -> void:
 	hat_mode = "head"
-	(parts["glasses"] as Node3D).visible = false
+	glasses.visible = false
 	blob.visible = true
-	if act_frames == 0 and pre_act.size() == 2:
+	if act_frames == 0 and pre_act.size() == 7:
 		# probed and released in the same frame (main.gd measures the seated pelvis): change nothing
-		cur = pre_act[0]
-		anim = "idle"
-		_set_expr("smile")
+		anim = pre_act[0]; act_w = pre_act[1]; act_target = pre_act[2]
+		slot_clip.assign(pre_act[3]); slot_t.assign(pre_act[4]); cur_slot = pre_act[5]; ab_w = pre_act[6]
+		_set_slot(0, slot_clip[0], slot_t[0])
+		_set_slot(1, slot_clip[1], slot_t[1])
+		expr = "smile"
 		return
-	anim = "idle"
-	foot_p = [IDLE_L, IDLE_R]
-	foot_yaw = [0.08, -0.08]
-	foot_pitch = [0.0, 0.0]
-	cur = pose_idle()
-	reanchor = true
+	# the stand-up clips end on the idle pose at t = 0
+	_to_idle()
+	act_w = 0.0
+	has_prev = false
+	show_stone(true)
 
-# ------------------------------------------------------------------ animation
+func throw_stance() -> Array:
+	return []
+
+# ------------------------------------------------------------------ mixer
+
+func _throw_clip() -> String:
+	return "throw_crouch" if stance == "crouch" else "throw_stand"
+
+func _to_idle() -> void:
+	anim = "idle"
+	act_target = 0.0
+	act_rate = 6.0
+	t_idle = 0.0
+	expr = "smile"
+
+func _set_slot(i: int, clip: String, time: float) -> void:
+	if clip == "":
+		return
+	if slot_clip[i] != clip:
+		slot_clip[i] = clip
+		(bt.get_node("a" if i == 0 else "b") as AnimationNodeAnimation).animation = clip
+	slot_t[i] = time
+
+## play `clip` at `time` in the action slots; a different clip (or `jump`) crossfades over `fade` seconds
+func _play(clip: String, time: float, fade: float, jump := false) -> void:
+	if slot_clip[cur_slot] == clip and not jump:
+		slot_t[cur_slot] = time
+		return
+	if fade <= 0.0:
+		_set_slot(cur_slot, clip, time)
+		ab_w = float(cur_slot)
+		return
+	cur_slot = 1 - cur_slot
+	_set_slot(cur_slot, clip, time)
+	ab_rate = 1.0 / fade
 
 func _process(delta: float) -> void:
+	if frozen:
+		return
 	_tick(delta)
-
-func _root_yaw() -> float:
-	return global_transform.basis.get_euler().y
-
-func _to_local() -> void:
-	var inv := global_transform.affine_inverse()
-	var ry := _root_yaw()
-	for i in 2:
-		foot_p[i] = inv * fw[i]
-		foot_yaw[i] = wrapf(fwy[i] - ry, -PI, PI)
-
-func _anchor_from_local() -> void:
-	var g := global_transform
-	var ry := _root_yaw()
-	for i in 2:
-		fw[i] = g * Vector3(foot_p[i].x, 0.0, foot_p[i].z)
-		fwy[i] = ry + foot_yaw[i]
-	step_i = -1
-	leg_swing = [false, false]
 
 func _tick(delta: float) -> void:
 	t += delta
 	anim_t += delta
 	if anim == "activity":
 		act_frames += 1
-		return
-	var g := global_transform
-	var ry := _root_yaw()
-	if reanchor:
-		reanchor = false
-		_anchor_from_local()
-		prev_root = g.origin
-		prev_yaw = ry
-	# root motion (from the node itself, so every mover - explore, throw walk, rest approach - plants feet right)
-	var moved := g.origin - prev_root
-	if moved.length() > 0.6:
-		_anchor_from_local()
-		moved = Vector3.ZERO
-		vel_s = Vector3.ZERO
-	if delta > 0.0:
-		var v := Vector3(moved.x, 0, moved.z) / delta
-		var old_f := vel_s.dot(-g.basis.z)
-		vel_s = vel_s.lerp(v, 1.0 - exp(-delta * 14.0))
-		accel_f = lerpf(accel_f, (vel_s.dot(-g.basis.z) - old_f) / delta, 1.0 - exp(-delta * 6.0))
-		yaw_rate = lerpf(yaw_rate, wrapf(ry - prev_yaw, -PI, PI) / delta, 1.0 - exp(-delta * 8.0))
-	speed_s = vel_s.length()
-	prev_root = g.origin
-	prev_yaw = ry
-
-	var want: Dictionary
-	var stance_l := IDLE_L
-	var stance_r := IDLE_R
-	var yaw_l := 0.08
-	var yaw_r := -0.08
-	var e := "smile"
-	var step_d := 0.24
-	var step_h := 0.05
-	var tol := 0.06
-	var blend := 6.0
+	# ground speed from the node's own motion (every mover gets planted feet)
+	var gp := global_position
+	var moved := Vector3.ZERO
+	if has_prev:
+		moved = gp - prev_pos
+		moved.y = 0.0
+		if moved.length() > 0.6:
+			moved = Vector3.ZERO
+	prev_pos = gp
+	has_prev = true
+	var v := moved.length() / maxf(delta, 1e-4)
+	speed_s = lerpf(speed_s, v, 1.0 - exp(-delta * 14.0))
+	var walk: Dictionary = clips["walk"]
+	var run: Dictionary = clips["run"]
 	match anim:
+		"move":
+			run_k = move_toward(run_k, smoothstep(RUN_FROM, RUN_TO, speed_s), delta * 3.0)
+			var stride := lerpf(float(walk["stride"]), float(run["stride"]), run_k) * SCALE
+			var still := move_speed < 0.05 and speed_s < 0.12
+			if still:
+				# finish the step towards feet-together (passing) and settle into idle
+				stopping = true
+			var adv := moved.length() / stride
+			if stopping:
+				adv = maxf(adv, delta * 0.55)
+				move_w = move_toward(move_w, 0.0, delta * 4.0)
+				if move_w <= 0.0:
+					_to_idle()
+			else:
+				move_w = move_toward(move_w, 1.0, delta * 6.0)
+			var old := phase
+			phase = fposmod(phase + adv, 1.0)
+			if move_w > 0.5 and not stopping:
+				if old > phase:
+					footstep.emit(0, run_k > 0.5)
+				elif old < 0.5 and phase >= 0.5:
+					footstep.emit(1, run_k > 0.5)
+			if not still:
+				stopping = false
 		"charge":
-			want = pose_charge(power)
-			var st := throw_stance()
-			stance_l = st[0][0]; stance_r = st[0][1]; yaw_l = st[1][0]; yaw_r = st[1][1]
-			e = "grit" if power > 0.35 else "smile"
-			tol = 0.025
-			blend = 14.0
+			_play(_throw_clip(), power * float(clips[_throw_clip()]["t_charge"]), 0.0)
+			expr = "grit" if power > 0.35 else "smile"
+			move_w = move_toward(move_w, 0.0, delta * 6.0)
 		"throw":
-			want = _throw_pose(anim_t)
-			var st := throw_stance() if anim_t < 0.22 else settle_stance()
-			stance_l = st[0][0]; stance_r = st[0][1]; yaw_l = st[1][0]; yaw_r = st[1][1]
-			e = "grit" if anim_t < T_FOLLOW else "smile"
-			tol = 0.025
-			step_d = 0.34
-			step_h = 0.1
-			blend = 0.0
+			var c := _throw_clip()
+			var tc := float(clips[c]["t_charge"])
+			var L := float(clips[c]["length"])
+			_play(c, minf(tc + anim_t, L), 0.08)
+			expr = "grit" if anim_t < 0.3 else "smile"
 			if not did_release and anim_t >= T_RELEASE:
 				did_release = true
 				show_stone(false)
 				released.emit()
+			if tc + anim_t >= L:
+				_to_idle()
+				act_w = 0.0
 		"react":
-			stance_l = foot_p[0]; stance_r = foot_p[1]
-			yaw_l = foot_yaw[0]; yaw_r = foot_yaw[1]
-			var rp := pose_cheer(anim_t) if react_kind == "cheer" else pose_oops(anim_t)
-			var k := smoothstep(0.0, 0.25, anim_t) * (1.0 - smoothstep(2.3, 2.8, anim_t))
-			var base := _mix(from_pose, _idle_pose(), smoothstep(0.0, 0.4, anim_t))
-			want = _mix(base, rp, k)
-			if react_kind == "cheer":
-				want["hop"] = float(rp["hop"])
-				stance_l = IDLE_L; stance_r = IDLE_R; yaw_l = 0.08; yaw_r = -0.08
-			e = ("laugh" if react_kind == "cheer" else "oops") if k > 0.4 else "smile"
-			blend = 14.0
-			if anim_t > 2.8:
-				anim = "idle"
-		"move":
-			gait_w = minf(gait_w + delta * 4.0, 1.0)
-			want = _gait(delta)
-			blend = 12.0
-			if run_k > 0.6:
-				e = "laugh"
-			if move_speed < 0.05 and speed_s < 0.12:
-				anim = "idle"
-		_:
-			want = _idle_pose()
-			if not stone_visible:
+			var c2 := "cheer" if react_kind == "cheer" else "oops"
+			var L2 := float(clips[c2]["length"])
+			_play(c2, minf(anim_t, L2), 0.25)
+			expr = ("laugh" if react_kind == "cheer" else "oops") if anim_t > 0.15 and anim_t < L2 - 0.3 else "smile"
+			if anim_t >= L2:
+				_to_idle()
+				act_w = 0.0
+		"idle":
+			move_w = move_toward(move_w, 0.0, delta * 5.0)
+			if not stone.visible and act_w < 0.5:
 				show_stone(true)
-	if anim != "move":
-		gait_w = 0.0
-		run_k = 0.0
-		leg_swing = [false, false]
-		_update_feet(delta, [stance_l, stance_r], [yaw_l, yaw_r], tol, step_d, step_h)
-	if blend <= 0.0:
-		cur = want
-	else:
-		cur = _mix(cur, want, 1.0 - exp(-delta * blend))
-		if anim == "react":
-			cur["hop"] = float(want["hop"])
-	_to_local()
-	if anim != "move":
-		foot_pitch = [float(cur["lheel"]), float(cur["rheel"])]
-		if step_i >= 0:
-			foot_pitch[step_i] += sin(PI * minf(step_t, 1.0)) * 0.25
-	_set_expr(e)
-	var sk := _skeleton(cur, foot_p, foot_yaw, foot_pitch, true)
-	blink_timer -= delta
-	var blink := 1.0
-	if blink_timer < 0.12:
-		blink = 0.12
-		if blink_timer < 0.0:
-			blink_timer = rng.randf_range(2.0, 4.5)
-	_springs(delta, (sk["head"] as Transform3D).origin, (sk["spine"] as Transform3D).origin)
-	_apply(sk, blink)
-	var pel: Vector3 = (sk["pelvis"] as Transform3D).origin
-	blob.position = Vector3(pel.x * 0.6, 0.012, pel.z * 0.6)
+	if anim != "move" and anim != "idle":
+		run_k = move_toward(run_k, 0.0, delta * 3.0)
+	if anim != "activity":
+		t_idle = fposmod(t_idle + delta, 4.0)
+	act_w = move_toward(act_w, act_target, delta * act_rate)
+	ab_w = move_toward(ab_w, float(cur_slot), delta * ab_rate)
+	if anim == "move" and run_k > 0.6:
+		expr = "laugh"
+	elif anim == "move" or anim == "idle":
+		expr = "smile"
+	_apply_mixer()
+	_update_props()
+	_update_face(delta)
 
-## breathing, slow weight shifts from foot to foot (contrapposto), looking around
-func _idle_pose() -> Dictionary:
-	var want := pose_idle()
-	var br := sin(t * 2.0)
-	var shift := smoothstep(-0.55, 0.55, sin(t * 0.42 + 1.0)) * 2.0 - 1.0
-	want["sl"] = float(want["sl"]) + br * 0.016
-	want["pdy"] = -0.012 + br * 0.003 - absf(shift) * 0.008
-	want["poff"] = Vector3(shift * 0.022, 0, 0)
-	want["proll"] = shift * 0.045
-	want["sr"] = -shift * 0.04
-	want["pyaw"] = shift * 0.05
-	want["rh"] = Vector3(0.165, -0.05 + br * 0.004, -0.035 + shift * 0.01)
-	want["lh"] = Vector3(-0.165, -0.05 + br * 0.004, -0.03 - shift * 0.01)
-	look_timer -= get_process_delta_time()
-	if look_timer < 0.0:
-		look_timer = rng.randf_range(2.5, 5.5)
-		look_target = [0.0, 0.55, -0.5, 0.0, 0.25][rng.randi() % 5]
-	want["hy"] = look_target - shift * 0.05
-	want["hd"] = -0.08 if absf(look_target) > 0.1 else 0.0
-	want["hr"] = shift * 0.05
-	return want
+func _apply_mixer() -> void:
+	var walk: Dictionary = clips["walk"]
+	var run: Dictionary = clips["run"]
+	tree.set("parameters/idle_s/seek_request", t_idle)
+	tree.set("parameters/walk_s/seek_request", phase * float(walk["length"]))
+	tree.set("parameters/run_s/seek_request", phase * float(run["length"]))
+	tree.set("parameters/a_s/seek_request", slot_t[0])
+	tree.set("parameters/b_s/seek_request", slot_t[1])
+	tree.set("parameters/wr/blend_amount", run_k)
+	tree.set("parameters/move/blend_amount", move_w)
+	tree.set("parameters/ab/blend_amount", ab_w)
+	tree.set("parameters/act/blend_amount", act_w)
+	tree.advance(0.0)
 
-func _throw_pose(a: float) -> Dictionary:
-	if a < T_RELEASE:
-		# kinetic chain: hips lead, chest follows, the arm whips through last
-		var kb := _sm(clampf(a / 0.11, 0.0, 1.0))
-		var ks := _sm(clampf((a - 0.02) / 0.11, 0.0, 1.0))
-		var ka := _ease_in(clampf((a - 0.035) / (T_RELEASE - 0.035), 0.0, 1.0))
-		return _mix_chain(from_pose, pose_release(), kb, ks, ks, ka)
-	var fol := pose_follow(throw_power)
-	if a < T_FOLLOW:
-		var x := (a - T_RELEASE) / (T_FOLLOW - T_RELEASE)
-		return _mix_chain(pose_release(), fol, _ease_out(minf(x * 1.1, 1.0)), _ease_out(x), _sm(x), _ease_out(minf(x * 1.25, 1.0)))
-	if a < T_HOLD:
-		# balance after the follow-through: a little sway over the front foot
-		var h := (a - T_FOLLOW) / (T_HOLD - T_FOLLOW)
-		var f := fol.duplicate()
-		f["plean"] = float(f["plean"]) - 0.05 * _sm(h) + 0.02 * sin(h * PI * 2.0)
-		f["proll"] = float(f["proll"]) + 0.02 * sin(h * PI * 1.5)
-		f["rheel"] = lerpf(float(f["rheel"]), 0.0, _sm(h * 3.5)) if stance == "stand" else float(f["rheel"])
-		return f
-	var settle := pose_settle()
-	if a < T_SETTLE:
-		var h2 := (a - T_HOLD) / (T_SETTLE - T_HOLD)
-		var f2 := fol.duplicate()
-		f2["plean"] = float(f2["plean"]) - 0.05
-		f2["rheel"] = 0.0 if stance == "stand" else float(f2["rheel"])
-		return _mix(f2, settle, _sm(h2))
-	return settle
-
-# ------------------------------------------------------------------ gait
-
-func _start_gait() -> void:
-	anim = "move"
-	gait_w = 0.0
-	# the foot that is further behind (relative to where we head) lifts first
-	var duty := 0.6
-	var dir := vel_s.normalized() if speed_s > 0.05 else -global_transform.basis.z
-	var zl := (fw[0] - global_position).dot(dir)
-	var zr := (fw[1] - global_position).dot(dir)
-	gait_ph = duty - 0.03 if zl < zr else duty - 0.53
-	gait_ph = fposmod(gait_ph, 1.0)
-	leg_swing = [false, false]
-	step_i = -1
-
-## walk / run cycle. Stance feet stay where they landed; the swing foot flies to where the body will be.
-func _gait(dt: float) -> Dictionary:
-	var g := global_transform
-	var ry := _root_yaw()
-	var spd := speed_s
-	run_k = lerpf(run_k, smoothstep(1.45, 2.35, spd), 1.0 - exp(-dt * 6.0))
-	var rk := run_k
-	var freq := lerpf(clampf(0.95 + 0.4 * spd, 0.95, 1.42), 1.72, rk)
-	var duty := lerpf(0.61, 0.36, rk)
-	if wading:
-		freq *= 0.85
-		duty = maxf(duty, 0.6)
-	gait_ph = fposmod(gait_ph + dt * freq, 1.0)
-	var travel := spd * duty / freq
-	var half := minf(travel * 0.5, 0.36)
-	var lift := lerpf(0.055, 0.12, rk) * (0.6 if wading else 1.0)
-	var comp := 0.0
-	for i in 2:
-		var u := fposmod(gait_ph + (0.0 if i == 0 else 0.5), 1.0)
-		var sx := -0.078 if i == 0 else 0.078
-		var swing := u >= duty
-		if swing and not leg_swing[i]:
-			leg_swing[i] = true
-			lift_w[i] = fw[i]
-			lift_yaw[i] = fwy[i]
-		var remain := (1.0 - u) / freq if swing else 0.0
-		var yaw_td := ry + clampf(yaw_rate, -4.0, 4.0) * remain
-		var tb := Basis(Vector3.UP, yaw_td)
-		var tgt := g.origin + vel_s * remain + tb * Vector3(sx, 0, -half - 0.02)
-		tgt.y = g.origin.y
-		var toe := -0.05 if i == 0 else 0.05
-		if not swing and leg_swing[i]:
-			leg_swing[i] = false
-			fw[i] = Vector3(fw[i].x, g.origin.y, fw[i].z)
-			if gait_w > 0.5:
-				footstep.emit(i, rk > 0.5)
-		if swing:
-			var s := (u - duty) / (1.0 - duty)
-			var k := _sm(s)
-			var p := lift_w[i].lerp(tgt, k)
-			p.y = lerpf(lift_w[i].y, tgt.y, k) + lift * pow(sin(PI * minf(s * 1.08, 1.0)), 0.75)
-			fw[i] = p
-			fwy[i] = lerp_angle(lift_yaw[i], yaw_td + toe, k)
-			foot_pitch[i] = lerpf(lerpf(0.55, 0.75, rk), lerpf(-0.22, 0.05, rk), _sm(s))
-			plant[i] = smoothstep(0.75, 0.95, s)
-		else:
-			var s2 := u / duty
-			comp = maxf(comp, sin(PI * s2))
-			var strike := lerpf(-0.22, 0.05, rk) * (1.0 - smoothstep(0.0, 0.18, s2))
-			var off := smoothstep(lerpf(0.55, 0.4, rk), 1.0, s2) * lerpf(0.55, 0.75, rk)
-			foot_pitch[i] = strike + off
-			plant[i] = 1.0
-	_to_local()
-	# upper body follows the legs
-	var zl := foot_p[0].z
-	var zr := foot_p[1].z
-	arm_z[0] = lerpf(arm_z[0], zr, 1.0 - exp(-dt * 16.0))   # left arm swings with the right leg
-	arm_z[1] = lerpf(arm_z[1], zl, 1.0 - exp(-dt * 16.0))
-	var pyaw := clampf((zl - zr) * lerpf(0.42, 0.3, rk), -0.22, 0.22)
-	var lean := lerpf(0.05, 0.19, rk) + clampf(accel_f * 0.035, -0.08, 0.14)
-	var turn := clampf(yaw_rate * spd * 0.07, -0.22, 0.22)
-	var sway := sin(TAU * (gait_ph - duty * 0.25)) * lerpf(0.018, 0.006, rk)
-	var pdy := lerpf(0.004, -0.03, rk) - comp * lerpf(0.0, 0.045, rk) + (1.0 - comp) * lerpf(0.0, 0.02, rk)
-	var hands: Array[Vector3] = []
-	var poles: Array[Vector3] = []
-	for i in 2:
-		var side := -1.0 if i == 0 else 1.0
-		var amp := lerpf(1.95, 2.1, rk)
-		var ang := clampf(-arm_z[i] * amp, -0.6, 0.9)
-		var bend := lerpf(0.3, 1.45, rk) + maxf(ang, 0.0) * lerpf(0.55, 0.2, rk)
-		var sh := Vector3(SHOULDER.x * side, SHOULDER.y, 0.0)
-		var el := sh + Vector3(side * lerpf(0.03, 0.05, rk), -cos(ang) * UARM, -sin(ang) * UARM)
-		var fa := ang + bend
-		var hd := el + Vector3(-side * lerpf(0.0, 0.035, rk) * maxf(sin(fa), 0.0), -cos(fa) * FARM, -sin(fa) * FARM)
-		hands.append(hd)
-		poles.append(Vector3(0.35 * side, -0.2, 1.0))
-	return P({"pdy": pdy, "pyaw": pyaw, "plean": lean, "proll": turn + sway, "poff": Vector3(-sway * 0.6, 0, 0),
-		"sy": -pyaw * 1.35, "sl": lerpf(0.03, 0.1, rk), "sr": -sway * 0.8, "hy": pyaw * 0.35 + clampf(yaw_rate * 0.12, -0.35, 0.35), "hd": lerpf(0.0, -0.1, rk),
-		"wr": 0.2, "rh": hands[1], "re": poles[1], "lh": hands[0], "le": poles[0]})
-
-# ------------------------------------------------------------------ single steps
-
-func _update_feet(delta: float, want_p: Array, want_yaw: Array, tol: float, dur: float, arc: float) -> void:
-	var g := global_transform
-	var ry := _root_yaw()
-	plant = [1.0, 1.0]
-	if step_i >= 0:
-		step_t += delta / step_dur
-		var k := _sm(minf(step_t, 1.0))
-		var p := step_from.lerp(step_to, k)
-		p.y += sin(PI * minf(step_t, 1.0)) * step_arc
-		fw[step_i] = p
-		fwy[step_i] = lerp_angle(step_yaw0, step_yaw1, k)
-		plant[step_i] = smoothstep(0.7, 1.0, step_t)
-		if step_t >= 1.0:
-			fw[step_i] = step_to
-			step_i = -1
-		return
-	var best := -1
-	var worst := 0.0
-	for i: int in [1, 0]:
-		var tw: Vector3 = g * (want_p[i] as Vector3)
-		var err := Vector2(fw[i].x - tw.x, fw[i].z - tw.z).length() + absf(wrapf(fwy[i] - ry - float(want_yaw[i]), -PI, PI)) * 0.12 + absf(fw[i].y - g.origin.y)
-		if err > tol and err > worst:
-			worst = err
-			best = i
-	if best >= 0:
-		step_i = best
-		step_t = 0.0
-		step_dur = dur
-		step_arc = arc
-		step_from = fw[best]
-		step_to = g * (want_p[best] as Vector3)
-		step_to.y = g.origin.y
-		step_yaw0 = fwy[best]
-		step_yaw1 = ry + float(want_yaw[best])
-
-func _springs(delta: float, head_pos: Vector3, sp_pos: Vector3) -> void:
-	if delta <= 0.0:
-		return
-	var v := (head_pos - head_prev) / delta
-	var acc := ((v - head_vprev) / delta).limit_length(40.0)
-	head_prev = head_pos; head_vprev = v
-	hat_vel += (Vector2(acc.z, -acc.x) * 0.012 - hat_ang * 160.0 - hat_vel * 10.0) * delta
-	hat_ang = (hat_ang + hat_vel * delta).clamp(Vector2(-0.3, -0.3), Vector2(0.3, 0.3))
-	var sv := (sp_pos - sp_prev) / delta
-	var sa := ((sv - sp_vprev) / delta).limit_length(40.0)
-	sp_prev = sp_pos; sp_vprev = sv
-	# vest flaps swing back when the body accelerates forward, and bounce with the step
-	vest_vel += ((sa.z * 0.5 + absf(sa.y) * 0.2) * 0.02 - vest_ang * 120.0 - vest_vel * 8.0) * delta
-	vest_ang = clampf(vest_ang + vest_vel * delta, -0.25, 0.25)
-
-func _set_expr(e: String) -> void:
-	if e == expr:
-		return
-	expr = e
-	var mouth := "sleep" if e == "relax" else e
-	for m in ["smile", "grit", "laugh", "sleep", "oops"]:
-		(parts["mouth_" + m] as Node3D).visible = m == mouth
-	(parts["eyes"] as Node3D).visible = e != "sleep"
-	(parts["eyes_closed"] as Node3D).visible = e == "sleep"
-
-# ------------------------------------------------------------------ skeleton
-
-static func _seg_basis(dir: Vector3, front: Vector3) -> Basis:
-	var y := -dir.normalized()
-	var z := -front
-	z = (z - y * z.dot(y))
-	if z.length_squared() < 1e-6:
-		z = Vector3(0, 0, 1) - y * y.z
-		if z.length_squared() < 1e-6:
-			z = Vector3(1, 0, 0)
-	z = z.normalized()
-	var x := y.cross(z)
-	return Basis(x, y, z)
-
-static func _ik(a: Vector3, tgt: Vector3, l1: float, l2: float, pole: Vector3) -> Array:
-	var v := tgt - a
-	var d := clampf(v.length(), 0.02, (l1 + l2) * 0.999)
-	var dir := v.normalized() if v.length() > 1e-5 else Vector3.DOWN
-	var ca := clampf((l1 * l1 + d * d - l2 * l2) / (2.0 * l1 * d), -1.0, 1.0)
-	var bend := pole - dir * pole.dot(dir)
-	if bend.length_squared() < 1e-6:
-		bend = Vector3(0, 0, -1) - dir * dir.z
-	bend = bend.normalized()
-	var mid := a + dir * (l1 * ca) + bend * (l1 * sqrt(1.0 - ca * ca))
-	var end := a + dir * d
-	return [mid, end, bend]
-
-## ankle position and foot basis for a foot planted at sole point fp (under the ankle).
-## pitch > 0 rolls up onto the ball (heel lifts), pitch < 0 rocks back on the heel (toes lift).
-static func _foot(fp: Vector3, yaw: float, pitch: float) -> Array:
-	var yb := Basis(Vector3.UP, yaw)
-	var piv := fp + yb * (Vector3(0, 0, -0.075) if pitch >= 0.0 else Vector3(0, 0, 0.06))
-	var fb := yb * Basis(Vector3.RIGHT, -pitch)
-	var a0 := fp + yb * Vector3(0, ANKLE_H, 0)
-	return [piv + fb * (yb.inverse() * (a0 - piv)), fb]
-
-func _skeleton(p: Dictionary, fp: Array, fy: Array, fpi: Array, reach: bool) -> Dictionary:
-	var sk := {}
-	var hop := float(p["hop"])
-	var pb := Basis(Vector3.UP, float(p["pyaw"])) * Basis(Vector3.RIGHT, -float(p["plean"])) * Basis(Vector3.BACK, float(p["proll"]))
-	var pel_o := Vector3(0, PEL_H + float(p["pdy"]) + hop, 0) + (p["poff"] as Vector3)
-	var feet: Array = []
-	for i in 2:
-		feet.append(_foot((fp[i] as Vector3) + Vector3(0, hop, 0), float(fy[i]), float(fpi[i])))
-	if reach:
-		# never over-stretch a planted leg: lower the pelvis just enough (gives the walk its natural bob)
-		var drop := 0.0
-		for i in 2:
-			var side := -1 if i == 0 else 1
-			var hip := pel_o + pb * Vector3(HIP.x * side, HIP.y, HIP.z)
-			var an: Vector3 = feet[i][0]
-			var hz := Vector2(hip.x - an.x, hip.z - an.z).length()
-			var vmax := sqrt(maxf(LEG_MAX * LEG_MAX - hz * hz, 0.01))
-			drop = maxf(drop, ((hip.y - an.y) - vmax) * float(plant[i]))
-		pel_o.y -= clampf(drop, 0.0, 0.2)
-	var pel := Transform3D(pb, pel_o)
-	sk["pelvis"] = pel
-	var sb := Basis(Vector3.UP, float(p["sy"])) * Basis(Vector3.RIGHT, -float(p["sl"])) * Basis(Vector3.BACK, float(p["sr"]))
-	var sp := pel * Transform3D(sb, Vector3(0, 0.04, 0))
-	sk["spine"] = sp
-	var hb := Basis(Vector3.UP, float(p["hy"])) * Basis(Vector3.RIGHT, -float(p["hd"])) * Basis(Vector3.BACK, float(p["hr"]))
-	var hd := sp * Transform3D(hb, Vector3(0, 0.3, 0))
-	sk["head"] = hd
+func _update_props() -> void:
+	var want: Node3D = hat_head_parent
+	var xf := hat_head_xf
 	match hat_mode:
 		"chest":
-			sk["hat"] = sp * Transform3D(Basis(Vector3.RIGHT, -PI * 0.5 + 0.15), Vector3(0, 0.15, -0.11))
+			want = chest_att
+			# lying on the chest, crown up towards the sky (bone-space offset found by eye)
+			xf = _skel_to_bone(chest_att.bone_name, Transform3D(Basis(Vector3.RIGHT, PI * 0.5), Vector3(0, 1.0, 0.2)))
 		"ground":
-			sk["hat"] = sp * Transform3D(Basis(Vector3.RIGHT, -PI * 0.5) * Basis(Vector3.UP, 0.4), Vector3(0.47, 0.58, 0.07))
-		_:
-			var hatb := Basis(Vector3.RIGHT, 0.13 + hat_ang.x) * Basis(Vector3.BACK, hat_ang.y)
-			sk["hat"] = hd * Transform3D(hatb, Vector3(0, 0.252, 0.012))
-	# vest flaps pivot on the shoulder straps
-	for side: int in [1, -1]:
-		var piv := Vector3(0.075 * side, 0.28, -0.05)
-		var fb := Basis(Vector3.RIGHT, vest_ang) * Basis(Vector3.FORWARD, vest_ang * 0.3 * side)
-		sk["vest_" + ("r" if side == 1 else "l")] = sp * Transform3D(Basis.IDENTITY, piv) * Transform3D(fb, Vector3.ZERO) * Transform3D(Basis.IDENTITY, -piv)
-	for side: int in [1, -1]:
-		var sh := sp * Vector3(SHOULDER.x * side, SHOULDER.y, SHOULDER.z)
-		var key := "r" if side == 1 else "l"
-		var tgt: Vector3 = sp * (p[key + "h"] as Vector3)
-		var pole: Vector3 = sp.basis * (p[key + "e"] as Vector3)
-		var r := _ik(sh, tgt, UARM, FARM, pole)
-		var el: Vector3 = r[0]
-		var wr: Vector3 = r[1]
-		var front: Vector3 = -(r[2] as Vector3)
-		var ub := _seg_basis(el - sh, front)
-		var fb := _seg_basis(wr - el, front)
-		sk["uarm_" + key] = Transform3D(ub, sh)
-		sk["farm_" + key] = Transform3D(fb, el)
-		var wrist := float(p["wr"]) if side == 1 else 0.1
-		sk["hand_" + key] = Transform3D(fb * Basis(Vector3.RIGHT, wrist), wr)
-	for i in 2:
-		var side := -1 if i == 0 else 1
-		var key := "l" if i == 0 else "r"
-		var hip := pel * Vector3(HIP.x * side, HIP.y, HIP.z)
-		var ankle: Vector3 = feet[i][0]
-		var fb: Basis = feet[i][1]
-		var ffwd := Basis(Vector3.UP, float(fy[i])) * Vector3(0, 0, -1)
-		var pole := (pb * Vector3(0, -0.15, -1.0) + ffwd).normalized()
-		var r := _ik(hip, ankle, THIGH, SHIN, pole)
-		var kn: Vector3 = r[0]
-		var an: Vector3 = r[1]
-		var front: Vector3 = r[2]
-		sk["thigh_" + key] = Transform3D(_seg_basis(kn - hip, front), hip)
-		sk["shin_" + key] = Transform3D(_seg_basis(an - kn, front), kn)
-		sk["foot_" + key] = Transform3D(fb, an)
-	return sk
+			want = model
+			xf = Transform3D(Basis(Vector3.RIGHT, PI * 0.5) * Basis(Vector3.UP, 0.4), Vector3(-0.42, 1.2, -0.06))
+	if hat.get_parent() != want:
+		hat.reparent(want, false)
+	hat.transform = xf
+	var pel := (parts["pelvis"] as Node3D).global_position
+	var lp := to_local(pel)
+	blob.position = Vector3(lp.x * 0.6, 0.012, lp.z * 0.6)
 
-func _apply(sk: Dictionary, blink: float) -> void:
-	for k in sk:
-		if parts.has(k):
-			(parts[k] as Node3D).transform = sk[k]
-	var hd: Transform3D = sk["head"]
-	for k in ["mouth_smile", "mouth_grit", "mouth_laugh", "mouth_sleep", "mouth_oops", "eyes_closed", "glasses"]:
-		(parts[k] as Node3D).transform = hd
-	(parts["eyes"] as Node3D).transform = hd * Transform3D(Basis.from_scale(Vector3(1, blink, 1)), eye_c)
-	(parts["stone"] as Node3D).transform = (sk["hand_r"] as Transform3D) * Transform3D(Basis.IDENTITY, STONE_OFF)
+## a transform given in skeleton rest space, expressed in a bone's frame
+func _skel_to_bone(bone: String, xf: Transform3D) -> Transform3D:
+	var bi := skel.find_bone(bone)
+	return skel.get_bone_global_rest(bi).affine_inverse() * xf
 
-## Freeze a named key pose (screenshots / tests). Returns the pelvis in boy space.
+func _update_face(delta: float) -> void:
+	blink_timer -= delta
+	var open := 1.0
+	if blink_timer < 0.12:
+		open = 0.0
+		if blink_timer < 0.0:
+			blink_timer = rng.randf_range(2.0, 4.5)
+	var mouth := 0
+	match expr:
+		"laugh": mouth = 1; open = 0.0
+		"oops": mouth = 2
+		"grit": mouth = 3
+		"sleep": mouth = 4; open = 0.0
+		"relax": open = 0.0
+	face_mat.set_shader_parameter("eye_open", open)
+	face_mat.set_shader_parameter("mouth", mouth)
+
+# ------------------------------------------------------------------ dev helpers
+
+## Freeze a named pose (screenshots / tests). Returns the pelvis in boy space.
 func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
-	set_process(false)
-	hat_mode = "head"
-	(parts["glasses"] as Node3D).visible = false
+	frozen = true
 	stance = "crouch" if kind.ends_with("_c") else "stand"
-	var st := throw_stance()
-	foot_p = [st[0][0], st[0][1]]
-	foot_yaw = [st[1][0], st[1][1]]
-	foot_pitch = [0.0, 0.0]
+	act_w = 1.0
+	ab_w = 0.0
+	cur_slot = 0
+	hat_mode = "head"
+	glasses.visible = false
 	var e := "smile"
-	var fp_override := false
+	var pel := Vector3.ZERO
 	match kind:
 		"charge", "charge_c":
-			cur = pose_charge(p); e = "grit"
+			_set_slot(0, _throw_clip(), p * float(clips[_throw_clip()]["t_charge"])); e = "grit"
 		"release", "release_c":
-			cur = pose_release(); e = "grit"
+			_set_slot(0, _throw_clip(), float(clips[_throw_clip()]["t_release"])); e = "grit"
 		"follow", "follow_c":
-			cur = pose_follow(p); e = "grit" if kind == "follow_c" else "smile"
-			if kind == "follow":
-				var ss := settle_stance()
-				foot_p = [ss[0][0], ss[0][1]]
-				foot_yaw = [ss[1][0], ss[1][1]]
-		"cheer":
-			cur = pose_cheer(tt); e = "laugh"
-			foot_p = [IDLE_L, IDLE_R]; foot_yaw = [0.08, -0.08]
-		"oops":
-			cur = pose_oops(tt); e = "oops"
-			foot_p = [IDLE_L, IDLE_R]; foot_yaw = [0.08, -0.08]
+			_set_slot(0, _throw_clip(), 0.82 + p * 0.3)
+		"cheer", "oops":
+			_set_slot(0, kind, tt); e = "laugh" if kind == "cheer" else "oops"
 		"walk", "run":
-			return _debug_gait(1.1 if kind == "walk" else 2.7, tt)
+			act_w = 0.0; move_w = 1.0; run_k = 1.0 if kind == "run" else 0.0; phase = tt
 		"sleep", "sun":
-			cur = pose_lie_sleep(tt) if kind == "sleep" else pose_lie_sun(tt)
+			var c := "hammock_sleep" if kind == "sleep" else "sun_rest"
+			_set_slot(0, c, tt)
 			hat_mode = "chest" if kind == "sleep" else "ground"
-			(parts["glasses"] as Node3D).visible = kind == "sun"
+			glasses.visible = kind == "sun"
 			e = "sleep" if kind == "sleep" else "relax"
-			fp_override = true
 		"sit_edge", "sit_ground":
-			cur = pose_sit_edge() if kind == "sit_edge" else pose_sit_ground()
-			fp_override = true
-		"grit":
-			cur = pose_idle(); e = "grit"
-			foot_p = [IDLE_L, IDLE_R]; foot_yaw = [0.08, -0.08]
+			_set_slot(0, "hammock_sit" if kind == "sit_edge" else "sun_sit", 1.0)
 		_:
-			cur = pose_idle()
-			foot_p = [IDLE_L, IDLE_R]; foot_yaw = [0.08, -0.08]
-	if fp_override:
-		foot_p = [cur["flp"], cur["frp"]]
-		foot_yaw = [float(cur["fly"]), float(cur["fry"])]
-	if kind.begins_with("release") or kind.begins_with("charge") or kind.begins_with("follow") or fp_override:
-		foot_pitch = [float(cur["lheel"]), float(cur["rheel"])]
-	plant = [1.0, 1.0]
-	_set_expr(e)
-	show_stone(kind in ["idle", "charge", "release", "charge_c", "release_c", "grit"])
-	var sk := _skeleton(cur, foot_p, foot_yaw, foot_pitch, not fp_override)
-	_apply(sk, 1.0)
-	return (sk["pelvis"] as Transform3D).origin
-
-## run the gait for a while along -Z, then freeze at cycle phase `ph` back at the origin
-func _debug_gait(spd: float, ph: float) -> Vector3:
-	var dt := 1.0 / 60.0
-	position = Vector3.ZERO
-	foot_p = [IDLE_L, IDLE_R]
-	foot_yaw = [0.08, -0.08]
-	reanchor = true
-	anim = "idle"
-	_tick(dt)
-	vel_s = Vector3(0, 0, -spd)
-	speed_s = spd
-	move_speed = spd
-	_start_gait()
-	var n := 0
-	while n < 600 and (n < 150 or absf(fposmod(gait_ph - ph + 0.5, 1.0) - 0.5) > 0.016):
-		position.z -= spd * dt
-		_tick(dt)
-		n += 1
-	var off := position
-	position = Vector3.ZERO
-	for i in 2:
-		fw[i] -= off
-	lift_w[0] -= off
-	lift_w[1] -= off
-	prev_root = Vector3.ZERO
-	_to_local()
-	var sk := _skeleton(cur, foot_p, foot_yaw, foot_pitch, true)
-	_apply(sk, 1.0)
-	return (sk["pelvis"] as Transform3D).origin
+			act_w = 0.0; move_w = 0.0; t_idle = tt
+	expr = e
+	_apply_mixer()
+	_update_props()
+	blink_timer = 9.0
+	_update_face(0.0)
+	return pel

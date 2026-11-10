@@ -38,37 +38,38 @@ func _initialize() -> void:
 	root.add_child(cam)
 	# [name, pose, power, cam yaw (0 = in front of the boy), pitch, dist, target y]
 	shots = [
-		["face_front", "idle", 0.0, 0.0, 0.04, 0.85, 1.02],
-		["face_34", "idle", 0.0, 0.6, 0.05, 0.9, 1.02],
-		["face_side", "idle", 0.0, -PI / 2, 0.05, 0.9, 1.02],
-		["face_grit", "grit", 0.0, 0.3, 0.04, 0.85, 1.02],
+		["face_front", "idle", 0.0, 0.0, 0.04, 0.85, 1.13],
+		["face_close", "idle", 0.0, 0.25, -0.08, 0.5, 1.17],
+		["face_34", "idle", 0.0, 0.6, 0.05, 0.9, 1.13],
+		["face_side", "idle", 0.0, -PI / 2, 0.05, 0.9, 1.13],
+		["face_grit", "grit", 0.0, 0.3, 0.04, 0.85, 1.13],
 		["face_laugh", "cheer", 0.0, 0.3, 0.04, 1.0, 1.0],
-		["front", "idle", 0.0, 0.0, 0.08, 2.1, 0.62],
-		["front34", "idle", 0.0, 0.6, 0.12, 2.1, 0.62],
-		["side", "idle", 0.0, -PI / 2, 0.08, 2.1, 0.62],
-		["back34", "idle", 0.0, PI * 0.8, 0.2, 2.2, 0.62],
-		["charge_side", "charge", 1.0, -PI / 2, 0.1, 2.3, 0.55],
-		["charge_back", "charge", 1.0, PI * 0.75, 0.15, 2.3, 0.55],
-		["release_side", "release", 1.0, -PI / 2, 0.1, 2.3, 0.55],
-		["follow_side", "follow", 1.0, -PI / 2, 0.1, 2.4, 0.55],
-		["follow_back", "follow", 1.0, PI * 0.72, 0.2, 2.4, 0.55],
-		["charge_c_side", "charge_c", 1.0, -PI / 2, 0.1, 2.2, 0.45],
-		["charge_c_34", "charge_c", 1.0, 0.9, 0.15, 2.2, 0.45],
-		["release_c_side", "release_c", 1.0, -PI / 2, 0.1, 2.2, 0.45],
-		["follow_c_side", "follow_c", 1.0, -PI / 2, 0.1, 2.2, 0.45],
-		["follow_c_back", "follow_c", 1.0, PI * 0.72, 0.2, 2.3, 0.45],
-		["walk0", "walk", 0.0, -PI / 2, 0.08, 2.2, 0.6],
-		["walk25", "walk", 0.25, -PI / 2, 0.08, 2.2, 0.6],
-		["walk_34", "walk", 0.1, 0.6, 0.12, 2.2, 0.6],
-		["run0", "run", 0.0, -PI / 2, 0.08, 2.2, 0.6],
-		["run20", "run", 0.2, -PI / 2, 0.08, 2.2, 0.6],
-		["run_34", "run", 0.1, 0.6, 0.12, 2.2, 0.6],
-		["sit_edge", "sit_edge", 0.0, -PI / 2, 0.08, 2.2, 0.5],
-		["sit_ground", "sit_ground", 0.0, -PI / 2, 0.08, 2.2, 0.4],
-		["sleep", "sleep", 0.0, -PI / 2, 0.08, 2.2, 0.6],
-		["sun", "sun", 0.0, -PI / 2, 0.08, 2.2, 0.6],
-		["cheer", "cheer", 1.0, 0.3, 0.1, 2.4, 0.7],
-		["oops", "oops", 1.0, 0.3, 0.1, 2.4, 0.7],
+		["front", "idle", 0.0, 0.0, 0.08, 2.6, 0.77],
+		["front34", "idle", 0.0, 0.6, 0.12, 2.6, 0.77],
+		["side", "idle", 0.0, -PI / 2, 0.08, 2.6, 0.77],
+		["back34", "idle", 0.0, PI * 0.8, 0.2, 2.7, 0.77],
+		["charge_side", "charge", 1.0, -PI / 2, 0.1, 2.8, 0.70],
+		["charge_back", "charge", 1.0, PI * 0.75, 0.15, 2.8, 0.70],
+		["release_side", "release", 1.0, -PI / 2, 0.1, 2.8, 0.70],
+		["follow_side", "follow", 1.0, -PI / 2, 0.1, 2.9, 0.70],
+		["follow_back", "follow", 1.0, PI * 0.72, 0.2, 2.9, 0.70],
+		["charge_c_side", "charge_c", 1.0, -PI / 2, 0.1, 2.7, 0.60],
+		["charge_c_34", "charge_c", 1.0, 0.9, 0.15, 2.7, 0.60],
+		["release_c_side", "release_c", 1.0, -PI / 2, 0.1, 2.7, 0.60],
+		["follow_c_side", "follow_c", 1.0, -PI / 2, 0.1, 2.7, 0.60],
+		["follow_c_back", "follow_c", 1.0, PI * 0.72, 0.2, 2.8, 0.60],
+		["walk0", "walk", 0.0, -PI / 2, 0.08, 2.7, 0.75],
+		["walk25", "walk", 0.25, -PI / 2, 0.08, 2.7, 0.75],
+		["walk_34", "walk", 0.1, 0.6, 0.12, 2.7, 0.75],
+		["run0", "run", 0.0, -PI / 2, 0.08, 2.7, 0.75],
+		["run20", "run", 0.2, -PI / 2, 0.08, 2.7, 0.75],
+		["run_34", "run", 0.1, 0.6, 0.12, 2.7, 0.75],
+		["sit_edge", "sit_edge", 0.0, -PI / 2, 0.08, 2.7, 0.65],
+		["sit_ground", "sit_ground", 0.0, -PI / 2, 0.08, 2.7, 0.55],
+		["sleep", "sleep", 0.0, -PI / 2, 0.08, 2.7, 0.75],
+		["sun", "sun", 0.0, -PI / 2, 0.08, 2.7, 0.75],
+		["cheer", "cheer", 1.0, 0.3, 0.1, 2.9, 0.85],
+		["oops", "oops", 1.0, 0.3, 0.1, 2.9, 0.85],
 	]
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--out="):
@@ -77,7 +78,7 @@ func _initialize() -> void:
 			var keep := a.substr(7).split(",")
 			shots = shots.filter(func(x: Array) -> bool: return String(x[0]) in keep)
 
-var out_dir := "res://screenshots/v5/dev"
+var out_dir := "res://screenshots/v6/dev"
 
 func _process(_d: float) -> bool:
 	if i >= shots.size():
