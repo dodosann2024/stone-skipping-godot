@@ -41,6 +41,8 @@ float caustic(vec2 p, float t) {
 	return pow(a, 14.0) + pow(b, 14.0) * 0.8 + pow(a * b, 6.0) * 0.6;
 }
 
+global uniform float night_k;
+
 void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
@@ -71,33 +73,55 @@ void fragment() {
 		float cyc = wash_cycle(p, t);
 		float nW = vnoise(p * 2.2 + vec2(t * 0.05, 0.0));
 		// the wash: a wavy edge climbing the slope and draining back
-		float ru = runup(cyc) + (vnoise(p * vec2(1.1, 1.3) + vec2(t * 0.08, 0.0)) - 0.5) * 0.02;
-		// wet band: darker, cooler and smoother up to just above the highest wash
-		float wet = 1.0 - smoothstep(0.06, 0.11 + nW * 0.03, hab);
-		float fresh = 1.0 - smoothstep(0.0, 0.03, hab - ru);
-		c *= mix(vec3(1.0), vec3(0.70, 0.72, 0.74), max(wet, fresh));
-		rough = mix(0.95, 0.5, wet);
-		// the water film behind the front, and the front itself: one crisp, bright, wavy foam line
-		float film = 1.0 - smoothstep(ru - 0.003, ru + 0.001, hab);
-		float dfw = fwidth(hab) + 0.0004;
-		float half_w = 0.0035 + 0.003 * nW;
-		float front = 1.0 - smoothstep(half_w, half_w + dfw, abs(hab - ru + half_w));
-		front *= 0.95 - smoothstep(0.35, 0.9, cyc) * 0.35;
-		vec3 sheet = c * vec3(0.82, 0.95, 0.92) + vec3(0.04, 0.07, 0.07);
-		c = mix(c, sheet, film * smoothstep(-0.02, 0.0, hab));
-		c = mix(c, vec3(0.97, 0.98, 0.97), front * smoothstep(-0.03, 0.0, hab));
-		rough = mix(rough, 0.25, film);
-		// under water the milky water hides the bottom quickly
+		float rj = (vnoise(p * vec2(1.1, 1.3) + vec2(t * 0.08, 0.0)) - 0.5) * 0.02;
+		float ru = runup(cyc) + rj;
+		// beach slope along the radial direction turns heights into metres behind the wash front
+		vec2 rn = normalize(p);
+		float slope = max((ground_near(p - rn * 0.1, d - 0.1) - ground_near(p, d)) / 0.1, 0.03);
+		float behind = (ru - hab) / slope;
+		// wet sand: a soft damp band by the sea, plus sand the backwash uncovered a moment ago, drying out
+		float damp = 1.0 - smoothstep(0.0, 0.12 + nW * 0.05, hab);
+		float wetted = 0.0;
+		float h2 = hab - rj;
+		if (h2 < 0.07) {
+			float s = clamp(1.0 - h2 / 0.07, 0.0, 1.0);
+			float cd = 0.26 + (0.5 - sin(asin(1.0 - 2.0 * s) / 3.0)) * 0.64;   // drain phase that uncovered it
+			float since = (cyc >= 0.26 ? cyc - cd : cyc + 1.0 - cd) / 0.105;
+			wetted = since < 0.0 ? 1.0 : exp(-since / 3.5);
+		}
+		float wet = clamp(max(damp * 0.7, wetted), 0.0, 1.0);
+		c *= mix(vec3(1.0), vec3(0.62, 0.635, 0.65), wet);
+		rough = mix(0.95, 0.4, wet);
+		// thin water sheet behind the front: slightly darker, cooler, glossy, with caustic shimmer
+		float film = smoothstep(-0.01, 0.05, behind);
+		float tw = clamp(ru - hab, 0.0, 0.08);
+		vec3 sheet = c * mix(vec3(0.92, 0.97, 0.96), vec3(0.76, 0.90, 0.87), smoothstep(0.0, 0.04, tw));
+		sheet += vec3(0.85, 1.0, 0.95) * caustic(p * 2.2, t * 1.4) * 0.07 * smoothstep(0.003, 0.02, tw);
+		c = mix(c, sheet, film * smoothstep(-0.03, 0.0, hab));
+		rough = mix(rough, 0.18, film);
+		// foam: a broken, lacy leading rim riding the front, lace behind it that thins out and is left
+		// stranded as the water drains back
+		vec2 q = p * 4.2 + rn * (runup(cyc) * 9.0) + vec2(t * 0.03, 0.0);
+		float age = smoothstep(0.05, 0.75, cyc);
+		float rim = exp(-pow((behind - 0.16) / 0.13, 2.0)) * (1.0 - smoothstep(0.22, 0.5, cyc));
+		rim *= smoothstep(0.15, 0.55, vnoise(p * 2.6 + vec2(t * 0.15, -t * 0.1)) + 0.15) * (0.3 + 0.7 * lace(q * 0.8, 0.05));
+		float trail = lace(q, age) * smoothstep(0.02, 0.18, behind) * (1.0 - smoothstep(0.35, 1.3, behind));
+		trail *= 1.0 - smoothstep(0.5, 0.95, cyc);
+		float foam = clamp(max(rim, trail * 0.85), 0.0, 1.0) * smoothstep(-0.05, 0.0, hab);
+		c = mix(c, vec3(0.95, 0.97, 0.96), foam * 0.92);
+		rough = mix(rough, 0.8, foam);
+		// under water the bottom fades into the sea colour with depth
 		float depth = -hab;
 		if (depth > 0.0) {
 			float rp = sin(d * 7.5 + vnoise(p * 0.45) * 7.0 + p.x * 0.6);
 			c *= 1.0 + rp * 0.04 * smoothstep(0.05, 0.5, depth) * (1.0 - smoothstep(2.0, 4.0, depth));
-			float k = exp(-depth * 0.8) * smoothstep(0.0, 0.18, depth);
-			c += vec3(0.75, 0.95, 0.85) * caustic(p * 1.5, t) * 0.05 * k;
+			float k = exp(-depth * 0.9) * smoothstep(0.0, 0.12, depth);
+			c += vec3(0.7, 0.95, 0.85) * caustic(p * 1.5, t) * 0.075 * k;
 			vec3 tr = exp(-depth * vec3(1.5, 0.75, 0.85));
 			c = c * tr + vec3(0.30, 0.52, 0.47) * (1.0 - tr);
 		}
 	}
 	ALBEDO = c;
 	ROUGHNESS = rough;
+	SPECULAR = 0.5 * (1.0 - 0.8 * night_k);   // the sky reflection is the day sky
 }

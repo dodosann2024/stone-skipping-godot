@@ -41,3 +41,13 @@ float wash_cycle(vec2 p, float t) {
 float runup(float c) {
 	return 0.07 * smoothstep(0.0, 0.26, c) * (1.0 - smoothstep(0.26, 0.9, c));
 }
+// lacy foam: contour lines of two noise octaves make a meandering web; `thin` (0..1) eats it away into
+// sparse strands and bubbles as the foam ages
+float lace(vec2 q, float thin) {
+	float a = abs(vnoise(q) - 0.5);
+	float b = abs(vnoise(q * 2.17 + vec2(5.2, 1.3)) - 0.5);
+	float w = mix(0.11, 0.025, thin);
+	float l = (1.0 - smoothstep(w * 0.3, w, a)) * 0.8 + (1.0 - smoothstep(w * 0.25, w * 0.8, b)) * 0.55;
+	float holes = smoothstep(0.25 + thin * 0.45, 0.6 + thin * 0.3, vnoise(q * 0.43 + vec2(2.7, 8.1)));
+	return clamp(l, 0.0, 1.0) * holes;
+}
