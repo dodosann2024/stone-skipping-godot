@@ -1968,6 +1968,7 @@ func _process(delta: float) -> void:
 	_update_camera(delta)
 	var focus := player.global_position + Vector3(0, 0.7, 0)
 	island.foliage_mat.set_shader_parameter("focus", focus)
+	island.leaf_mat.set_shader_parameter("focus", focus)
 	island.static_mat.set_shader_parameter("focus", focus)
 	_update_prints()
 	_update_audio(delta)
@@ -2730,6 +2731,30 @@ func _v11_sequence(pre: String, part: String) -> void:
 
 ## v12 stills: the reflection at the screen edges, day and night, round 360 degrees and zoomed in / out
 func _v12_sequence(pre: String, part: String) -> void:
+	if part == "" or part == "bush":
+		var best: Array = island.bush_spots[0]
+		for b: Array in island.bush_spots:
+			if _hd(b[0], island.hut_pos) < _hd(best[0], island.hut_pos) and _hd(b[0], island.hut_pos) > 4.5:
+				best = b
+		var bp: Vector3 = best[0]
+		var bs: float = best[1]
+		var away := Vector3(bp.x - island.hut_pos.x, 0, bp.z - island.hut_pos.z).normalized()
+		var yaw := atan2(away.x, away.z)
+		_place(bp + away * (0.9 + 0.5 * bs), yaw)
+		_fixed_cam(bp + Vector3(0, 0.55 * bs, 0), yaw + 0.5, 0.2, 2.6 * bs)
+		await _wait(0.6)
+		_shot(pre + "80_bush_close")
+		_fixed_cam(bp + Vector3(0, 0.45 * bs, 0), yaw + 2.4, 0.08, 2.0 * bs)
+		await _wait(0.4)
+		_shot(pre + "81_bush_close_side")
+		_fixed_cam(bp + away * 1.2 + Vector3(0, 0.15, 0), yaw - 1.2, 0.05, 1.6)
+		await _wait(0.4)
+		_shot(pre + "82_grass_low")
+		_free_cam()
+		_snap_explore_cam()
+		await _wait(1.0)
+		_shot(pre + "83_bush_game_view")
+
 	if part == "" or part == "edges":
 		for night in [false, true]:
 			var tag := "night" if night else "day"

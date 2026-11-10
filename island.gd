@@ -29,6 +29,9 @@ var glow_mat: ShaderMaterial
 var cloud_mat: ShaderMaterial
 var campfire_pos := Vector3.ZERO
 var water_mi: MeshInstance3D
+var bush_spots: Array = []
+var leaves: Array = []    # [Transform3D, Color tint (a = sway), Color(outward normal, ao)] per leaf spray
+var leaf_mat: ShaderMaterial
 var terrain_mi: MeshInstance3D
 var campfire: Campfire
 var sign_board: MeshInstance3D
@@ -222,6 +225,64 @@ func _flush() -> void:
 	cloud_mat.shader = load("res://shaders/sky_tint.gdshader")
 	cloud_mat.set_shader_parameter("boost", 1.3)
 	_mi(CB.commit(), cloud_mat).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_build_leaves()
+
+## the bushes' leaf sprays: one MultiMesh of two crossed cards (a twig from each half of the texture);
+## from far off (the sea) a third of them, larger, stand in for the rest, and that sparse set also casts
+## the bushes' shadows (dappled all the same, a third of the shadow-pass work). The mirror skips them
+func _build_leaves() -> void:
+	leaf_mat = ShaderMaterial.new()
+	leaf_mat.shader = load("res://shaders/leaf.gdshader")
+	leaf_mat.set_shader_parameter("leaf_tex", load("res://textures/leaf_cluster.png"))
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for q in 2:
+		var ax := Vector3.RIGHT if q == 0 else Vector3.BACK
+		var nn := Vector3.BACK if q == 0 else Vector3.LEFT
+		var u0 := 0.5 * q
+		var c := [[-0.5, 0.0, u0, 1.0], [0.5, 0.0, u0 + 0.5, 1.0], [0.5, 1.0, u0 + 0.5, 0.0], [-0.5, 1.0, u0, 0.0]]
+		for i: int in [0, 1, 2, 0, 2, 3]:
+			var v: Array = c[i]
+			st.set_normal(nn)
+			st.set_uv(Vector2(v[2], v[3]))
+			st.add_vertex(ax * float(v[0]) + Vector3.UP * float(v[1]))
+	var card := st.commit()
+	for lod in 3:
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_colors = true
+		mm.use_custom_data = true
+		mm.mesh = card
+		var pick: Array = []
+		for i in leaves.size():
+			if lod == 0 or i % 3 == 0:
+				pick.append(i)
+		mm.instance_count = pick.size()
+		for j in pick.size():
+			var lf: Array = leaves[pick[j]]
+			var xf: Transform3D = lf[0]
+			if lod > 0:
+				xf.basis = xf.basis.scaled(Vector3.ONE * 1.45)
+			mm.set_instance_transform(j, xf)
+			mm.set_instance_color(j, lf[1])
+			mm.set_instance_custom_data(j, lf[2])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.material_override = leaf_mat
+		# visibility ranges measure to the centre of the whole island's bushes
+		mmi.layers = 1 | 16
+		if lod == 0:
+			mmi.visibility_range_end = 62.0
+			mmi.visibility_range_end_margin = 4.0
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		elif lod == 1:
+			mmi.visibility_range_begin = 62.0
+			mmi.visibility_range_begin_margin = 4.0
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		else:
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
+		add_child(mmi)
 
 func _mi(mesh: Mesh, mat: Material) -> MeshInstance3D:
 	var mi = MeshInstance3D.new()
@@ -235,6 +296,7 @@ func set_time(t: float) -> void:
 	water_mat.set_shader_parameter("game_time", t)
 	terrain_mat.set_shader_parameter("game_time", t)
 	foliage_mat.set_shader_parameter("game_time", t)
+	leaf_mat.set_shader_parameter("game_time", t)
 
 # ------------------------------------------------------------------ primitives
 
@@ -1323,16 +1385,63 @@ func swing_hammock(ang: float) -> Transform3D:
 
 func _bush(p: Vector3, s: float) -> void:
 	wall_c(Vector2(p.x, p.z), 0.34 * s, p.y - 0.3, p.y + 0.8 * s, "灌木")
+	bush_spots.append([p, s])
 	var g = [Color(0.36, 0.64, 0.28), Color(0.42, 0.7, 0.3), Color(0.3, 0.58, 0.3)][rng.randi() % 3]
+	# the old lobes still draw their random numbers (into a mesh that is thrown away) so everything placed
+	# after a bush stays where it was; they shape the leafy bush
+	var junk := MeshBuilder.new()
+	var lobes: Array = []
 	for k in rng.randi_range(3, 5):
 		var o = Vector3(rng.randf_range(-0.5, 0.5), rng.randf_range(0.2, 0.5), rng.randf_range(-0.5, 0.5)) * s
-		blob(FB, p + o + Vector3(0, s * 0.3, 0), Vector3(0.55, 0.45, 0.55) * s * rng.randf_range(0.7, 1.1), g, 0.07 * s, 7, 4, 0.04, 0.08)
+		var sc: Vector3 = Vector3(0.55, 0.45, 0.55) * s * rng.randf_range(0.7, 1.1)
+		blob(junk, p + o + Vector3(0, s * 0.3, 0), sc, g, 0.07 * s, 7, 4, 0.04, 0.08)
+		lobes.append([p + o + Vector3(0, s * 0.3, 0), sc])
+	_leafy_bush(p, s, lobes, g)
 	if rng.randf() < 0.5:
 		var fc = [Color(0.95, 0.3, 0.4), Color(0.98, 0.6, 0.75), Color(1.0, 0.85, 0.3), Color(0.98, 0.98, 0.95)][rng.randi() % 4]
 		for k in rng.randi_range(3, 6):
 			var a = rng.randf() * TAU
 			var o = Vector3(cos(a) * 0.5 * s, rng.randf_range(0.5, 0.85) * s, sin(a) * 0.5 * s)
-			_flower(FB, p + o, 0.1 * s + 0.05, fc, 0.1, Vector3(cos(a), 0.6, sin(a)).normalized())
+			_flower(FB, p + o, 0.05 * s + 0.03, fc, 0.1, Vector3(cos(a), 0.6, sin(a)).normalized())
+
+## a bush of leaf sprays: LEAF_N-ish small cards (textures/leaf_cluster.png, instanced in one MultiMesh)
+## over the lobes, pointing outwards, darker the deeper and lower they sit; a dark core and a few
+## branches fill what shows through the gaps
+func _leafy_bush(p: Vector3, s: float, lobes: Array, g: Color) -> void:
+	var lr := RandomNumberGenerator.new()
+	lr.seed = hash(Vector2i(roundi(p.x * 100.0), roundi(p.z * 100.0)))
+	var top := p.y
+	for lb: Array in lobes:
+		top = maxf(top, (lb[0] as Vector3).y + (lb[1] as Vector3).y)
+	var bark := Color(0.36, 0.27, 0.19)
+	for lb: Array in lobes:
+		var c: Vector3 = lb[0]
+		var r: Vector3 = lb[1]
+		for k in 2:
+			var tip := c + Vector3(lr.randf_range(-0.5, 0.5) * r.x, lr.randf_range(-0.1, 0.4) * r.y, lr.randf_range(-0.5, 0.5) * r.z)
+			var base := p + Vector3(lr.randf_range(-0.06, 0.06), 0.0, lr.randf_range(-0.06, 0.06)) * s
+			var mid := base.lerp(tip, 0.5) + Vector3(lr.randf_range(-0.08, 0.08), 0.0, lr.randf_range(-0.08, 0.08)) * s
+			tube(FB, base, mid, 0.028 * s, 0.02 * s, 4, bark, 0.0, 0.0)
+			tube(FB, mid, tip, 0.02 * s, 0.008 * s, 4, bark, 0.0, 0.04)
+		var n := int(12.0 * (r.x * r.z) / (0.3 * s * s) * s) + 7
+		for k in n:
+			# a point in the outer shell of the lobe, never under the ground
+			var d := Vector3(lr.randf_range(-1, 1), lr.randf_range(-0.8, 1), lr.randf_range(-1, 1)).normalized()
+			var rr := sqrt(lr.randf_range(0.12, 1.0))
+			var q := c + d * r * rr
+			if q.y < p.y + 0.04 * s:
+				q.y = p.y + 0.04 * s + lr.randf() * 0.05
+			var out := (q - Vector3(p.x, p.y + (top - p.y) * 0.35, p.z)).normalized()
+			var up := (out + Vector3(0, 0.7, 0)).normalized()
+			var sz := lr.randf_range(0.42, 0.56) * s
+			var b := Basis(Vector3.UP, lr.randf() * TAU)
+			b = Basis(Quaternion(Vector3.UP, up)) * b
+			b = b.scaled(Vector3.ONE * sz)
+			# deeper and lower: darker (inner ambient occlusion); a touch of hue and value variety per spray
+			var depth := clampf(rr, 0.0, 1.0) * clampf(0.55 + 0.6 * (q.y - p.y) / maxf(top - p.y, 0.1), 0.0, 1.0)
+			var ao := clampf(0.35 + 0.65 * depth, 0.3, 1.0)
+			var tint := Color.from_hsv(g.h + lr.randf_range(-0.035, 0.035), g.s * lr.randf_range(0.45, 0.65), minf(g.v * lr.randf_range(0.95, 1.18), 1.0))
+			leaves.append([Transform3D(b, q - up * sz * 0.35), Color(tint, clampf((q.y - p.y) / maxf(top - p.y, 0.1), 0.15, 1.0)), Color(out.x, out.y, out.z, ao)])
 
 func _flower(b: MeshBuilder, c: Vector3, r: float, col: Color, sway: float, up := Vector3.UP) -> void:
 	var u = up.cross(Vector3.RIGHT if absf(up.x) < 0.9 else Vector3.FORWARD).normalized()
@@ -1352,12 +1461,42 @@ func _fern(p: Vector3, s: float) -> void:
 
 func _grass(p: Vector3, s: float) -> void:
 	var g = Color(0.42, 0.68, 0.28)
+	var lr := RandomNumberGenerator.new()
+	lr.seed = hash(Vector2i(roundi(p.x * 100.0), roundi(p.z * 100.0))) + 1
 	for k in 7:
+		# same draws as the old seven triangles, so the island's layout does not move
 		var a = rng.randf() * TAU
 		var base = p + Vector3(cos(a), 0, sin(a)) * rng.randf() * 0.18
-		var tip = base + Vector3(cos(a) * 0.2, rng.randf_range(0.3, 0.55), sin(a) * 0.2) * s
-		var side = Vector3(-sin(a), 0, cos(a)) * 0.035 * s
-		FB.tri3(base - side, base + side, tip, Color(g.darkened(0.2), 0.0), Color(g.darkened(0.2), 0.0), Color(g.lightened(0.1), 0.25), Vector3.UP)
+		var h = rng.randf_range(0.3, 0.55) * s
+		for j in 2:
+			var aa: float = a + lr.randf_range(-0.6, 0.6)
+			var bb: Vector3 = base + Vector3(lr.randf_range(-0.05, 0.05), 0, lr.randf_range(-0.05, 0.05))
+			_blade(bb, Vector3(cos(aa), 0, sin(aa)), h * lr.randf_range(0.7, 1.1), 0.014 * s * lr.randf_range(0.8, 1.2), lr.randf_range(0.25, 0.55), g, lr)
+
+## one slender blade: a tapered strip of 3 segments arching away from `dir`, dark at the root, paler and
+## a little dry at the tip; normals lean up so the tuft shades softly
+func _blade(base: Vector3, dir: Vector3, h: float, w: float, lean: float, g: Color, lr: RandomNumberGenerator) -> void:
+	var side := Vector3(-dir.z, 0, dir.x)
+	var tipc := g.lerp(Color(0.78, 0.76, 0.5), lr.randf_range(0.1, 0.4)).lightened(0.1)
+	var rootc := g.darkened(0.22)
+	var hue := lr.randf_range(-0.04, 0.04)
+	var prev_l := base - side * w
+	var prev_r := base + side * w
+	for i in range(1, 4):
+		var t := i / 3.0
+		var c := base + dir * (lean * h * t * t) + Vector3(0, h * (t - 0.18 * t * t * lean), 0)
+		var ww := w * (1.0 - t) + 0.001
+		var l := c - side * ww
+		var r := c + side * ww
+		var c0 := rootc.lerp(tipc, (i - 1) / 3.0)
+		var c1 := rootc.lerp(tipc, t)
+		c0 = Color.from_hsv(c0.h + hue, c0.s, c0.v, (i - 1) / 3.0 * 0.3)
+		c1 = Color.from_hsv(c1.h + hue, c1.s, c1.v, t * 0.3)
+		var n := (Vector3.UP * 1.2 + dir * 0.3).normalized()
+		FB.tri_sm(prev_l, prev_r, r, n, n, n, c0, c0, c1)
+		FB.tri_sm(prev_l, r, l, n, n, n, c0, c1, c1)
+		prev_l = l
+		prev_r = r
 
 func _build_vegetation() -> void:
 	var placed = 0
