@@ -1349,7 +1349,7 @@ func _stamp_footprint(side: int) -> void:
 		return
 	var c := Vector2(heel.x, heel.z) + f * 0.6
 	# only on dry or wet sand: not on the dock, the grass, in the sea or under the running wash
-	if _surface_kind(c.x, c.y) != "sand" or Island.wash_covers(c.x, c.y, gt):
+	if _surface_kind(c.x, c.y) != "sand" or Island.wash_covers(c.x, c.y, gt, 0.012):
 		return
 	print_buf[print_i] = Vector4(c.x, c.y, atan2(f.y, f.x), gt)
 	print_wash[print_i] = -1.0
@@ -1361,7 +1361,7 @@ func _update_prints() -> void:
 	var dirty := false
 	for i in PRINTS:
 		var fp := print_buf[i]
-		if print_wash[i] < 0.0 and gt - fp.w < PRINT_LIFE and Island.wash_covers(fp.x, fp.y, gt):
+		if print_wash[i] < 0.0 and gt - fp.w < PRINT_LIFE and Island.wash_covers(fp.x, fp.y, gt, 0.004):
 			print_wash[i] = gt
 			dirty = true
 	if dirty:

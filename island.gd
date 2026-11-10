@@ -95,15 +95,16 @@ static func wash_cycle(x: float, z: float, t: float) -> float:
 static func runup(c: float) -> float:
 	return 0.07 * smoothstep(0.0, 0.26, c) * (1.0 - smoothstep(0.26, 0.9, c))
 
-## true while the swash film (sea or the wash running up the beach) covers the sand at (x, z)
-static func wash_covers(x: float, z: float, t: float) -> bool:
+## true while the swash film (sea or the wash running up the beach) covers the sand at (x, z),
+## or is within `margin` metres (height) of covering it
+static func wash_covers(x: float, z: float, t: float, margin := 0.0) -> bool:
 	var d := shore_d(x, z)
 	if d < -4.0:
 		return false
 	var gy := lerpf(ground_near(x, z, d), ground_h(x, z), smoothstep(0.5, 2.5, absf(d + 0.3)))
 	var hab := gy - sea_y(x, z, t)
 	var ru := runup(wash_cycle(x, z, t)) + (vnoise(x * 1.1 + t * 0.08, z * 1.3) - 0.5) * 0.02
-	return hab < ru + 0.002
+	return hab < ru + 0.002 + margin
 
 func shore_pt(th: float, inset: float) -> Vector3:
 	var p = dir_at(th) * (island_R(th) - inset)
