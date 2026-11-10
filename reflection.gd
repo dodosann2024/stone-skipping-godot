@@ -13,6 +13,9 @@ const MAIN_LIGHT_LAYER := 4
 const REFL_LIGHT_LAYER := 8
 const PLANE_Y := 0.0
 const MAX_SIDE := 480.0     # wave distortion hides the detail anyway
+## overscan: the mirror camera sees GUARD more of the screen's width / height on each side, so the
+## wave-shifted lookups near the edges still land on real image (water.gdshader remaps by 1 + 2 GUARD)
+const GUARD := 0.1
 
 var vp: SubViewport
 var cam: Camera3D
@@ -56,8 +59,8 @@ func set_enabled(on: bool) -> void:
 func update() -> void:
 	if not enabled:
 		return
-	var px := Vector2(get_window().size) * scale
-	px *= minf(1.0, MAX_SIDE / maxf(px.x, px.y))
+	var px := Vector2(get_window().size) * scale * (1.0 + 2.0 * GUARD)
+	px *= minf(1.0, MAX_SIDE * (1.0 + 2.0 * GUARD) / maxf(px.x, px.y))
 	var want := Vector2i(px.round()).max(Vector2i(48, 48))
 	if vp.size != want:
 		vp.size = want
@@ -72,7 +75,7 @@ func update() -> void:
 	o.y = 2.0 * PLANE_Y - o.y
 	var m := func(v: Vector3) -> Vector3: return Vector3(v.x, -v.y, v.z)
 	cam.global_transform = Transform3D(Basis(m.call(t.basis.x), -m.call(t.basis.y), m.call(t.basis.z)), o)
-	cam.fov = src.fov
+	cam.fov = rad_to_deg(2.0 * atan(tan(deg_to_rad(src.fov) * 0.5) * (1.0 + 2.0 * GUARD)))
 	cam.keep_aspect = src.keep_aspect
 	cam.near = src.near
 	cam.far = minf(src.far, 400.0)

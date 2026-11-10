@@ -149,7 +149,7 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v11"
+var shot_dir := "v12"
 var night_k := 0.0
 var night_on := false
 var saved_night := false
@@ -2169,6 +2169,7 @@ func _build_reflection() -> void:
 	add_child(refl)
 	refl.setup(camera, sun)
 	island.water_mat.set_shader_parameter("refl_tex", refl.texture())
+	island.water_mat.set_shader_parameter("refl_guard", WaterReflection.GUARD)
 	var want := _opt("refl", "auto")
 	refl_auto = want == "auto"
 	_set_refl_level({"0": 2, "low": 1}.get(want, 0))
@@ -2710,6 +2711,31 @@ func _v11_sequence(pre: String, part: String) -> void:
 			_shot(pre + "54_log_%d_outside" % i)
 		_free_cam()
 
+## v12 stills: the reflection at the screen edges, day and night, round 360 degrees and zoomed in / out
+func _v12_sequence(pre: String, part: String) -> void:
+	if part == "" or part == "edges":
+		for night in [false, true]:
+			var tag := "night" if night else "day"
+			if night:
+				_toggle_night()
+				await _wait(2.9)
+			var c := Vector3(0, 1.0, island.dock_end_z + 1.0)
+			for k in 8:
+				_fixed_cam(c, k * TAU / 8.0, 0.1, 9.0)
+				await _wait(0.35)
+				_shot(pre + "70_%s_yaw%d" % [tag, k * 45])
+			for z: Array in [[3.5, 0.06, "near"], [30.0, 0.16, "far"]]:
+				_fixed_cam(c, 0.6, z[1], z[0])
+				await _wait(0.35)
+				_shot(pre + "71_%s_zoom_%s" % [tag, z[2]])
+			_fixed_cam(Vector3(0, 1.5, island.dock_start_z - 4.0), PI + 0.15, 0.07, 30.0)
+			await _wait(0.35)
+			_shot(pre + "72_%s_low_from_sea" % tag)
+			if night:
+				_toggle_night()
+				await _wait(2.9)
+		_free_cam()
+
 ## gameplay follow camera along the beach (style checks): walk, run, then stand
 func _explore_sequence(pre: String) -> void:
 	var a := island.shore_pt(-1.3, 2.2)
@@ -2750,6 +2776,8 @@ func _run_demo4() -> void:
 				await _v8_sequence(pre)
 			elif what.begins_with("v9"):
 				await _v9_sequence(pre, what.substr(2).trim_prefix("_"))
+			elif what.begins_with("v12"):
+				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
 				await _v11_sequence(pre, what.substr(3).trim_prefix("_"))
 			else:
