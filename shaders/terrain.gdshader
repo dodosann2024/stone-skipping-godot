@@ -107,7 +107,8 @@ void fragment() {
 		rim *= smoothstep(0.15, 0.55, vnoise(p * 2.6 + vec2(t * 0.15, -t * 0.1)) + 0.15) * (0.3 + 0.7 * lace(q * 0.8, 0.05));
 		float trail = lace(q, age) * smoothstep(0.02, 0.18, behind) * (1.0 - smoothstep(0.35, 1.3, behind));
 		trail *= 1.0 - smoothstep(0.5, 0.95, cyc);
-		float foam = clamp(max(rim, trail * 0.85), 0.0, 1.0) * smoothstep(-0.05, 0.0, hab);
+		// the cycle phase wraps (fract) along a moving seam; fading in from 0 keeps the foam continuous there
+		float foam = clamp(max(rim, trail * 0.85), 0.0, 1.0) * smoothstep(-0.05, 0.0, hab) * smoothstep(0.0, 0.05, cyc);
 		c = mix(c, vec3(0.95, 0.97, 0.96), foam * 0.92);
 		rough = mix(rough, 0.8, foam);
 		// under water the bottom fades into the sea colour with depth
@@ -123,5 +124,5 @@ void fragment() {
 	}
 	ALBEDO = c;
 	ROUGHNESS = rough;
-	SPECULAR = 0.5 * (1.0 - 0.8 * night_k);   // the sky reflection is the day sky
+	SPECULAR = 0.5 * (1.0 - night_k);
 }
