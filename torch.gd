@@ -2,7 +2,8 @@ class_name Torch
 extends Node3D
 ## A tiki torch's live parts, sitting on the oil-soaked cloth wick: three flame tongues (the campfire's
 ## flame shader, smaller and quicker), a few rising embers, a thin smoke wisp, a heat glow and a warm
-## flickering light that is subtle by day and carries the camp at night.
+## flickering light that is subtle by day and carries the camp at night. At night the flame also lights its own
+## pole, cup and lashing all the way round (island.gd's torch_wood material, `wood_mat`).
 
 var light: OmniLight3D
 var glow: ShaderMaterial
@@ -10,6 +11,10 @@ var flames: Array[MeshInstance3D] = []
 var t := 0.0
 var phase := 0.0
 var night := 0.0
+var wood_mat: ShaderMaterial
+var slot := 0
+static var flame_data: Array[Vector4] = [Vector4.ZERO, Vector4.ZERO]
+const SELF_LIT := 2.2
 
 func build(seed_: float) -> void:
 	phase = seed_ * 5.3
@@ -138,6 +143,10 @@ func _process(delta: float) -> void:
 	light.omni_range = lerpf(2.4, 5.2, night)
 	light.position = Vector3(0.015 * sin(s * 6.3), 0.12 + 0.02 * f, 0.015 * cos(s * 5.1))
 	glow.set_shader_parameter("k", k * lerpf(0.18, 0.75, night))
+	if wood_mat and slot < flame_data.size():
+		var fp := global_position + Vector3(0, 0.06, 0)
+		flame_data[slot] = Vector4(fp.x, fp.y, fp.z, k * night * SELF_LIT)
+		wood_mat.set_shader_parameter("flames", flame_data)
 	for i in flames.size():
 		var fl := flames[i]
 		fl.position.x = (0.015 if i == 1 else -0.01 * i) + 0.006 * sin(s * (4.0 + i))
