@@ -58,6 +58,53 @@ static func ground_h(x: float, z: float) -> float:
 static func dir_at(th: float) -> Vector3:
 	return Vector3(cos(th), 0.0, sin(th))
 
+# ---- beach wash, mirrored from shaders/common.gdshaderinc + terrain.gdshader (keep in sync)
+
+static func _fract(x: float) -> float:
+	return x - floorf(x)
+
+static func hash12(x: float, y: float) -> float:
+	var a := _fract(x * 0.1031)
+	var b := _fract(y * 0.1031)
+	var c := a
+	var d := a * (b + 33.33) + b * (c + 33.33) + c * (a + 33.33)
+	a += d; b += d; c += d
+	return _fract((a + b) * c)
+
+static func vnoise(x: float, y: float) -> float:
+	var ix := floorf(x)
+	var iy := floorf(y)
+	var fx := x - ix
+	var fy := y - iy
+	var ux := fx * fx * (3.0 - 2.0 * fx)
+	var uy := fy * fy * (3.0 - 2.0 * fy)
+	return lerpf(lerpf(hash12(ix, iy), hash12(ix + 1.0, iy), ux), lerpf(hash12(ix, iy + 1.0), hash12(ix + 1.0, iy + 1.0), ux), uy)
+
+static func sea_y(x: float, z: float, t: float) -> float:
+	return 0.03 * sin((0.82 * x + 0.57 * z) * 0.5 + t * 0.9) + 0.02 * sin((-0.45 * x + 0.89 * z) * 0.8 + t * 1.2)
+
+static func ground_near(x: float, z: float, d: float) -> float:
+	var n := 0.07 * sin(x * 0.9 + z * 0.4) + 0.05 * cos(z * 1.3 - x * 0.5) + 0.04 * sin(x * 2.1 - z * 1.7)
+	if d > 0.0:
+		return -(clampf(d * 0.17, 0.0, 1.7) + smoothstep(13.0, 26.0, d) * 4.0) + n * 0.6
+	return 0.9 * smoothstep(0.0, 6.0, -d) + n * (0.6 + 0.4 * smoothstep(0.0, 3.0, -d))
+
+static func wash_cycle(x: float, z: float, t: float) -> float:
+	return _fract(t * 0.105 + vnoise(x * 0.18, z * 0.18) * 0.6 + atan2(z, x) * (6.0 / TAU))
+
+static func runup(c: float) -> float:
+	return 0.07 * smoothstep(0.0, 0.26, c) * (1.0 - smoothstep(0.26, 0.9, c))
+
+## true while the swash film (sea or the wash running up the beach) covers the sand at (x, z)
+static func wash_covers(x: float, z: float, t: float) -> bool:
+	var d := shore_d(x, z)
+	if d < -4.0:
+		return false
+	var gy := lerpf(ground_near(x, z, d), ground_h(x, z), smoothstep(0.5, 2.5, absf(d + 0.3)))
+	var hab := gy - sea_y(x, z, t)
+	var ru := runup(wash_cycle(x, z, t)) + (vnoise(x * 1.1 + t * 0.08, z * 1.3) - 0.5) * 0.02
+	return hab < ru + 0.002
+
 func shore_pt(th: float, inset: float) -> Vector3:
 	var p = dir_at(th) * (island_R(th) - inset)
 	return Vector3(p.x, ground_h(p.x, p.z), p.z)
