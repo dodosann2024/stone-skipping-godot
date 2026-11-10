@@ -23,6 +23,8 @@ var umbrella_pos := Vector3.ZERO
 var hut_pos := Vector3.ZERO
 var lighthouse_pos := Vector3.ZERO
 var campfire_pos := Vector3.ZERO
+var campfire: Campfire
+var sign_board: MeshInstance3D
 ## places to sit: {name, top (seat surface under the pelvis), face (where the sitter looks), approach, hint}
 var seats: Array[Dictionary] = []
 const SEAT_TOP := 0.35   # seat height the boy's sitting clips are authored for
@@ -536,20 +538,18 @@ func _build_dock() -> void:
 	# rowboat tied alongside
 	_boat(Vector3(2.3, 0.05, (dock_start_z + dock_end_z) * 0.5 - 1.0), 0.06, Color(0.3, 0.6, 0.8))
 	tube(SB, Vector3(1.2, DECK_Y + 0.5, (dock_start_z + dock_end_z) * 0.5 + 0.2), Vector3(2.1, 0.45, (dock_start_z + dock_end_z) * 0.5 + 0.4), 0.02, 0.02, 4, Color(0.85, 0.75, 0.55))
-	# sign at the dock entrance
+	# sign at the dock entrance: an old broken board with a kid's doodle of stone skipping, no words
 	var sp = Vector3(-1.6, ground_h(-1.6, dock_start_z + 1.6), dock_start_z + 1.6)
-	tube(SB, sp, sp + Vector3(0, 1.7, 0), 0.06, 0.06, 6, post_c)
-	box(SB, Vector3(1.5, 0.55, 0.06), sp + Vector3(0, 1.55, 0), Vector3(0, 0.15, 0), _wood(0.05))
-	var lbl = Label3D.new()
-	lbl.text = "打水漂码头"
-	lbl.font = ui_font
-	lbl.font_size = 64
-	lbl.pixel_size = 0.0045
-	lbl.modulate = Color(0.32, 0.18, 0.08)
-	lbl.outline_size = 0
-	add_child(lbl)
-	lbl.position = sp + Vector3(0, 1.55, -0.05)
-	lbl.rotation = Vector3(0, 0.15 + PI, 0)
+	var rs := rng.state
+	tube(SB, sp, sp + Vector3(0, 1.62, 0), 0.06, 0.055, 6, post_c.darkened(0.15))
+	tube(SB, sp + Vector3(0, 1.62, 0), sp + Vector3(0.03, 1.74, 0.01), 0.05, 0.02, 5, Color(0.5, 0.45, 0.38))   # split top
+	_sign_board(sp + Vector3(0, 1.5, 0.1), 0.15)
+	# the piece that broke off, lying at the foot of the post
+	var chunk := Transform3D(Basis(Vector3.UP, 0.9) * Basis(Vector3.FORWARD, 0.12), sp + Vector3(0.45, 0.03, 0.35))
+	boxb(SB, Vector3(0.38, 0.04, 0.2), chunk, Color(0.5, 0.47, 0.42))
+	boxb(SB, Vector3(0.2, 0.035, 0.12), chunk * Transform3D(Basis(Vector3.UP, 0.5), Vector3(0.24, -0.004, 0.08)), Color(0.46, 0.43, 0.38))
+	rng.state = rs
+	box(MeshBuilder.new(), Vector3(1.5, 0.55, 0.06), sp + Vector3(0, 1.55, 0), Vector3(0, 0.15, 0), _wood(0.05))   # v7's board drew from rng
 	add_obstacle(Vector2(sp.x, sp.z), 0.4, sp.y + 1.8, "路牌", -99.0, false)
 	wall_c(Vector2(sp.x, sp.z), 0.08, sp.y - 0.3, sp.y + 1.8, "路牌")
 
@@ -557,6 +557,68 @@ func _add_seat(name: String, top: Vector3, face: Vector3, front: float, hint: St
 	var ap := top + face * front
 	ap.y = ground_h(ap.x, ap.z)
 	seats.append({"name": name, "top": top, "face": face, "approach": ap, "hint": hint})
+
+## the weathered sign board: a slab with a chipped corner and a ragged broken end, doodle texture on both faces
+func _sign_board(c: Vector3, yaw: float) -> void:
+	var outline := PackedVector2Array([
+		Vector2(-0.75, -0.25), Vector2(-0.72, -0.28), Vector2(0.44, -0.28), Vector2(0.5, -0.2), Vector2(0.57, -0.22),
+		Vector2(0.61, -0.13), Vector2(0.66, -0.1), Vector2(0.64, -0.03), Vector2(0.71, 0.02), Vector2(0.69, 0.08),
+		Vector2(0.75, 0.13), Vector2(0.73, 0.2), Vector2(0.75, 0.28), Vector2(-0.69, 0.28), Vector2(-0.75, 0.22)])
+	var half := 0.028
+	var tris := Geometry2D.triangulate_polygon(outline)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for face in 2:
+		var z := half if face == 0 else -half
+		var nrm := Vector3(0, 0, 1 if face == 0 else -1)
+		for i in range(0, tris.size(), 3):
+			var vs: Array[Vector3] = []
+			var uvs: Array[Vector2] = []
+			for o in 3:
+				var v: Vector2 = outline[tris[i + o]]
+				var u := (v.x + 0.75) / 1.5
+				if face == 1:
+					u = 1.0 - u
+				vs.append(Vector3(v.x, v.y, z))
+				uvs.append(Vector2(u, (0.28 - v.y) / 0.56 * 0.5 + 0.5 * face))
+			_tri_facing(st, vs, uvs, nrm)
+	# broken / sawn edges: thin strips of the back face's grain
+	for i in outline.size():
+		var a2: Vector2 = outline[i]
+		var b2: Vector2 = outline[(i + 1) % outline.size()]
+		var n2 := (b2 - a2).orthogonal().normalized()
+		if Geometry2D.is_point_in_polygon((a2 + b2) * 0.5 + n2 * 0.01, outline):
+			n2 = -n2
+		var nrm2 := Vector3(n2.x, n2.y, 0)
+		var ua := (a2.x + 0.75) / 1.5
+		var ub := (b2.x + 0.75) / 1.5
+		var pa := Vector3(a2.x, a2.y, half)
+		var pb := Vector3(b2.x, b2.y, half)
+		var qa := Vector3(a2.x, a2.y, -half)
+		var qb := Vector3(b2.x, b2.y, -half)
+		_tri_facing(st, [pa, pb, qb], [Vector2(ua, 0.6), Vector2(ub, 0.6), Vector2(ub, 0.62)], nrm2)
+		_tri_facing(st, [pa, qb, qa], [Vector2(ua, 0.6), Vector2(ub, 0.62), Vector2(ua, 0.62)], nrm2)
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = load("res://textures/sign_board.png")
+	m.roughness = 0.95
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	mi.material_override = m
+	add_child(mi)
+	# hangs a little askew off its one good nail
+	mi.transform = Transform3D(Basis(Vector3.UP, yaw) * Basis(Vector3.BACK, -0.07), c)
+	sign_board = mi
+
+## Godot culls counter-clockwise triangles, so order each one to face along nrm
+func _tri_facing(st: SurfaceTool, vs: Array, uvs: Array, nrm: Vector3) -> void:
+	var order := [0, 1, 2]
+	if ((vs[1] - vs[0]) as Vector3).cross(vs[2] - vs[0]).dot(nrm) > 0.0:
+		order = [0, 2, 1]
+	for o: int in order:
+		st.set_normal(nrm)
+		st.set_uv(uvs[o])
+		st.add_vertex(vs[o])
 
 func _crate(c: Vector3, s: float, yaw: float) -> void:
 	var xf = Transform3D(Basis(Vector3.UP, yaw), c)
@@ -782,11 +844,23 @@ func _build_campfire() -> void:
 	for i in 9:
 		var a = TAU * i / 9.0
 		blob(SB, c + Vector3(cos(a) * 0.65, 0.08, sin(a) * 0.65), Vector3(0.17, 0.12, 0.15), Color(0.5, 0.48, 0.45))
-	for i in 3:
-		var a = i * 2.1
-		tube(SB, c + Vector3(cos(a) * 0.45, 0.05, sin(a) * 0.45), c + Vector3(-cos(a) * 0.2, 0.35, -sin(a) * 0.2), 0.07, 0.06, 5, Color(0.35, 0.22, 0.12))
-	cyl(GB, 0.0, 0.28, 0.7, 5, c + Vector3(0, 0.42, 0), Vector3.ZERO, Color(1.0, 0.55, 0.15))
-	cyl(GB, 0.0, 0.16, 0.5, 5, c + Vector3(0.05, 0.38, 0.05), Vector3(0, 0.6, 0), Color(1.0, 0.85, 0.3))
+	# charred logs in a little teepee: black where they burn, grey ash further out, glowing tips in the coals
+	var char_c := Color(0.09, 0.075, 0.065)
+	var rs := rng.state   # keep the rest of the island's random layout as it was
+	for i in 5:
+		var a = i * TAU / 5.0 + 0.3
+		var foot = c + Vector3(cos(a) * 0.5, 0.06, sin(a) * 0.5)
+		var tip = c + Vector3(-cos(a) * 0.08, 0.36 + 0.04 * (i % 2), -sin(a) * 0.08)
+		tube(SB, foot, tip, 0.065, 0.05, 6, Color(0.36, 0.33, 0.3), 1.0, 1.0, char_c)
+		blob(GB, foot.lerp(tip, 0.82), Vector3(0.045, 0.04, 0.045), Color(1.0, 0.42, 0.1), 0.1, 5, 3, 0.0)
+	for i in 2:
+		var a2 = 1.1 + i * 2.6
+		tube(SB, c + Vector3(cos(a2) * 0.42, 0.07, sin(a2) * 0.42), c + Vector3(-cos(a2) * 0.25, 0.08, -sin(a2) * 0.25), 0.06, 0.06, 6, char_c, 1.0, 1.0, Color(0.3, 0.28, 0.26))
+	rng.state = rs
+	campfire = Campfire.new()
+	add_child(campfire)
+	campfire.position = c
+	campfire.build()
 	for i in 3:
 		var a = 0.6 + i * 2.1
 		var lp = c + Vector3(cos(a) * 1.7, 0, sin(a) * 1.7)

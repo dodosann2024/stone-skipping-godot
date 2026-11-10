@@ -194,6 +194,44 @@ def step_water(seed):
     gl = chirp(t, f0, f0 * 1.6, 0.05, 0.02) * env_exp(t, 0.05, 0.02, 0.003) * 0.35
     return fades(norm(slosh + spray + gl, -6.0), 0.002, 0.1)
 
+# ---------------------------------------------------------------- campfire
+def fire_loop(L=8.0, X=1.0):
+    """low roar + hiss + random crackles and the odd snap; the tail is cross-faded over the head so it loops"""
+    n = int((L + X) * SR); t = np.arange(n) / SR
+    out = np.zeros((n, 2))
+    for ch in range(2):
+        flick = 0.75 + 0.25 * lp(white(n), 3.0, 1) / 0.02
+        flick = np.clip(flick, 0.4, 1.2)
+        roar = lp(brown(n), 380, 2) * 0.5 * flick
+        hiss = bp(pink(n), 2500, 7000, 2) * 0.05 * flick
+        out[:, ch] += roar + hiss
+    # crackles: short bright noise ticks, Poisson-timed, in little clusters
+    nc = int(L * 9)
+    for _ in range(nc):
+        t0 = rng.uniform(0, L + X - 0.05)
+        cl = 1 if rng.random() < 0.7 else rng.integers(2, 5)
+        a = rng.uniform(0.15, 0.6) * (1.6 if rng.random() < 0.08 else 1.0)
+        pan = rng.uniform(-0.6, 0.6)
+        for k in range(cl):
+            tk = t0 + k * rng.uniform(0.008, 0.04)
+            i0 = int(tk * SR); m = int(0.03 * SR)
+            if i0 + m >= n:
+                continue
+            tt = np.arange(m) / SR
+            tau = rng.uniform(0.0012, 0.006)
+            burst = hp(white(m), rng.uniform(1200, 3500), 2) * np.exp(-tt / tau)
+            if rng.random() < 0.3:   # a woody snap rings a little
+                f = rng.uniform(1400, 3200)
+                burst += np.sin(2 * np.pi * f * tt) * np.exp(-tt / 0.004) * 0.6
+            amp = a * rng.uniform(0.5, 1.0)
+            out[i0:i0 + m, 0] += burst * amp * (1 - pan) * 0.5
+            out[i0:i0 + m, 1] += burst * amp * (1 + pan) * 0.5
+    nl, nx = int(L * SR), int(X * SR)
+    w = np.linspace(0, 1, nx)[:, None]
+    loop = out[:nl].copy()
+    loop[:nx] = loop[:nx] * w + out[nl:nl + nx] * (1 - w)
+    return norm(loop, -4.0)
+
 def write_steps():
     for i in range(2):
         write(f"step_sand_{i}", step_sand(300 + i))
@@ -203,6 +241,8 @@ def write_steps():
 
 if __name__ == "__main__":
     import sys
+    if "--fire" in sys.argv:
+        os.makedirs(PREV, exist_ok=True); write("fire_loop", fire_loop(), q=3); print("fire done"); sys.exit(0)
     if "--steps" in sys.argv:
         os.makedirs(PREV, exist_ok=True); write_steps(); print("steps done"); sys.exit(0)
     os.makedirs(OUT, exist_ok=True); os.makedirs(PREV, exist_ok=True)
@@ -217,4 +257,5 @@ if __name__ == "__main__":
     write("combo", chime())
     write("record", chime((1046.5, 1318.5, 1568.0, 2093.0), 0.09))
     write_steps()
+    write("fire_loop", fire_loop(), q=3)
     print("done")

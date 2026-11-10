@@ -128,6 +128,7 @@ var right_box: VBoxContainer
 # audio
 var sfx := {}
 var amb: AudioStreamPlayer
+var fire_amb: AudioStreamPlayer
 var sfx_players: Array[AudioStreamPlayer] = []
 var sfx_i := 0
 var last_skip := -1
@@ -142,7 +143,7 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v7"
+var shot_dir := "v8"
 var demo_release_pending := 0
 var demo_input := Vector2.ZERO
 var demo_run := false
@@ -1575,6 +1576,12 @@ func _build_audio() -> void:
 	amb.stream = ocean
 	amb.volume_db = -6.0
 	add_child(amb)
+	var crackle: AudioStreamOggVorbis = load("res://audio/fire_loop.ogg")
+	crackle.loop = true
+	fire_amb = AudioStreamPlayer.new()
+	fire_amb.stream = crackle
+	fire_amb.volume_db = -60.0
+	add_child(fire_amb)
 	for i in 10:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
@@ -1598,6 +1605,8 @@ func _start_audio() -> void:
 		JavaScriptBridge.eval("window.__unlockAudio && window.__unlockAudio()", true)
 	amb.play()
 	amb.stream_paused = muted
+	fire_amb.play()
+	fire_amb.stream_paused = muted
 	chime_pending = true
 	chime_wait = 0.0
 	if is_web:
@@ -1627,8 +1636,11 @@ func _toggle_sound() -> void:
 	AudioServer.set_bus_mute(0, muted)
 	if audio_started:
 		amb.stream_paused = muted
+		fire_amb.stream_paused = muted
 		if not muted and not amb.playing:
 			amb.play()
+		if not muted and not fire_amb.playing:
+			fire_amb.play()
 	if muted:
 		for p in sfx_players:
 			p.stop()
@@ -1672,6 +1684,10 @@ func _update_audio(_delta: float) -> void:
 	var d := absf(Island.shore_d(cp.x, cp.z)) + maxf(cp.y - 2.0, 0.0) * 0.6
 	var want := lerpf(-3.0, -15.0, smoothstep(6.0, 70.0, d))
 	amb.volume_db = lerpf(amb.volume_db, want, 0.05)
+	# campfire crackle: heard from a few metres away, loud when sitting by it
+	var fd := minf(cp.distance_to(island.campfire_pos), player.global_position.distance_to(island.campfire_pos) + 1.5)
+	var fwant := lerpf(-4.0, -40.0, smoothstep(1.5, 16.0, fd))
+	fire_amb.volume_db = lerpf(fire_amb.volume_db, fwant, 0.08)
 
 # ------------------------------------------------------------------ loop
 
@@ -1779,7 +1795,7 @@ func _rest_cam() -> Array:
 			var along := (island.hammock_b - island.hammock_a).normalized()
 			off = (off + Vector3(along.x, 0, along.z) * 0.45).normalized()
 		elif rest_kind == "seat":
-			off = ((island.seats[seat_i]["face"] as Vector3) * 0.85 + rest_side * 0.55).normalized()
+			off = ((island.seats[seat_i]["face"] as Vector3) * 0.45 + rest_side * 0.9).normalized()
 		else:
 			off = (rest_side * 0.75 + island.towel_dir * 0.75).normalized()
 		rest_cam_yaw = _clear_yaw(t, atan2(off.x, off.z), 0.42, dist)
@@ -2157,6 +2173,72 @@ func _shore_sequence(pre: String) -> void:
 	_shot(pre + "16_wading")
 	_stop_walk()
 
+## v8 stills: the doodled sign, the campfire, sitting on the bench / log / lounger, throw reach
+func _v8_sequence(pre: String) -> void:
+	var sb := island.sign_board
+	var sn := sb.global_basis.z.normalized()
+	var sc := sb.global_position
+	_place(sc + sn * 2.6 + Vector3(0.8, 0, 0), 0.0)
+	_fixed_cam(sc + Vector3(0, -0.05, 0), atan2(sn.x, sn.z) + 0.12, 0.08, 1.45)
+	await _wait(0.5)
+	_shot(pre + "20_sign_close")
+	_fixed_cam(sc + Vector3(0, -0.55, 0), atan2(sn.x, sn.z) + 0.5, 0.1, 3.0)
+	await _wait(0.4)
+	_shot(pre + "21_sign_post")
+	_fixed_cam(sc + Vector3(0, -0.05, 0), atan2(-sn.x, -sn.z) - 0.2, 0.1, 1.6)
+	await _wait(0.4)
+	_shot(pre + "22_sign_back")
+	# campfire close and with the kid on a log
+	var c := island.campfire_pos
+	_place(c + Vector3(3.5, 0, 3.5), 0.0)
+	_fixed_cam(c + Vector3(0, 0.45, 0), 0.6, 0.22, 2.4)
+	await _wait(1.0)
+	_shot(pre + "23_fire_close")
+	_fixed_cam(c + Vector3(0, 0.3, 0), 2.0, 0.42, 5.5)
+	await _wait(0.3)
+	_shot(pre + "24_fire_wide")
+	for i in island.seats.size():
+		var st: Dictionary = island.seats[i]
+		var face: Vector3 = st["face"]
+		_place((st["approach"] as Vector3) + face * 0.9, atan2(face.x, face.z))
+		_free_cam()
+		await _wait(0.4)
+		_shot(pre + "25_seat_prompt_%d" % i)
+		_on_action()
+		while rest_phase < 4:
+			await get_tree().process_frame
+		await _wait(1.6)
+		_shot(pre + "26_seat_%d" % i)
+		_wake()
+		while mode != Mode.EXPLORE:
+			await get_tree().process_frame
+	# throw: the arm reaching out after the release, gameplay camera and from the side
+	for crouch: bool in [false, true]:
+		for side: bool in [false, true]:
+			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.0)
+			await _wait(0.2)
+			_enter_throw()
+			boy.stance = "crouch" if crouch else "stand"
+			await _wait(1.3)
+			if side:
+				demo_cam = true
+				demo_track = [aim_yaw + PI * 0.5 + 0.1, 0.1, 2.5, 0.55 if not crouch else 0.4, true]
+			_begin_aim(Vector2.ZERO)
+			aim_pitch = 3.0
+			charge_t = 0.9 * POWER_CYCLE * 0.5
+			await _wait(1.0)
+			_throw()
+			var tag := ("crouch" if crouch else "stand") + ("_side" if side else "_game")
+			for k: Array in [[0.0, "a_cock"], [0.15, "b_release"], [0.21, "c_reach"], [0.32, "d_sweep"], [0.46, "e_wrap"]]:
+				while boy.anim_t < float(k[0]) - 0.001:
+					await get_tree().process_frame
+				_shot(pre + "27_throw_%s_%s" % [tag, k[1]])
+			_free_cam()
+			while state != State.READY:
+				await get_tree().process_frame
+			_leave_throw()
+			await _wait(0.6)
+
 ## gameplay follow camera along the beach (style checks): walk, run, then stand
 func _explore_sequence(pre: String) -> void:
 	var a := island.shore_pt(-1.3, 2.2)
@@ -2193,6 +2275,8 @@ func _run_demo4() -> void:
 				await _shore_sequence(pre)
 			elif what == "explore":
 				await _explore_sequence(pre)
+			elif what == "v8":
+				await _v8_sequence(pre)
 			else:
 				await _rest_sequence(pre + ("10_" if what == "sleep" else "11_"), what, close)
 			get_tree().quit()
@@ -2374,6 +2458,94 @@ func _video_seg(seg: String) -> void:
 				await _wait(1.2)
 			_free_cam()
 
+		"throw8":
+			# the reworked throw: standing in the game camera, standing side-on, crouching side-on, crouching in the game camera
+			_place(Vector3(0.0, 0, island.dock_end_z + 3.0), 0.0)
+			await _walk_to(Vector3(0.2, 0, island.dock_end_z + 1.5), false, 2.0)
+			await _wait(0.4)
+			_enter_throw()
+			for k in 4:
+				await _wait(0.5)
+				if (k >= 2) != (boy.stance == "crouch"):
+					_toggle_stance()
+					await _wait(0.9)
+				var side := k == 1 or k == 2
+				if side:
+					demo_cam = true
+					demo_track = [aim_yaw + PI * 0.5 + 0.1, 0.1, 2.6, 0.55 if k == 1 else 0.42, true]
+				else:
+					_free_cam()
+				_begin_aim(Vector2.ZERO)
+				aim_pitch = 3.0
+				var t0 := gt
+				while gt - t0 < 1.5:
+					charge_t = minf((gt - t0) / 1.2, 1.0) * 0.9 * POWER_CYCLE * 0.5
+					await get_tree().process_frame
+				charge_t = 0.9 * POWER_CYCLE * 0.5
+				_throw()
+				fly_t = 0.0
+				if side:
+					await _wait(2.6)
+				while state != State.READY:
+					await get_tree().process_frame
+				await _wait(0.8 if side else 2.0)
+			_free_cam()
+		"bump":
+			# walking into things: palm, log by the fire, the lounger, a rock, then wading against the dock
+			var tests: Array = []
+			for nm: String in ["椰子树", "坐木", "躺椅", "礁石", "码头", "钓鱼小屋"]:
+				for w: Array in island.walls:
+					if w[6] != nm:
+						continue
+					var found := _bump_spot(w)
+					if not found.is_empty():
+						tests.append(found)
+						break
+			for tst: Array in tests:
+				var sp: Vector3 = tst[0]
+				var dir: Vector3 = tst[1]
+				_place(sp, atan2(-dir.x, -dir.z))
+				ex_yaw = face_yaw + 0.5
+				_snap_cam_now()
+				_toast(tst[2], 2.0)
+				await _wait(0.3)
+				await _drive_dir(dir, 1.6, false)
+				await _drive_dir(dir.rotated(Vector3.UP, 0.7), 1.8, false)
+				await _drive_dir(dir.rotated(Vector3.UP, -0.7), 2.0, true)
+				await _wait(0.3)
+		"sit":
+			# bench by the lighthouse, then a log at the campfire, then the lounger
+			for i: int in [0, 2, 4]:
+				var st: Dictionary = island.seats[i]
+				var face: Vector3 = st["face"]
+				var side := face.cross(Vector3.UP)
+				_place((st["approach"] as Vector3) + face * 2.2 + side * 0.8, 0.0)
+				var to := (st["approach"] as Vector3) - player.position
+				face_yaw = atan2(-to.x, -to.z)
+				player.rotation.y = face_yaw
+				ex_yaw = face_yaw + 0.35
+				_snap_cam_now()
+				await _walk_to((st["approach"] as Vector3) + face * 0.5, false, 3.0)
+				await _wait(0.5)
+				_on_action()
+				while rest_phase < 4:
+					await get_tree().process_frame
+				await _wait(3.0)
+				_wake()
+				while mode != Mode.EXPLORE:
+					await get_tree().process_frame
+				await _drive_dir(face, 1.0, false)
+				await _wait(0.3)
+		"fire":
+			# campfire close-up, slowly circling
+			var c := island.campfire_pos
+			_place(c + Vector3(4.0, 0, 4.0), 0.0)
+			var t1 := gt
+			while gt - t1 < 9.0:
+				var u := (gt - t1) / 9.0
+				_fixed_cam(c + Vector3(0, 0.4, 0), 0.4 + u * 1.2, 0.2 + 0.1 * sin(u * PI), 2.3 + u * 1.2)
+				await get_tree().process_frame
+			_free_cam()
 		"prints":
 			# footprints along the waterline: the swash wipes out the low ones, the dry ones stay (and fade slowly)
 			var a := island.shore_pt(-1.30, 2.0)
@@ -2390,6 +2562,33 @@ func _video_seg(seg: String) -> void:
 				await _walk_to(w, false, 6.0)
 			_stop_walk()
 			await _wait(22.0)
+
+## steer with the stick towards a world direction (camera-relative, like a player would)
+func _drive_dir(dir: Vector3, sec: float, run: bool) -> void:
+	demo_run = run
+	var t0 := gt
+	while gt - t0 < sec:
+		var fwd := Vector3(-sin(ex_yaw), 0, -cos(ex_yaw))
+		var right := Vector3(cos(ex_yaw), 0, -sin(ex_yaw))
+		demo_input = Vector2(dir.dot(right), -dir.dot(fwd)) * (1.0 if run else 0.75)
+		await get_tree().process_frame
+	demo_input = Vector2.ZERO
+	demo_run = false
+
+## a clear spot ~1.5 m from a wall with flat ground towards it (collision demo)
+func _bump_spot(w: Array) -> Array:
+	var a: Vector2 = w[1]
+	var c := a if w[0] != "s" else (a + (w[2] as Vector2)) * 0.5
+	var ext: float = float(w[3]) if w[0] == "c" else (0.3 if w[0] == "s" else (w[2] as Vector2).x)
+	for k in 12:
+		var d := Vector2(cos(k * TAU / 12.0 + 0.3), sin(k * TAU / 12.0 + 0.3))
+		var s := c + d * (ext + 1.6)
+		var h := _surface(s.x, s.y)
+		var sp := Vector3(s.x, h, s.y)
+		if not _can_stand(h, s.x, s.y) or penetration(sp) > 0.0 or not _wall_hits_y(w, h) or Island.wall_dist(w, s).x < 1.2:
+			continue
+		return [sp, Vector3(-d.x, 0, -d.y), "撞上%s：沿着它滑开" % w[6]]
+	return []
 
 ## drive the on-screen joystick with real touch events (like a finger on the phone)
 func _stick_walk(dirs: Array, sec_each: float) -> void:

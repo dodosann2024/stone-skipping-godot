@@ -311,7 +311,7 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	act_w = 1.0 if sit_k > 0.02 or lie_k > 0.0 else act_w
 	act_rate = 8.0
 	hat_mode = "head"
-	if lie_k > 0.6:
+	if lie_k > 0.6 and kind != "seat":
 		hat_mode = "chest" if kind == "sleep" else "ground"
 	glasses.visible = kind == "sun" and lie_k > 0.5
 	blob.visible = sit_k < 0.3 and lie_k <= 0.0
