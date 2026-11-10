@@ -32,7 +32,8 @@ vec3 uw_tint(vec3 c, vec3 wpos) {
 	return r;
 }
 
-// refraction for vertices under the surface: they appear shallower (~3/4 depth) and wobble a little
+// refraction for vertices under the surface: a small wobble and only a slight lift. The seabed is not
+// refracted, so the full ~1/4 apparent-depth lift would squash the legs and float the feet off the sand
 vec3 uw_refract(vec3 wpos) {
 	float dep = uw_depth(wpos);
 	if (dep <= 0.0) {
@@ -41,5 +42,5 @@ vec3 uw_refract(vec3 wpos) {
 	float t = sea_time;
 	float k = smoothstep(0.0, 0.05, dep);
 	vec2 wob = vec2(sin(wpos.y * 18.0 + t * 3.1 + wpos.z * 4.0), sin(wpos.y * 15.0 - t * 2.7 + wpos.x * 4.0)) * 0.012 * k;
-	return vec3(wob.x, dep * 0.22, wob.y);
+	return vec3(wob.x, min(dep * 0.06, 0.025), wob.y);
 }
