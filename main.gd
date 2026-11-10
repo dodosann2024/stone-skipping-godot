@@ -606,29 +606,84 @@ func _build_ui() -> void:
 		small.offset_top = 110; small.offset_left = 16; small.offset_right = -16
 		start_overlay.add_child(small)
 	get_viewport().size_changed.connect(_layout_ui)
+	bottom_box.resized.connect(_fit_action)
 	_layout_ui()
 
 func _tall() -> bool:
 	var vs := get_viewport().get_visible_rect().size
 	return vs.x < vs.y
 
-## portrait: smaller title, action button a bit higher; landscape: roomier
+## Screen insets (notch / Dynamic Island, home indicator, rounded corners) in UI units: top, right,
+## bottom, left. The page asks for viewport-fit=cover and reports env(safe-area-inset-*) (export
+## head_include); `--safe=t,r,b,l` (CSS px) fakes a phone's insets for desktop checks.
+var safe := Vector4.ZERO
+var safe_css := ""
+var safe_t := 0.0
+
+func _read_safe_area() -> bool:
+	var raw := ""
+	var css_h := float(DisplayServer.window_get_size().y)
+	if OS.has_feature("web"):
+		raw = str(JavaScriptBridge.eval("window.__safeArea ? window.__safeArea() : ''", true))
+	else:
+		for a0 in OS.get_cmdline_user_args():
+			if a0.begins_with("--safe="):
+				raw = a0.substr(7) + ",0," + str(css_h)
+	if raw == safe_css:
+		return false
+	safe_css = raw
+	var v := raw.split(",")
+	if v.size() < 6 or float(v[5]) <= 0.0:
+		safe = Vector4.ZERO
+		return true
+	var k := get_viewport().get_visible_rect().size.y / float(v[5])
+	safe = Vector4(float(v[0]), float(v[1]), float(v[2]), float(v[3])) * k
+	return true
+
+## The context buttons sit bottom right; on a tall screen the hint spans the width, so they stand on top of it.
+func _fit_action() -> void:
+	var tall := _tall()
+	var base := 56.0 if tall else 36.0
+	if tall and is_instance_valid(bottom_box) and lbl_hint.text != "":
+		base = maxf(base, 14.0 + bottom_box.size.y + 14.0)
+	action_btn.offset_right = -24 - safe.y
+	action_btn.offset_left = action_btn.offset_right - 190
+	action_btn.offset_bottom = -base - safe.z
+	action_btn.offset_top = action_btn.offset_bottom - 94
+	lie_btn.offset_left = action_btn.offset_left; lie_btn.offset_right = action_btn.offset_right
+	lie_btn.offset_bottom = action_btn.offset_top - 16
+	lie_btn.offset_top = lie_btn.offset_bottom - 80
+
+## portrait: smaller title, action button a bit higher; landscape: roomier. Everything anchored to an
+## edge keeps clear of the safe-area insets.
 func _layout_ui() -> void:
 	if not is_instance_valid(action_btn):
 		return
+	_read_safe_area()
+	var st := safe.x
+	var sr := safe.y
+	var sb := safe.z
+	var sl := safe.w
 	var tall := _tall()
 	lbl_title.add_theme_font_size_override("font_size", 24 if tall else 26)
 	lbl_stats.add_theme_font_size_override("font_size", 28 if tall else 32)
-	top_box.offset_right = -184
-	action_btn.offset_top = -150 if tall else -130
-	action_btn.offset_bottom = -56 if tall else -36
-	lie_btn.offset_left = -214; lie_btn.offset_right = -24
-	lie_btn.offset_bottom = action_btn.offset_top - 16
-	lie_btn.offset_top = lie_btn.offset_bottom - 80
+	top_box.offset_left = 18 + sl
+	top_box.offset_top = 12 + st
+	top_box.offset_right = -184 - sr
+	right_box.offset_top = 14 + st
+	right_box.offset_right = -14 - sr
+	right_box.offset_left = right_box.offset_right - 162
+	_fit_action()
 	joy.anchor_top = 0.6 if tall else 0.45
 	joy.anchor_right = 0.62 if tall else 0.45
+	joy.offset_left = sl
+	joy.offset_bottom = -sb
 	joy.radius = 66.0 if tall else 72.0
-	tip_box.offset_top = 170 if tall else 120
+	joy.lift = 62.0 if tall else 0.0
+	bottom_box.offset_left = 18 + sl
+	bottom_box.offset_right = -18 - sr
+	bottom_box.offset_bottom = -14 - sb
+	tip_box.offset_top = (170 if tall else 120) + st
 
 func _toast(t: String, dur := 1.4) -> void:
 	lbl_toast.text = t
@@ -1903,6 +1958,12 @@ func _update_audio(_delta: float) -> void:
 # ------------------------------------------------------------------ loop
 
 func _process(delta: float) -> void:
+	if OS.has_feature("web"):
+		safe_t += delta
+		if safe_t > 1.0:
+			safe_t = 0.0
+			if _read_safe_area():
+				_layout_ui()
 	gt += delta
 	island.set_time(gt)
 	var tall := _tall()

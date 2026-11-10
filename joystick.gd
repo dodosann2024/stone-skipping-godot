@@ -10,12 +10,13 @@ var touch_id := -2
 var center := Vector2.ZERO
 var knob := Vector2.ZERO
 var rest := Vector2.ZERO
+var lift := 0.0   # raise the resting ring above the hint text along the bottom edge
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
 func _rest_pos() -> Vector2:
-	return Vector2(radius + 34.0, size.y - radius - 34.0)
+	return Vector2(radius + 34.0, size.y - radius - 34.0 - lift)
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
