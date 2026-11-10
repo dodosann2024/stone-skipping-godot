@@ -59,17 +59,34 @@ static func island_R(th: float) -> float:
 static func shore_d(x: float, z: float) -> float:
 	return Vector2(x, z).length() - island_R(atan2(z, x))
 
-## level pads under the campfire logs: [a, b] (xz ends of the log axis), flat height; see _make_pads
+## the logs round the campfire stand on the hillside. Inside site_r of the fire the rise above it (and its
+## bumps) is scaled by site_k, easing back to the raw hill over site_l; the ground below the fire is left
+## alone so the beach and its wash stay put. Each log then gets a level pad: [a, b] (xz ends of its core
+## axis), height. Flat within pad_flat of the axis (the log, and the feet of whoever sits on either side),
+## back to the clearing over a wide pad_blend so the banks stay no steeper than the hill round them.
 static var pads: Array = []
+static var pad_half := 0.35
+static var pad_flat := 0.42
+static var pad_blend := 1.9
+static var site := Vector3.ZERO
+static var site_on := false
+static var site_k := 0.25
+static var site_r := 3.0
+static var site_l := 6.0
 
 static func ground_h(x: float, z: float) -> float:
 	var h := _ground_raw(x, z)
+	if site_on:
+		var r := Vector2(x - site.x, z - site.z).length()
+		if r < site_r + site_l:
+			var k := lerpf(1.0, site_k, smoothstep(-0.4, 0.4, h - site.y))
+			h = lerpf(site.y + k * (h - site.y), h, smoothstep(site_r, site_r + site_l, r))
 	for pd: Array in pads:
 		var q := Vector2(x, z)
 		var a: Vector2 = pd[0]
 		var ab: Vector2 = (pd[1] as Vector2) - a
 		var dist := q.distance_to(a + ab * clampf((q - a).dot(ab) / ab.length_squared(), 0.0, 1.0))
-		h = lerpf(float(pd[2]), h, smoothstep(0.75, 1.4, dist))
+		h = lerpf(float(pd[2]), h, smoothstep(pad_flat, pad_flat + pad_blend, dist))
 	return h
 
 static func _ground_raw(x: float, z: float) -> float:
@@ -174,16 +191,19 @@ func build(font: Font) -> void:
 	_flush()
 	_build_water()
 
-## the logs round the campfire stand on a slope: flatten the sand under each one (and under the feet of
-## whoever sits on it, from either side) to the height at its middle
 func _make_pads() -> void:
 	pads.clear()
 	var c := campfire_pos
+	site = c
+	site_on = true
+	var out: Array = []
 	for i in 3:
 		var a := 0.6 + i * 2.1
 		var lp := c + Vector3(cos(a) * 1.7, 0, sin(a) * 1.7)
-		var t := Vector2(-sin(a), cos(a)) * 0.7
-		pads.append([Vector2(lp.x, lp.z) + t, Vector2(lp.x, lp.z) - t, _ground_raw(lp.x, lp.z)])
+		var t := Vector2(-sin(a), cos(a)) * pad_half
+		out.append([Vector2(lp.x, lp.z) + t, Vector2(lp.x, lp.z) - t, ground_h(lp.x, lp.z)])
+	pads = out
+	campfire_pos.y = ground_h(c.x, c.z)
 
 func _flush() -> void:
 	static_mat = ShaderMaterial.new()
@@ -334,11 +354,46 @@ func _build_terrain() -> void:
 			st.set_color(_ground_color(x, z, h))
 			st.set_uv(Vector2(x, z))
 			st.add_vertex(Vector3(x, h, z))
+	# the campfire clearing gets a 4x finer patch so the level pads and their banks are drawn as they are
+	# walked on; its border vertices sit on the coarse cells' edges, so no cracks open between the two
+	var fi0 := int(floor(campfire_pos.x + half)) - 6
+	var fj0 := int(floor(campfire_pos.z + half)) - 6
+	var fi1 := fi0 + 12
+	var fj1 := fj0 + 12
 	for j in n:
 		for i in n:
+			if i >= fi0 and i < fi1 and j >= fj0 and j < fj1:
+				continue
 			var a = j * (n + 1) + i
 			var b = a + 1
 			var c = a + n + 1
+			var d = c + 1
+			st.add_index(a); st.add_index(b); st.add_index(c)
+			st.add_index(b); st.add_index(d); st.add_index(c)
+	var sub := 4
+	var fn := (fi1 - fi0) * sub
+	var base: int = (n + 1) * (n + 1)
+	for j in fn + 1:
+		for i in fn + 1:
+			var x: float = -half + fi0 + float(i) / sub
+			var z: float = -half + fj0 + float(j) / sub
+			var h: float
+			if i == 0 or i == fn or j == 0 or j == fn:
+				var x0: float = floorf(x + half + 1e-4) - half
+				var z0: float = floorf(z + half + 1e-4) - half
+				var tx := x - x0
+				var tz := z - z0
+				h = lerpf(lerpf(ground_h(x0, z0), ground_h(x0 + 1.0, z0), tx), lerpf(ground_h(x0, z0 + 1.0), ground_h(x0 + 1.0, z0 + 1.0), tx), tz)
+			else:
+				h = ground_h(x, z)
+			st.set_color(_ground_color(x, z, h))
+			st.set_uv(Vector2(x, z))
+			st.add_vertex(Vector3(x, h, z))
+	for j in fn:
+		for i in fn:
+			var a = base + j * (fn + 1) + i
+			var b = a + 1
+			var c = a + fn + 1
 			var d = c + 1
 			st.add_index(a); st.add_index(b); st.add_index(c)
 			st.add_index(b); st.add_index(d); st.add_index(c)
@@ -882,19 +937,19 @@ func _build_campfire() -> void:
 	wall_c(Vector2(c.x, c.z), 0.82, c.y - 0.5, c.y + 0.9, "篝火")
 	for i in 9:
 		var a = TAU * i / 9.0
-		blob(SB, c + Vector3(cos(a) * 0.65, 0.08, sin(a) * 0.65), Vector3(0.17, 0.12, 0.15), Color(0.5, 0.48, 0.45))
+		blob(SB, gp(c.x + cos(a) * 0.65, c.z + sin(a) * 0.65) + Vector3(0, 0.08, 0), Vector3(0.17, 0.12, 0.15), Color(0.5, 0.48, 0.45))
 	# charred logs in a little teepee: black where they burn, grey ash further out, glowing tips in the coals
 	var char_c := Color(0.09, 0.075, 0.065)
 	var rs := rng.state   # keep the rest of the island's random layout as it was
 	for i in 5:
 		var a = i * TAU / 5.0 + 0.3
-		var foot = c + Vector3(cos(a) * 0.5, 0.06, sin(a) * 0.5)
+		var foot = gp(c.x + cos(a) * 0.5, c.z + sin(a) * 0.5) + Vector3(0, 0.06, 0)
 		var tip = c + Vector3(-cos(a) * 0.08, 0.36 + 0.04 * (i % 2), -sin(a) * 0.08)
 		tube(SB, foot, tip, 0.065, 0.05, 6, Color(0.36, 0.33, 0.3), 1.0, 1.0, char_c)
 		blob(GB, foot.lerp(tip, 0.82), Vector3(0.045, 0.04, 0.045), Color(1.0, 0.42, 0.1), 0.1, 5, 3, 0.0)
 	for i in 2:
 		var a2 = 1.1 + i * 2.6
-		tube(SB, c + Vector3(cos(a2) * 0.42, 0.07, sin(a2) * 0.42), c + Vector3(-cos(a2) * 0.25, 0.08, -sin(a2) * 0.25), 0.06, 0.06, 6, char_c, 1.0, 1.0, Color(0.3, 0.28, 0.26))
+		tube(SB, gp(c.x + cos(a2) * 0.42, c.z + sin(a2) * 0.42) + Vector3(0, 0.07, 0), gp(c.x - cos(a2) * 0.25, c.z - sin(a2) * 0.25) + Vector3(0, 0.08, 0), 0.06, 0.06, 6, char_c, 1.0, 1.0, Color(0.3, 0.28, 0.26))
 	rng.state = rs
 	campfire = Campfire.new()
 	add_child(campfire)

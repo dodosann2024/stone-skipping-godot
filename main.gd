@@ -147,7 +147,7 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v10"
+var shot_dir := "v11"
 var night_k := 0.0
 var night_on := false
 var saved_night := false
@@ -2549,6 +2549,32 @@ func _v9_sequence(pre: String, part: String) -> void:
 		_toggle_night()
 		await _wait(2.8)
 
+## v11 stills: the ground round the campfire logs. part "" = all, or logs
+func _v11_sequence(pre: String, part: String) -> void:
+	if part == "" or part == "logs":
+		var c := island.campfire_pos
+		_place(c + Vector3(6.0, 0, 6.0), 0.0)
+		_fixed_cam(c + Vector3(0, 0.2, 0), 0.4, 0.55, 7.5)
+		await _wait(0.5)
+		_shot(pre + "50_logs_wide")
+		_fixed_cam(c + Vector3(0, 0.2, 0), -2.5, 0.3, 6.5)
+		await _wait(0.3)
+		_shot(pre + "51_logs_from_hill")
+		for i in 3:
+			var a := 0.6 + i * 2.1
+			var lp := island.gp(c.x + cos(a) * 1.7, c.z + sin(a) * 1.7)
+			# along the log (its bank in profile), from the fire side looking past it, and from outside
+			_fixed_cam(lp + Vector3(0, 0.3, 0), atan2(-sin(a), cos(a)), 0.3, 4.2)
+			await _wait(0.3)
+			_shot(pre + "52_log_%d_profile" % i)
+			_fixed_cam(lp + Vector3(0, 0.3, 0), atan2(-cos(a), -sin(a)) + 0.3, 0.12, 3.6)
+			await _wait(0.3)
+			_shot(pre + "53_log_%d_from_fire" % i)
+			_fixed_cam(lp + Vector3(0, 0.25, 0), atan2(cos(a), sin(a)) + 0.35, 0.35, 3.6)
+			await _wait(0.3)
+			_shot(pre + "54_log_%d_outside" % i)
+		_free_cam()
+
 ## gameplay follow camera along the beach (style checks): walk, run, then stand
 func _explore_sequence(pre: String) -> void:
 	var a := island.shore_pt(-1.3, 2.2)
@@ -2589,6 +2615,8 @@ func _run_demo4() -> void:
 				await _v8_sequence(pre)
 			elif what.begins_with("v9"):
 				await _v9_sequence(pre, what.substr(2).trim_prefix("_"))
+			elif what.begins_with("v11"):
+				await _v11_sequence(pre, what.substr(3).trim_prefix("_"))
 			else:
 				await _rest_sequence(pre + ("10_" if what == "sleep" else "11_"), what, close)
 			get_tree().quit()
