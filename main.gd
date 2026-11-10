@@ -2494,6 +2494,11 @@ func _v9_sequence(pre: String, part: String) -> void:
 		_place(c + Vector3(2.4, 0, 2.4), 0.0)
 		await _wait(0.3)
 		_shot(pre + "40_day_ui")
+		_fixed_cam(c + Vector3(0, 0.4, 0), 0.7, 0.25, 4.2)
+		await _wait(0.4)
+		_shot(pre + "40b_day_fire")
+		_free_cam()
+		await _wait(0.2)
 		_toggle_night()
 		await _wait(1.25)
 		_shot(pre + "41_dusk_transition")
@@ -2757,6 +2762,68 @@ func _video_seg(seg: String) -> void:
 				await _walk_to(g1, true, 4.0)
 				_stop_walk()
 				await _wait(1.2)
+			_free_cam()
+
+		"gait10":
+			# walk -> run -> stop seen from the front, then side-on, then a zig-zag (turns) in the game camera
+			for view in ["front", "side", "game"]:
+				var g0 := island.shore_pt(-1.38, 2.4)
+				var gm := island.shore_pt(-1.15, 2.4)
+				var g1 := island.shore_pt(-0.86, 2.6)
+				var gd := (gm - g0).normalized()
+				_place(g0, atan2(-gd.x, -gd.z))
+				ex_yaw = face_yaw
+				_snap_cam_now()
+				_toast({"front": "正面：走 → 跑 → 停", "side": "侧面：走 → 跑 → 停", "game": "转弯：走、跑"}[view], 1.6)
+				if view == "game":
+					_free_cam()
+					await _wait(0.4)
+					var sd := gd.cross(Vector3.UP)
+					await _walk_to(g0 + gd * 2.5 + sd * 1.2, false, 4.0)
+					await _walk_to(g0 + gd * 4.5 - sd * 1.0, false, 4.0)
+					await _walk_to(g0 + gd * 8.0 + sd * 1.5, true, 4.0)
+					await _walk_to(g0 + gd * 11.0 - sd * 1.5, true, 4.0)
+					_stop_walk()
+					await _wait(1.2)
+				else:
+					demo_cam = true
+					demo_track = [PI + 0.25 if view == "front" else PI * 0.5, 0.06, 2.6, 0.62]
+					await _wait(0.6)
+					await _walk_to(gm, false, 5.0)
+					await _walk_to(g1, true, 4.0)
+					_stop_walk()
+					await _wait(1.4)
+			_free_cam()
+
+		"throw10":
+			# standing and half-kneeling throws, each from the front, side-on (throwing arm side) and from above
+			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.0)
+			await _wait(0.3)
+			_enter_throw()
+			for k in 6:
+				var crouch := k >= 3
+				if crouch != (boy.stance == "crouch"):
+					_toggle_stance()
+				await _wait(1.0)
+				var v := k % 3
+				demo_cam = true
+				var hgt := 0.62 if not crouch else 0.45
+				demo_track = [[aim_yaw + PI + 0.15, 0.05, 2.7, hgt, true], [aim_yaw - PI * 0.5, 0.05, 2.7, hgt, true],
+					[aim_yaw + PI * 0.8, 1.15, 2.6, hgt, true]][v]
+				_toast(("半蹲" if crouch else "站立") + ["投掷 · 正面", "投掷 · 侧面", "投掷 · 俯视"][v], 1.6)
+				_begin_aim(Vector2.ZERO)
+				aim_pitch = 3.0
+				var t0 := gt
+				while gt - t0 < 1.0:
+					charge_t = minf((gt - t0) / 0.9, 1.0) * 0.9 * POWER_CYCLE * 0.5
+					await get_tree().process_frame
+				charge_t = 0.9 * POWER_CYCLE * 0.5
+				_throw()
+				fly_t = 0.0
+				await _wait(2.6)
+				while state != State.READY:
+					await get_tree().process_frame
+				await _wait(0.4)
 			_free_cam()
 
 		"throw8":
