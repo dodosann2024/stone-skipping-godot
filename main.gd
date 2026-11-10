@@ -1709,7 +1709,7 @@ func _update_camera(delta: float) -> void:
 		k = 1.0 - exp(-delta * (2.2 if hold else 3.0))
 		if hold:
 			# coming back from the stone view: re-centre on the kid first, then dolly in, so the
-			# camera never passes in front of him (that cropped him in portrait)
+			# camera never passes in front of him
 			cam_target = cam_target.lerp(want[0], 1.0 - exp(-delta * 5.5))
 			cam_dist = maxf(cam_dist, float(want[3]))
 	elif mode == Mode.REST and rest_phase >= 2:
