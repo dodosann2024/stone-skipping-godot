@@ -25,6 +25,7 @@ var trunks: Array = []   # palm trunk polylines (camera line-of-sight checks)
 var water_mat: ShaderMaterial
 var terrain_mat: ShaderMaterial
 var foliage_mat: ShaderMaterial
+var static_mat: ShaderMaterial
 var buoys: Array[Node3D] = []
 var ui_font: Font
 
@@ -97,11 +98,9 @@ func build(font: Font) -> void:
 	_build_water()
 
 func _flush() -> void:
-	var sm = StandardMaterial3D.new()
-	sm.vertex_color_use_as_albedo = true
-	sm.vertex_color_is_srgb = true
-	sm.roughness = 0.88
-	_mi(SB.commit(), sm)
+	static_mat = ShaderMaterial.new()
+	static_mat.shader = load("res://shaders/static.gdshader")
+	_mi(SB.commit(), static_mat)
 	foliage_mat = ShaderMaterial.new()
 	foliage_mat.shader = load("res://shaders/foliage.gdshader")
 	_mi(FB.commit(), foliage_mat)

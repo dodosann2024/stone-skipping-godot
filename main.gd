@@ -1635,7 +1635,9 @@ func _process(delta: float) -> void:
 	elif mode == Mode.THROW and (state == State.READY or state == State.AIMING):
 		player.rotation.y = lerp_angle(player.rotation.y, aim_yaw, 1.0 - exp(-delta * 10.0))
 	_update_camera(delta)
-	island.foliage_mat.set_shader_parameter("focus", player.global_position + Vector3(0, 0.7, 0))
+	var focus := player.global_position + Vector3(0, 0.7, 0)
+	island.foliage_mat.set_shader_parameter("focus", focus)
+	island.static_mat.set_shader_parameter("focus", focus)
 	_update_audio(delta)
 	_audio_tick(delta)
 
@@ -1776,10 +1778,11 @@ func _update_camera(delta: float) -> void:
 	_apply_camera()
 
 func _cam_blocked(q: Vector3) -> bool:
-	for bl in island.cam_blockers:
-		if q.distance_to(bl[0]) < float(bl[1]):
-			return true
 	if mode == Mode.THROW or mode == Mode.VIEW:
+		# the high follow camera ignores these small dock props: the cut-out shader dithers them instead
+		for bl in island.cam_blockers:
+			if q.distance_to(bl[0]) < float(bl[1]):
+				return true
 		return false
 	for ob in island.obstacles:
 		var c: Vector2 = ob[0]
