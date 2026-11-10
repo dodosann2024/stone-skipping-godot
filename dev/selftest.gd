@@ -125,6 +125,31 @@ func _gait_check() -> void:
 	b._to_idle()
 	b._apply_mixer()
 
+## planted feet through walk / run transitions, turns, game-speed zig-zags and stops (dev/gait_probe.gd):
+## no heel / toe pad may slide more than 5 mm in a frame, at 30 and at 20 fps
+func _slide_check() -> void:
+	for fps: int in [30, 20]:
+		var b := Boy.new()
+		m.add_child(b)
+		var probe := GaitProbe.new(b, Vector3(0, 60, 0))
+		probe.run_all(1.0 / fps)
+		var worst := 0.0
+		var worst_seg := ""
+		var parts: Array[String] = []
+		for sg in GaitProbe.SEGS:
+			var v := float(probe.seg_max.get(sg[2], 0.0))
+			parts.append("%.1f" % (v * 1000.0))
+			if v > worst:
+				worst = v
+				worst_seg = sg[2]
+		var ok := worst < 0.005 and probe.slide_n > 300
+		print("SELFTEST %-28s %s  (worst %.1f mm/frame in '%s'; per segment mm: %s; %d planted frames, %d quick steps)" % [
+			"foot slide @%d fps" % fps, "ok" if ok else "FAIL", worst * 1000.0, worst_seg, " ".join(parts), probe.slide_n, b.steps_taken])
+		if not ok:
+			fails.append("planted foot slides %.1f mm/frame (%s, %d fps)" % [worst * 1000.0, worst_seg, fps])
+		m.remove_child(b)
+		b.free()
+
 func _rest(kind: String, approach: Vector3) -> void:
 	m._place(approach, 0.0)
 	await _frames(5)
@@ -369,6 +394,7 @@ func run(main: Node) -> void:
 	await _wait(0.5)
 	_arm_check()
 	_gait_check()
+	_slide_check()
 	await _can_walk("start")
 	# towel: from both sides and from the sea end
 	var td: Vector3 = m.island.towel_dir

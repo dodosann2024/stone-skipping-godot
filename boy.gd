@@ -86,6 +86,26 @@ var prev_at: Array[Variant] = [null, null]
 var turn_lean := 0.0
 var settle_ph := 0.0
 var contacts: Array = []      # per side: [foot bone, heel offset, ball bone, toe offset]
+# foot locking: while a heel / toe pad is down, the leg is bent (two-bone IK) so that point and the foot's
+# heading stay fixed in the world, whatever the walk / run blend, the stride change or a turn would do
+# to it; the correction (offset and yaw about the ankle, skeleton space) bleeds off once the foot lifts
+var legs: Array = []          # per side: [thigh, calf, foot, ball] bone indices
+var lock_c: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
+var lock_yaw: Array[float] = [0.0, 0.0]
+var lock_on: Array[bool] = [false, false]
+var lock_prev: Array = [null, null]   # last frame's corrected [heel, toe] world points and foot heading
+var lock_pos := Vector3.ZERO
+var lock_enabled := true
+var pivot_w: Array[float] = [0.0, 0.0]
+var step_t: Array[float] = [-1.0, -1.0]
+var steps_taken := 0
+var step_from: Array = [[Vector3.ZERO, 0.0], [Vector3.ZERO, 0.0]]
+const PIVOT_YAW := 0.45
+const TURN_MAX := 12.0
+const STEP_AT := 0.15        # skeleton units (~13 cm)
+const STEP_DUR := 0.16
+const STEP_LIFT := 0.06
+const PIVOT_LIFT := 0.3
 
 func _ready() -> void:
 	rng.seed = 7
@@ -107,10 +127,12 @@ func _ready() -> void:
 		var g := float(meta["ground"])
 		contacts.append([fb, fr.affine_inverse() * Vector3(fr.origin.x, g, fr.origin.z - 0.035),
 			bb, br.affine_inverse() * Vector3(br.origin.x, g, br.origin.z + 0.02)])
+		legs.append([skel.find_bone("thigh_" + sd), skel.find_bone("calf_" + sd), fb, bb])
 	_setup_materials()
 	_setup_parts()
 	_setup_tree()
 	_build_blob()
+	_build_gait_tables()
 	release_stand = _probe_release("throw_stand")
 	release_crouch = _probe_release("throw_crouch")
 	_apply_mixer()
@@ -428,6 +450,7 @@ func _tick(delta: float) -> void:
 	var run: Dictionary = clips["run"]
 	match anim:
 		"move":
+			var k0 := run_k
 			run_k = move_toward(run_k, smoothstep(RUN_FROM, RUN_TO, speed_s), delta * 5.0)
 			var stride := lerpf(float(walk["stride"]), float(run["stride"]), run_k) * SCALE
 			var still := move_speed < 0.05 and speed_s < 0.12
@@ -435,6 +458,8 @@ func _tick(delta: float) -> void:
 				# finish the step towards feet-together (passing) and settle into idle
 				stopping = true
 			var adv := moved.length() / stride
+			if not stopping and move_w > 0.5:
+				adv = _stance_advance(adv, k0, moved.dot(-global_basis.z) / SCALE)
 			if stopping:
 				adv = maxf(adv, delta * 0.55)
 				move_w = move_toward(move_w, 0.0, delta * 4.0)
@@ -492,6 +517,7 @@ func _tick(delta: float) -> void:
 		expr = "smile"
 	_apply_mixer()
 	_plant_turn(delta)
+	_foot_lock(delta)
 	_update_props()
 	_update_face(delta)
 
@@ -533,7 +559,7 @@ func _plant_turn(delta: float) -> void:
 	var yaw := global_rotation.y
 	var dyaw := wrapf(yaw - plant_prev_yaw, -PI, PI)
 	plant_prev_yaw = yaw
-	if absf(dyaw) > 0.3:
+	if absf(dyaw) > 1.5:
 		dyaw = 0.0
 	var moving := anim == "move" and move_w > 0.5
 	var lean_to := 0.0
@@ -543,34 +569,253 @@ func _plant_turn(delta: float) -> void:
 	var down: Array[Variant] = [_contact(0), _contact(1)]
 	var n := int(down[0] != null) + int(down[1] != null)
 	# a turn happens on one foot: with both feet down the body keeps its heading (the lag is caught up in
-	# single support / flight), and in single support it pivots about the stance foot
-	var turn := dyaw
+	# single support / flight), and in single support it pivots about the stance foot (both feet down: about
+	# the middle of them). A flick of the stick turns the node at up to ~10 rad/s; the body follows at TURN_MAX
+	var lag0 := plant_lag
 	if moving and n == 2:
 		plant_lag -= dyaw
-		turn = 0.0
 	else:
-		var keep := plant_lag * exp(-delta * (12.0 if moving else 8.0))
-		turn = dyaw + (keep - plant_lag)
-		plant_lag = keep
+		plant_lag *= exp(-delta * (12.0 if moving else 8.0))
+	var lim := TURN_MAX * delta
+	plant_lag = lag0 + clampf(dyaw + plant_lag - lag0, -lim, lim) - dyaw
 	plant_lag = clampf(plant_lag, -0.35, 0.35)
+	var turn := dyaw + plant_lag - lag0
 	if absf(turn) > 0.0 and moving:
-		var piv := -1
+		var pa: Variant = null
+		if n == 2 and prev_at[0] != null and prev_at[1] != null:
+			pa = ((prev_at[0] as Vector3) + (prev_at[1] as Vector3)) * 0.5
 		for i in 2:
 			if down[i] != null and down[1 - i] == null and prev_at[i] != null:
-				piv = i
-		if piv >= 0:
-			var pa: Vector3 = prev_at[piv]
+				pa = prev_at[i]
+		if pa != null:
 			var o := model.global_position
-			o.y = pa.y
+			o.y = (pa as Vector3).y
 			plant_off += (pa - o) - (pa - o).rotated(Vector3.UP, turn)
 	plant_off = plant_off.lerp(Vector3.ZERO, 1.0 - exp(-delta * (2.0 if moving else 6.0)))
 	plant_off.y = 0.0
-	plant_off = plant_off.limit_length(0.1)
+	plant_off = plant_off.limit_length(0.25)
 	model.rotation.y = PI + plant_lag
 	model.position = model_base + global_basis.inverse() * plant_off
 	for i in 2:
 		var c: Variant = _contact(i)
 		prev_at[i] = skel.global_transform * (c as Vector3) if c != null else null
+
+## walk and run share one phase, but their stances do not line up (a walk foot is still down when the run
+## one has long pushed off), so while run_k moves the blended stance foot would be dragged along. Per clip,
+## sampled at load: per foot [heel z, heel y, toe z, toe y] by phase (skeleton space).
+const GAIT_N := 64
+var gait_tab := {}
+
+func _build_gait_tables() -> void:
+	var keep := [phase, run_k, move_w, act_w]
+	for c in ["walk", "run"]:
+		var rows: Array = []
+		for k in GAIT_N:
+			phase = float(k) / GAIT_N
+			run_k = 1.0 if c == "run" else 0.0
+			move_w = 1.0
+			act_w = 0.0
+			_apply_mixer()
+			var row: Array = []
+			for i in 2:
+				var ct: Array = contacts[i]
+				var h: Vector3 = skel.get_bone_global_pose(ct[0]) * (ct[1] as Vector3)
+				var to: Vector3 = skel.get_bone_global_pose(ct[2]) * (ct[3] as Vector3)
+				row.append_array([h.z, h.y, to.z, to.y])
+			rows.append(row)
+		gait_tab[c] = rows
+	phase = keep[0]; run_k = keep[1]; move_w = keep[2]; act_w = keep[3]
+
+## blended [heel z, heel y, toe z, toe y] of foot i at phase p and walk / run mix k
+func _gait_at(i: int, p: float, k: float) -> Array:
+	var f := fposmod(p, 1.0) * GAIT_N
+	var a := int(f) % GAIT_N
+	var b := (a + 1) % GAIT_N
+	var u := f - floorf(f)
+	var w: Array = gait_tab["walk"]
+	var r: Array = gait_tab["run"]
+	var out: Array = []
+	for j in 4:
+		var vw := lerpf(float(w[a][i * 4 + j]), float(w[b][i * 4 + j]), u)
+		var vr := lerpf(float(r[a][i * 4 + j]), float(r[b][i * 4 + j]), u)
+		out.append(lerpf(vw, vr, k))
+	return out
+
+## z of foot i's planted point at (p, k): heel, toe pad or between them as in _foot_lock; null when lifted.
+## `kind` (0 heel, 1 toe, 2 both) pins the point when given.
+func _plant_z(i: int, p: float, k: float, kind := -1) -> Variant:
+	var s := _gait_at(i, p, k)
+	var th := float(meta["ground"]) + 0.008
+	if kind < 0:
+		var hd := float(s[1]) < th
+		var td := float(s[3]) < th
+		if not hd and not td:
+			return null
+		kind = 2 if hd and td else (0 if hd else 1)
+	return [float(s[0]) if kind == 0 else (float(s[2]) if kind == 1 else (float(s[0]) + float(s[2])) * 0.5), kind]
+
+## phase advance that moves the blended stance foot back by exactly the distance the body went forward
+## (skeleton units), so a changing walk / run mix does not drag it; the plain stride rate otherwise
+func _stance_advance(adv: float, k0: float, fwd: float) -> float:
+	if gait_tab.is_empty() or absf(run_k - k0) < 1e-5:
+		return adv
+	var best := -1
+	var lo := 1e9
+	for i in 2:
+		var s := _gait_at(i, phase, k0)
+		var hmin := minf(float(s[1]), float(s[3]))
+		if hmin < lo:
+			lo = hmin
+			best = i
+	var p0: Variant = _plant_z(best, phase, k0)
+	if p0 == null:
+		return adv
+	var target := float(p0[0]) - fwd
+	var kind: int = p0[1]
+	var span := maxf(adv * 4.0, 0.03)
+	var prev_f := float(_plant_z(best, phase, run_k, kind)[0]) - target
+	if prev_f <= 0.0:
+		return 0.0
+	var n := 16
+	for j in range(1, n + 1):
+		var q := phase + span * j / n
+		var f := float(_plant_z(best, q, run_k, kind)[0]) - target
+		if f <= 0.0:
+			return span * (float(j - 1) + prev_f / (prev_f - f)) / n
+		prev_f = f
+	return span
+
+func _foot_lock(delta: float) -> void:
+	var S := skel.global_transform
+	var Si := S.affine_inverse()
+	var g := float(meta["ground"])
+	var on := lock_enabled and (anim == "move" or anim == "idle") and act_w < 0.05
+	var jumped := global_position.distance_to(lock_pos) > 0.6
+	lock_pos = global_position
+	for i in 2:
+		var lb: Array = legs[i]
+		var ct: Array = contacts[i]
+		if jumped:
+			lock_c[i] = Vector3.ZERO; lock_yaw[i] = 0.0; lock_on[i] = false; lock_prev[i] = null
+			step_t[i] = -1.0; pivot_w[i] = 0.0
+		var F := skel.get_bone_global_pose(lb[2])
+		var B := skel.get_bone_global_pose(lb[3])
+		var A := F.origin
+		var heel := F * (ct[1] as Vector3)
+		var toe := B * (ct[3] as Vector3)
+		var th := g + (0.015 if lock_on[i] else 0.008)
+		var hd := heel.y < th
+		var td := toe.y < th
+		var planted := on and (hd or td) and lock_prev[i] != null and step_t[i] < 0.0
+		if planted:
+			var pv: Array = lock_prev[i]
+			# heading: while the foot is flat, undo whatever the animation / body turn did to its yaw since
+			# last frame; on the heel or the ball alone it pivots with the body about that point. A sharp turn
+			# (past PIVOT_YAW of twist) rolls a flat foot up onto the ball and pivots there
+			if hd and td:
+				var fw := S.basis * (Basis(Vector3.UP, lock_yaw[i]) * (B.origin - A))
+				lock_yaw[i] -= wrapf(atan2(fw.x, fw.z) - float(pv[2]), -PI, PI)
+				if absf(lock_yaw[i]) > PIVOT_YAW:
+					lock_yaw[i] = clampf(lock_yaw[i], -PIVOT_YAW, PIVOT_YAW)
+					pivot_w[i] = 1.0
+			var on_ball := td and (pivot_w[i] > 0.0 or not hd)
+			# position: the planted point (heel, toe pad or both) back where it was
+			var pa: Vector3 = toe if on_ball else (heel if not td else (heel + toe) * 0.5)
+			var was: Vector3 = pv[1] if on_ball else (pv[0] if not td else ((pv[0] as Vector3) + (pv[1] as Vector3)) * 0.5)
+			var now := Basis(Vector3.UP, lock_yaw[i]) * (pa - A) + A + lock_c[i]
+			var d := Si.basis * (was - S * now)
+			d.y = 0.0
+			lock_c[i] += d
+			lock_on[i] = true
+			if lock_c[i].length() > STEP_AT:
+				# the body has got too far from the planted foot (a flick of the stick): a quick step
+				step_t[i] = 0.0
+				step_from[i] = [lock_c[i], lock_yaw[i]]
+				steps_taken += 1
+				planted = false
+		var lift := 0.0
+		if step_t[i] >= 0.0:
+			lock_on[i] = false
+			step_t[i] += delta
+			var u := minf(step_t[i] / STEP_DUR, 1.0)
+			var w := 1.0 - smoothstep(0.0, 1.0, u)
+			lock_c[i] = (step_from[i][0] as Vector3) * w
+			lock_yaw[i] = float(step_from[i][1]) * w
+			lift = STEP_LIFT * sin(PI * u)
+			if u >= 1.0:
+				step_t[i] = -1.0
+		elif not planted:
+			lock_on[i] = false
+			var k := exp(-delta * 10.0)
+			lock_c[i] *= k
+			lock_yaw[i] *= k
+		var R := Basis(Vector3.UP, lock_yaw[i])
+		var heel_c := R * (heel - A) + A + lock_c[i]
+		var toe_c := R * (toe - A) + A + lock_c[i]
+		var ankle := A + lock_c[i]
+		var fb := R * F.basis
+		if lift > 0.0:
+			heel_c.y += lift; toe_c.y += lift; ankle.y += lift
+		if pivot_w[i] > 0.0:
+			var fwd := toe_c - heel_c
+			fwd.y = 0.0
+			var Rp := Basis(Vector3.UP.cross(fwd).normalized(), PIVOT_LIFT * smoothstep(0.0, 1.0, pivot_w[i]))
+			ankle = toe_c + Rp * (ankle - toe_c)
+			heel_c = toe_c + Rp * (heel_c - toe_c)
+			fb = Rp * fb
+			pivot_w[i] = move_toward(pivot_w[i], 0.0, delta * 4.0)
+		if lock_c[i].length_squared() > 1e-10 or absf(lock_yaw[i]) > 1e-5 or pivot_w[i] > 0.0 or lift > 0.0:
+			_leg_ik(lb, ankle, fb, R)
+		var hw := S * heel_c
+		var tw := S * toe_c
+		var fw2 := S.basis * (R * (B.origin - A))
+		lock_prev[i] = [hw, tw, atan2(fw2.x, fw2.z)]
+
+## two-bone IK (skeleton space): ankle to `ankle`, foot to `foot_b`; the knee stays in the animated leg's
+## plane, turned with the foot by `twist`
+func _leg_ik(lb: Array, ankle: Vector3, foot_b: Basis, twist: Basis) -> void:
+	var Tg := skel.get_bone_global_pose(lb[0])
+	var Cg := skel.get_bone_global_pose(lb[1])
+	var Fg := skel.get_bone_global_pose(lb[2])
+	var H := Tg.origin
+	var K := Cg.origin
+	var A := Fg.origin
+	var l1 := H.distance_to(K)
+	var l2 := K.distance_to(A)
+	var to := ankle - H
+	var dist := clampf(to.length(), absf(l1 - l2) + 1e-4, (l1 + l2) * 0.9999)
+	var u := to.normalized()
+	var la := (A - H).normalized()
+	var pole := twist * ((K - H) - la * (K - H).dot(la))
+	if pole.length_squared() < 1e-10:
+		pole = twist * (Tg.basis * Vector3(0, 0, 1))
+	var v := (pole - u * pole.dot(u)).normalized()
+	var a := (l1 * l1 - l2 * l2 + dist * dist) / (2.0 * dist)
+	var K2 := H + u * a + v * sqrt(maxf(l1 * l1 - a * a, 0.0))
+	var A2 := H + u * dist
+	var n_old := (K - H).cross(A - K)
+	var n_new := (K2 - H).cross(A2 - K2)
+	if n_old.length_squared() < 1e-12 or n_new.length_squared() < 1e-12:
+		n_old = Tg.basis.x
+		n_new = twist * Tg.basis.x
+	var q1 := _frame_rot(K - H, n_old, K2 - H, n_new)
+	var q2 := _frame_rot(A - K, n_old, A2 - K2, n_new)
+	var Tb := q1 * Tg.basis
+	var Cb := q2 * Cg.basis
+	var Pg := skel.get_bone_global_pose(skel.get_bone_parent(lb[0])).basis
+	skel.set_bone_pose_rotation(lb[0], (Pg.inverse() * Tb).get_rotation_quaternion())
+	skel.set_bone_pose_rotation(lb[1], (Tb.inverse() * Cb).get_rotation_quaternion())
+	skel.set_bone_pose_rotation(lb[2], (Cb.inverse() * foot_b).get_rotation_quaternion())
+
+## rotation taking direction d0 (with n0 as the second axis) onto d1 / n1
+static func _frame_rot(d0: Vector3, n0: Vector3, d1: Vector3, n1: Vector3) -> Basis:
+	var e1 := d0.normalized()
+	var e2 := (n0 - e1 * n0.dot(e1)).normalized()
+	var f1 := d1.normalized()
+	var f2 := (n1 - f1 * n1.dot(f1)).normalized()
+	var m0 := Basis(e1, e2, e1.cross(e2))
+	var m1 := Basis(f1, f2, f1.cross(f2))
+	return m1 * m0.transposed()
 
 ## mid-stride when the stick is let go: main.gd keeps creeping forward until the passing pose (one foot
 ## under the hips, the other in the air), so the cross-fade to idle never drags a planted foot
