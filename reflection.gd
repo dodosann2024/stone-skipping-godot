@@ -62,8 +62,9 @@ func set_enabled(on: bool) -> void:
 func update() -> void:
 	if not enabled:
 		return
-	var px := Vector2(get_window().size) * scale * (1.0 + 2.0 * GUARD)
-	px *= minf(1.0, MAX_SIDE * (1.0 + 2.0 * GUARD) / maxf(px.x, px.y))
+	# the overscan shares v11's pixel budget (slightly softer instead of 44% more fill on a phone)
+	var px := Vector2(get_window().size) * scale
+	px *= minf(1.0, MAX_SIDE / maxf(px.x, px.y))
 	var want := Vector2i(px.round()).max(Vector2i(48, 48))
 	if vp.size != want:
 		vp.size = want
