@@ -93,12 +93,12 @@ class Gait:
         sp_roll = -roll * 0.9
         chest_yaw = yaw + sp_yaw
         head_yaw = -chest_yaw * 0.85
-        # arms: opposite to the legs, slightly lagging
+        # arms swing contralaterally (left heel strike at phase 0 = right arm forward), slightly lagging
         A = 0.42 if run else 0.28
         out = {}
         for s, sgn in (("l", 1.0), ("r", -1.0)):
-            ph_a = ph + (0.04 if not run else 0.03)
-            swing = A * math.cos(TAU * ph_a) * (1.0 if s == "l" else -1.0)
+            ph_a = ph - (0.04 if not run else 0.03)
+            swing = A * math.cos(TAU * ph_a) * (-1.0 if s == "l" else 1.0)
             # swing > 0: arm forward
             sh = V(0.153 * sgn, -0.014, 1.092)
             if run:
