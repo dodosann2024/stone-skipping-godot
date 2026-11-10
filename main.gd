@@ -2237,20 +2237,23 @@ func _video_seg(seg: String) -> void:
 			await _stick_walk([Vector2(0.2, -1), Vector2(1, -0.3), Vector2(0.4, 1)], 1.6)
 			await _wait(0.8)
 		"gait":
-			# side-on tracking camera: walk, run, stop; then the same in the game camera
+			# side-on camera out over the water: walk, run, stop; then the same stretch in the game camera
+			var sea_side := Island.dir_at(-1.1)
 			for game_cam: bool in [false, true]:
-				var g0 := island.shore_pt(-1.2, 3.0)
-				var g1 := island.shore_pt(-0.55, 3.4)
-				var gd := (g1 - g0).normalized()
+				var g0 := island.shore_pt(-1.38, 2.4)
+				var gm := island.shore_pt(-1.15, 2.4)
+				var g1 := island.shore_pt(-0.86, 2.6)
+				var gd := (gm - g0).normalized()
 				_place(g0, atan2(-gd.x, -gd.z))
+				ex_yaw = face_yaw
 				_snap_cam_now()
 				if game_cam:
 					_free_cam()
 				else:
 					demo_cam = true
-					demo_track = [atan2(gd.cross(Vector3.UP).x, gd.cross(Vector3.UP).z) + 0.25, 0.12, 4.2, 0.6, true]
+					demo_track = [atan2(sea_side.x, sea_side.z), 0.08, 3.0, 0.62, true]
 				await _wait(0.6)
-				await _walk_to(g0.lerp(g1, 0.45), false, 4.5)
+				await _walk_to(gm, false, 5.0)
 				await _walk_to(g1, true, 4.0)
 				_stop_walk()
 				await _wait(1.2)
