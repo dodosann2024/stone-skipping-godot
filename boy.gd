@@ -266,6 +266,13 @@ func react(kind: String) -> void:
 func show_stone(v: bool) -> void:
 	stone.visible = v
 
+## world-space heel (ankle) and ball joints of one foot (0 left, 1 right), for footprints
+func foot_points(side: int) -> Array:
+	var sx := "_l" if side == 0 else "_r"
+	var heel := skel.global_transform * skel.get_bone_global_pose(skel.find_bone("foot" + sx)).origin
+	var ball := skel.global_transform * skel.get_bone_global_pose(skel.find_bone("ball" + sx)).origin
+	return [heel, ball]
+
 ## kind: "sleep" | "sun"; sit_k: 0 stand -> 1 seated; lie_k: 0 seated -> 1 lying. Returns the pelvis in boy space.
 func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	if anim != "activity":
@@ -472,18 +479,27 @@ func _update_props() -> void:
 	var xf := hat_head_xf
 	match hat_mode:
 		"chest":
+			# lying on the chest, crown up towards the sky
 			want = chest_att
-			# lying on the chest, crown up towards the sky (bone-space offset found by eye)
-			xf = _skel_to_bone(chest_att.bone_name, Transform3D(Basis(Vector3.RIGHT, PI * 0.5), Vector3(0, 1.0, 0.2)))
+			xf = _skel_to_bone(chest_att.bone_name, _hat_at(Basis(Vector3.RIGHT, PI * 0.5), Vector3(0, 1.0, 0.16)))
 		"ground":
+			# on the towel next to his right shoulder (the lying body frame is upright, back = -Z)
 			want = model
-			xf = Transform3D(Basis(Vector3.RIGHT, PI * 0.5) * Basis(Vector3.UP, 0.4), Vector3(-0.42, 1.2, -0.06))
+			xf = _hat_at(Basis(Vector3.RIGHT, PI * 0.5) * Basis(Vector3.UP, 0.4), Vector3(-0.45, 1.22, -0.12))
 	if hat.get_parent() != want:
 		hat.reparent(want, false)
 	hat.transform = xf
 	var pel := (parts["pelvis"] as Node3D).global_position
 	var lp := to_local(pel)
 	blob.position = Vector3(lp.x * 0.6, 0.012, lp.z * 0.6)
+
+## hat transform (skeleton rest space) putting the centre of its band rim at `base` with orientation `b`
+## (the hat mesh keeps its rest-pose vertex positions, so its origin is the model origin)
+func _hat_at(b: Basis, base: Vector3) -> Transform3D:
+	var bb := (hat as MeshInstance3D).get_aabb()
+	var c := bb.get_center()
+	c.y = bb.position.y + 0.03
+	return Transform3D(b, base - b * c)
 
 ## a transform given in skeleton rest space, expressed in a bone's frame
 func _skel_to_bone(bone: String, xf: Transform3D) -> Transform3D:

@@ -840,22 +840,23 @@ func _frond(b: MeshBuilder, base: Vector3, dir: Vector3, length: float, rise: fl
 		tube(b, pts[i], pts[i + 1], 0.035 * (1.0 - s0), 0.035 * (1.0 - s0 - 1.0 / seg), 3, cv.darkened(0.15), sway_base + s0 * 0.6, sway_base + (s0 + 1.0 / seg) * 0.6)
 
 func palm(b: MeshBuilder, base: Vector3, height: float, lean_dir: Vector3, lean: float, bend: float, leaf_scale := 1.0, nfr := 11) -> Vector3:
-	var segs = 9
+	var segs = 13
 	var pts: Array[Vector3] = []
 	for i in segs + 1:
 		var t = float(i) / segs
 		var off = lean_dir * height * lean * (t * 0.3 + bend * t * t)
 		pts.append(base + off + Vector3.UP * height * t * (1.0 - 0.08 * lean * t))
 	trunks.append(pts)
-	var c1 = Color(0.56, 0.42, 0.27)
-	var c2 = Color(0.47, 0.35, 0.22)
+	# warm grey-brown ringed segments (each ring flares, a darker groove under it)
+	var c1 = Color(0.58, 0.50, 0.41)
+	var c2 = Color(0.52, 0.45, 0.37)
 	for i in segs:
 		var t0 = float(i) / segs
 		var t1 = float(i + 1) / segs
 		var r0: float = lerp(0.27, 0.15, t0)
 		var r1: float = lerp(0.27, 0.15, t1)
 		var col = c1 if i % 2 == 0 else c2
-		tube(b, pts[i] - (pts[i + 1] - pts[i]) * 0.05, pts[i + 1], r0 * 1.12, r1 * 0.86, 7, col, t0 * t0 * 0.35, t1 * t1 * 0.35, col.darkened(0.12))
+		tube(b, pts[i] - (pts[i + 1] - pts[i]) * 0.05, pts[i + 1], r0 * 1.1, r1 * 0.88, 8, col, t0 * t0 * 0.35, t1 * t1 * 0.35, col.darkened(0.22))
 	var crown = pts[segs]
 	var sw = 0.35
 	blob(b, crown + Vector3(0, 0.05, 0), Vector3(0.24, 0.2, 0.24), Color(0.4, 0.36, 0.2), 0.04, 6, 3, 0.0, sw)
@@ -918,8 +919,8 @@ func _build_palms() -> void:
 		var crown = palm(FB, p, s[1], s[2], s[3], s[4], rng.randf_range(0.85, 1.1))
 		palm_spots.append(crown)
 	# hammock between the hut pair: its own node so it can swing about the a-b axis
-	var a = h1 + Vector3(0, 1.4, 0)
-	var b = h2 + Vector3(0, 1.4, 0)
+	var a = h1 + Vector3(0, 1.05, 0)   # low enough that the (taller) kid sits with his feet near the sand
+	var b = h2 + Vector3(0, 1.05, 0)
 	hammock_a = a
 	hammock_b = b
 	var mid = (a + b) * 0.5

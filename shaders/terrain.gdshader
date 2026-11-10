@@ -3,6 +3,26 @@ render_mode cull_back, diffuse_lambert, specular_disabled;
 #include "res://shaders/common.gdshaderinc"
 
 uniform float game_time = 0.0;
+uniform vec4 prints[24];          // footprints: x, z, heading angle, time stamped
+
+// flip-flop print: a soft dent along the foot (rounded sole, wider at the ball)
+float footprint(vec2 p, vec4 fp, float t) {
+	float age = t - fp.w;
+	if (age < 0.0 || age > 45.0) {
+		return 0.0;
+	}
+	vec2 dv = p - fp.xy;
+	if (dot(dv, dv) > 0.04) {
+		return 0.0;
+	}
+	vec2 f = vec2(cos(fp.z), sin(fp.z));
+	float u = dot(dv, f);
+	float v = dot(dv, vec2(-f.y, f.x));
+	float k = clamp((u + 0.11) / 0.2, 0.0, 1.0);
+	float r = mix(0.028, 0.036, smoothstep(0.2, 0.75, k));
+	float dist = length(vec2(u - (k * 0.2 - 0.11), v)) - r;
+	return (1.0 - smoothstep(-0.008, 0.004, dist)) * (1.0 - smoothstep(25.0, 45.0, age));
+}
 varying vec3 wpos;
 
 float ridge(float n) { return 1.0 - abs(n * 2.0 - 1.0); }
@@ -22,35 +42,49 @@ void fragment() {
 	vec2 p = wpos.xz;
 	float d = shore_d(p);
 	float rough = 0.95;
+	// sand grain: fine speckle + mid-scale mottling (faded out where it would alias), broad tonal drift
+	float fq = fwidth(p.x * 40.0) + fwidth(p.y * 40.0);
+	float grain = (hash12(floor(p * 40.0)) - 0.5) * (1.0 - smoothstep(0.5, 1.4, fq));
+	c *= 1.0 + grain * 0.16 + (vnoise(p * 7.0) - 0.5) * 0.07 + (vnoise(p * 0.12) - 0.5) * 0.1;
+	float fpr = 0.0;
+	for (int i = 0; i < 24; i++) {
+		fpr = max(fpr, footprint(p, prints[i], t));
+	}
+	c *= 1.0 - 0.16 * fpr;
 	if (d > -9.0) {
 		float sea = sea_y(p, t);
-		float hab = wpos.y - sea;   // height above the sea surface right here
+		// height above the sea surface; near the waterline use the smooth analytic beach profile
+		// (the 1 m terrain grid would make the wash line angular)
+		float gy = mix(ground_near(p, d), wpos.y, smoothstep(0.5, 2.5, abs(d + 0.3)));
+		float hab = gy - sea;
 		float cyc = wash_cycle(p, t);
-		float ru = runup(cyc);
 		float nW = vnoise(p * 2.2 + vec2(t * 0.05, 0.0));
-		// wet sand: dark where the wash reaches, drying out above the high-water mark
-		float wet = 1.0 - smoothstep(0.0, 0.1 + nW * 0.03, hab - ru * 0.6);
-		c *= mix(1.0, 0.62, wet);
-		rough = mix(0.95, 0.45, wet);
-		// the wash itself: a thin sheet of water running up the slope with a lacy foam front
+		// the wash: a wavy edge climbing the slope and draining back
+		float ru = runup(cyc) + (vnoise(p * vec2(1.1, 1.3) + vec2(t * 0.08, 0.0)) - 0.5) * 0.02;
+		// wet band: darker, cooler and smoother up to just above the highest wash
+		float wet = 1.0 - smoothstep(0.06, 0.11 + nW * 0.03, hab);
+		float fresh = 1.0 - smoothstep(0.0, 0.03, hab - ru);
+		c *= mix(vec3(1.0), vec3(0.70, 0.72, 0.74), max(wet, fresh));
+		rough = mix(0.95, 0.5, wet);
+		// the water film behind the front, and the front itself: one crisp, bright, wavy foam line
 		float film = 1.0 - smoothstep(ru - 0.003, ru + 0.001, hab);
-		float dfw = fwidth(hab) + 0.0005;
-		float front = (1.0 - smoothstep(0.0, 0.006 + dfw, abs(hab - ru + 0.003))) * smoothstep(0.004, 0.02, ru);
-		front *= (0.6 + 0.4 * nW) * (1.0 - smoothstep(0.3, 0.85, cyc) * 0.75);
-		float lace = smoothstep(0.78, 0.94, ridge(vnoise(p * 3.4 + vec2(-t * 0.08, t * 0.05))));
-		vec3 sheet = c * vec3(0.78, 0.95, 0.93) + vec3(0.03, 0.07, 0.08);
+		float dfw = fwidth(hab) + 0.0004;
+		float half_w = 0.0035 + 0.003 * nW;
+		float front = 1.0 - smoothstep(half_w, half_w + dfw, abs(hab - ru + half_w));
+		front *= 0.95 - smoothstep(0.35, 0.9, cyc) * 0.35;
+		vec3 sheet = c * vec3(0.82, 0.95, 0.92) + vec3(0.04, 0.07, 0.07);
 		c = mix(c, sheet, film * smoothstep(-0.02, 0.0, hab));
-		c = mix(c, vec3(0.92, 0.95, 0.95), max(front, lace * film * (1.0 - smoothstep(0.0, 0.6, cyc)) * 0.6));
-		rough = mix(rough, 0.2, film);
-		// under water: absorption tints the sand turquoise-green, sand ripples and caustics on the bottom
+		c = mix(c, vec3(0.97, 0.98, 0.97), front * smoothstep(-0.03, 0.0, hab));
+		rough = mix(rough, 0.25, film);
+		// under water the milky water hides the bottom quickly
 		float depth = -hab;
 		if (depth > 0.0) {
 			float rp = sin(d * 7.5 + vnoise(p * 0.45) * 7.0 + p.x * 0.6);
-			c *= 1.0 + rp * 0.05 * smoothstep(0.05, 0.5, depth) * (1.0 - smoothstep(2.0, 4.0, depth));
-			float k = exp(-depth * 0.5) * smoothstep(0.0, 0.18, depth);
-			c += vec3(0.75, 0.95, 0.85) * caustic(p * 1.5, t) * 0.22 * k;
-			vec3 tr = exp(-depth * vec3(0.95, 0.2, 0.28));
-			c = c * tr + vec3(0.02, 0.32, 0.30) * (1.0 - tr);
+			c *= 1.0 + rp * 0.04 * smoothstep(0.05, 0.5, depth) * (1.0 - smoothstep(2.0, 4.0, depth));
+			float k = exp(-depth * 0.8) * smoothstep(0.0, 0.18, depth);
+			c += vec3(0.75, 0.95, 0.85) * caustic(p * 1.5, t) * 0.05 * k;
+			vec3 tr = exp(-depth * vec3(1.5, 0.75, 0.85));
+			c = c * tr + vec3(0.30, 0.52, 0.47) * (1.0 - tr);
 		}
 	}
 	ALBEDO = c;
