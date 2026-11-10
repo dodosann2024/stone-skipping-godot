@@ -222,8 +222,10 @@ def throw_stand(rig):
               neck=(-0.05, 0.0, -0.3), head=(-0.05, 0.0, -0.32),
               hr=V(-0.24, -0.76, 0.68), wr=(0.0, 0.0, 0.6), er=V(-0.2, 0.2, -1.0), gr=0.3,
               hl=V(0.22, 0.02, 0.84), pr=-0.85, yr=-0.5)
+    reach2 = P(reach, pel=V(0.035, -0.19, -0.145), prot=(0.34, 0.025, 0.45), sp=(0.28, -0.07, 0.29),
+               hr=V(-0.13, -0.74, 0.68), wr=(0.0, 0.0, 0.45), er=V(-0.1, 0.4, -1.0), pr=-0.92, yr=-0.4)
     # deceleration: the arm sweeps across to the left side, the chest keeps turning and bends over
-    sweep = P(reach, pel=V(0.04, -0.19, -0.14), prot=(0.34, 0.03, 0.55), sp=(0.24, -0.04, 0.32),
+    sweep = P(reach2, pel=V(0.04, -0.19, -0.14), prot=(0.34, 0.03, 0.55), sp=(0.24, -0.04, 0.32),
               neck=(-0.05, 0.0, -0.4), head=(-0.05, 0.0, -0.42),
               hr=V(0.10, -0.54, 0.66), wr=(0.0, 0.0, 0.3), er=V(0.0, 0.6, -1.0), gr=0.25,
               hl=V(0.20, -0.04, 0.82), pr=-1.0, yr=-0.3)
@@ -231,7 +233,7 @@ def throw_stand(rig):
              neck=(0.0, 0.0, -0.4), head=(0.0, 0.0, -0.45),
              hr=V(0.30, -0.20, 0.72), er=V(0.3, 1.0, -0.4), wr=(0.0, 0.0, 0.0), hl=V(0.20, -0.08, 0.80), pr=-1.0, yr=-0.2)
     keys = [(0.0, ready), (T_CHARGE, charge), (0.555, stride), (0.60, plant), (0.625, accel), (T_RELEASE, release),
-            (0.71, reach), (0.82, sweep), (0.96, wrap)] + _recover(i, wrap, 1.14, ST_L2)
+            (0.71, reach), (0.76, reach2), (0.86, sweep), (0.99, wrap)] + _recover(i, wrap, 1.17, ST_L2)
     return keyed(keys), keys[-1][0]
 
 
@@ -262,7 +264,9 @@ def throw_crouch(rig):
     reach = P(release, pel=V(0.02, -0.12, -0.34), prot=(0.50, 0.02, 0.36), sp=(0.38, -0.08, 0.26),
               neck=(-0.05, 0.0, -0.3), head=(-0.1, 0.0, -0.32),
               hr=V(-0.24, -0.70, 0.34), wr=(0.0, 0.0, 0.6), er=V(-0.2, 0.2, -1.0), gr=0.3, hl=V(0.22, 0.02, 0.84))
-    sweep = P(reach, pel=V(0.03, -0.11, -0.34), prot=(0.50, 0.03, 0.52), sp=(0.34, -0.03, 0.30),
+    reach2 = P(reach, pel=V(0.025, -0.115, -0.34), prot=(0.50, 0.025, 0.45), sp=(0.36, -0.05, 0.28),
+               hr=V(-0.13, -0.68, 0.35), wr=(0.0, 0.0, 0.45), er=V(-0.1, 0.4, -1.0))
+    sweep = P(reach2, pel=V(0.03, -0.11, -0.34), prot=(0.50, 0.03, 0.52), sp=(0.34, -0.03, 0.30),
               neck=(-0.05, 0.0, -0.4), head=(-0.1, 0.0, -0.42),
               hr=V(0.10, -0.50, 0.38), wr=(0.0, 0.0, 0.3), er=V(0.0, 0.6, -1.0), gr=0.25, hl=V(0.20, -0.04, 0.82))
     wrap = P(sweep, pel=V(0.04, -0.09, -0.33), prot=(0.45, 0.04, 0.58), sp=(0.30, 0.0, 0.34),
@@ -275,7 +279,7 @@ def throw_crouch(rig):
     rise = P(lean, pel=V(0.02, -0.12, -0.16), prot=(0.30, 0.02, 0.25), fr=V(-0.13, 0.18, 0.10), pr=-0.5, kr=None,
              hr=V(-0.20, -0.08, 0.74), hl=V(0.21, -0.06, 0.74), head=(-0.05, 0.0, -0.2))
     keys = [(0.0, ready), (T_CHARGE, charge), (0.56, drive), (0.60, plant), (0.625, accel), (T_RELEASE, release),
-            (0.71, reach), (0.82, sweep), (0.96, wrap), (1.16, lean), (1.36, rise)] + _recover(i, rise, 1.52, CR_L)
+            (0.71, reach), (0.76, reach2), (0.86, sweep), (0.99, wrap), (1.19, lean), (1.39, rise)] + _recover(i, rise, 1.55, CR_L)
     return keyed(keys), keys[-1][0]
 
 
