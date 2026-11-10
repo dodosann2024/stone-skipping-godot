@@ -232,6 +232,43 @@ def fire_loop(L=8.0, X=1.0):
     loop[:nx] = loop[:nx] * w + out[nl:nl + nx] * (1 - w)
     return norm(loop, -4.0)
 
+def night_loop(L=12.0, X=1.0):
+    """crickets: a few insects at different pitches, each chirping trains of 3-4 pulses (a ~4.5 kHz
+    carrier gated at ~30 Hz) at its own steady rate, over a faint airy hiss; loops seamlessly"""
+    n = int((L + X) * SR); t = np.arange(n) / SR
+    out = np.zeros((n, 2))
+    for ch in range(2):
+        out[:, ch] += bp(pink(n), 300, 1500, 2) * 0.012
+    for k in range(5):
+        f = rng.uniform(3900, 5200)
+        period = rng.uniform(0.55, 0.95)
+        pulses = int(rng.integers(3, 5))
+        prate = rng.uniform(26, 34)
+        amp = rng.uniform(0.25, 0.6) * (0.5 if k > 2 else 1.0)
+        pan = rng.uniform(-0.8, 0.8)
+        drift = rng.uniform(0, 1)
+        tk = rng.uniform(0, period)
+        while tk < L + X - 0.3:
+            # every insect pauses now and then
+            if rng.random() < 0.12:
+                tk += period * rng.uniform(2, 5); continue
+            for j in range(pulses):
+                t0 = tk + j / prate
+                i0 = int(t0 * SR); m = int(0.022 * SR)
+                if i0 + m >= n: break
+                tt = np.arange(m) / SR
+                e = np.sin(np.pi * np.clip(tt / 0.02, 0, 1)) ** 2
+                tone = np.sin(2 * np.pi * f * tt + drift) + 0.25 * np.sin(4 * np.pi * f * tt)
+                a = amp * (0.8 + 0.2 * rng.random())
+                out[i0:i0 + m, 0] += tone * e * a * (1 - pan) * 0.5
+                out[i0:i0 + m, 1] += tone * e * a * (1 + pan) * 0.5
+            tk += period * rng.uniform(0.97, 1.03)
+    nl, nx = int(L * SR), int(X * SR)
+    w = np.linspace(0, 1, nx)[:, None]
+    loop = out[:nl].copy()
+    loop[:nx] = loop[:nx] * w + out[nl:nl + nx] * (1 - w)
+    return norm(loop, -6.0)
+
 def write_steps():
     for i in range(2):
         write(f"step_sand_{i}", step_sand(300 + i))
@@ -243,6 +280,8 @@ if __name__ == "__main__":
     import sys
     if "--fire" in sys.argv:
         os.makedirs(PREV, exist_ok=True); write("fire_loop", fire_loop(), q=3); print("fire done"); sys.exit(0)
+    if "--night" in sys.argv:
+        os.makedirs(PREV, exist_ok=True); write("night_loop", night_loop(), q=3); print("night done"); sys.exit(0)
     if "--steps" in sys.argv:
         os.makedirs(PREV, exist_ok=True); write_steps(); print("steps done"); sys.exit(0)
     os.makedirs(OUT, exist_ok=True); os.makedirs(PREV, exist_ok=True)
@@ -258,4 +297,5 @@ if __name__ == "__main__":
     write("record", chime((1046.5, 1318.5, 1568.0, 2093.0), 0.09))
     write_steps()
     write("fire_loop", fire_loop(), q=3)
+    write("night_loop", night_loop(), q=3)
     print("done")

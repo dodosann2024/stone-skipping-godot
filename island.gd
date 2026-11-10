@@ -22,6 +22,11 @@ var towel_dir := Vector3.FORWARD   # towel long axis, pointing out to sea (feet 
 var umbrella_pos := Vector3.ZERO
 var hut_pos := Vector3.ZERO
 var lighthouse_pos := Vector3.ZERO
+var beacon_pos := Vector3.ZERO
+# glowing lanterns: [position, kind] with kind "dock" / "porch" / "path" (lit at night)
+var lamps: Array = []
+var glow_mat: ShaderMaterial
+var cloud_mat: ShaderMaterial
 var campfire_pos := Vector3.ZERO
 var campfire: Campfire
 var sign_board: MeshInstance3D
@@ -162,14 +167,14 @@ func _flush() -> void:
 	foliage_mat = ShaderMaterial.new()
 	foliage_mat.shader = load("res://shaders/foliage.gdshader")
 	_mi(FB.commit(), foliage_mat)
-	var gm = ShaderMaterial.new()
-	gm.shader = load("res://shaders/sky_tint.gdshader")
-	gm.set_shader_parameter("boost", 1.5)
-	_mi(GB.commit(), gm).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	var cm = ShaderMaterial.new()
-	cm.shader = load("res://shaders/sky_tint.gdshader")
-	cm.set_shader_parameter("boost", 1.3)
-	_mi(CB.commit(), cm).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	glow_mat = ShaderMaterial.new()
+	glow_mat.shader = load("res://shaders/sky_tint.gdshader")
+	glow_mat.set_shader_parameter("boost", 1.5)
+	_mi(GB.commit(), glow_mat).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	cloud_mat = ShaderMaterial.new()
+	cloud_mat.shader = load("res://shaders/sky_tint.gdshader")
+	cloud_mat.set_shader_parameter("boost", 1.3)
+	_mi(CB.commit(), cloud_mat).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 func _mi(mesh: Mesh, mat: Material) -> MeshInstance3D:
 	var mi = MeshInstance3D.new()
@@ -179,6 +184,7 @@ func _mi(mesh: Mesh, mat: Material) -> MeshInstance3D:
 	return mi
 
 func set_time(t: float) -> void:
+	RenderingServer.global_shader_parameter_set("sea_time", t)
 	water_mat.set_shader_parameter("game_time", t)
 	terrain_mat.set_shader_parameter("game_time", t)
 	foliage_mat.set_shader_parameter("game_time", t)
@@ -514,6 +520,7 @@ func _build_dock() -> void:
 		box(SB, Vector3(0.24, 0.04, 0.24), lp + Vector3(0, 0.2, 0), Vector3.ZERO, Color(0.2, 0.2, 0.22))
 		box(SB, Vector3(0.24, 0.04, 0.24), lp + Vector3(0, -0.2, 0), Vector3.ZERO, Color(0.2, 0.2, 0.22))
 		box(GB, Vector3(0.18, 0.34, 0.18), lp, Vector3.ZERO, Color(1.0, 0.82, 0.45))
+		lamps.append([lp, "dock"])
 	# crates, barrel, bucket, fishing rod, life ring on the platform
 	var pc = Vector3(-2.3, DECK_Y + 0.04, dock_end_z + 2.9)
 	# spheres the close throw camera must not pass through (crates, barrels, corner lanterns)
@@ -762,6 +769,7 @@ func _build_hut(th: float) -> void:
 	var hp: Vector3 = xf * Vector3(1.6, floor_y + 2.0, 2.75)
 	box(SB, Vector3(0.2, 0.04, 0.2), hp + Vector3(0, 0.16, 0), Vector3.ZERO, Color(0.2, 0.2, 0.22))
 	box(GB, Vector3(0.15, 0.25, 0.15), hp, Vector3.ZERO, Color(1.0, 0.8, 0.45))
+	lamps.append([hp, "porch"])
 	_barrel(xf * Vector3(2.4, 0, 2.2) + Vector3(0, ground_h((xf * Vector3(2.4, 0, 2.2)).x, (xf * Vector3(2.4, 0, 2.2)).z) - base.y, 0))
 	_crate(xf * Vector3(-2.6, 0.0, 2.6) + Vector3(0, ground_h((xf * Vector3(-2.6, 0, 2.6)).x, (xf * Vector3(-2.6, 0, 2.6)).z) - base.y + 0.3, 0), 0.6, 0.4)
 	# fishing net drying between two poles beside the hut
@@ -823,6 +831,7 @@ func _build_lighthouse() -> void:
 		tube(SB, p + Vector3(cos(a) * 0.88, h + 0.1, sin(a) * 0.88), p + Vector3(cos(a) * 0.88, h + 0.55, sin(a) * 0.88), 0.02, 0.02, 3, Color(0.25, 0.25, 0.27))
 	cyl(SB, 0.9, 0.9, 0.04, 12, p + Vector3(0, h + 0.55, 0), Vector3.ZERO, Color(0.25, 0.25, 0.27))
 	cyl(GB, 0.45, 0.45, 0.75, 8, p + Vector3(0, h + 0.5, 0), Vector3.ZERO, Color(1.0, 0.9, 0.55))
+	beacon_pos = p + Vector3(0, h + 0.5, 0)
 	cyl(SB, 0.0, 0.7, 0.75, 10, p + Vector3(0, h + 1.25, 0), Vector3.ZERO, Color(0.86, 0.25, 0.22))
 	blob(SB, p + Vector3(0, h + 1.68, 0), Vector3(0.08, 0.08, 0.08), Color(0.9, 0.8, 0.3), 0.0, 6, 3, 0.0)
 	cyl(SB, 0.06, 0.06, 0.6, 6, p + Vector3(0.35, 0.9, 0.95), Vector3.ZERO, Color(0.3, 0.22, 0.15))
@@ -1328,6 +1337,7 @@ func _build_vegetation() -> void:
 		tube(SB, g, g + Vector3(0, 1.1, 0), 0.04, 0.035, 5, Color(0.4, 0.28, 0.16))
 		wall_c(Vector2(g.x, g.z), 0.06, g.y - 0.2, g.y + 1.35, "路灯")
 		box(GB, Vector3(0.14, 0.2, 0.14), g + Vector3(0, 1.2, 0), Vector3.ZERO, Color(1.0, 0.78, 0.4))
+		lamps.append([g + Vector3(0, 1.2, 0), "path"])
 		box(SB, Vector3(0.18, 0.03, 0.18), g + Vector3(0, 1.32, 0), Vector3.ZERO, Color(0.2, 0.2, 0.22))
 
 # ------------------------------------------------------------------ far scenery

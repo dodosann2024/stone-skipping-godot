@@ -502,7 +502,7 @@ func _update_props() -> void:
 			want = parts["head"]
 			var hb := skel.find_bone("head")
 			var hp := skel.get_bone_global_rest(hb).origin
-			xf = _skel_to_bone("head", _hat_at(Basis(Vector3.RIGHT, PI * 0.5 - 0.12), hp + Vector3(0, 0.07, 0.12)))
+			xf = _skel_to_bone("head", _hat_at(Basis(Vector3.RIGHT, PI * 0.5 - 0.05), hp + Vector3(0, 0.0, 0.125)))
 		"ground":
 			# on the towel next to his right shoulder (the lying body frame is upright, back = -Z)
 			want = model
