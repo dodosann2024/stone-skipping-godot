@@ -276,8 +276,9 @@ func foot_points(side: int) -> Array:
 	var ball := skel.global_transform * skel.get_bone_global_pose(skel.find_bone("ball" + sx)).origin
 	return [heel, ball]
 
-## kind: "sleep" | "sun" | "seat"; sit_k: 0 stand -> 1 seated; lie_k: 0 seated -> 1 lying ("seat": 1 = sitting
-## idle, tt counted from when it started). Returns the pelvis in boy space.
+## kind: "sleep" | "sun" | "seat" | "seatlie"; sit_k: 0 stand -> 1 seated; lie_k: 0 seated -> 1 lying ("seat": 1 =
+## sitting idle; "seatlie": lying back along the bench / log), tt counted from when it started.
+## Returns the pelvis in boy space.
 func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	if anim != "activity":
 		pre_act = [anim, act_w, act_target, slot_clip.duplicate(), slot_t.duplicate(), cur_slot, ab_w]
@@ -285,10 +286,13 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 		prev_sit = 0.0 if sit_k < 1.0 else 1.0
 		prev_lie = 0.0
 	anim = "activity"
-	var pre: String = {"sleep": "hammock_", "sun": "sun_", "seat": "seat_"}[kind]
+	var pre: String = {"sleep": "hammock_", "sun": "sun_", "seat": "seat_", "seatlie": "seat_"}[kind]
 	var clip: String
 	var u: float
-	if kind == "seat" and lie_k >= 1.0:
+	if kind == "seatlie" and lie_k >= 1.0:
+		clip = "seat_nap"
+		u = fposmod(tt, 4.0) / 4.0
+	elif kind == "seat" and lie_k >= 1.0:
 		clip = "seat_rest"
 		u = fposmod(tt, 4.0) / 4.0
 	elif lie_k <= 0.0:
@@ -306,16 +310,19 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	prev_lie = lie_k
 	var L := float(clips[clip]["length"])
 	# the sitting idle loop can be mid foot-swing when he gets up: blend out of it
-	_play(clip, u * L, 0.25 if kind == "seat" and slot_clip[cur_slot] == "seat_rest" and clip != "seat_rest" else 0.0)
+	var from_loop: bool = slot_clip[cur_slot] in ["seat_rest", "seat_nap"] and clip != slot_clip[cur_slot]
+	_play(clip, u * L, 0.25 if kind.begins_with("seat") and from_loop else 0.0)
 	act_target = 1.0
 	act_w = 1.0 if sit_k > 0.02 or lie_k > 0.0 else act_w
 	act_rate = 8.0
 	hat_mode = "head"
-	if lie_k > 0.6 and kind != "seat":
+	if kind == "seatlie" and lie_k > 0.55:
+		hat_mode = "face"
+	elif lie_k > 0.6 and not kind.begins_with("seat"):
 		hat_mode = "chest" if kind == "sleep" else "ground"
 	glasses.visible = kind == "sun" and lie_k > 0.5
 	blob.visible = sit_k < 0.3 and lie_k <= 0.0
-	if kind == "sleep":
+	if kind == "sleep" or kind == "seatlie":
 		expr = "sleep" if lie_k > 0.7 else "smile"
 	else:
 		expr = "relax" if lie_k > 0.5 else "smile"
@@ -490,6 +497,12 @@ func _update_props() -> void:
 			# lying on the chest, crown up towards the sky
 			want = chest_att
 			xf = _skel_to_bone(chest_att.bone_name, _hat_at(Basis(Vector3.RIGHT, PI * 0.5), Vector3(0, 1.0, 0.16)))
+		"face":
+			# tipped down over his face against the sun, brim resting on the chin and forehead
+			want = parts["head"]
+			var hb := skel.find_bone("head")
+			var hp := skel.get_bone_global_rest(hb).origin
+			xf = _skel_to_bone("head", _hat_at(Basis(Vector3.RIGHT, PI * 0.5 - 0.05), hp + Vector3(0, 0.0, 0.125)))
 		"ground":
 			# on the towel next to his right shoulder (the lying body frame is upright, back = -Z)
 			want = model

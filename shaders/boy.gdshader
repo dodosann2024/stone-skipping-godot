@@ -13,17 +13,23 @@ uniform float rim = 0.12;
 uniform float eye_open = 1.0;     // 0 closed (blink / asleep) .. 1 open
 uniform int mouth = 0;            // 0 smile, 1 laugh, 2 oops, 3 grit, 4 sleepy
 uniform float blush = 0.35;
+#include "res://shaders/underwater.gdshaderinc"
 
 varying vec2 fuv;
 varying float ao;
 varying float fmask;
 varying vec3 lpos;
+varying vec3 wp0;
 
 void vertex() {
 	fuv = vec2(UV2.x, 1.0 - UV2.y);  // glTF stores V flipped
 	ao = COLOR.r;
 	fmask = COLOR.g;
 	lpos = VERTEX;
+	wp0 = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	if (wp0.y < 0.12) {
+		VERTEX += inverse(mat3(MODEL_MATRIX)) * uw_refract(wp0);
+	}
 }
 
 float ellipse(vec2 p, vec2 c, vec2 r, float aa) {
@@ -97,11 +103,17 @@ void fragment() {
 		c *= 1.0 + w * 0.09 * fade;
 		c *= 1.0 - 0.06 * smoothstep(0.6, 1.0, sin(UV.y * 160.0));
 	}
-	ALBEDO = c * mix(1.0, ao, ao_strength);
+	vec3 a = c * mix(1.0, ao, ao_strength);
+	float sub = 0.0;
+	if (wp0.y < 0.12) {
+		a = uw_tint(a, wp0);
+		sub = smoothstep(-0.004, 0.02, uw_depth(wp0));
+	}
+	ALBEDO = a;
 	ROUGHNESS = kind == 4 ? 0.35 : 0.85;
 	SPECULAR = kind == 4 ? 0.5 : 0.15;
 	float f = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
-	EMISSION = c * f * rim;
+	EMISSION = c * f * rim * (1.0 - sub) * (1.0 - 0.75 * night_k);
 }
 
 void light() {

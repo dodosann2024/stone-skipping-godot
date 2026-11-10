@@ -6,7 +6,7 @@ Godot scales him down).
 """
 import math
 from mathutils import Vector
-from posekit import V, pose, catmull, lerp_pose, GROUND
+from posekit import V, pose, catmull, lerp_pose, solve, GROUND
 
 TAU = math.pi * 2.0
 
@@ -173,18 +173,31 @@ T_CHARGE = 0.5      # charge part of the throw clips: seek 0..T_CHARGE by power
 T_RELEASE = 0.65    # stone leaves the hand
 
 
-def _recover(i, last, t0, fl_from):
-    """after the follow-through: back foot steps up, front foot steps back, settle into idle (t0 = first key)"""
-    relax = dict(hr=V(-0.20, -0.02, 0.76), hrw=0.0, wr=(0.0, 0.0, 0.0), er=i["er"], gr=0.3,
-                 hl=V(0.21, 0.0, 0.76), hlw=0.0, el=i["el"], gl=0.3)
-    step_r = P(last, fr=V(-0.12, 0.10, 0.10), pr=-0.25, yr=-0.15, kr=None, pel=V(0.03, -0.10, -0.08),
-               prot=(0.18, 0.02, 0.32), sp=(0.10, 0.0, 0.12), neck=(0.0, 0.0, -0.18), head=(0.0, 0.0, -0.2), **relax)
-    land_r = P(step_r, fr=i["fr"], pr=0.0, yr=i["yr"], pel=V(0.01, -0.07, -0.04), prot=(0.07, 0.02, 0.12),
-               sp=(0.02, 0.0, 0.05), neck=(0.0, 0.0, -0.08), head=(0.03, 0.0, -0.08))
-    step_l = P(land_r, fl=(fl_from + i["fl"]) * 0.5 + V(0, 0, 0.045), pl=-0.2, yl=0.05, pel=V(-0.01, -0.03, -0.03),
-               prot=(0.03, 0.03, 0.04), sp=(0.0, 0.0, 0.0), neck=(0.0, 0.0, 0.0), head=(0.04, 0.0, 0.0))
-    land_l = P(i, pel=V(0.0, 0.0, -0.022), prot=(0.01, 0.0, 0.0), sp=(-0.02, 0.0, 0.0))
-    return [(t0, step_r), (t0 + 0.14, land_r), (t0 + 0.30, step_l), (t0 + 0.44, land_l), (t0 + 0.66, i), (t0 + 0.8, i)]
+def _idle_hand_r(rig, i):
+    """idle right-hand target in root space (the chest is almost square at idle, so it is where hrw=0 lands)"""
+    M, _ = solve(rig, i)
+    return M["hand_r"].translation.copy()
+
+
+def _recover(rig, i, last, t0, fl_from):
+    """from `last` (arm already falling, torso unwinding): the relaxed arm swings past the right side like a
+    pendulum, overshoots a little behind the hip, swings back and settles while the back foot steps up, the
+    front foot steps back and the weight dips onto both feet. Hands stay in root space until the body is square."""
+    R0 = _idle_hand_r(rig, i)
+    loose_l = dict(hl=V(0.21, 0.0, 0.75), hlw=0.0, el=i["el"], gl=0.3)
+    swing = P(last, fr=V(-0.12, 0.10, 0.10), pr=-0.25, yr=-0.15, kr=None, pel=V(0.03, -0.08, -0.07),
+              prot=(0.10, 0.02, 0.20), sp=(0.05, 0.0, 0.10), neck=(0.0, 0.0, -0.12), head=(0.02, 0.0, -0.12),
+              hr=R0 + V(0.06, -0.09, 0.012), hrw=1.0, er=V(-0.3, 1.0, 0.0), wr=(0.10, 0.0, 0.0), gr=0.3,
+              clav_r=(0.0, 0.0, 0.0), **loose_l)
+    behind = P(swing, fr=i["fr"], pr=0.0, yr=i["yr"], pel=V(0.01, -0.05, -0.036), prot=(0.05, 0.02, 0.07),
+               sp=(0.01, 0.0, 0.03), neck=(0.0, 0.0, -0.04), head=(0.03, 0.0, -0.04),
+               hr=R0 + V(-0.015, 0.075, -0.004), wr=(-0.12, 0.0, 0.0), hl=V(0.225, 0.02, 0.74))
+    step_l = P(behind, fl=(fl_from + i["fl"]) * 0.5 + V(0, 0, 0.045), pl=-0.2, yl=0.05, pel=V(-0.01, -0.02, -0.03),
+               prot=(0.02, 0.03, 0.02), sp=(0.0, 0.0, 0.0), neck=(0.0, 0.0, 0.0), head=(0.04, 0.0, 0.0),
+               hr=R0 + V(0.0, -0.032, 0.0), wr=(0.06, 0.0, 0.0), hl=V(0.23, -0.012, 0.735))
+    land_l = P(i, pel=V(0.0, 0.0, -0.026), prot=(0.015, 0.0, 0.0), sp=(-0.02, 0.0, 0.0),
+               hr=R0 + V(-0.002, 0.012, 0.0), hrw=1.0, er=V(-0.4, 1.0, 0.0))
+    return [(t0, swing), (t0 + 0.15, behind), (t0 + 0.30, step_l), (t0 + 0.45, land_l), (t0 + 0.63, i), (t0 + 0.8, i)]
 
 
 def throw_stand(rig):
@@ -231,9 +244,18 @@ def throw_stand(rig):
               hl=V(0.20, -0.04, 0.82), pr=-1.0, yr=-0.3)
     wrap = P(sweep, pel=V(0.05, -0.16, -0.11), prot=(0.24, 0.04, 0.62), sp=(0.16, 0.0, 0.36),
              neck=(0.0, 0.0, -0.4), head=(0.0, 0.0, -0.45),
-             hr=V(0.30, -0.20, 0.72), er=V(0.3, 1.0, -0.4), wr=(0.0, 0.0, 0.0), hl=V(0.20, -0.08, 0.80), pr=-1.0, yr=-0.2)
+             hr=V(0.30, -0.20, 0.72), er=V(0.3, 1.0, -0.4), wr=(0.0, 0.0, 0.0), hl=V(0.20, -0.08, 0.80), pr=-1.0, yr=-0.2,
+             clav_r=(0.10, 0.0, 0.06))
+    # the arm has run out of speed: it goes limp (elbow folds, shoulder drops) and starts to fall while the
+    # chest unwinds back towards the target
+    loose = P(wrap, pel=V(0.05, -0.155, -0.105), prot=(0.20, 0.04, 0.56), sp=(0.13, 0.0, 0.32),
+              neck=(0.0, 0.0, -0.36), head=(0.02, 0.0, -0.40),
+              hr=V(0.26, -0.16, 0.70), er=V(0.1, 1.0, -0.5), wr=(0.2, 0.0, 0.0), gr=0.35, clav_r=(0.04, 0.0, 0.0))
+    fall = P(loose, pel=V(0.045, -0.13, -0.09), prot=(0.15, 0.03, 0.40), sp=(0.09, 0.0, 0.22),
+             neck=(0.0, 0.0, -0.25), head=(0.02, 0.0, -0.28),
+             hr=V(0.04, -0.20, 0.69), er=V(-0.2, 1.0, -0.2), wr=(0.15, 0.0, 0.0), clav_r=(0.0, 0.0, 0.0), pr=-0.7, yr=-0.4)
     keys = [(0.0, ready), (T_CHARGE, charge), (0.555, stride), (0.60, plant), (0.625, accel), (T_RELEASE, release),
-            (0.71, reach), (0.76, reach2), (0.86, sweep), (0.99, wrap)] + _recover(i, wrap, 1.17, ST_L2)
+            (0.71, reach), (0.76, reach2), (0.86, sweep), (0.99, wrap), (1.11, loose), (1.25, fall)] + _recover(rig, i, fall, 1.40, ST_L2)
     return keyed(keys), keys[-1][0]
 
 
@@ -271,15 +293,20 @@ def throw_crouch(rig):
               hr=V(0.10, -0.50, 0.38), wr=(0.0, 0.0, 0.3), er=V(0.0, 0.6, -1.0), gr=0.25, hl=V(0.20, -0.04, 0.82))
     wrap = P(sweep, pel=V(0.04, -0.09, -0.33), prot=(0.45, 0.04, 0.58), sp=(0.30, 0.0, 0.34),
              neck=(0.0, 0.0, -0.4), head=(-0.05, 0.0, -0.45),
-             hr=V(0.28, -0.20, 0.46), er=V(0.3, 1.0, -0.4), wr=(0.0, 0.0, 0.0), hl=V(0.20, -0.08, 0.80))
-    # stand up: weight onto the front foot, push off the back knee
-    lean = P(wrap, pel=V(0.02, -0.12, -0.31), prot=(0.62, 0.02, 0.3), sp=(0.2, 0.0, 0.15),
-             hr=V(-0.16, -0.30, 0.62), hrw=0.0, wr=(0.0, 0.0, 0.0), er=i["er"], hl=V(0.18, -0.30, 0.62), hlw=0.0, el=i["el"],
-             neck=(0.0, 0.0, -0.25), head=(-0.15, 0.0, -0.25), gr=0.3, gl=0.3)
-    rise = P(lean, pel=V(0.02, -0.12, -0.16), prot=(0.30, 0.02, 0.25), fr=V(-0.13, 0.18, 0.10), pr=-0.5, kr=None,
-             hr=V(-0.20, -0.08, 0.74), hl=V(0.21, -0.06, 0.74), head=(-0.05, 0.0, -0.2))
+             hr=V(0.28, -0.20, 0.46), er=V(0.3, 1.0, -0.4), wr=(0.0, 0.0, 0.0), hl=V(0.20, -0.08, 0.80),
+             clav_r=(0.10, 0.0, 0.06))
+    loose = P(wrap, pel=V(0.04, -0.095, -0.325), prot=(0.47, 0.04, 0.52), sp=(0.30, 0.0, 0.30),
+              hr=V(0.24, -0.16, 0.42), er=V(0.1, 1.0, -0.5), wr=(0.2, 0.0, 0.0), gr=0.35, clav_r=(0.04, 0.0, 0.0))
+    # stand up: weight onto the front foot, push off the back knee; the limp arm falls past the front knee
+    lean = P(loose, pel=V(0.02, -0.13, -0.30), prot=(0.60, 0.02, 0.28), sp=(0.22, 0.0, 0.14),
+             hr=V(0.04, -0.27, 0.43), er=V(-0.2, 1.0, -0.2), wr=(0.15, 0.0, 0.0), clav_r=(0.0, 0.0, 0.0),
+             hl=V(0.18, -0.30, 0.62), hlw=0.0, el=i["el"],
+             neck=(0.0, 0.0, -0.22), head=(-0.15, 0.0, -0.22), gr=0.3, gl=0.3)
+    rise = P(lean, pel=V(0.02, -0.11, -0.15), prot=(0.28, 0.02, 0.22), fr=V(-0.13, 0.18, 0.10), pr=-0.5, kr=None,
+             hr=V(-0.10, -0.22, 0.62), hl=V(0.21, -0.06, 0.74), head=(-0.05, 0.0, -0.18))
     keys = [(0.0, ready), (T_CHARGE, charge), (0.56, drive), (0.60, plant), (0.625, accel), (T_RELEASE, release),
-            (0.71, reach), (0.76, reach2), (0.86, sweep), (0.99, wrap), (1.19, lean), (1.39, rise)] + _recover(i, rise, 1.55, CR_L)
+            (0.71, reach), (0.76, reach2), (0.86, sweep), (0.99, wrap), (1.11, loose), (1.29, lean), (1.49, rise)] \
+        + _recover(rig, i, rise, 1.65, CR_L)
     return keyed(keys), keys[-1][0]
 
 
@@ -427,8 +454,24 @@ def seat_poses(rig):
     return i, seated
 
 
+# lying on the back along the bench / log, authored upright (main.gd tips the body frame onto the seat, head
+# towards his right): right knee raised with the foot flat on the seat, left ankle crossed over that knee,
+# hands behind the head (the hat goes over his face in boy.gd)
+KNEE_R = V(-0.036, -0.316, 0.651)
+
+
+def seat_lying(rig):
+    i = I(rig)
+    return P(i, pel=V(0, 0, 0), prot=(0.0, 0, 0), sp=(0.03, 0, 0), neck=(0.06, 0, 0), head=(0.08, 0.0, 0.0),
+             fr=V(-0.10, 0.03, 0.33), yr=-0.1, pr=-1.45, kr=V(0.2, -1, 0),
+             fl=KNEE_R + V(0.0, -0.075, 0.015), yl=0.5, pl=0.0, kl=V(1.0, -0.8, 0.3),
+             hl=V(0.07, 0.08, 1.40), hr=V(-0.07, 0.08, 1.40), hlw=0.0, hrw=0.0,
+             el=V(1, -0.3, 0.3), er=V(-1, -0.3, 0.3), gl=0.3, gr=0.3)
+
+
 def seat_clips(rig):
     i, seated = seat_poses(rig)
+    lying = seat_lying(rig)
     # look back at the seat, bend the knees, reach behind for it, lower
     bend = P(i, pel=V(0.0, 0.05, -0.12), prot=(0.30, 0, 0.12), sp=(0.12, 0, 0), head=(-0.05, 0, 0.25),
              fl=V(0.11, -0.10, 0.055), fr=V(-0.11, -0.09, 0.055), pl=0.0, pr=0.0, kl=V(0.1, -1, 0), kr=V(-0.1, -1, 0),
@@ -462,4 +505,31 @@ def seat_clips(rig):
              fl=V(0.11, -0.08, 0.055), fr=V(-0.11, -0.07, 0.055),
              hl=V(0.16, -0.24, 0.58), hr=V(-0.16, -0.23, 0.58), hlw=1.0, hrw=1.0, el=V(0.7, 0.4, -0.2), er=V(-0.7, 0.4, -0.2))
     stand = keyed([(0.0, seated), (0.3, tuck), (0.62, push), (1.0, i)])
-    return {"seat_sit": sit, "seat_rest": rest, "seat_stand": stand}
+    # lie down (time 0..1 follows main.gd's tip of the body frame): lean onto the right hand on the seat,
+    # swing the legs up, settle the right foot, cross the left ankle over the knee, hands behind the head
+    prop = P(seated, prot=(-0.05, 0.0, 0.08), sp=(0.10, 0.05, 0.10), head=(0.0, 0.0, 0.2),
+             hr=V(-0.30, 0.02, 0.44), hrw=1.0, er=V(-0.8, 0.6, 0.0), gr=0.1,
+             hl=V(0.12, -0.22, 0.48), hlw=1.0, fl=V(0.12, -0.24, 0.10), fr=V(-0.12, -0.22, 0.08))
+    swing = P(prop, pel=V(0.0, 0.06, -0.15), prot=(-0.04, 0.0, 0.04), sp=(0.06, 0.03, 0.05), head=(0.05, 0.0, 0.1),
+              fl=V(0.11, -0.34, 0.30), fr=V(-0.11, -0.30, 0.26), pl=0.2, pr=0.1, kl=V(0.2, -1, 0.2), kr=V(-0.1, -1, 0.2),
+              hr=V(-0.20, 0.10, 0.80), hrw=0.0, er=V(-1.0, 0.0, 0.0), hl=V(0.14, -0.06, 0.95), hlw=0.0, el=V(1.0, 0.2, 0.0))
+    settle = P(lying, fl=V(0.10, -0.20, 0.30), pl=0.1, yl=0.2, kl=V(0.4, -1, 0.2),
+               hl=V(0.12, 0.0, 1.25), hr=V(-0.12, 0.0, 1.25), el=V(1, 0.2, 0.0), er=V(-1, 0.2, 0.0))
+    lie = keyed([(0.0, seated), (0.3, prop), (0.6, swing), (0.82, settle), (1.0, lying)])
+
+    def nap(t):
+        """4 s loop: slow breathing, the crossed foot bobs to a tune, a hand drums once on the head"""
+        u = TAU * t / 4.0
+        br = math.sin(u * 2)
+        bob = math.sin(u * 4)
+        p = dict(lying)
+        p["sp"] = (0.03 + 0.02 * br, 0, 0)
+        p["pel"] = V(0, 0, 0.004 * br)
+        p["pl"] = 0.28 * bob
+        p["fl"] = lying["fl"] + V(0.0, -0.012 * max(bob, 0.0), 0.0)
+        p["hl"] = lying["hl"] + V(0, -0.006 * br, 0.004 * br)
+        p["hr"] = lying["hr"] + V(0, -0.006 * br, 0.004 * br)
+        p["head"] = (0.08 - 0.01 * br, 0.0, 0.05 * math.sin(u))
+        return p
+    up = keyed([(0.0, lying), (0.18, settle), (0.4, swing), (0.7, prop), (1.0, seated)])
+    return {"seat_sit": sit, "seat_rest": rest, "seat_stand": stand, "seat_lie": lie, "seat_nap": nap, "seat_up": up}

@@ -91,6 +91,10 @@ var rest_root_sit := Vector3.ZERO
 var rest_side := Vector3.ZERO
 var rest_cam_yaw := INF
 var seat_i := -1   # island.seats entry near the kid / being sat on
+var seat_face := Vector3.FORWARD   # the way he sits on it (logs: whichever side he came from)
+var seat_ap := Vector3.ZERO
+var seat_lying := false   # lying back along the bench / log
+var lie_btn: Button
 var swing_amp := 0.0
 var zzz: Label3D
 
@@ -143,7 +147,17 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v8"
+var shot_dir := "v9"
+var night_k := 0.0
+var night_on := false
+var night_btn: Button
+var night_fx: NightFx
+var night_amb: AudioStreamPlayer
+var env: Environment
+var sky_mat: ProceduralSkyMaterial
+var sun: DirectionalLight3D
+const SUN_DAY := Vector3(-38, 135, 0)
+const MOON_NIGHT := Vector3(-14, 206, 0)
 var demo_release_pending := 0
 var demo_input := Vector2.ZERO
 var demo_run := false
@@ -160,7 +174,11 @@ func _ready() -> void:
 	island = Island.new()
 	add_child(island)
 	island.build(ui_font)
+	night_fx = NightFx.new()
+	add_child(night_fx)
+	night_fx.build(island)
 	_build_player()
+	_build_wade_ring()
 	_build_stone()
 	_build_birds()
 	_build_audio()
@@ -177,6 +195,10 @@ func _ready() -> void:
 		get_tree().quit()
 		return
 	portrait_demo = "--portrait" in args
+	if "--night" in args:
+		night_on = true
+		night_k = 1.0
+		_update_night(0.0, true)
 	for a in args:
 		if a.begins_with("--video4="):
 			demo_seg = a.substr(9)
@@ -191,6 +213,43 @@ func _ready() -> void:
 			_run_demo4.call_deferred()
 	_apply_camera()
 	_update_ui()
+
+var wade_ring: MeshInstance3D
+var wade_mat: ShaderMaterial
+var wade_k := 0.0
+
+## foam collar + ripple rings around the legs while the kid stands or walks in the sea
+func _build_wade_ring() -> void:
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(2.6, 2.6)
+	wade_mat = ShaderMaterial.new()
+	wade_mat.shader = load("res://shaders/wade_ring.gdshader")
+	wade_ring = MeshInstance3D.new()
+	wade_ring.mesh = pm
+	wade_ring.material_override = wade_mat
+	wade_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	wade_ring.visible = false
+	add_child(wade_ring)
+
+func _update_wade_ring(delta: float) -> void:
+	var p := player.global_position
+	var sy := Island.sea_y(p.x, p.z, gt)
+	var dep := sy - _surface(p.x, p.z)
+	var want := smoothstep(0.02, 0.1, dep) * (1.0 - smoothstep(0.9, 1.2, dep))
+	if mode == Mode.REST or _on_dock(p.x, p.z):
+		want = 0.0
+	wade_k = move_toward(wade_k, want, delta * 2.5)
+	wade_ring.visible = wade_k > 0.001
+	if not wade_ring.visible:
+		return
+	wade_ring.global_position = Vector3(p.x, sy + 0.006, p.z)
+	var v := move_vel if mode == Mode.EXPLORE else Vector3.ZERO
+	var r := player.global_basis.x
+	wade_mat.set_shader_parameter("strength", wade_k)
+	wade_mat.set_shader_parameter("vel", Vector2(v.x, v.z))
+	wade_mat.set_shader_parameter("right", Vector2(r.x, r.z).normalized())
+	wade_mat.set_shader_parameter("time", gt)
+	wade_mat.set_shader_parameter("night", night_k)
 
 func _build_player() -> void:
 	boy = Boy.new()
@@ -218,9 +277,10 @@ func _build_player() -> void:
 # ------------------------------------------------------------------ environment
 
 func _build_environment() -> void:
-	var env := Environment.new()
+	env = Environment.new()
 	var sky := Sky.new()
 	var sm := ProceduralSkyMaterial.new()
+	sky_mat = sm
 	sm.sky_top_color = Color(0.40, 0.58, 0.76)
 	sm.sky_horizon_color = Color(0.78, 0.85, 0.88)
 	sm.ground_horizon_color = Color(0.78, 0.85, 0.88)
@@ -247,8 +307,8 @@ func _build_environment() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-38, 135, 0)
+	sun = DirectionalLight3D.new()
+	sun.rotation_degrees = SUN_DAY
 	sun.light_energy = 1.0
 	sun.light_color = Color(1.0, 0.93, 0.82)
 	sun.shadow_enabled = true
@@ -410,6 +470,10 @@ func _build_ui() -> void:
 	sound_btn.custom_minimum_size = Vector2(162, 50)
 	sound_btn.pressed.connect(_toggle_sound)
 	right_box.add_child(sound_btn)
+	night_btn = _btn("夜晚", 22)
+	night_btn.custom_minimum_size = Vector2(162, 50)
+	night_btn.pressed.connect(_toggle_night)
+	right_box.add_child(night_btn)
 	stance_btn = _btn("姿势：站立", 22)
 	stance_btn.custom_minimum_size = Vector2(162, 56)
 	stance_btn.pressed.connect(_toggle_stance)
@@ -425,6 +489,10 @@ func _build_ui() -> void:
 	action_btn.offset_left = -214; action_btn.offset_right = -24; action_btn.offset_top = -134; action_btn.offset_bottom = -40
 	action_btn.pressed.connect(_on_action)
 	root.add_child(action_btn)
+	lie_btn = _btn("躺下", 30, true)
+	lie_btn.anchor_left = 1.0; lie_btn.anchor_right = 1.0; lie_btn.anchor_top = 1.0; lie_btn.anchor_bottom = 1.0
+	lie_btn.pressed.connect(_lie_down)
+	root.add_child(lie_btn)
 
 	bottom_box = VBoxContainer.new()
 	bottom_box.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
@@ -534,6 +602,9 @@ func _layout_ui() -> void:
 	top_box.offset_right = -184
 	action_btn.offset_top = -150 if tall else -130
 	action_btn.offset_bottom = -56 if tall else -36
+	lie_btn.offset_left = -214; lie_btn.offset_right = -24
+	lie_btn.offset_bottom = action_btn.offset_top - 16
+	lie_btn.offset_top = lie_btn.offset_bottom - 80
 	joy.anchor_top = 0.6 if tall else 0.45
 	joy.anchor_right = 0.62 if tall else 0.45
 	joy.radius = 66.0 if tall else 72.0
@@ -553,6 +624,7 @@ func _update_ui() -> void:
 	view_btn.text = "返回" if mode == Mode.VIEW else "观景"
 	view_btn.visible = (mode == Mode.EXPLORE) or mode == Mode.VIEW or (throw_mode and state == State.READY)
 	sound_btn.text = "声音：关" if muted else "声音：开"
+	night_btn.text = "白天" if night_on else "夜晚"
 	stance_btn.visible = throw_mode and state == State.READY
 	stance_btn.text = "姿势：半蹲" if boy.stance == "crouch" else "姿势：站立"
 	leave_btn.visible = throw_mode and state == State.READY
@@ -566,6 +638,8 @@ func _update_ui() -> void:
 		act = "起来"
 	action_btn.visible = act != ""
 	action_btn.text = act
+	lie_btn.visible = mode == Mode.REST and rest_phase == 4 and rest_kind == "seat" and not seat_lying \
+		and seat_i >= 0 and island.seats[seat_i]["can_lie"]
 	match mode:
 		Mode.VIEW:
 			lbl_hint.text = "观景：单指拖动 360° 旋转，双指捏合缩放（电脑：拖鼠标 / 滚轮）\n点右上角「返回」继续玩"
@@ -587,8 +661,15 @@ func _update_ui() -> void:
 						h += "\n打水漂要走到码头尽头；吊床可以睡觉，沙滩毛巾可以晒太阳，长椅和篝火边可以坐"
 			lbl_hint.text = h
 		Mode.REST:
-			var rh := {"sleep": "呼……睡着了 · 轻点屏幕或「起来」叫醒他", "sun": "晒太阳中 · 轻点屏幕或「起来」站起来", "seat": "坐着歇一会儿 · 轻点屏幕或「起来」站起来"}
-			lbl_hint.text = rh[rest_kind] if rest_phase == 4 else ""
+			var rh := {"sleep": "呼……睡着了 · 轻点屏幕或「起来」叫醒他", "sun": "晒太阳中 · 轻点屏幕或「起来」站起来", "seat": "坐着歇一会儿 · 轻点屏幕或「起来」站起来",
+				"seatcan": "坐着歇一会儿 · 点「躺下」翘腿躺一会儿，轻点屏幕或「起来」站起来",
+				"seatlie": "草帽盖脸，翘着腿躺着 · 轻点屏幕或「起来」起身"}
+			var rk := rest_kind
+			if rest_kind == "seat" and seat_lying:
+				rk = "seatlie"
+			elif rest_kind == "seat" and island.seats[seat_i]["can_lie"]:
+				rk = "seatcan"
+			lbl_hint.text = rh[rk] if rest_phase == 4 else ""
 		_:
 			match state:
 				State.READY:
@@ -670,15 +751,26 @@ func _update_action_kind() -> void:
 		var best := 1.25
 		for i in island.seats.size():
 			var st: Dictionary = island.seats[i]
-			var ap: Vector3 = st["approach"]
-			var dd := Vector2(p.x - ap.x, p.z - ap.z).length()
+			var face: Vector3 = st["face"]
 			var top: Vector3 = st["top"]
-			var front := (p - top).dot(st["face"] as Vector3)
-			if dd < best and front > 0.15:
+			var front := (p - top).dot(face)
+			var ap: Vector3 = st["approach"]
+			var lim := 1.25
+			if st["two_sided"]:
+				# a log: sit on whichever side he is on; from the ends too (the approach is mid-log)
+				lim = 1.35
+				if front < -0.05:
+					face = -face
+					ap = st["back_approach"]
+				front = absf(front) + 0.2
+			var dd := Vector2(p.x - ap.x, p.z - ap.z).length()
+			if dd < minf(best, lim) and front > 0.15:
 				best = dd
 				k = "seat"
-				if seat_i != i:
+				if seat_i != i or not seat_face.is_equal_approx(face):
 					seat_i = i
+					seat_face = face
+					seat_ap = ap
 					action_kind = ""
 	if k != action_kind:
 		action_kind = k
@@ -963,15 +1055,18 @@ func _begin_rest(kind: String) -> void:
 		rest_approach = rest_seat + side * 0.26
 	elif kind == "seat":
 		var st: Dictionary = island.seats[seat_i]
-		var face: Vector3 = st["face"]
+		var face: Vector3 = seat_face
+		seat_lying = false
 		rest_side = face.cross(Vector3.UP).normalized()
 		rest_sit_b = Basis(Vector3.UP, atan2(-face.x, -face.z))
-		rest_approach = st["approach"]
+		rest_approach = seat_ap
 		var pl0 := boy.activity("seat", 1.0, 0.0, 0.0)
 		# the clips sit on a SEAT_TOP high seat: put the pelvis over the seat point at that height
-		rest_seat = (st["top"] as Vector3) + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
-		rest_lie = rest_seat
-		rest_lie_b = rest_sit_b
+		var top: Vector3 = st["top"]
+		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
+		# lying back: head towards his right, pelvis a little towards the foot end, back on the seat
+		rest_lie = top + Vector3(0, LIE_BACK, 0) - rest_side * 0.1
+		rest_lie_b = _lie_basis(rest_side)
 	else:
 		var td := island.towel_dir
 		var tp := island.towel_pos
@@ -992,6 +1087,23 @@ func _begin_rest(kind: String) -> void:
 	boy.rotation = Vector3(0, face_yaw, 0)
 	_update_ui()
 
+const LIE_BACK := 0.085   # pelvis centre above the seat when lying on the back
+const SEAT_LIE_DUR := 1.6
+
+## sit -> lie back along the bench / log (the seated boy's「躺下」)
+func _lie_down() -> void:
+	if mode != Mode.REST or rest_kind != "seat" or rest_phase != 4 or seat_lying:
+		return
+	if not island.seats[seat_i]["can_lie"]:
+		return
+	seat_lying = true
+	rest_phase = 3
+	rest_t = 0.0
+	_update_ui()
+
+func _act_kind() -> String:
+	return "seatlie" if rest_kind == "seat" and seat_lying else rest_kind
+
 ## lying on the back: local +Y (head) along head_dir, local -Z (chest) facing the sky
 func _lie_basis(head_dir: Vector3) -> Basis:
 	var y := (head_dir.normalized() + Vector3(0, 0.12, 0)).normalized()
@@ -1001,7 +1113,7 @@ func _lie_basis(head_dir: Vector3) -> Basis:
 
 func _wake() -> void:
 	if mode == Mode.REST and rest_phase == 4:
-		rest_phase = 6 if rest_kind == "seat" else 5
+		rest_phase = 6 if rest_kind == "seat" and not seat_lying else 5
 		rest_t = 0.0
 		_update_ui()
 
@@ -1070,12 +1182,12 @@ func _rest_tick(delta: float) -> void:
 					_update_action_kind()
 					_update_ui()
 		3, 5:
-			var dur2 := 1.0
+			var dur2 := SEAT_LIE_DUR if rest_kind == "seat" else 1.0
 			var k2 := clampf(rest_t / dur2, 0.0, 1.0)
 			if rest_phase == 5:
 				k2 = 1.0 - k2
 			var ks2 := smoothstep(0.0, 1.0, k2)
-			var pl2 := boy.activity(rest_kind, 1.0, k2, gt)
+			var pl2 := boy.activity(_act_kind(), 1.0, k2, gt)
 			var b := rest_sit_b.slerp(rest_lie_b, ks2)
 			var w := rest_seat.lerp(rest_lie, ks2) + Vector3(0, 0.07 * sin(PI * k2), 0)
 			if sleep:
@@ -1085,12 +1197,14 @@ func _rest_tick(delta: float) -> void:
 			if rest_t >= dur2:
 				rest_t = 0.0
 				rest_phase = 4 if rest_phase == 3 else 6
+				if rest_phase == 6 and rest_kind == "seat":
+					seat_lying = false
 				_update_ui()
-		4 when rest_kind == "seat":
+		4 when rest_kind == "seat" and not seat_lying:
 			boy.activity("seat", 1.0, 1.0, rest_t)
 			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 		4:
-			var pl3 := boy.activity(rest_kind, 1.0, 1.0, gt)
+			var pl3 := boy.activity(_act_kind(), 1.0, 1.0, gt)
 			if sleep:
 				swing_amp = lerpf(swing_amp, 0.07, 1.0 - exp(-delta * 1.0))
 				swing = island.swing_hammock(swing_amp * sin(gt * 1.3))
@@ -1506,7 +1620,7 @@ func _splash(p: Vector3, strength: float, big: bool, vel: Vector3) -> void:
 		spray.global_position = p
 		spray.emitting = true
 		get_tree().create_timer(1.5).timeout.connect(spray.queue_free)
-	_add_ripple(p, 1.0 if big else 0.75)
+	_add_ripple(p, 1.0 if big else (0.75 if strength > 0.4 else 0.3))
 	if big:
 		_add_ripple(p, 0.6, 0.35)
 
@@ -1582,6 +1696,12 @@ func _build_audio() -> void:
 	fire_amb.stream = crackle
 	fire_amb.volume_db = -60.0
 	add_child(fire_amb)
+	var crickets: AudioStreamOggVorbis = load("res://audio/night_loop.ogg")
+	crickets.loop = true
+	night_amb = AudioStreamPlayer.new()
+	night_amb.stream = crickets
+	night_amb.volume_db = -60.0
+	add_child(night_amb)
 	for i in 10:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
@@ -1606,6 +1726,7 @@ func _start_audio() -> void:
 	amb.play()
 	amb.stream_paused = muted
 	fire_amb.play()
+	night_amb.play()
 	fire_amb.stream_paused = muted
 	chime_pending = true
 	chime_wait = 0.0
@@ -1631,16 +1752,60 @@ func _audio_tick(delta: float) -> void:
 		if is_web:
 			JavaScriptBridge.eval("window.__chimePlayed = (window.__chimePlayed || 0) + 1", true)
 
+func _toggle_night() -> void:
+	night_on = not night_on
+	_toast("夜晚：篝火和灯都亮起来了" if night_on else "天亮了", 1.6)
+	_update_ui()
+
+## day <-> night over ~2.5 s: sky, sun -> moon, ambient, fog, water glints, lamps, fire, sounds
+func _update_night(delta: float, force := false) -> void:
+	var target := 1.0 if night_on else 0.0
+	if night_k == target and not force:
+		return
+	night_k = move_toward(night_k, target, delta / 2.5)
+	var k := smoothstep(0.0, 1.0, night_k)
+	RenderingServer.global_shader_parameter_set("night_k", k)
+	sky_mat.sky_top_color = Color(0.40, 0.58, 0.76).lerp(Color(0.025, 0.05, 0.13), k)
+	sky_mat.sky_horizon_color = Color(0.78, 0.85, 0.88).lerp(Color(0.09, 0.14, 0.25), k)
+	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
+	sky_mat.ground_bottom_color = Color(0.30, 0.46, 0.52).lerp(Color(0.02, 0.05, 0.09), k)
+	var qd := Basis.from_euler(SUN_DAY * PI / 180.0).get_rotation_quaternion()
+	var qn := Basis.from_euler(MOON_NIGHT * PI / 180.0).get_rotation_quaternion()
+	sun.basis = Basis(qd.slerp(qn, k))
+	sun.light_energy = lerpf(1.0, 0.42, k)
+	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(0.62, 0.72, 1.0), k)
+	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.5 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
+	env.ambient_light_color = Color(0.22, 0.30, 0.50)
+	env.ambient_light_sky_contribution = 1.0 - k
+	env.ambient_light_energy = lerpf(0.75, 0.42, k)
+	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.07, 0.11, 0.19), k)
+	env.tonemap_exposure = lerpf(1.0, 1.2, k)
+	env.adjustment_saturation = lerpf(0.85, 0.95, k)
+	var moon := sun.global_basis.z.normalized()
+	island.water_mat.set_shader_parameter("glint_dir", moon)
+	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(0.8, 0.88, 1.0), k))
+	island.water_mat.set_shader_parameter("night", k)
+	island.glow_mat.set_shader_parameter("boost", lerpf(1.5, 3.4, k))
+	island.cloud_mat.set_shader_parameter("tint", Color(1, 1, 1).lerp(Color(0.13, 0.16, 0.26), k))
+	island.campfire.night = k
+	for b in birds:
+		(b["node"] as Node3D).visible = k < 0.5
+	if night_amb:
+		night_amb.volume_db = lerpf(-60.0, -13.0, sqrt(k))
+
 func _toggle_sound() -> void:
 	muted = not muted
 	AudioServer.set_bus_mute(0, muted)
 	if audio_started:
 		amb.stream_paused = muted
 		fire_amb.stream_paused = muted
+		night_amb.stream_paused = muted
 		if not muted and not amb.playing:
 			amb.play()
 		if not muted and not fire_amb.playing:
 			fire_amb.play()
+		if not muted and not night_amb.playing:
+			night_amb.play()
 	if muted:
 		for p in sfx_players:
 			p.stop()
@@ -1682,7 +1847,7 @@ func _update_audio(_delta: float) -> void:
 		return
 	var cp := camera.global_position
 	var d := absf(Island.shore_d(cp.x, cp.z)) + maxf(cp.y - 2.0, 0.0) * 0.6
-	var want := lerpf(-3.0, -15.0, smoothstep(6.0, 70.0, d))
+	var want := lerpf(-3.0, -15.0, smoothstep(6.0, 70.0, d)) - 4.0 * night_k   # softer waves at night
 	amb.volume_db = lerpf(amb.volume_db, want, 0.05)
 	# campfire crackle: heard from a few metres away, loud when sitting by it
 	var fd := minf(cp.distance_to(island.campfire_pos), player.global_position.distance_to(island.campfire_pos) + 1.5)
@@ -1716,6 +1881,9 @@ func _process(delta: float) -> void:
 		var flap := sin(gt * 7.0 + b["ph"]) * 0.55 if fmod(gt + b["ph"], 6.0) < 3.0 else 0.08
 		for w in b["wings"]:
 			(w[0] as Node3D).rotation.z = flap * float(w[1])
+	_update_wade_ring(delta)
+	_update_night(delta)
+	night_fx.apply(night_k, camera.global_position, sun.global_basis.z.normalized(), delta)
 	if toast_timer > 0.0:
 		toast_timer -= delta
 		if toast_timer < 0.5:
@@ -1795,7 +1963,7 @@ func _rest_cam() -> Array:
 			var along := (island.hammock_b - island.hammock_a).normalized()
 			off = (off + Vector3(along.x, 0, along.z) * 0.45).normalized()
 		elif rest_kind == "seat":
-			off = ((island.seats[seat_i]["face"] as Vector3) * 0.45 + rest_side * 0.9).normalized()
+			off = (seat_face * 0.45 + rest_side * 0.9).normalized()
 		else:
 			off = (rest_side * 0.75 + island.towel_dir * 0.75).normalized()
 		rest_cam_yaw = _clear_yaw(t, atan2(off.x, off.z), 0.42, dist)
@@ -2239,6 +2407,125 @@ func _v8_sequence(pre: String) -> void:
 			_leave_throw()
 			await _wait(0.6)
 
+## v9 stills: shore water through a surf cycle, wading close-ups, lying on the bench / a log, night.
+## part "" = all, or one of shore / wade / lie / night
+func _v9_sequence(pre: String, part: String) -> void:
+	if part == "" or part == "shore":
+		for th: float in [-1.05, 2.2]:
+			var tag := "a" if th < 0.0 else "b"
+			var sea := Island.dir_at(th)
+			var p := island.shore_pt(th, 1.4)
+			var along := sea.cross(Vector3.UP)
+			_place(p, atan2(-sea.x, -sea.z) + 0.5)
+			await _wait(0.4)
+			for k in 4:
+				_fixed_cam(p + sea * 1.6 + Vector3(0, 0.2, 0), atan2(sea.x, sea.z) + 0.55, 0.62, 5.0)
+				await _wait(0.05)
+				_shot(pre + "30%s_shore_%d" % [tag, k])
+				_fixed_cam(p + sea * 1.0 + Vector3(0, 0.3, 0), atan2(along.x, along.z) - 0.5, 0.16, 3.6)
+				await _wait(0.05)
+				_shot(pre + "31%s_shore_low_%d" % [tag, k])
+				await _wait(2.3)
+			_free_cam()
+	if part == "" or part == "wade":
+		var wp := island.shore_pt(-1.2, -1.6)
+		_place(wp, 0.4)
+		_walk_to.call(island.shore_pt(-1.32, -2.0), false)
+		await _wait(1.5)
+		_shot(pre + "32_wading_game")
+		_stop_walk()
+		await _wait(0.6)
+		var bp := player.global_position
+		_fixed_cam(bp + Vector3(0, 0.25, 0), face_yaw + 1.2, 0.12, 1.9)
+		await _wait(0.3)
+		_shot(pre + "33_wading_low")
+		_fixed_cam(bp + Vector3(0, 0.2, 0), face_yaw + 0.5, 0.55, 2.2)
+		await _wait(0.3)
+		_shot(pre + "34_wading_high")
+		var dp := Vector3(0.0, 0.0, lerpf(island.dock_start_z, island.dock_end_z, 0.35))
+		_fixed_cam(dp + Vector3(0, -0.2, 0), 1.3, 0.22, 4.2)
+		await _wait(0.3)
+		_shot(pre + "35_dock_posts")
+		_free_cam()
+	if part == "" or part == "lie" or part == "lieq":
+		for i: int in ([0, 1, 2, 3] if part != "lieq" else [1]):
+			var st: Dictionary = island.seats[i]
+			var face: Vector3 = st["face"]
+			var from_back := i == 2
+			var spot: Vector3 = (st["back_approach"] as Vector3) - face * 0.7 if from_back else (st["approach"] as Vector3) + face * 0.7
+			_place(_blocked_by(spot), 0.0)
+			_free_cam()
+			await _wait(0.3)
+			_on_action()
+			while rest_phase != 4:
+				await get_tree().process_frame
+			await _wait(0.8)
+			_shot(pre + "36_seat_%d_sit" % i)
+			_lie_down()
+			await _wait(SEAT_LIE_DUR * 0.5)
+			_shot(pre + "37_seat_%d_lying_down" % i)
+			while rest_phase != 4:
+				await get_tree().process_frame
+			await _wait(1.5)
+			_shot(pre + "38_seat_%d_lie" % i)
+			_fixed_cam(rest_lie + Vector3(0, 0.1, 0), atan2(seat_face.x, seat_face.z) + 0.35, 0.35, 1.8)
+			await _wait(0.4)
+			_shot(pre + "39_seat_%d_lie_close" % i)
+			_free_cam()
+			_wake()
+			while mode != Mode.EXPLORE:
+				await get_tree().process_frame
+			await _wait(0.3)
+
+	if part == "" or part == "night":
+		var c := island.campfire_pos
+		_place(c + Vector3(2.4, 0, 2.4), 0.0)
+		await _wait(0.3)
+		_shot(pre + "40_day_ui")
+		_toggle_night()
+		await _wait(1.25)
+		_shot(pre + "41_dusk_transition")
+		await _wait(1.6)
+		_shot(pre + "42_night_ui")
+		_fixed_cam(c + Vector3(0, 0.4, 0), 0.7, 0.25, 4.2)
+		await _wait(0.4)
+		_shot(pre + "43_night_fire")
+		var st: Dictionary = island.seats[1]
+		_place(_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.7), 0.0)
+		_free_cam()
+		await _wait(0.2)
+		_on_action()
+		while rest_phase != 4:
+			await get_tree().process_frame
+		await _wait(1.0)
+		_shot(pre + "44_night_sit_fire")
+		_wake()
+		while mode != Mode.EXPLORE:
+			await get_tree().process_frame
+		_place(Vector3(0.3, 0, island.dock_end_z + 1.6), 0.1)
+		await _wait(0.5)
+		_shot(pre + "45_night_dock")
+		_enter_throw()
+		await _wait(1.3)
+		_shot(pre + "46_night_throw_view")
+		_leave_throw()
+		await _wait(0.6)
+		_fixed_cam(Vector3(0, 1.0, island.dock_start_z - 2.0), 2.6, 0.32, 26.0)
+		await _wait(0.4)
+		_shot(pre + "47_night_wide")
+		_fixed_cam(island.beacon_pos + Vector3(0, -3.0, 0), 1.9, 0.12, 18.0)
+		await _wait(0.4)
+		_shot(pre + "48_night_lighthouse")
+		var wp := island.shore_pt(-1.2, -1.6)
+		_place(wp, 0.4)
+		_walk_to.call(island.shore_pt(-1.32, -2.0), false)
+		await _wait(1.5)
+		_shot(pre + "49_night_wading")
+		_stop_walk()
+		_free_cam()
+		_toggle_night()
+		await _wait(2.8)
+
 ## gameplay follow camera along the beach (style checks): walk, run, then stand
 func _explore_sequence(pre: String) -> void:
 	var a := island.shore_pt(-1.3, 2.2)
@@ -2277,6 +2564,8 @@ func _run_demo4() -> void:
 				await _explore_sequence(pre)
 			elif what == "v8":
 				await _v8_sequence(pre)
+			elif what.begins_with("v9"):
+				await _v9_sequence(pre, what.substr(2).trim_prefix("_"))
 			else:
 				await _rest_sequence(pre + ("10_" if what == "sleep" else "11_"), what, close)
 			get_tree().quit()
@@ -2562,6 +2851,143 @@ func _video_seg(seg: String) -> void:
 				await _walk_to(w, false, 6.0)
 			_stop_walk()
 			await _wait(22.0)
+
+		"recover":
+			# the arm after the release: stand and half-kneel, side-on from the throwing side, each once at
+			# full speed and once at half speed
+			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.0)
+			await _wait(0.3)
+			_enter_throw()
+			for k in 4:
+				var crouch := k >= 2
+				if crouch != (boy.stance == "crouch"):
+					_toggle_stance()
+				await _wait(1.0)
+				demo_cam = true
+				demo_track = [aim_yaw + PI - 0.7, 0.1, 2.6, 0.62 if not crouch else 0.45, true]
+				_toast(("半蹲" if crouch else "站立") + ("投掷 · 慢放 0.5×" if k % 2 == 1 else "投掷"), 1.6)
+				_begin_aim(Vector2.ZERO)
+				aim_pitch = 3.0
+				var t0 := gt
+				while gt - t0 < 1.0:
+					charge_t = minf((gt - t0) / 0.9, 1.0) * 0.9 * POWER_CYCLE * 0.5
+					await get_tree().process_frame
+				charge_t = 0.9 * POWER_CYCLE * 0.5
+				if k % 2 == 1:
+					Engine.time_scale = 0.5
+				_throw()
+				fly_t = 0.0
+				await _wait(2.6)
+				Engine.time_scale = 1.0
+				while state != State.READY:
+					await get_tree().process_frame
+				await _wait(0.4)
+			_free_cam()
+		"lie":
+			# the bench, then the three logs by the fire (front, back, front): sit, lie back with the hat on
+			# the face and a leg crossed, nap a moment, get up
+			for i: int in [0, 1, 2, 3]:
+				var st: Dictionary = island.seats[i]
+				var face: Vector3 = st["face"]
+				var from_back := i == 2
+				var spot: Vector3 = (st["back_approach"] as Vector3) - face * 1.6 if from_back else (st["approach"] as Vector3) + face * 1.6
+				_place(_blocked_by(spot), 0.0)
+				var to := (st["top"] as Vector3) - player.position
+				face_yaw = atan2(-to.x, -to.z)
+				player.rotation.y = face_yaw
+				ex_yaw = face_yaw + 0.5
+				_snap_cam_now()
+				_toast("%s · 坐下 → 躺下 → 起来" % ("长椅" if i == 0 else "篝火边的木头 %d%s" % [i, "（从背面坐）" if from_back else ""]), 2.0)
+				await _walk_to(_blocked_by((st["back_approach"] as Vector3) - face * 0.6 if from_back else (st["approach"] as Vector3) + face * 0.6), false, 2.5)
+				await _wait(0.3)
+				_on_action()
+				while rest_phase != 4:
+					await get_tree().process_frame
+				await _wait(1.2)
+				_lie_down()
+				await _wait(SEAT_LIE_DUR * 0.4)
+				_fixed_cam(rest_lie + Vector3(0, 0.15, 0), atan2(seat_face.x, seat_face.z) + 0.45, 0.32, 2.2)
+				while rest_phase != 4:
+					await get_tree().process_frame
+				await _wait(3.2 if i == 0 else 2.2)
+				_wake()
+				while mode != Mode.EXPLORE:
+					await get_tree().process_frame
+				_free_cam()
+				await _wait(0.6)
+		"shore":
+			# a full surf cycle from above, then low along the beach
+			var sea := Island.dir_at(-1.05)
+			var p := island.shore_pt(-1.05, 1.4)
+			var along := sea.cross(Vector3.UP)
+			_place(p, atan2(-sea.x, -sea.z) + 0.5)
+			_fixed_cam(p + sea * 1.6 + Vector3(0, 0.2, 0), atan2(sea.x, sea.z) + 0.55, 0.62, 5.0)
+			await _wait(10.5)
+			_fixed_cam(p + sea * 1.0 + Vector3(0, 0.3, 0), atan2(along.x, along.z) - 0.5, 0.16, 3.6)
+			await _wait(10.5)
+			var sea2 := Island.dir_at(2.2)
+			var p2 := island.shore_pt(2.2, 1.4)
+			_place(p2, atan2(-sea2.x, -sea2.z) + 0.5)
+			_fixed_cam(p2 + sea2 * 1.2 + Vector3(0, 0.2, 0), atan2(sea2.x, sea2.z) - 0.4, 0.35, 4.5)
+			await _wait(10.0)
+			_free_cam()
+		"wade":
+			# walk into the sea by the dock: legs go under, tinted and wobbling; foam collar + rings follow
+			var a := island.shore_pt(-1.2, 0.6)
+			var b := island.shore_pt(-1.24, -1.9)
+			var dv := (b - a).normalized()
+			_place(a, atan2(-dv.x, -dv.z))
+			demo_cam = true
+			demo_track = [atan2(dv.x, dv.z) + PI * 0.5 + 0.4, 0.14, 2.3, 0.35, true]
+			await _walk_to(b, false, 7.0)
+			await _wait(2.5)
+			await _walk_to(island.shore_pt(-1.34, -2.2), false, 4.0)
+			_free_cam()
+			await _wait(0.5)
+			await _walk_to(island.shore_pt(-1.2, -1.2), false, 4.0)
+			await _wait(2.0)
+		"night":
+			# dusk falls by the campfire, fireflies, sit by the fire, then the dock: the moon path on the sea
+			var c := island.campfire_pos
+			_place(c + Vector3(2.6, 0, 2.6), 0.0)
+			_fixed_cam(c + Vector3(0, 0.5, 0), 0.7, 0.28, 5.2)
+			await _wait(1.2)
+			_toggle_night()
+			await _wait(4.5)
+			var st: Dictionary = island.seats[1]
+			_free_cam()
+			await _walk_to(_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.6), false, 3.0)
+			_on_action()
+			while rest_phase != 4:
+				await get_tree().process_frame
+			await _wait(4.0)
+			_wake()
+			while mode != Mode.EXPLORE:
+				await get_tree().process_frame
+			_free_cam()
+			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.1)
+			await _wait(0.5)
+			_enter_throw()
+			await _wait(1.5)
+			_begin_aim(Vector2.ZERO)
+			aim_pitch = 3.0
+			var t0 := gt
+			while gt - t0 < 1.2:
+				charge_t = minf((gt - t0) / 1.1, 1.0) * 0.9 * POWER_CYCLE * 0.5
+				await get_tree().process_frame
+			_throw()
+			while state != State.READY:
+				await get_tree().process_frame
+			await _wait(1.0)
+			_leave_throw()
+			_fixed_cam(Vector3(0, 1.0, island.dock_start_z - 2.0), 2.6, 0.32, 26.0)
+			var t1 := gt
+			while gt - t1 < 5.0:
+				_fixed_cam(Vector3(0, 1.0, island.dock_start_z - 2.0), 2.6 + (gt - t1) * 0.08, 0.32, 26.0)
+				await get_tree().process_frame
+			_toggle_night()
+			await _wait(3.5)
+			_free_cam()
 
 ## steer with the stick towards a world direction (camera-relative, like a player would)
 func _drive_dir(dir: Vector3, sec: float, run: bool) -> void:

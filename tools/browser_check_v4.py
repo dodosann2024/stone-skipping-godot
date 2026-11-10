@@ -118,7 +118,7 @@ async def main():
         await tap(cdp, page, 325, 788)   # 打水漂 (only shown at the dock end)
         await page.wait_for_timeout(2500)
         await page.screenshot(path=OUT + "_7_throw_mode.png")
-        await tap(cdp, page, 338, 94)    # 姿势：站立 -> 半蹲
+        await tap(cdp, page, 338, 126)   # 姿势：站立 -> 半蹲 (below 观景 / 声音 / 夜晚)
         await page.wait_for_timeout(1500)
         await touch(cdp, "touchStart", [(195, 520)])
         for i in range(1, 6):
@@ -133,9 +133,12 @@ async def main():
         res["throw_starts"] = (await page.evaluate("window.__t.realStarts")) - s1
         res["after_throw_rms"] = await rms(page, 5)
         await page.screenshot(path=OUT + "_10_result.png")
-        await tap(cdp, page, 338, 130)   # 离开码头
+        await tap(cdp, page, 338, 162)   # 离开码头
         await page.wait_for_timeout(2500)
         await page.screenshot(path=OUT + "_11_left_dock.png")
+        await tap(cdp, page, 338, 92)    # 夜晚
+        await page.wait_for_timeout(9000)
+        await page.screenshot(path=OUT + "_12_night.png")
         res["end"] = json.loads(await page.evaluate(STATE))
         print(json.dumps(res, ensure_ascii=False, indent=1))
         print("\n".join(l for l in logs if "WebGL" not in l)[:4000])

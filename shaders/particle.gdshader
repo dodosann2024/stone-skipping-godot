@@ -4,6 +4,7 @@ render_mode unshaded, depth_draw_never, cull_disabled, shadows_disabled;
 
 // size over life (start, end); INSTANCE_CUSTOM.y is the particle's age fraction
 uniform vec2 grow = vec2(1.0, 1.0);
+global uniform float night_k;
 
 void vertex() {
 	vec3 pos = MODEL_MATRIX[3].xyz;
@@ -17,6 +18,6 @@ void fragment() {
 	if (COLOR.a * a * a < 0.01) {
 		discard;
 	}
-	ALBEDO = COLOR.rgb;
+	ALBEDO = COLOR.rgb * mix(1.0, 0.3, night_k);
 	ALPHA = COLOR.a * a * a;
 }

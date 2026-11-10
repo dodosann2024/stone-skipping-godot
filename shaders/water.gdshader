@@ -2,18 +2,22 @@ shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, specular_schlick_ggx;
 #include "res://shaders/common.gdshaderinc"
 
-// Milky jade water (v6, after the "Wired to Fish" look): an opaque-looking pastel gradient by depth,
-// little specular, a translucent rim on the wet sand, one faint second foam line rolling in each
-// surf cycle and scattered foam flecks. The crisp main foam line is the wash front on the sand
-// (terrain.gdshader), so it slides up and down the beach.
-uniform vec3 c_shallow : source_color = vec3(0.52, 0.78, 0.69);
-uniform vec3 c_mid : source_color = vec3(0.38, 0.66, 0.61);
-uniform vec3 c_deep : source_color = vec3(0.25, 0.52, 0.54);
-uniform vec3 c_abyss : source_color = vec3(0.18, 0.40, 0.47);
+// Jade water after the "Wired to Fish" look: clear over the sand in the shallows (the terrain shader
+// tints and caustics the bottom), greener and more opaque with depth. Each surf cycle a lacy breaker
+// band rolls in, hands over to the swash foam on the sand (terrain.gdshader) and leaves drifting lace
+// behind; sun (or moon) glints sparkle on the small waves.
+uniform vec3 c_shallow : source_color = vec3(0.42, 0.80, 0.70);
+uniform vec3 c_mid : source_color = vec3(0.24, 0.66, 0.60);
+uniform vec3 c_deep : source_color = vec3(0.13, 0.50, 0.52);
+uniform vec3 c_abyss : source_color = vec3(0.09, 0.37, 0.45);
 uniform vec3 c_sky : source_color = vec3(0.82, 0.89, 0.90);
 uniform sampler2D obj_foam : filter_linear, repeat_disable;
 uniform float game_time = 0.0;
 uniform vec4 ripples[8];
+uniform vec3 glint_dir = vec3(0.45, 0.62, -0.64);   // towards the sun / moon (world)
+uniform vec3 glint_col : source_color = vec3(1.0, 0.95, 0.85);
+uniform float glint_gain = 1.0;
+uniform float night = 0.0;
 
 varying vec3 wpos;
 
@@ -66,12 +70,14 @@ void fragment() {
 	for (int i = 0; i < 8; i++) {
 		vec4 r = ripples[i];
 		float age = t - r.z;
-		if (r.w > 0.0 && age > 0.0 && age < 3.2) {
+		// footsteps (w ~0.3) make small, short-lived rings; stones big ones
+		float life = r.w < 0.5 ? 1.6 : 3.2;
+		if (r.w > 0.0 && age > 0.0 && age < life) {
 			vec2 dv = p - r.xy;
 			float dist = length(dv);
-			float fade = (1.0 - age / 3.2) * r.w;
+			float fade = (1.0 - age / life) * r.w;
 			for (int k = 0; k < 2; k++) {
-				float rad = 0.25 + (age - float(k) * 0.28) * 1.45;
+				float rad = 0.25 + (age - float(k) * 0.28) * (r.w < 0.5 ? 0.7 : 1.45);
 				float x = dist - rad;
 				float ring = exp(-x * x * 30.0) * fade * (1.0 - float(k) * 0.45) * step(0.0, rad);
 				rip += ring;
@@ -90,49 +96,60 @@ void fragment() {
 	col = mix(col, c_abyss, smoothstep(3.8, 5.8, depth));
 	col *= 1.0 + (vnoise(p * 0.35 + vec2(t * 0.02, 0.0)) - 0.5) * 0.06;
 	float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
-	col = mix(col, c_sky, fres * 0.25);
+	col *= mix(vec3(1.0), vec3(0.32, 0.42, 0.62), night);
+	col = mix(col, mix(c_sky, vec3(0.10, 0.15, 0.28), night), fres * 0.14);
 
 	// --- foam
 	float foam = 0.0;
 	float th = wpos.y - ground_near(p, d); // water thickness over the sand
-	if (d < 6.0) {
-		float nB = vnoise(p * 2.6 - vec2(t * 0.11, t * 0.07));
+	if (d < 7.0) {
 		float c = wash_cycle(p, t);
-		// a faint second line rolling in, merging into the wash front as the surf reaches the sand
-		float roll = smoothstep(0.55, 1.0, c);
-		float dl = mix(2.4, 0.1, roll) + (vnoise(p * 0.8 + vec2(t * 0.05, 0.0)) - 0.5) * 0.5;
-		float w2 = mix(0.02, 0.05, nB);
-		foam = aline(d - dl, w2, fwd) * smoothstep(0.55, 0.7, c) * (0.25 + 0.25 * nB);
-		// foam flecks drifting near the shore
-		vec2 q = p * 2.4 + vec2(t * 0.05, t * 0.035);
-		vec2 cell = floor(q);
-		vec2 f = fract(q);
-		float h = hash12(cell);
-		vec2 cc = vec2(hash12(cell + 3.1), hash12(cell + 7.7)) * 0.6 + 0.2;
-		float r = 0.035 + 0.05 * hash12(cell + 1.7);
-		float fq = fwidth(q.x) + 0.002;
-		float fleck = step(0.74, h) * (1.0 - smoothstep(r - fq, r + fq, length(f - cc)));
-		foam = max(foam, fleck * (1.0 - smoothstep(0.6, 4.5, d)) * smoothstep(-0.2, 0.3, d) * 0.85);
+		vec2 rn = normalize(p);
+		// the breaker: a lacy band rolling in from ~2.5 m out, merging with the swash as it reaches the sand
+		float roll = smoothstep(0.5, 1.0, c);
+		float dl = mix(2.6, 0.0, roll) + (vnoise(p * 0.8 + vec2(t * 0.05, 0.0)) - 0.5) * 0.5;
+		vec2 q = p * 3.6 + rn * (roll * 6.0) + vec2(t * 0.04, 0.0);
+		float form = smoothstep(0.5, 0.68, c);
+		float band = exp(-pow((d - dl) / 0.22, 2.0)) * (0.55 + 0.45 * lace(q * 0.7, 0.0));
+		band *= smoothstep(0.15, 0.5, vnoise(p * 1.7 + vec2(t * 0.12, 0.0)) + 0.1);
+		float wake = lace(q, 0.35) * smoothstep(dl, dl + 0.15, d) * (1.0 - smoothstep(dl + 0.3, dl + 1.6, d));
+		foam = (band * 0.9 + wake * 0.45) * form;
+		// after the wave has broken, lace spreads over the shallows and slowly pops
+		float spent = 1.0 - smoothstep(0.0, 0.55, c);
+		float drift = lace(p * 3.1 + vec2(t * 0.05, t * 0.03), mix(0.3, 0.9, 1.0 - spent));
+		foam = max(foam, drift * (1.0 - smoothstep(0.1, 1.4, d)) * smoothstep(-0.3, 0.1, d) * (0.15 + 0.35 * spent));
 	}
 
 	// --- foam around posts / rocks (baked distance map, 0..3 m)
 	vec2 fuv = (p + vec2(64.0)) / 128.0;
 	float od = texture(obj_foam, fuv).r * 3.0;
 	float nO = vnoise(p * 3.3 + vec2(t * 0.15, 0.0));
-	float objf = 1.0 - smoothstep(0.04, 0.24 + nO * 0.3, od);
+	float objf = (1.0 - smoothstep(0.02, 0.2 + nO * 0.25, od)) * (0.45 + 0.55 * lace(p * 4.0 + vec2(t * 0.06, 0.0), 0.1));
 	objf += (1.0 - smoothstep(0.0, 1.4, od)) * smoothstep(0.62, 0.95, 0.5 + 0.5 * sin(od * 7.0 - t * 2.0)) * 0.45 * smoothstep(0.3, 0.6, nO);
 	foam = max(foam, objf);
-	foam = max(foam, clamp(rip, 0.0, 1.0) * 0.85);
+	foam = max(foam, clamp(rip, 0.0, 1.0) * 0.7);
 	float foam_v = clamp(foam, 0.0, 1.0);
 	col = mix(col, vec3(0.97, 0.99, 1.0), foam_v);
 
+	// --- glints: tiny twinkling highlights of the sun (or the moon's path at night) on the wave facets
+	vec3 vw = normalize(CAMERA_POSITION_WORLD - wpos);
+	vec3 rw = reflect(-vw, nw);
+	float gd = max(dot(rw, normalize(glint_dir)), 0.0);
+	vec2 gc = floor(p * 9.0);
+	vec2 gf = fract(p * 9.0) - 0.5 - (vec2(hash12(gc + 3.1), hash12(gc + 7.7)) - 0.5) * 0.5;
+	float tw = step(0.55, hash12(gc + floor(t * 5.0 + hash12(gc) * 5.0))) * (1.0 - smoothstep(0.06, 0.2, length(gf)));
+	float glint = pow(gd, 300.0) * tw * 6.0 + pow(gd, 40.0) * 0.12 * (1.0 + night * 2.5);
+	glint *= (1.0 - foam_v) * glint_gain;
+
 	ALBEDO = col;
+	EMISSION = glint_col * glint;
 	ROUGHNESS = mix(0.3, 0.7, foam_v);
-	SPECULAR = 0.25;
+	SPECULAR = 0.2 * (1.0 - 0.85 * night);
 	METALLIC = 0.0;
-	// milky: mostly opaque, with a thin translucent edge where it runs onto the wet sand
-	float a = mix(0.62, 0.86, smoothstep(0.0, 1.2, depth));
-	a = mix(a, 0.97, smoothstep(1.8, 4.2, depth));
-	a *= smoothstep(0.0, 0.05, th) * 0.75 + 0.25 * smoothstep(0.0, 0.012, th);
-	ALPHA = clamp(a + fres * 0.2 + foam_v, 0.0, 1.0);
+	// clear over the sand, greener and more opaque with depth; a soft fade where it thins onto the beach
+	float a = mix(0.16, 0.62, smoothstep(0.0, 0.9, depth));
+	a = mix(a, 0.9, smoothstep(1.2, 3.2, depth));
+	a = mix(a, 0.97, smoothstep(3.8, 5.5, depth));
+	a *= smoothstep(0.0, 0.07, th);
+	ALPHA = clamp(a + fres * 0.14 * smoothstep(0.0, 0.05, th) + foam_v + glint, 0.0, 1.0);
 }

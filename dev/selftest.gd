@@ -277,25 +277,59 @@ func _collision_check() -> void:
 		if not tested.has(need):
 			fails.append("bump %s never tested" % need)
 
-func _sit(i: int) -> void:
+## sit on seat i coming from `from` (front / back / end); lie back along it too when `lie`
+func _sit(i: int, from: String, lie: bool) -> void:
 	var st: Dictionary = m.island.seats[i]
 	var face: Vector3 = st["face"]
-	m._place((st["approach"] as Vector3) + face * 0.5 + face.cross(Vector3.UP) * 0.4, 0.0)
+	var top: Vector3 = st["top"]
+	var side := face.cross(Vector3.UP).normalized()
+	var tag := "%s #%d (%s%s)" % [st["name"], i, from, ", lie" if lie else ""]
+	var spot: Vector3
+	match from:
+		"back": spot = (st["back_approach"] as Vector3) - face * 0.5 + side * 0.3
+		"end": spot = top + side * 1.05 - face * 0.1
+		_: spot = (st["approach"] as Vector3) + face * 0.5 + side * 0.4
+	spot.y = 0.0
+	spot = m._blocked_by(spot)
+	m._place(spot, 0.0)
 	await _frames(5)
 	if m.action_kind != "seat" or m.seat_i != i:
-		fails.append("no sit prompt at %s %d" % [st["name"], i])
+		fails.append("no sit prompt at " + tag)
 		return
+	var want_face := -face if from == "back" else face
+	if from != "end" and m.seat_face.dot(want_face) < 0.9:
+		fails.append("sits the wrong way round on " + tag)
 	m._on_action()
 	if not await _until(func() -> bool: return m.rest_phase == 4, 12.0):
-		fails.append("never sat on %s" % st["name"])
+		fails.append("never sat on " + tag)
 		return
-	await _wait(1.0)
+	await _wait(0.8)
+	var pel: Vector3 = (m.boy.parts["pelvis"] as Node3D).global_position
+	var sit_h := pel.y - top.y
+	var note := "sat (pelvis %.2f m over the seat" % sit_h
+	if lie:
+		if not m.lie_btn.visible:
+			fails.append("no lie button on " + tag)
+			return
+		m._lie_down()
+		if not await _until(func() -> bool: return m.rest_phase == 4 and m.seat_lying, 6.0):
+			fails.append("never lay down on " + tag)
+			return
+		await _wait(1.2)
+		pel = (m.boy.parts["pelvis"] as Node3D).global_position
+		var head: Vector3 = (m.boy.parts["head"] as Node3D).global_position
+		note += ", lying pelvis %.2f / head %.2f m over it, hat %s" % [pel.y - top.y, head.y - top.y, m.boy.hat_mode]
+		if m.boy.hat_mode != "face":
+			fails.append("hat not over the face on " + tag)
+		if pel.y - top.y < 0.0 or pel.y - top.y > 0.25 or absf(head.y - pel.y) > 0.3:
+			fails.append("not lying flat on " + tag)
 	m._wake()
-	if not await _until(func() -> bool: return m.mode == m.Mode.EXPLORE, 6.0):
-		fails.append("never got up from %s" % st["name"])
+	if not await _until(func() -> bool: return m.mode == m.Mode.EXPLORE, 8.0):
+		fails.append("never got up from " + tag)
 		return
 	await _frames(3)
-	await _can_walk("after sitting on %s %d" % [st["name"], i])
+	print("SELFTEST seat %-26s %s)" % [tag, note])
+	await _can_walk("after " + tag)
 
 func run(main: Node) -> void:
 	m = main
@@ -311,9 +345,14 @@ func run(main: Node) -> void:
 	var hs: Array = m._hammock_spot()
 	for s: float in [1.6, -1.6]:
 		await _rest("sleep", hs[0] + hs[2] * s)
-	# bench, campfire logs, lounger
+	# bench, each campfire log (from the fire side, from behind, from its end), lounger; lie on bench + logs
 	for i in m.island.seats.size():
-		await _sit(i)
+		var st: Dictionary = m.island.seats[i]
+		await _sit(i, "front", st["can_lie"])
+		if st["two_sided"]:
+			await _sit(i, "back", false)
+			await _sit(i, "end", false)
+			await _sit(i, "back", true)
 	await _collision_check()
 	# dock: throw (cheer / oops), throw from the half-crouch, then leave
 	for crouch: bool in [false, true]:
@@ -349,5 +388,21 @@ func run(main: Node) -> void:
 	await _wait(0.8)
 	m._toggle_view()
 	await _can_walk("after view mode")
+	# night: the button fades everything over, the lamps / beams come on, and back to day
+	m.night_btn.pressed.emit()
+	await _wait(3.0)
+	var lit: bool = m.night_fx.visible and m.night_fx.beacon_light.visible and m.night_fx.beam_pivot.visible
+	var moon_e: float = m.sun.light_energy
+	print("SELFTEST night                 %s  (k %.2f, button '%s', moonlight %.2f, fire %.2f, lamps+beams %s)" % [
+			"ok" if m.night_k > 0.999 and lit else "FAIL", m.night_k, m.night_btn.text, moon_e, m.island.campfire.light.light_energy, lit])
+	if m.night_k < 0.999 or not lit or m.night_btn.text != "白天":
+		fails.append("night mode did not come on")
+	await _can_walk("at night")
+	m.night_btn.pressed.emit()
+	await _wait(3.0)
+	print("SELFTEST day again             %s  (k %.2f, button '%s', fx %s)" % ["ok" if m.night_k < 0.001 and not m.night_fx.visible else "FAIL", m.night_k, m.night_btn.text, m.night_fx.visible])
+	if m.night_k > 0.001 or m.night_fx.visible:
+		fails.append("day did not come back")
+	await _can_walk("after night")
 	print("SELFTEST %s" % ("PASS" if fails.is_empty() else "FAIL: " + ", ".join(fails)))
 	m.get_tree().quit(0 if fails.is_empty() else 1)
