@@ -141,6 +141,7 @@ var demo_input := Vector2.ZERO
 var demo_run := false
 var demo_track: Array = []
 var demo_seg := ""
+var selftest: RefCounted
 
 func _ready() -> void:
 	rng.seed = 99
@@ -166,11 +167,15 @@ func _ready() -> void:
 	for a in args:
 		if a.begins_with("--video4="):
 			demo_seg = a.substr(9)
-	demo_mode = "--demo4" in args or demo_seg != ""
+	demo_mode = "--demo4" in args or demo_seg != "" or "--selftest" in args
 	_snap_explore_cam()
 	if demo_mode:
 		_start_audio()
-		_run_demo4.call_deferred()
+		if "--selftest" in args:
+			selftest = load("res://dev/selftest.gd").new()
+			selftest.run.call_deferred(self)
+		else:
+			_run_demo4.call_deferred()
 	_apply_camera()
 	_update_ui()
 
@@ -783,12 +788,16 @@ func _blocked_by(p: Vector3) -> Vector3:
 
 func _try_move(from: Vector3, d: Vector3) -> Vector3:
 	var fh := _surface(from.x, from.z)
+	# already overlapping something (e.g. put down there after an action): let him walk out
+	var inside := _blocked_by(from).distance_to(from) > 0.01
 	for cand: Vector3 in [d, Vector3(d.x, 0, 0), Vector3(0, 0, d.z)]:
 		if cand.length() < 1e-6:
 			continue
 		var p := _blocked_by(from + cand)
-		if (p - from).length() > cand.length() * 1.6 + 0.02:
+		if not inside and (p - from).length() > cand.length() * 1.6 + 0.02:
 			continue
+		if inside and (p - from).length() > 0.25:
+			p = from + (p - from).normalized() * 0.25
 		if _can_stand(fh, p.x, p.z):
 			p.y = from.y
 			return p
@@ -970,10 +979,14 @@ func _rest_tick(delta: float) -> void:
 					rest_phase = 3
 				else:
 					boy.end_activity()
-					player.position = rest_approach
+					player.position = _blocked_by(rest_approach)
 					player.rotation = Vector3(0, face_yaw, 0)
+					ground_y = _surface(player.position.x, player.position.z)
+					move_vel = Vector3.ZERO
 					mode = Mode.EXPLORE
 					ex_yaw = face_yaw
+					_update_action_kind()
+					_update_ui()
 		3, 5:
 			var dur2 := 1.0
 			var k2 := clampf(rest_t / dur2, 0.0, 1.0)
@@ -1564,6 +1577,9 @@ func _process(delta: float) -> void:
 		toast_timer -= delta
 		if toast_timer < 0.5:
 			lbl_toast.modulate.a = max(toast_timer / 0.5, 0.0)
+	# the stick only exists while exploring; never leave it hidden (or shown) after a mode change
+	if joy.visible != (mode == Mode.EXPLORE):
+		_update_ui()
 	match mode:
 		Mode.EXPLORE:
 			_explore_tick(delta)
