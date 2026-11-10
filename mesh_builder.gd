@@ -32,6 +32,34 @@ func face(a: Vector3, b: Vector3, c: Vector3, ca: Color, cb: Color, cc: Color, o
 		var tc := cb; cb = cc; cc = tc
 	tri3(a, b, c, ca, cb, cc, n if n != Vector3.ZERO else cr.normalized() * signf(cr.dot(outward)))
 
+## Smooth-shaded triangle (per-vertex normals); winding is fixed from the normals.
+func tri_sm(a: Vector3, b: Vector3, c: Vector3, na: Vector3, nb: Vector3, nc: Vector3, ca: Color, cb: Color, cc: Color) -> void:
+	var cr := (c - a).cross(b - a)
+	if cr.length_squared() < 1e-16:
+		return
+	if cr.dot(na + nb + nc) < 0.0:
+		var t := b; b = c; c = t
+		var tn := nb; nb = nc; nc = tn
+		var tc := cb; cb = cc; cc = tc
+	st.set_normal(na); st.set_color(ca); st.add_vertex(a)
+	st.set_normal(nb); st.set_color(cb); st.add_vertex(b)
+	st.set_normal(nc); st.set_color(cc); st.add_vertex(c)
+	tris += 1
+
+## Append a primitive mesh keeping its own smooth normals.
+func prim_smooth(mesh: Mesh, xf: Transform3D, col: Color) -> void:
+	var arrays := mesh.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var norms: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var nb := xf.basis.inverse().transposed()
+	var n := idx.size() if idx.size() > 0 else verts.size()
+	for i in range(0, n, 3):
+		var ia := idx[i] if idx.size() > 0 else i
+		var ib := idx[i + 1] if idx.size() > 0 else i + 1
+		var ic := idx[i + 2] if idx.size() > 0 else i + 2
+		tri_sm(xf * verts[ia], xf * verts[ib], xf * verts[ic], (nb * norms[ia]).normalized(), (nb * norms[ib]).normalized(), (nb * norms[ic]).normalized(), col, col, col)
+
 func quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, col: Color) -> void:
 	tri(a, b, c, col)
 	tri(a, c, d, col)
