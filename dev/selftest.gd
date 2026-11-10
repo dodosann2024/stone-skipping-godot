@@ -348,7 +348,7 @@ func _arm_check() -> void:
 	const MARGIN := {"r": 0.01, "l": 0.01, "r_ua": -0.01, "l_ua": -0.01, "arms": 0.01, "legs": 0.0}
 	const NAMES := {"r": "R elbow/forearm/hand", "l": "L elbow/forearm/hand", "r_ua": "R upper arm", "l_ua": "L upper arm",
 		"arms": "arm-arm", "legs": "arm-legs"}
-	var res: Dictionary = ArmClearance.new().run(m, ["throw_stand", "throw_crouch", "idle", "walk", "run"])
+	var res: Dictionary = ArmClearance.new().run(m, ["throw_stand", "throw_crouch", "cheer", "oops", "idle", "walk", "run"])
 	for clip: String in res:
 		var w: Dictionary = res[clip]
 		var bad: Array[String] = []

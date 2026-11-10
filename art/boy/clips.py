@@ -366,22 +366,27 @@ def cheer(rig):
         sgn = 1 if n % 2 == 0 else -1
         wave.append((t + 0.15 + n * w, P(i, pel=V(0.0, 0, -0.01), sp=(-0.05, 0.04 * sgn, 0.05 * sgn), head=(-0.15, -0.05 * sgn, 0.1 * sgn),
                                          hr=V(-0.22 - 0.12 * sgn, -0.05, 1.5), er=V(-1.0, 0.3, -0.2), gr=0.1,
-                                         hl=V(0.2, 0.0, 0.82), gl=0.4)))
-    keys += wave + [(t + 0.15 + 4 * w + 0.35, i)]
+                                         hl=V(0.235, -0.01, 0.84), gl=0.4)))
+    # the waving hand comes down out to the side, not across the chest
+    down = P(i, pel=V(0.0, 0, -0.01), hr=V(-0.36, -0.08, 1.02), er=V(-1.0, 0.3, -0.2), gr=0.3, hl=V(0.235, -0.01, 0.82), gl=0.4)
+    keys += wave + [(t + 0.15 + 4 * w + 0.12, down), (t + 0.15 + 4 * w + 0.4, i)]
     return keyed(keys), keys[-1][0] + 0.2
 
 
 def oops(rig):
     i = I(rig)
-    hands = dict(hl=V(0.12, -0.06, 1.36), hr=V(-0.12, -0.06, 1.36), el=V(1.0, -0.2, 0.1), er=V(-1.0, -0.2, 0.1), gl=0.2, gr=0.2)
+    hands = dict(hl=V(0.14, -0.06, 1.36), hr=V(-0.14, -0.06, 1.36), el=V(1.0, -0.2, 0.1), er=V(-1.0, -0.2, 0.1), gl=0.2, gr=0.2)
     grab = P(i, pel=V(0, 0.02, -0.04), prot=(0.08, 0, 0), sp=(0.15, 0, 0), neck=(0.15, 0, 0), head=(0.2, 0, 0), **hands)
-    keys = [(0.0, i), (0.3, grab)]
+    rise = P(i, pel=V(0, 0.01, -0.02), hl=V(0.31, -0.10, 1.02), hr=V(-0.31, -0.10, 1.02), el=V(1.0, 0.3, -0.2), er=V(-1.0, 0.3, -0.2))
+    keys = [(0.0, i), (0.13, rise), (0.3, grab)]
     for n in range(4):
         sgn = 1 if n % 2 == 0 else -1
         keys.append((0.5 + n * 0.22, P(grab, neck=(0.15, 0, 0.12 * sgn), head=(0.22, 0.04 * sgn, 0.18 * sgn))))
     slump = P(i, pel=V(0, 0.0, -0.025), prot=(0.05, 0, 0), sp=(0.2, 0, 0), head=(0.25, 0, 0), clav_l=(0.1, 0, 0), clav_r=(0.1, 0, 0),
-              hl=V(0.18, -0.02, 0.73), hr=V(-0.18, -0.02, 0.73))
-    keys += [(1.55, slump), (2.1, slump), (2.6, i)]
+              hl=V(0.235, -0.03, 0.75), hr=V(-0.235, -0.03, 0.75), el=V(1.0, 0.3, -0.2), er=V(-1.0, 0.3, -0.2))
+    # hands leave the head outwards and drop beside the body (never down the face and chest)
+    let_go = P(grab, hl=V(0.32, -0.10, 1.12), hr=V(-0.32, -0.10, 1.12), el=V(1.0, 0.3, -0.2), er=V(-1.0, 0.3, -0.2), gl=0.3, gr=0.3)
+    keys += [(1.3, let_go), (1.6, slump), (2.1, slump), (2.6, i)]
     return keyed(keys), 2.6
 
 
