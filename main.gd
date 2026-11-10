@@ -2122,6 +2122,7 @@ var refl_auto := true
 var fps_t := 0.0
 var fps_n := 0
 var fps_avg := 0.0
+var fps_low := 0
 var lbl_fps: Label
 var url_opts := {}
 
@@ -2170,7 +2171,7 @@ func _build_reflection() -> void:
 	island.water_mat.set_shader_parameter("lamp_col", col)
 	if _opt("fps") != "":
 		lbl_fps = _label(18, Color(1, 1, 0.8))
-		lbl_fps.position = Vector2(18, 120)
+		lbl_fps.position = Vector2(18, 150)
 		ui_root.add_child(lbl_fps)
 
 func _set_refl_level(l: int) -> void:
@@ -2189,8 +2190,11 @@ func _watch_fps(delta: float) -> void:
 	fps_avg = fps_n / fps_t
 	fps_t = 0.0
 	fps_n = 0
-	if refl_auto and not demo_mode and gt > 5.0 and fps_avg < 26.0 and refl_level < 2:
+	# two slow windows in a row (4 s), so one hitch such as a first-use shader compile does not count
+	fps_low = fps_low + 1 if fps_avg < 26.0 else 0
+	if refl_auto and not demo_mode and gt > 5.0 and fps_low >= 2 and refl_level < 2:
 		_set_refl_level(refl_level + 1)
+		fps_low = 0
 	if lbl_fps:
 		lbl_fps.text = "%.0f fps · 倒影 %s" % [fps_avg, ["高", "低", "关"][refl_level]]
 		var dc := Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME

@@ -1,7 +1,70 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v10 投掷不穿身体 + 走跑上身协调 + 夜晚水面 / 水下 / 浪花 / 坐木头等修复
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v11 脚步锁定（走跑切换 / 转弯不滑脚）+ 水面实时倒影与夜晚灯光倒影 + 篝火木头周围地形平滑
 
 低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩由 Blender 脚本（`art/boy/`）建模、绑定骨骼、制作动画后导出 glTF；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+## v11 改动
+在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（导出文件改名为 `game_v11.*`，保留 iOS 声音解锁的 head_include）。截图与视频见 `screenshots/v11/`。
+
+### 1. 走 ↔ 跑切换、转弯时支撑脚不再滑动（`boy.gd`）
+- **步态相位同步**：走、跑两个片段共用一个归一化相位。加载时对两个片段各采样 64 个相位点，记下每只脚脚跟 / 前脚掌的位置（`_build_gait_tables`）。走跑混合权重变化的那几帧里，相位不再按固定速度前进，而是解出一个相位增量，让“混合后”的支撑脚正好向后移动身体前进的距离（`_stance_advance`），所以步幅和播放速度始终和移动速度匹配。
+- **支撑脚锁定 + 两骨骼 IK**（`_foot_lock`、`_leg_ik`）：脚着地时记住它在世界里的接触点（脚跟、前脚掌或两者中点），之后每帧算出一个刚体修正（水平偏移 + 绕踝的转角），用解析的两骨骼 IK 把大腿 / 小腿摆到修正后的位置，膝盖保持在原动画的腿平面里。脚抬起后修正在约 0.1 秒内平滑衰减为 0。
+  - 只有脚跟和脚尖都着地时才锁朝向；转角超过 0.45 rad 时改为以前脚掌为轴转（脚跟略抬起），不会出现脚扭在地上的情况。
+  - 急转（摇杆一甩，转速可到约 10 rad/s）时修正超过 15 cm 就补一个 0.16 秒的快速小碎步（抬脚 6 cm，落到动画位置），而不是硬拖着脚。
+- **转身**（`_plant_turn`）：可见转速上限 12 rad/s；单脚支撑时以支撑脚为轴、双脚支撑时以两脚中点为轴转身。
+- **测量与自检**：`dev/gait_probe.gd` 用固定的一段操作驱动小男孩：起步、直走、走→跑、直跑、跑着转弯、跑→走、走着转弯、停下、走 / 跑之字形（按游戏里摇杆转向的速度）、跑着急停。每帧量“着地的脚底接触点”在世界里的移动距离。`--selftest` 在 30 fps 和 20 fps 下各跑一遍，任一帧超过 5 mm 即失败。
+- 结果（每帧最大滑动，mm，30 fps；v10 为同一套操作在 v10 代码上的结果）：
+
+| 片段 | v10 | v11 |
+|---|---|---|
+| 起步 | 14.4 | 0.8 |
+| 直走 | 3.4 | 1.8 |
+| 走 → 跑 | 29.8 | 1.5 |
+| 直跑 | 3.7 | 0.5 |
+| 跑着转弯 1.3 rad/s | 9.3 | 0.5 |
+| 跑 → 走 | 40.8 | 0.2 |
+| 走着转弯 1.6 rad/s | 14.9 | 1.7 |
+| 停下 → 待机 | 6.5 | 0.4 |
+| 走之字形（游戏转向） | 140.1 | 1.2 |
+| 跑之字形（游戏转向） | 181.6 | 1.0 |
+| 跑着急停 | 7.4 | 0.8 |
+
+  60 fps 最大 0.8 mm，20 fps 最大 4.0 mm（跑着转弯）。只用相位同步、不用脚锁定（`--nolock`）时跑 → 走仍有 8.6 mm。曲线见 `foot_slide_graph.png`。
+- **脚印位置**：原来在脚步声（脚跟刚触地）那一刻盖脚印，脚随后放平、前移，脚印和脚实际停住的位置差约 4~6 cm（中位数）。现在在脚跟和前脚掌都着地的那一帧盖（`Boy.foot_flat` 信号），快速小碎步落地后再盖一个新的。`--selftest` 检查脚印数量（40 步 39 个）和脚印位置在之后 0.06 秒内的偏移（30 fps 3.2 mm，60 fps 3.4 mm；20 fps 跑步时脚跟已开始抬起，14 mm）。
+
+### 2. 水面实时倒影（白天和夜晚）+ 夜晚灯光倒影（`reflection.gd`、`shaders/water.gdshader`）
+- **平面反射**：一个低分辨率 SubViewport 共用同一个场景，用主相机关于水面（y = 0）镜像后的相机渲染（窗口像素 × 0.35，长边最多 480 px）。水面着色器按屏幕坐标采样（上下翻转），用波浪法线偏移制造扭曲，按菲涅尔（Schlick）加权混合；浪花处不反射。在 gl_compatibility / WebGL2 上可用，不依赖屏幕空间反射。
+  - 水面和蹚水波纹放在渲染层 2，反射相机不渲染它们；地形、静物、植物、小男孩的着色器在反射这一遍里丢掉水面以下的部分。
+  - 反射相机看到的是一个**不投影的太阳副本**（灯光也按相机层剔除），所以平行光阴影图不会再渲染一遍。
+  - 夜里倒影能看到岛、椰子树、码头、小屋的灯窗、路灯和灯塔；打开倒影后不再用 v10 的近似夜空，星光闪点保留。
+- **夜晚灯光拉长倒影**：篝火、灯塔和码头 / 小屋 / 路边的灯（共 12 个）在水面上形成一条向观察者方向拉长、随波闪烁的光带（三级 Blinn 高光 + 闪烁网格）。
+- **帧率与自动降级**：连续两个 2 秒窗口平均低于 26 fps 时自动降一级：先降到 0.25 倍、隔帧更新，再不行就关闭倒影（回到 v10 的近似夜空）。网址参数 `?refl=0|low|1` 强制关闭 / 低 / 高，`?fps=1` 在左上角显示帧率和倒影档位，`?night=1` 直接进入夜晚（桌面版用 `--refl=` / `--fps` / `--night`）。
+- 测量（390×844，桌面版，llvmpipe 软件渲染）：
+
+| 设置 | fps | draw calls（主画面 + 倒影） |
+|---|---|---|
+| 关闭倒影 | 12.7 | 47 + 0 |
+| 倒影（高） | 10.5 | 47 + 18 |
+| 倒影（第一版，未去掉第二遍阴影） | 7.5 | 47 + 40 |
+
+  软件渲染下倒影约增加 20% 的帧时间。无头 Chrome（SwiftShader）里开 / 关倒影都是 7.5 fps（被 CPU 渲染限制，测不出差别）。这里没有真机，**没有在 iPhone 上实测**；倒影只多 18 个 draw call，渲染分辨率约为主画面的 4%，在 iPhone 上可以用 `?fps=1` 查看，跟不上时会自动降级。
+
+### 3. 篝火木头周围的地形（`island.gd`）
+- 篝火空地：火堆 3 m 内，高于火堆的地面按 0.25 压向火堆高度，再在 6 m 内平滑过渡回原地形（低于火堆的部分不动，沙滩和浪花带完全不变）。
+- 每根木头下面的平地：木头轴线两侧 0.42 m 内水平，再用 1.9 m 的 smoothstep 过渡（v10 是 0.75 m / 1.4 m 的直线过渡）。火堆、围石、柴堆改为跟随过渡后的地面。
+- 篝火周围加了一块 0.25 m 的细分地形网格（12×12 m），网格能准确贴合过渡曲线；细分块边界上的顶点按粗网格插值，不会裂缝。
+- 结果：篝火附近最大坡度 v10 为 76°（网格上 55°），v11 为 42°（网格上 36°），原山坡约 38~39°。靠山的那根木头身后的坡 v10 为 58°，v11 为 35°（原地形 30°）。三根木头脚下 / 两端的地面高差仍为 0.000 m。
+- 图：`log_slope_before_after.png`、`log_slope_profile.png`（每根木头的横截面：原地形 / v10 / v11）、`log_slope_heatmap.png`、`50_*`~`54_*`（`before/` 为 v10）。
+
+### 4. 截图与视频（`screenshots/v11/`）
+- 脚步：`foot_slide_graph.png`（v10 / 只相位同步 / v11 每帧滑动曲线）、`walk_run_transition.mp4`（正面、侧面：走 → 跑 → 停；游戏视角之字形转弯）。
+- 倒影：`night_reflection_before_after.png`、`day_reflection_before_after.png`、`61_*`~`64_*`（`before/` 为 v10 同一机位）。
+- 地形：见上。
+
+### 已知问题
+- 倒影在屏幕边缘附近（镜像画面里没有的内容）会被拉伸；小男孩蹚水时水下的腿在反射里被裁掉，但水面以上的部分正常。
+- 急转弯时会出现快速小碎步（30 fps 下整段测试 4 次，20 fps 下 9 次），这是故意的，用来代替拖脚。
+- iPhone 实机帧率未测量（见上）。
 
 ## v10 改动
 在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（导出文件改名为 `game_v10.*`，保留 iOS 声音解锁的 head_include）。截图与视频见 `screenshots/v10/`。
@@ -311,10 +374,11 @@
 - `main.gd`：模式（自由走动 / 投掷 / 观景 / 休息）、移动与碰撞、相机、UI、声音、演示脚本。
 - `boy.gd`：加载 `boy/boy.glb`，用 AnimationTree 混合动画片段（步态相位按移动距离推进）、表情、草帽 / 墨镜 / 石头道具。
 - `art/boy/`：Blender 脚本——`build_boy.py`（建模 + 骨骼 + 衣服 + 道具）、`posekit.py`（IK 姿势工具）、`clips.py`（所有动画）、`export_boy.py`（AO 烘焙、动画烘焙、glTF 导出）、`test_*.py`（预览图）。
+- `reflection.gd`：水面平面反射（镜像相机 + 低分辨率 SubViewport，按帧率自动降级）。
 - `joystick.gd`：虚拟摇杆；`island.gd`：整岛程序化生成（含可摇晃的吊床、毛巾、行走碰撞体）；`mesh_builder.gd`；`shaders/`。
 - `web/audio_unlock.js`：iOS 音频解锁脚本（压缩后写在 `export_presets.cfg` 的 head_include 中）。
 - `tools/`：音效合成 / 检查、字体子集、浏览器（模拟 iPhone）测试脚本。
-- `dev/boy_view.gd`：角色姿势检查；`dev/gait_view.gd`：步态检查（走 / 跑 / 转弯 / 急停，输出支撑脚滑移量）；`dev/selftest.gd`：回归测试（各动作结束后能否行走、走 / 跑是否对侧摆臂、投掷后是否回到待机）；均不会被导出。
+- `dev/boy_view.gd`：角色姿势检查；`dev/gait_probe.gd` + `dev/gait_view.gd`：步态检查（起步 / 走跑切换 / 转弯 / 之字形 / 急停，输出支撑脚每帧滑移量，`--csv=` 导出曲线，`--nolock` 关闭脚锁定对比）；`dev/selftest.gd`：回归测试（各动作结束后能否行走、走 / 跑是否对侧摆臂、投掷后是否回到待机）；均不会被导出。
 - `docs/`：Web 导出结果（GitHub Pages 从这里发布）。
 
 ## 命令
@@ -327,11 +391,12 @@ godot --headless --path . --fixed-fps 30 -- --selftest                 # 回归�
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4            # v6 截图（screenshots/v6）
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 --from=explore # 游戏相机下走 / 跑
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 --from=shore # 海岸 / 浅海截图
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 --from=v11_refl # 白天 / 夜晚倒影（v11_logs：篝火木头地形）
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 585x1266 -- --demo4 --portrait # 竖屏截图
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --write-movie w.avi -- --video4=walk     # 视频片段 walk/throw/sleep/sun/getup/gait
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . -s res://dev/boy_view.gd -- --out=/tmp/pose            # 角色姿势图
 godot --headless --path . --fixed-fps 30 -s res://dev/gait_view.gd                                    # 步态滑步检查（加 --out=/tmp/g 输出帧）
-godot --headless --path . --export-release "Web" build/web/game_v8.html   # 然后复制到 docs/，index.html = game_v8.html
+godot --headless --path . --export-release "Web" build/web/game_v11.html  # 然后复制到 docs/，index.html = game_v11.html
 python3 tools/browser_check_v4.py "https://dodosann2024.github.io/stone-skipping-godot/?v=6" /tmp/web   # 模拟 iPhone 测试（含真实出声检测）
 ```
 
