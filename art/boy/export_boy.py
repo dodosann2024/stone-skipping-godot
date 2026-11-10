@@ -1,6 +1,6 @@
 """Join the boy, bake AO + all clips, export boy/boy.glb and boy/boy_meta.json for Godot."""
 import bpy, json, os, math
-import posekit, clips
+import posekit, clips, clearance
 from mathutils import Vector
 
 FPS = 30
@@ -73,10 +73,14 @@ def bake_clips(rig_obj, meta):
     acts = {}
     walk = clips.Gait(rig, 1.0, 1.0, 0.62)
     run = clips.Gait(rig, 0.68, 2.04, 0.36, run=True)
+    def cycle(g):
+        # the baked frames must span exactly one stride cycle, or the loop pops and planted feet creep
+        n = int(round(g.T * FPS))
+        return lambda t: g.pose(t * g.T * FPS / n)
     todo = [
         ("idle", clips.idle(rig), 4.0),
-        ("walk", walk.pose, walk.T),
-        ("run", run.pose, run.T),
+        ("walk", cycle(walk), walk.T),
+        ("run", cycle(run), run.T),
     ]
     f, L = clips.throw_stand(rig); todo.append(("throw_stand", f, L))
     f, L = clips.throw_crouch(rig); todo.append(("throw_crouch", f, L))
@@ -112,6 +116,8 @@ def bake_clips(rig_obj, meta):
 
 def export(rig_obj, out_dir):
     meta = {"fps": FPS, "ground": posekit.GROUND}
+    # torso outline for the arm / body clearance check in dev/selftest.gd (measured before the join)
+    clearance.save(clearance.measure_rig(posekit.Rig(rig_obj)), os.path.join(out_dir, "torso_profile.json"))
     body = join_parts(rig_obj)
     hat = bpy.data.objects["Hat"]
     props = [bpy.data.objects[n] for n in RIGID]
