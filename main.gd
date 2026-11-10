@@ -1114,7 +1114,7 @@ func _explore_tick(delta: float) -> void:
 	wading = not _on_dock(to.x, to.z) and h < -0.03
 	boy.wading = wading
 	boy.pivoting = spot_turning
-	boy.turn_ahead = need if spot_turning else (wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0)
+	boy.turn_ahead = wrapf(spot_goal - face_yaw, -PI, PI) if spot_turning else (wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0)
 	boy.set_move(cur_speed)
 	if cur_speed < 0.05:
 		boy.set_idle()
