@@ -21,6 +21,7 @@ var lighthouse_pos := Vector3.ZERO
 var campfire_pos := Vector3.ZERO
 var obstacles: Array = []   # [Vector2 centre, radius, top_y, name]
 var palm_spots: Array = []  # crowns, for screenshots
+var trunks: Array = []   # palm trunk polylines (camera line-of-sight checks)
 var water_mat: ShaderMaterial
 var terrain_mat: ShaderMaterial
 var foliage_mat: ShaderMaterial
@@ -845,6 +846,7 @@ func palm(b: MeshBuilder, base: Vector3, height: float, lean_dir: Vector3, lean:
 		var t = float(i) / segs
 		var off = lean_dir * height * lean * (t * 0.3 + bend * t * t)
 		pts.append(base + off + Vector3.UP * height * t * (1.0 - 0.08 * lean * t))
+	trunks.append(pts)
 	var c1 = Color(0.56, 0.42, 0.27)
 	var c2 = Color(0.47, 0.35, 0.22)
 	for i in segs:

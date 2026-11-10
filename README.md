@@ -1,7 +1,37 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v4 岛上自由走动 + 半蹲投掷 + 吊床 / 晒太阳
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v5 新角色 + 自然动画 + 清澈浅海
 
 低多边形热带海岛小游戏。场景、角色、道具全部由 GDScript 代码生成，水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+## v5 改动
+在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（导出文件改名为 `game_v5.*`，旧缓存不会干扰）。截图与视频见 `screenshots/v5/`（`00_compare_v4_v5.png` 为前后对比，`demo.mp4` 为走路 / 投掷 / 吊床 / 晒太阳片段）。
+
+### 1. 小男孩新形象（`boy_mesh.gd`、`shaders/character.gdshader`）
+- 从方块拼接改为平滑曲面：头、身体、四肢、短裤、草帽都由带平滑法线的网格（放样 / 车削 / 圆管 / 胶囊）生成，轮廓圆润，从高处 3/4 俯视也清楚。
+- 比例更“Q 版小男孩”：大头、圆下巴、略带婴儿肥的脸颊；粗眉、大眼（贴图式画在脸上，带高光）、露齿笑、雀斑和创可贴保留；刺刺短发、鬓角、后脑碎发从草帽下露出。
+- 服装保留：草帽（车削帽冠 + 红色帽带 + 微卷帽檐 + 编织纹理）、敞开的红色无袖马甲（白色滚边、内外两面）、白色背心（露肩、肩带、圆领）、黄色沙滩短裤（小花图案）、人字拖。
+- 新的角色着色：包裹式漫反射（阴影更柔）、皮肤暗部偏暖、柔和高光与轮廓光；脚下加了一个柔和的接触阴影，站在沙滩上更“落地”。
+- 面数约 1.9 万三角形（v4 约 1 万），绘制调用数不变（27）。
+
+### 2. 动画全部重做（`boy.gd`）
+- 脚锚定在世界坐标里：着地的脚绝不滑动（`dev/gait_view.gd` 实测走、跑、转弯、急停时支撑脚滑移为 0）。
+- 步态循环按真实地面速度计算步频与步幅；摆动脚落在身体“将要到达”的位置（含转弯预测）；脚跟着地 → 全脚掌 → 脚尖蹬离；手臂与对侧腿反向摆动（走路自然下垂、跑步屈肘）；骨盆扭转、重心左右转移、起伏、加速前倾 / 减速后仰、转弯内倾；跑步有腾空期。
+- 起步 / 停步平滑：先迈靠后的那只脚，停下时收脚站稳；待机时重心在两脚间缓慢转移、呼吸、四处张望。
+- 投掷：髋 → 胸 → 手臂依次发力（动力链），出手后手臂甩过身前随挥，站姿投掷后右脚向前迈一步稳住重心，再回到准备姿势；半蹲同样有随挥。
+- 欢呼（三连跳、双手举高）、失手、坐下 / 躺下（吊床、毛巾）之间全部为平滑混合过渡，没有跳变。
+- 自由走动的加速、减速、转身略微放缓（`main.gd`），配合步态更像小孩真实起步、跑起来。
+
+### 3. 海面（`shaders/water.gdshader`、`terrain.gdshader`、`common.gdshaderinc`）
+- 浅水清澈：沙质海床在浅滩清晰可见，随深度由浅绿松石 → 碧绿 → 蓝（海床本身做吸收着色），礁缘外深蓝不透明。
+- 海床有沙纹与更细腻的焦散光纹。
+- 岸边泡沫改为多层细线：一道道细白浪线平行于海岸线向岸推进、断续而不呆板，后方留下网状泡沫；每到岸一道，海水沿沙滩上冲再缓慢退回（按等高线推进，所以始终贴合岸线），退后留下深色湿沙。
+- 水与沙交界处不再是硬切边，而是柔和渐隐 + 细泡沫边。
+- 性能：噪声采样数与 v4 基本持平（远离岸边的像素跳过泡沫计算），仍为 Compatibility 渲染器可用的写法。
+
+### 4. 其它修复
+- 吊床视角：相机会在默认角度附近自动寻找一条不被椰子树干挡住的视线。
+- 竖屏下投掷结束后相机从远处回来时会短暂把小男孩切出画面：现在先把画面中心移回小男孩、再拉近，全程不会越过他。
+- iOS 声音解锁逻辑（`export_presets.cfg` 的 `html/head_include`）未改动。
 
 ## v4 改动
 ### 1. 声音（iPhone 没声音）
@@ -69,7 +99,7 @@
 - `joystick.gd`：虚拟摇杆；`island.gd`：整岛程序化生成（含可摇晃的吊床、毛巾、行走碰撞体）；`mesh_builder.gd`；`shaders/`。
 - `web/audio_unlock.js`：iOS 音频解锁脚本（压缩后写在 `export_presets.cfg` 的 head_include 中）。
 - `tools/`：音效合成 / 检查、字体子集、浏览器（模拟 iPhone）测试脚本。
-- `dev/boy_view.gd`：角色姿势检查（不会被导出）。
+- `dev/boy_view.gd`：角色姿势检查；`dev/gait_view.gd`：步态检查（走 / 跑 / 转弯 / 急停，输出支撑脚滑移量），均不会被导出。
 - `docs/`：Web 导出结果（GitHub Pages 从这里发布）。
 
 ## 命令
@@ -77,12 +107,14 @@
 godot --headless --path . --import
 godot --headless --path . -- --sim                                    # 站立 / 半蹲物理参数表
 python3 tools/synth_audio.py && python3 tools/check_audio.py           # 重新合成并检查音效
-xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4            # v4 截图
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4            # v5 截图（screenshots/v5）
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 --from=shore # 海岸 / 浅海截图
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 585x1266 -- --demo4 --portrait # 竖屏截图
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --write-movie w.avi -- --video4=walk     # 视频片段 walk/throw/sleep/sun
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . -s res://dev/boy_view.gd -- --out=/tmp/pose            # 角色姿势图
-godot --headless --path . --export-release "Web" build/web/game_v4.html
-python3 tools/browser_check_v4.py "https://dodosann2024.github.io/stone-skipping-godot/?v=4" /tmp/web   # 模拟 iPhone 测试（含真实出声检测）
+godot --headless --path . --fixed-fps 30 -s res://dev/gait_view.gd                                    # 步态滑步检查（加 --out=/tmp/g 输出帧）
+godot --headless --path . --export-release "Web" build/web/game_v5.html   # 然后复制到 docs/，index.html = game_v5.html
+python3 tools/browser_check_v4.py "https://dodosann2024.github.io/stone-skipping-godot/?v=5" /tmp/web   # 模拟 iPhone 测试（含真实出声检测）
 ```
 
 ## 素材与许可

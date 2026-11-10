@@ -77,7 +77,7 @@ func _initialize() -> void:
 			var keep := a.substr(7).split(",")
 			shots = shots.filter(func(x: Array) -> bool: return String(x[0]) in keep)
 
-var out_dir := "res://screenshots/v4/dev"
+var out_dir := "res://screenshots/v5/dev"
 
 func _process(_d: float) -> bool:
 	if i >= shots.size():

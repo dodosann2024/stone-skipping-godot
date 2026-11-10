@@ -1,5 +1,5 @@
 extends Node3D
-## 海岛打水漂 v4 — walk / run around a little tropical island, nap in the hammock, sunbathe on the
+## 海岛打水漂 v5 — walk / run around a little tropical island, nap in the hammock, sunbathe on the
 ## beach towel, and skip stones from the end of the dock (standing or half-kneeling).
 
 const GRAVITY := 9.8
@@ -83,6 +83,7 @@ var rest_sit_b := Basis.IDENTITY
 var rest_lie_b := Basis.IDENTITY
 var rest_root_sit := Vector3.ZERO
 var rest_side := Vector3.ZERO
+var rest_cam_yaw := INF
 var swing_amp := 0.0
 var zzz: Label3D
 
@@ -134,7 +135,7 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v4"
+var shot_dir := "v5"
 var demo_release_pending := 0
 var demo_input := Vector2.ZERO
 var demo_run := false
@@ -820,13 +821,14 @@ func _explore_tick(delta: float) -> void:
 		if wading:
 			spd *= 0.6
 		target_v = wish.normalized() * spd
-	var acc := 9.0 if target_v.length() > move_vel.length() else 12.0
+	# ease into a run (a kid needs a couple of steps), stop a little quicker; the gait matches the speed
+	var acc := (6.5 if move_vel.length() < WALK_MAX else 4.5) if target_v.length() > move_vel.length() else 10.0
 	move_vel = move_vel.move_toward(target_v, acc * delta)
 	# turn toward the walking direction; while turning hard, slow down a little
 	if move_vel.length() > 0.05:
 		var want_yaw := atan2(-move_vel.x, -move_vel.z)
 		var diff := absf(wrapf(want_yaw - face_yaw, -PI, PI))
-		face_yaw = lerp_angle(face_yaw, want_yaw, 1.0 - exp(-delta * 11.0))
+		face_yaw = lerp_angle(face_yaw, want_yaw, 1.0 - exp(-delta * 9.0))
 		if diff > 1.2:
 			move_vel *= 1.0 - minf(delta * 4.0, 0.5)
 	var from := player.position
@@ -870,6 +872,7 @@ func _begin_rest(kind: String) -> void:
 	rest_kind = kind
 	rest_phase = 0
 	rest_t = 0.0
+	rest_cam_yaw = INF
 	move_vel = Vector3.ZERO
 	if kind == "sleep":
 		var hs := _hammock_spot()
@@ -1621,14 +1624,50 @@ func _explore_cam() -> Array:
 func _rest_cam() -> Array:
 	var tall := _tall()
 	var t := rest_lie + Vector3(0, 0.25, 0)
-	var off: Vector3
-	if rest_kind == "sleep":
-		off = rest_side
-		var along := (island.hammock_b - island.hammock_a).normalized()
-		off = (off + Vector3(along.x, 0, along.z) * 0.45).normalized()
-	else:
-		off = (rest_side * 0.75 + island.towel_dir * 0.75).normalized()
-	return [t, atan2(off.x, off.z), 0.42, 3.0 if not tall else 3.6]
+	var dist := 3.0 if not tall else 3.6
+	if rest_cam_yaw == INF:
+		var off: Vector3
+		if rest_kind == "sleep":
+			off = rest_side
+			var along := (island.hammock_b - island.hammock_a).normalized()
+			off = (off + Vector3(along.x, 0, along.z) * 0.45).normalized()
+		else:
+			off = (rest_side * 0.75 + island.towel_dir * 0.75).normalized()
+		rest_cam_yaw = _clear_yaw(t, atan2(off.x, off.z), 0.42, dist)
+	return [t, rest_cam_yaw, 0.42, dist]
+
+## the yaw closest to `pref` from which no palm trunk stands between the camera and the resting kid
+func _clear_yaw(t: Vector3, pref: float, pitch: float, dist: float) -> float:
+	var along := island.towel_dir * 0.7 if rest_kind != "sleep" else (island.hammock_b - island.hammock_a).normalized() * 0.7
+	var looks: Array[Vector3] = [t, t + along, t - along]
+	var best := pref
+	var best_cost := INF
+	for n in 15:
+		var dy := floori((n + 1) * 0.5) * 0.17 * (1.0 if n % 2 == 1 else -1.0)
+		var yaw := pref + dy
+		var cam := t + Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
+		var hits := 0
+		for l in looks:
+			for tr: Array in island.trunks:
+				if _seg_hits_trunk(cam, l, tr):
+					hits += 1
+					break
+		var cost := hits * 10.0 + absf(dy)
+		if cost < best_cost:
+			best_cost = cost
+			best = yaw
+		if hits == 0:
+			break
+	return best
+
+func _seg_hits_trunk(a: Vector3, b: Vector3, pts: Array) -> bool:
+	if Vector2(pts[0].x - a.x, pts[0].z - a.z).length() > a.distance_to(b) + 6.0:
+		return false
+	for i in pts.size() - 1:
+		var c := Geometry3D.get_closest_points_between_segments(a, b, pts[i], pts[i + 1])
+		if c[0].distance_to(c[1]) < 0.42:
+			return true
+	return false
 
 func _snap_explore_cam() -> void:
 	ex_yaw = face_yaw
@@ -1668,6 +1707,11 @@ func _update_camera(delta: float) -> void:
 		if (state == State.THROWING or state == State.FLYING) and not _tall():
 			want[3] = float(want[3]) + 0.4
 		k = 1.0 - exp(-delta * (2.2 if hold else 3.0))
+		if hold:
+			# coming back from the stone view: re-centre on the kid first, then dolly in, so the
+			# camera never passes in front of him
+			cam_target = cam_target.lerp(want[0], 1.0 - exp(-delta * 5.5))
+			cam_dist = maxf(cam_dist, float(want[3]))
 	elif mode == Mode.REST and rest_phase >= 2:
 		want = _rest_cam()
 		k = 1.0 - exp(-delta * 1.8)
@@ -1779,7 +1823,7 @@ func _demo_shot(name: String) -> void:
 	img.save_png(path)
 	print("DEMO screenshot ", path)
 
-# ------------------------------------------------------------------ v4 scripted demo (screenshots / video)
+# ------------------------------------------------------------------ v4/v5 scripted demo (screenshots / video)
 # godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 [--portrait] [--shotdir=/abs/dir]
 # godot --path . --fixed-fps 30 --write-movie x.avi -- --video4=walk|throw|sleep|sun
 
@@ -1892,6 +1936,10 @@ func _throw_sequence(pre: String, crouch: bool, close: bool) -> void:
 		await get_tree().process_frame
 	await _wait(0.9)
 	_shot(pre + "result")
+	await _wait(1.0)
+	_shot(pre + "result_b")
+	await _wait(1.4)
+	_shot(pre + "result_c")
 
 func _rest_sequence(pre: String, kind: String, close: bool) -> void:
 	if kind == "sleep":
@@ -1930,6 +1978,32 @@ func _rest_sequence(pre: String, kind: String, close: bool) -> void:
 		_shot(pre + kind + "_body")
 		_free_cam()
 
+## the sea along the beach: shallows, seabed, foam lines (high 3/4 view like the game, low and wide)
+func _shore_sequence(pre: String) -> void:
+	for th: float in [-1.05, 2.2]:
+		var tag := "a" if th < 0.0 else "b"
+		var sea := Island.dir_at(th)
+		var p := island.shore_pt(th, 0.9)
+		var along := sea.cross(Vector3.UP)
+		_place(p, atan2(-sea.x, -sea.z) + 0.5)
+		await _wait(0.6)
+		_fixed_cam(p + sea * 2.2 + Vector3(0, 0.2, 0), atan2(sea.x, sea.z) + 0.55, 0.72, 7.0)
+		await _wait(0.4)
+		_shot(pre + "13%s_shore_top" % tag)
+		_fixed_cam(p + sea * 1.2 + Vector3(0, 0.4, 0), atan2(along.x, along.z) - 0.5, 0.2, 5.0)
+		await _wait(0.4)
+		_shot(pre + "14%s_shore_low" % tag)
+		_fixed_cam(p + sea * 3.0, atan2(sea.x, sea.z) - 0.6, 0.5, 14.0)
+		await _wait(0.4)
+		_shot(pre + "15%s_shore_wide" % tag)
+		_free_cam()
+	var wp := island.shore_pt(-1.2, -1.3)
+	_place(wp, 0.4)
+	_walk_to.call(island.shore_pt(-1.35, -1.1), false)
+	await _wait(1.2)
+	_shot(pre + "16_wading")
+	_stop_walk()
+
 func _run_demo4() -> void:
 	await _wait(0.5)
 	if demo_seg != "":
@@ -1943,6 +2017,8 @@ func _run_demo4() -> void:
 			var what := a0.substr(7)
 			if what == "throw":
 				await _throw_sequence(pre + "08_", true, close)
+			elif what == "shore":
+				await _shore_sequence(pre)
 			else:
 				await _rest_sequence(pre + ("10_" if what == "sleep" else "11_"), what, close)
 			get_tree().quit()
@@ -2050,7 +2126,7 @@ func _video_seg(seg: String) -> void:
 			fly_t = 0.0
 			while state != State.READY:
 				await get_tree().process_frame
-			await _wait(1.6)
+			await _wait(3.6)
 		"sleep":
 			var hs := _hammock_spot()
 			var bed: Vector3 = hs[0]
