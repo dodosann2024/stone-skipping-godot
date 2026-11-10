@@ -99,16 +99,50 @@ var lock_prev: Array = [null, null]   # last frame's corrected [heel, toe] world
 var lock_pos := Vector3.ZERO
 var lock_enabled := true
 var flat_sent := [false, false]
+var swing_t := [-1.0, -1.0]
+var swing_from := [[Vector3.ZERO, 0.0], [Vector3.ZERO, 0.0]]
+var phase_rate := 0.0
+var was_down := [false, false]
 var pivot_w: Array[float] = [0.0, 0.0]
 var step_t: Array[float] = [-1.0, -1.0]
 var steps_taken := 0
+var spot_steps := 0
 var step_from: Array = [[Vector3.ZERO, 0.0], [Vector3.ZERO, 0.0]]
 const PIVOT_YAW := 0.45
 const TURN_MAX := 12.0
-const STEP_AT := 0.15        # skeleton units (~13 cm)
+const STEP_FAR := 0.22       # skeleton units (~19 cm)
+const SLIP := 0.0025
+const STEP_REACH := 0.97     # of the leg's length, and clearly more than the animation's
 const STEP_DUR := 0.16
 const STEP_LIFT := 0.06
 const PIVOT_LIFT := 0.3
+# turning on the spot (the mover sets `pivoting` and `turn_ahead`): the feet take turns stepping round,
+# inner foot first, each landing turned ahead of the body; weight goes onto the standing foot
+const SPOT_YAW := 0.25        # foot twist that calls for the next step
+const SPOT_C := 0.05
+const SPOT_LEAD := 1.1        # how far round (rad) a turning step goes, at most
+const SPOT_DUR := 0.17
+const SPOT_LIFT := 0.045
+const SPOT_RATE := 3.8        # rad/s, the fastest turn on the spot
+var pivoting := false
+var turn_ahead := 0.0         # rad (+ = left) the heading still has to turn, from the mover
+var lead_y := [0.0, 0.0, 0.0, 0.0]   # spine_02, spine_03, neck_01, head yaw: the head goes first
+var step_to: Array = [[Vector3.ZERO, 0.0], [Vector3.ZERO, 0.0]]
+var step_dur: Array[float] = [STEP_DUR, STEP_DUR]
+var step_lift: Array[float] = [STEP_LIFT, STEP_LIFT]
+var last_step_foot := -1
+var step_world: Array = [null, null]   # spot steps: [from pos, from heading, to pos, to heading] in the world
+var idle_still := 0.0
+var lead_dt := 0.0
+var hip_shift := Vector3.ZERO   # skeleton space; the feet do not move with it
+
+## the turn-on-the-spot rule shared by main.gd and the gait probe: [new heading, new turn rate]
+static func spot_turn(face: float, want: float, rate: float, delta: float) -> Array:
+	var need := wrapf(want - face, -PI, PI)
+	var top := minf(SPOT_RATE, 1.2 + absf(need) * 2.6)
+	rate = move_toward(rate, top, delta * 14.0)
+	var stp := minf(absf(need), rate * delta)
+	return [face + signf(need) * stp, rate]
 
 func _ready() -> void:
 	rng.seed = 7
@@ -472,6 +506,7 @@ func _tick(delta: float) -> void:
 				move_w = move_toward(move_w, 1.0, delta * 6.0)
 			var old := phase
 			phase = fposmod(phase + adv, 1.0)
+			phase_rate = adv / maxf(delta, 1e-4)
 			if move_w > 0.5 and not stopping:
 				if old > phase:
 					footstep.emit(0, run_k > 0.5)
@@ -518,7 +553,9 @@ func _tick(delta: float) -> void:
 		expr = "laugh"
 	elif anim == "move" or anim == "idle":
 		expr = "smile"
+	lead_dt = delta
 	_apply_mixer()
+	lead_dt = 0.0
 	_plant_turn(delta)
 	_foot_lock(delta)
 	_update_props()
@@ -543,6 +580,43 @@ func _apply_mixer() -> void:
 		var par := skel.get_bone_global_pose(skel.get_bone_parent(bi)).basis
 		var axis := (par.inverse() * Vector3(0, 0, 1)).normalized()
 		skel.set_bone_pose_rotation(bi, Quaternion(axis, turn_lean) * skel.get_bone_pose_rotation(bi))
+	_lead_turn()
+	_weight_shift()
+
+## a turn starts at the eyes: head, then chest, then hips (the legs follow with the feet)
+func _lead_turn() -> void:
+	var dt := lead_dt
+	var ah := clampf(turn_ahead, -1.8, 1.8) if (anim == "move" or anim == "idle") else 0.0
+	ah *= 1.0 - act_w
+	var share := [0.1, 0.17, 0.16, 0.2]
+	var top := [0.16, 0.28, 0.3, 0.38]
+	var rate := [5.0, 7.0, 11.0, 14.0]
+	var names := ["spine_02", "spine_03", "neck_01", "head"]
+	for j in 4:
+		var want := clampf(ah * float(share[j]), -float(top[j]), float(top[j]))
+		lead_y[j] = lerpf(lead_y[j], want, 1.0 - exp(-dt * float(rate[j])))
+		if absf(lead_y[j]) < 1e-4:
+			continue
+		var bi := skel.find_bone(names[j])
+		var par := skel.get_bone_global_pose(skel.get_bone_parent(bi)).basis
+		var axis := (par.inverse() * Vector3.UP).normalized()
+		skel.set_bone_pose_rotation(bi, Quaternion(axis, lead_y[j]) * skel.get_bone_pose_rotation(bi))
+
+## while one foot is stepping round, the hips sway over the other one and dip a little
+func _weight_shift() -> void:
+	var off := Vector3.ZERO
+	hip_shift = Vector3.ZERO
+	for i in 2:
+		if step_t[i] >= 0.0 and pivoting:
+			var u := clampf(step_t[i] / step_dur[i], 0.0, 1.0)
+			var sw := sin(PI * minf(u * 1.25, 1.0))
+			off += Vector3(0.028 if i == 1 else -0.028, -0.012, 0.0) * sw
+	if off.length_squared() < 1e-8:
+		return
+	hip_shift = off
+	var bi := skel.find_bone("pelvis")
+	var par := skel.get_bone_global_pose(skel.get_bone_parent(bi)).basis
+	skel.set_bone_pose_position(bi, skel.get_bone_pose_position(bi) + par.inverse() * off)
 
 ## planted contact (skeleton space, lowest of heel / toe pad) of one foot, or null when it is lifted
 func _contact(i: int) -> Variant:
@@ -695,6 +769,7 @@ func _foot_lock(delta: float) -> void:
 	var on := lock_enabled and (anim == "move" or anim == "idle") and act_w < 0.05
 	var jumped := global_position.distance_to(lock_pos) > 0.6
 	lock_pos = global_position
+	var req := _step_request(on, delta)
 	for i in 2:
 		var lb: Array = legs[i]
 		var ct: Array = contacts[i]
@@ -703,6 +778,8 @@ func _foot_lock(delta: float) -> void:
 			step_t[i] = -1.0; pivot_w[i] = 0.0
 		var F := skel.get_bone_global_pose(lb[2])
 		var B := skel.get_bone_global_pose(lb[3])
+		F.origin -= hip_shift
+		B.origin -= hip_shift
 		var A := F.origin
 		var heel := F * (ct[1] as Vector3)
 		var toe := B * (ct[3] as Vector3)
@@ -728,31 +805,69 @@ func _foot_lock(delta: float) -> void:
 			var now := Basis(Vector3.UP, lock_yaw[i]) * (pa - A) + A + lock_c[i]
 			var d := Si.basis * (was - S * now)
 			d.y = 0.0
-			lock_c[i] += d
+			# a foot coming down out of the air is pinned where it touches (pinning it to where it was in the
+			# air a frame ago would yank it back); one already on the ground keeps its spot
+			if lock_on[i] or was_down[i]:
+				lock_c[i] += d
 			lock_on[i] = true
-			if lock_c[i].length() > STEP_AT:
-				# the body has got too far from the planted foot (a flick of the stick): a quick step
-				step_t[i] = 0.0
-				step_from[i] = [lock_c[i], lock_yaw[i]]
+			if not pivoting and _needs_step(i, A):
+				# the body has got too far from the planted foot (a flick of the stick): a quick step, turned
+				# a little into the turn
+				_start_step(i, Vector3.ZERO, clampf(turn_ahead * 0.4, -0.3, 0.3), STEP_DUR, STEP_LIFT)
 				steps_taken += 1
-				flat_sent[i] = false
 				planted = false
+			elif not pivoting:
+				_ease_overreach(i, A)
+		var fa := S.basis * (B.origin - A)
+		var ha := atan2(fa.x, fa.z)
+		if req == i and step_t[i] < 0.0:
+			# turning on the spot / squaring up: this foot steps round to a spot on the ground turned `lead`
+			# (towards the new heading) about the body's centre; the spot is fixed in the world, so the turning
+			# body does not drag the foot along on its way down
+			var lead := clampf(turn_ahead, -SPOT_LEAD, SPOT_LEAD) if pivoting else 0.0
+			var O := global_position
+			var Pw := S * A
+			O.y = Pw.y
+			_start_step(i, Vector3.ZERO, 0.0, SPOT_DUR, SPOT_LIFT if pivoting else SPOT_LIFT * 0.7)
+			step_world[i] = [S * (A + lock_c[i]), ha + lock_yaw[i], O + Basis(Vector3.UP, lead) * (Pw - O), ha + lead]
+			spot_steps += 1
+			planted = false
+		was_down[i] = hd or td
 		var lift := 0.0
 		if step_t[i] >= 0.0:
 			lock_on[i] = false
 			step_t[i] += delta
-			var u := minf(step_t[i] / STEP_DUR, 1.0)
-			var w := 1.0 - smoothstep(0.0, 1.0, u)
-			lock_c[i] = (step_from[i][0] as Vector3) * w
-			lock_yaw[i] = float(step_from[i][1]) * w
-			lift = STEP_LIFT * sin(PI * u)
+			var u := minf(step_t[i] / step_dur[i], 1.0)
+			# across while it is up, down onto the new spot at the end
+			var w := smoothstep(0.08, 0.85, u)
+			if step_world[i] != null:
+				var sw: Array = step_world[i]
+				var P := (sw[0] as Vector3).lerp(sw[2], w)
+				var c := Si * P - A
+				c.y = 0.0
+				lock_c[i] = c
+				lock_yaw[i] = wrapf(lerp_angle(float(sw[1]), float(sw[3]), w) - ha, -PI, PI)
+			else:
+				lock_c[i] = (step_from[i][0] as Vector3).lerp(step_to[i][0], w)
+				lock_yaw[i] = lerpf(float(step_from[i][1]), float(step_to[i][1]), w)
+			lift = step_lift[i] * sin(PI * u)
 			if u >= 1.0:
 				step_t[i] = -1.0
 		elif not planted:
+			if lock_on[i] or swing_t[i] < 0.0:
+				swing_t[i] = 0.0
+				swing_from[i] = [lock_c[i], lock_yaw[i]]
 			lock_on[i] = false
-			var k := exp(-delta * 10.0)
-			lock_c[i] *= k
-			lock_yaw[i] *= k
+			swing_t[i] += delta
+			# a swinging foot sheds its correction by the time it lands (predicted from the gait table), so
+			# every stance starts on the animated footfall instead of carrying the last one's offset along
+			var u := 1.0 - exp(-swing_t[i] * 10.0)
+			var left := _time_to_contact(i)
+			if left >= 0.0:
+				u = maxf(u, swing_t[i] / maxf(swing_t[i] + left, 1e-4))
+			var w := 1.0 - smoothstep(0.0, 1.0, u)
+			lock_c[i] = (swing_from[i][0] as Vector3) * w
+			lock_yaw[i] = float(swing_from[i][1]) * w
 		var R := Basis(Vector3.UP, lock_yaw[i])
 		var heel_c := R * (heel - A) + A + lock_c[i]
 		var toe_c := R * (toe - A) + A + lock_c[i]
@@ -768,7 +883,7 @@ func _foot_lock(delta: float) -> void:
 			heel_c = toe_c + Rp * (heel_c - toe_c)
 			fb = Rp * fb
 			pivot_w[i] = move_toward(pivot_w[i], 0.0, delta * 4.0)
-		if lock_c[i].length_squared() > 1e-10 or absf(lock_yaw[i]) > 1e-5 or pivot_w[i] > 0.0 or lift > 0.0:
+		if lock_c[i].length_squared() > 1e-10 or absf(lock_yaw[i]) > 1e-5 or pivot_w[i] > 0.0 or lift > 0.0 or hip_shift != Vector3.ZERO:
 			_leg_ik(lb, ankle, fb, R)
 		var hw := S * heel_c
 		var tw := S * toe_c
@@ -780,6 +895,86 @@ func _foot_lock(delta: float) -> void:
 				foot_flat.emit(i)
 		elif not hd and not td:
 			flat_sent[i] = false
+
+## the body has got too far from a planted foot (a flick of the stick): the leg is nearly straight, or the
+## foot is far off its animated spot
+## a leg just past full stretch with the foot only a little off: no step for that, it gives a hair
+## (the heel is about to come up anyway), at most SLIP a frame
+func _ease_overreach(i: int, A: Vector3) -> void:
+	var c: Vector3 = lock_c[i]
+	if c.length() < 0.005:
+		return
+	var lb: Array = legs[i]
+	var H := skel.get_bone_global_pose(lb[0]).origin
+	var K := skel.get_bone_global_pose(lb[1]).origin
+	var ln := H.distance_to(K) + K.distance_to(A)
+	var over := (A + c - H).length() - 0.985 * ln
+	if over > 0.0:
+		lock_c[i] = c * (1.0 - minf(minf(over, SLIP) / c.length(), 1.0))
+
+func _needs_step(i: int, A: Vector3) -> bool:
+	var c: Vector3 = lock_c[i]
+	if c.length() < 0.05:
+		return false
+	if c.length() > STEP_FAR:
+		return true
+	var lb: Array = legs[i]
+	var H := skel.get_bone_global_pose(lb[0]).origin
+	var K := skel.get_bone_global_pose(lb[1]).origin
+	var ln := H.distance_to(K) + K.distance_to(A)
+	var r := (A + c - H).length() / ln
+	if r > 1.0 or (r > 0.99 and c.length() > 0.095):
+		return true
+	return c.length() > 0.1 and r > STEP_REACH and r > (A - H).length() / ln + 0.05
+
+func _start_step(i: int, to_c: Vector3, to_yaw: float, dur: float, lift: float) -> void:
+	step_t[i] = 0.0
+	step_from[i] = [lock_c[i], lock_yaw[i]]
+	step_to[i] = [to_c, to_yaw]
+	step_dur[i] = dur
+	step_lift[i] = lift
+	step_world[i] = null
+	flat_sent[i] = false
+	last_step_foot = i
+
+## which foot (if any) starts a step on the spot this frame: while turning on the spot the feet take turns,
+## inner foot first, once either one is twisted or stretched enough; standing still after a turn or a stop,
+## a foot left badly twisted or stretched squares up
+func _step_request(on: bool, delta: float) -> int:
+	if step_t[0] >= 0.0 or step_t[1] >= 0.0 or not on:
+		return -1
+	idle_still = idle_still + delta if anim == "idle" and not pivoting else 0.0
+	if pivoting:
+		if not (lock_on[0] and lock_on[1]):
+			return -1
+		var need := 0.0
+		for i in 2:
+			need = maxf(need, maxf(absf(lock_yaw[i]) / SPOT_YAW, lock_c[i].length() / SPOT_C) + pivot_w[i] * 2.0)
+		if need < 1.0:
+			return -1
+		var inner := 0 if turn_ahead > 0.0 else 1
+		return (1 - last_step_foot) if last_step_foot >= 0 else inner
+	last_step_foot = -1
+	if anim == "idle" and idle_still > 0.25:
+		var worst := -1
+		var wv := 1.0
+		for i in 2:
+			var v := maxf(lock_c[i].length() / 0.07, absf(lock_yaw[i]) / 0.35)
+			if lock_on[i] and v > wv:
+				wv = v
+				worst = i
+		return worst
+	return -1
+
+## seconds until foot i touches down again at the current gait rate, or -1 when not walking / running
+func _time_to_contact(i: int) -> float:
+	if anim != "move" or move_w < 0.5 or gait_tab.is_empty() or phase_rate < 0.05:
+		return -1.0
+	for j in range(1, GAIT_N):
+		var q := phase + float(j) / GAIT_N
+		if _plant_z(i, q, run_k) != null:
+			return float(j) / GAIT_N / phase_rate
+	return -1.0
 
 ## two-bone IK (skeleton space): ankle to `ankle`, foot to `foot_b`; the knee stays in the animated leg's
 ## plane, turned with the foot by `twist`

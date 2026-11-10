@@ -9,7 +9,10 @@ const POINTS := ["heel_l", "toe_l", "heel_r", "toe_r"]
 const SEGS := [[1.0, 1.5, "idle -> walk"], [1.5, 4.0, "walk straight"], [5.5, 6.3, "walk -> run"], [6.3, 8.0, "run straight"],
 	[8.0, 10.5, "run turning 1.3 rad/s"], [10.5, 11.0, "run -> walk"], [11.0, 12.0, "walk turning -1.6 rad/s"],
 	[12.0, 14.5, "stop -> idle"], [14.5, 16.0, "walk zig-zag (game turn)"], [16.0, 17.6, "run zig-zag (game turn)"],
-	[17.6, 19.0, "run -> stop"]]
+	[17.6, 19.0, "run -> stop"], [19.4, 21.2, "turn on the spot 180 left"], [21.2, 22.6, "turn on the spot 90 right"],
+	[22.6, 24.2, "walk off"], [24.2, 26.2, "walk, flick back 180"], [26.2, 27.4, "stop"]]
+# after PROFILE: the stick is pushed to a heading (main.gd's explore steering, turning on the spot as it does)
+const TURNS := [[19.4, PI, 0.0], [21.2, -PI * 0.5, 0.0], [22.6, 0.0, 1.15], [24.2, PI, 1.15], [26.2, 0.0, 0.0], [27.4, 0.0, -1.0]]
 # [until t, target speed, yaw rate, zig-zag amplitude]: a zig-zag swings the heading +-amp every 0.8 s the way
 # main.gd turns the boy towards the stick (lerp_angle at rate 9: up to ~10 rad/s right after a flick)
 const PROFILE := [
@@ -49,6 +52,11 @@ var steps := 0          # footstep sounds
 var prints := 0         # foot_flat events (footprints)
 var print_err := 0.0    # worst drift of a footprint spot over the next 0.06 s of stance
 var _pend: Array = []
+var want := 0.0
+var spot_rate := 0.0
+var pivot := false
+var turn_i := 0
+var wish_spd := 0.0
 
 func _init(b: Boy, at := Vector3.ZERO) -> void:
 	boy = b
@@ -80,7 +88,13 @@ func step(dt: float) -> bool:
 	t += dt
 	var tg := _target(t)
 	if tg[0] < 0.0:
-		return false
+		if not _turn_step(dt):
+			return false
+		boy._tick(dt)
+		_measure()
+		_track_prints()
+		frame += 1
+		return true
 	var acc := 6.0 if tg[0] > speed else 9.0
 	var want_spd: float = tg[0]
 	if want_spd < 0.05 and boy.settling():
@@ -89,9 +103,11 @@ func step(dt: float) -> bool:
 	if float(tg[2]) > 0.0:
 		var want_yaw := zig_base + float(tg[2]) * (1.0 if int(t / 0.8) % 2 == 0 else -1.0)
 		yaw = lerp_angle(yaw, want_yaw, 1.0 - exp(-dt * 9.0))
+		boy.turn_ahead = wrapf(want_yaw - yaw, -PI, PI)
 	else:
 		yaw += float(tg[1]) * dt * minf(speed / 1.0, 1.0)
 		zig_base = yaw
+		boy.turn_ahead = 0.0
 	boy.rotation.y = yaw
 	boy.position += Basis(Vector3.UP, yaw) * Vector3(0, 0, -speed * dt)
 	if speed > 0.05:
@@ -101,13 +117,61 @@ func step(dt: float) -> bool:
 		boy.set_idle()
 	boy._tick(dt)
 	_measure()
+	_track_prints()
+	frame += 1
+	return true
+
+func _track_prints() -> void:
 	# a quick step picks the foot up again: it gets a fresh print where it lands
 	_pend = _pend.filter(func(pd: Array) -> bool: return float(boy.step_t[pd[0]]) < 0.0)
 	for pd in _pend:
 		if t - float(pd[2]) >= 0.06:
 			print_err = maxf(print_err, (_print_spot(pd[0]) - (pd[1] as Vector2)).length())
 	_pend = _pend.filter(func(pd: Array) -> bool: return t - float(pd[2]) < 0.06)
-	frame += 1
+
+## main.gd's explore steering after the stick moves to `want`: a big change of heading at walking pace or
+## slower stops and turns on the spot (Boy.spot_turn), otherwise the heading eases round while moving
+func _turn_step(dt: float) -> bool:
+	if turn_i == 0:
+		want = yaw
+	while turn_i < TURNS.size() and t >= float(TURNS[turn_i][0]):
+		if float(TURNS[turn_i][2]) < 0.0:
+			return false
+		want += float(TURNS[turn_i][1])
+		wish_spd = float(TURNS[turn_i][2])
+		turn_i += 1
+	var need := wrapf(want - yaw, -PI, PI)
+	var active := turn_i > 0 and (wish_spd > 0.0 or absf(need) > 0.01)
+	if active and absf(need) > 1.1 and speed < 0.9:
+		pivot = true
+	if pivot and absf(need) < 0.25:
+		pivot = false
+	if pivot:
+		speed = move_toward(speed, 0.0, 10.0 * dt)
+		var r := Boy.spot_turn(yaw, want, spot_rate, dt)
+		yaw = r[0]
+		spot_rate = r[1]
+	else:
+		spot_rate = 0.0
+		if absf(need) > 1.1:
+			speed = move_toward(speed, 0.0, 10.0 * dt)    # braking before the turn
+		else:
+			var acc := 6.0 if wish_spd > speed else 9.0
+			var ws := wish_spd
+			if ws < 0.05 and boy.settling():
+				ws = 0.5
+			speed = move_toward(speed, ws, acc * dt)
+			if speed > 0.05:
+				yaw = lerp_angle(yaw, want, 1.0 - exp(-dt * 9.0))
+	boy.pivoting = pivot
+	boy.turn_ahead = wrapf(want - yaw, -PI, PI) if (pivot or speed > 0.05) else 0.0
+	boy.rotation.y = yaw
+	boy.position += Basis(Vector3.UP, yaw) * Vector3(0, 0, -speed * dt)
+	if speed > 0.05:
+		boy.set_move(speed)
+	else:
+		boy.set_move(0.0)
+		boy.set_idle()
 	return true
 
 ## the spot main.gd stamps a footprint on (60 % of the way from heel to ball)

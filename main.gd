@@ -72,6 +72,8 @@ var player: Node3D
 var boy: Boy
 var face_yaw := 0.0
 var move_vel := Vector3.ZERO
+var spot_turning := false
+var spot_rate := 0.0
 var ground_y := 0.0
 var cur_speed := 0.0
 var wading := false
@@ -989,7 +991,16 @@ func _explore_tick(delta: float) -> void:
 	var right := Vector3(cos(ex_yaw), 0, -sin(ex_yaw))
 	var wish := right * inp.x - fwd * inp.y
 	var target_v := Vector3.ZERO
-	if mag > 0.05:
+	# a sharp turn from (nearly) standing is a turn on the spot: he stops, steps round, then sets off
+	var wish_yaw := atan2(-wish.x, -wish.z)
+	var need := wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0
+	var spd_now := move_vel.length()
+	if mag > 0.05 and ((absf(need) > 1.1 and spd_now < 0.4) or (absf(need) > 2.0 and spd_now < 0.9)):
+		spot_turning = true
+	if spot_turning and (mag <= 0.05 or absf(need) < 0.25):
+		spot_turning = false
+		spot_rate = 0.0
+	if mag > 0.05 and not spot_turning:
 		var spd := RUN_SPEED if running else lerpf(0.55, WALK_MAX, clampf(mag / 0.85, 0.0, 1.0))
 		if wading:
 			spd *= 0.6
@@ -1006,7 +1017,11 @@ func _explore_tick(delta: float) -> void:
 	var acc := (6.5 if move_vel.length() < WALK_MAX else 4.5) if target_v.length() > move_vel.length() else 10.0
 	move_vel = move_vel.move_toward(target_v, acc * delta)
 	# turn toward the walking direction; while turning hard, slow down a little
-	if move_vel.length() > 0.05:
+	if spot_turning:
+		var st := Boy.spot_turn(face_yaw, face_yaw + need, spot_rate, delta)
+		face_yaw = st[0]
+		spot_rate = st[1]
+	elif move_vel.length() > 0.05:
 		var want_yaw := atan2(-move_vel.x, -move_vel.z)
 		var diff := absf(wrapf(want_yaw - face_yaw, -PI, PI))
 		face_yaw = lerp_angle(face_yaw, want_yaw, 1.0 - exp(-delta * 9.0))
@@ -1026,6 +1041,8 @@ func _explore_tick(delta: float) -> void:
 	player.rotation.y = face_yaw
 	wading = not _on_dock(to.x, to.z) and h < -0.03
 	boy.wading = wading
+	boy.pivoting = spot_turning
+	boy.turn_ahead = wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0
 	boy.set_move(cur_speed)
 	if cur_speed < 0.05:
 		boy.set_idle()
@@ -1907,6 +1924,10 @@ func _process(delta: float) -> void:
 	# the stick only exists while exploring; never leave it hidden (or shown) after a mode change
 	if joy.visible != (mode == Mode.EXPLORE):
 		_update_ui()
+	if mode != Mode.EXPLORE:
+		spot_turning = false
+		boy.pivoting = false
+		boy.turn_ahead = 0.0
 	match mode:
 		Mode.EXPLORE:
 			_explore_tick(delta)

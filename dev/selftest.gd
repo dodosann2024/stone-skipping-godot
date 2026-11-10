@@ -143,8 +143,8 @@ func _slide_check() -> void:
 				worst = v
 				worst_seg = sg[2]
 		var ok := worst < 0.005 and probe.slide_n > 300
-		print("SELFTEST %-28s %s  (worst %.1f mm/frame in '%s'; per segment mm: %s; %d planted frames, %d quick steps)" % [
-			"foot slide @%d fps" % fps, "ok" if ok else "FAIL", worst * 1000.0, worst_seg, " ".join(parts), probe.slide_n, b.steps_taken])
+		print("SELFTEST %-28s %s  (worst %.1f mm/frame in '%s'; per segment mm: %s; %d planted frames, %d quick steps, %d steps on the spot)" % [
+			"foot slide @%d fps" % fps, "ok" if ok else "FAIL", worst * 1000.0, worst_seg, " ".join(parts), probe.slide_n, b.steps_taken, b.spot_steps])
 		if not ok:
 			fails.append("planted foot slides %.1f mm/frame (%s, %d fps)" % [worst * 1000.0, worst_seg, fps])
 		var pok := probe.prints >= probe.steps - 3 and probe.prints > 20 and probe.print_err < 0.02
@@ -154,6 +154,40 @@ func _slide_check() -> void:
 			fails.append("footprints: %d for %d steps, drift %.1f mm (%d fps)" % [probe.prints, probe.steps, probe.print_err * 1000.0, fps])
 		m.remove_child(b)
 		b.free()
+
+## a 180° flick of the stick from standing is a turn on the spot: small alternating steps while the
+## head and chest lead, no shuffle of quick steps, no drifting, then he walks off the new way
+func _turn_check() -> void:
+	await _frames(20)
+	var b: Boy = m.boy
+	var q0 := b.steps_taken
+	var s0 := b.spot_steps
+	var p0: Vector3 = m.player.position
+	var yaw: float = m.ex_yaw
+	var back := Vector3(sin(m.face_yaw), 0, cos(m.face_yaw))
+	var fwd := Vector3(-sin(yaw), 0, -cos(yaw))
+	var right := Vector3(cos(yaw), 0, -sin(yaw))
+	var t := 0.0
+	var lead := 0.0
+	var drift := 0.0
+	while t < 3.0:
+		m.demo_input = Vector2(back.dot(right), -back.dot(fwd)) * 0.5
+		await m.get_tree().process_frame
+		t += 1.0 / 30.0
+		if not m.spot_turning and t > 0.2:
+			break
+		drift = maxf(drift, (m.player.position - p0).length())
+		lead = maxf(lead, absf(b.turn_ahead))
+	m.demo_input = Vector2.ZERO
+	var spot := b.spot_steps - s0
+	var quick := b.steps_taken - q0
+	var left := absf(wrapf(m.face_yaw - atan2(-back.x, -back.z), -PI, PI))
+	var ok := spot >= 2 and spot <= 6 and quick == 0 and drift < 0.12 and left < 0.3 and t < 2.5
+	print("SELFTEST %-28s %s  (180° in %.2f s with %d steps on the spot, %d quick steps, body drift %.1f cm, %.0f° short)" % [
+		"turn on the spot", "ok" if ok else "FAIL", t, spot, quick, drift * 100.0, rad_to_deg(left)])
+	if not ok:
+		fails.append("turn on the spot: %d spot steps, %d quick, drift %.2f m, %.2f rad short, %.2f s" % [spot, quick, drift, left, t])
+	await _frames(10)
 
 func _rest(kind: String, approach: Vector3) -> void:
 	m._place(approach, 0.0)
@@ -400,6 +434,7 @@ func run(main: Node) -> void:
 	_arm_check()
 	_gait_check()
 	_slide_check()
+	await _turn_check()
 	await _can_walk("start")
 	# towel: from both sides and from the sea end
 	var td: Vector3 = m.island.towel_dir
