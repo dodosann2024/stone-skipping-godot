@@ -18,6 +18,13 @@ uniform vec3 glint_dir = vec3(0.45, 0.62, -0.64);   // towards the sun / moon (w
 uniform vec3 glint_col : source_color = vec3(1.0, 0.95, 0.85);
 uniform float glint_gain = 1.0;
 uniform float night = 0.0;
+// planar reflection (reflection.gd): the scene mirrored about the water plane, flipped vertically
+uniform sampler2D refl_tex : source_color, filter_linear, repeat_disable, hint_default_black;
+uniform float refl_on = 0.0;
+uniform float refl_gain = 1.0;
+// night lights that streak across the waves: xyz, w = strength (0 off); rgb colour
+uniform vec4 lamp_pos[12];
+uniform vec4 lamp_col[12];
 
 varying vec3 wpos;
 
@@ -142,31 +149,61 @@ void fragment() {
 	float glint = pow(gd, 300.0) * tw * 6.0 + pow(gd, 40.0) * 0.12 * (1.0 + night * 2.5);
 	glint *= (1.0 - foam_v) * glint_gain;
 
-	// at night the engine's sky reflection is off (its radiance has no stars or moon); the water mirrors
-	// the night dome of night_sky.gdshader instead: its blue gradient, the moon halo and a wave-broken disc
 	vec3 emis = glint_col * glint;
+	float fr = 0.02 + 0.98 * pow(1.0 - clamp(dot(nw, vw), 0.0, 1.0), 5.0);
+	float rk = 0.0;
+	if (refl_on > 0.5) {
+		// the mirrored scene, shifted by how far the wave normal leans (in screen space) and faded towards
+		// the screen edges where the mirror image has nothing to show
+		vec3 n0 = (VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
+		vec2 off = (NORMAL.xy - n0.xy) * vec2(0.22, -0.22);
+		vec2 ruv = vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y) + off;
+		vec3 R = texture(refl_tex, clamp(ruv, vec2(0.002), vec2(0.998))).rgb;
+		rk = clamp(fr * 1.6 + 0.07, 0.0, 1.0) * (1.0 - foam_v) * refl_gain;
+		col *= 1.0 - rk;
+		emis += R * rk;
+	}
+	// at night the engine's sky reflection is off (its radiance has no stars or moon). Without the planar
+	// reflection the water mirrors an approximation of the night dome of night_sky.gdshader: its blue
+	// gradient, the moon halo and a wave-broken disc
 	if (night > 0.001) {
-		float fr = 0.02 + 0.98 * pow(1.0 - clamp(dot(nw, vw), 0.0, 1.0), 5.0);
 		float ry = max(rw.y, 0.0);
-		vec3 nsky = mix(vec3(0.09, 0.14, 0.25), vec3(0.025, 0.05, 0.13), smoothstep(0.0, 0.5, ry));
-		col = mix(col, nsky, fr * night * (1.0 - foam_v));
-		float ma = acos(clamp(dot(rw, normalize(glint_dir)), -1.0, 1.0));
-		vec3 moon = vec3(0.55, 0.65, 0.9) * (exp(-ma / 0.06) * 0.28 + exp(-ma / 0.32) * 0.07);
-		moon += vec3(1.0, 0.97, 0.88) * (1.0 - smoothstep(0.035, 0.05, ma)) * 1.1;
+		vec3 moon = vec3(0.0);
+		if (refl_on < 0.5) {
+			vec3 nsky = mix(vec3(0.09, 0.14, 0.25), vec3(0.025, 0.05, 0.13), smoothstep(0.0, 0.5, ry));
+			col = mix(col, nsky, fr * night * (1.0 - foam_v));
+			float ma = acos(clamp(dot(rw, normalize(glint_dir)), -1.0, 1.0));
+			moon = vec3(0.55, 0.65, 0.9) * (exp(-ma / 0.06) * 0.28 + exp(-ma / 0.32) * 0.07);
+			moon += vec3(1.0, 0.97, 0.88) * (1.0 - smoothstep(0.035, 0.05, ma)) * 1.1;
+		}
 		float sc = step(0.985, hash12(gc + 11.0 + floor(t * 0.7 + hash12(gc + 5.0) * 3.0))) * (1.0 - smoothstep(0.03, 0.12, length(gf)));
 		moon += vec3(0.75, 0.82, 1.0) * sc * 0.35 * smoothstep(0.05, 0.4, ry);
 		emis += moon * (0.25 + 0.75 * fr) * night * (1.0 - foam_v);
+		// lamps, the campfire and the lighthouse: a glitter path of wave facets towards the viewer
+		vec3 streak = vec3(0.0);
+		for (int i = 0; i < 12; i++) {
+			vec4 lp = lamp_pos[i];
+			if (lp.w > 0.0) {
+				vec3 L = lp.xyz - wpos;
+				float dl = length(L);
+				vec3 h = normalize(L / dl + vw);
+				float nh = max(dot(nw, h), 0.0);
+				float s = pow(nh, 700.0) * tw * 5.0 + pow(nh, 160.0) * 0.5 + pow(nh, 30.0) * 0.03;
+				streak += lamp_col[i].rgb * s * lp.w / (1.0 + dl * dl * 0.01);
+			}
+		}
+		emis += streak * night * (1.0 - foam_v);
 	}
 
 	ALBEDO = col;
 	EMISSION = emis;
 	ROUGHNESS = mix(0.3, 0.7, foam_v);
-	SPECULAR = 0.2 * (1.0 - night);
+	SPECULAR = 0.2 * (1.0 - night) * (1.0 - 0.75 * refl_on);
 	METALLIC = 0.0;
 	// clear over the sand, greener and more opaque with depth; a soft fade where it thins onto the beach
 	float a = mix(0.16, 0.62, smoothstep(0.0, 0.9, depth));
 	a = mix(a, 0.9, smoothstep(1.2, 3.2, depth));
 	a = mix(a, 0.97, smoothstep(3.8, 5.5, depth));
 	a *= smoothstep(0.0, 0.07, th);
-	ALPHA = clamp(a + fres * 0.14 * smoothstep(0.0, 0.05, th) + foam_v + glint, 0.0, 1.0);
+	ALPHA = clamp(a + fres * 0.14 * smoothstep(0.0, 0.05, th) + foam_v + glint + rk * smoothstep(0.0, 0.05, th) * 0.8, 0.0, 1.0);
 }

@@ -4,6 +4,7 @@ render_mode cull_disabled, diffuse_lambert;
 uniform float game_time = 0.0;
 uniform float wind = 1.0;
 #include "res://shaders/cutout.gdshaderinc"
+#include "res://shaders/refl_clip.gdshaderinc"
 varying vec3 wpos;
 
 void vertex() {
@@ -18,7 +19,11 @@ void vertex() {
 }
 
 void fragment() {
-	if (!IN_SHADOW_PASS && cut_amount(wpos, CAMERA_POSITION_WORLD) > bayer4(FRAGCOORD.xy)) {
+	if (!IN_SHADOW_PASS && refl_pass(CAMERA_POSITION_WORLD)) {
+		if (wpos.y < 0.0) {
+			discard;
+		}
+	} else if (!IN_SHADOW_PASS && cut_amount(wpos, CAMERA_POSITION_WORLD) > bayer4(FRAGCOORD.xy)) {
 		discard;
 	}
 	ALBEDO = pow(COLOR.rgb, vec3(2.2));
