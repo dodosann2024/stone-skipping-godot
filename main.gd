@@ -3100,10 +3100,10 @@ func _video_seg(seg: String) -> void:
 				demo_input = Vector2(dirv.dot(right), -dirv.dot(fwd)) * mag
 				await _wait(dur)
 				demo_input = Vector2.ZERO
-			var g0 := island.shore_pt(-1.2, 2.4)
-			var gd := (island.shore_pt(-1.0, 2.4) - g0).normalized()
+			# mid-dock: open, flat, and the camera can stand off to the side over the water
+			var g0 := Vector3(0.0, 0.0, lerpf(island.dock_start_z, island.dock_end_z, 0.45))
+			var gd := Vector3(0, 0, signf(island.dock_end_z - island.dock_start_z))
 			var sd := gd.cross(Vector3.UP)
-			var sea_side := Island.dir_at(-1.2)
 			for view in ["side", "slow", "game"]:
 				_place(g0, atan2(-gd.x, -gd.z))
 				ex_yaw = face_yaw
@@ -3112,7 +3112,7 @@ func _video_seg(seg: String) -> void:
 					_free_cam()
 				else:
 					demo_cam = true
-					demo_track = [atan2(sea_side.x, sea_side.z) + (0.35 if view == "side" else -0.3), 0.16, 3.2, 0.55, true]
+					demo_track = [atan2(sd.x, sd.z) + (0.45 if view == "side" else -0.35), 0.16, 3.2, 0.55, true]
 				await _wait(0.8)
 				if view == "slow":
 					_toast("慢放 0.4×：原地转身 180°", 1.6)
@@ -3132,9 +3132,8 @@ func _video_seg(seg: String) -> void:
 				await push.call((-sd + gd).normalized(), 0.45, 0.4)
 				await _wait(1.8)
 				_toast("走着突然掉头", 1.2)
-				var f := Vector3(-sin(face_yaw), 0, -cos(face_yaw))
-				await push.call(f, 0.6, 1.4)
-				await push.call(-f, 0.6, 1.6)
+				await push.call(gd, 0.6, 1.4)
+				await push.call(-gd, 0.6, 1.6)
 				await _wait(1.2)
 			_free_cam()
 
