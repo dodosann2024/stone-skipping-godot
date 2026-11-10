@@ -11,6 +11,9 @@ extends Node
 const WATER_LAYER := 2
 const MAIN_LIGHT_LAYER := 4
 const REFL_LIGHT_LAYER := 8
+## small or short-lived things (splashes, sparks, smoke, fireflies, birds, the aim dots) that the
+## wave-broken mirror would only blur away: drawn in the main view, skipped by the mirror camera
+const SKIP_LAYER := 16
 const PLANE_Y := 0.0
 const MAX_SIDE := 480.0     # wave distortion hides the detail anyway
 ## overscan: the mirror camera sees GUARD more of the screen's width / height on each side, so the
@@ -44,7 +47,7 @@ func setup(main_cam: Camera3D, main_sun: DirectionalLight3D) -> void:
 	vp.size = Vector2i(128, 128)
 	add_child(vp)
 	cam = Camera3D.new()
-	cam.cull_mask = 0xFFFFF & ~(WATER_LAYER | MAIN_LIGHT_LAYER)
+	cam.cull_mask = 0xFFFFF & ~(WATER_LAYER | MAIN_LIGHT_LAYER | SKIP_LAYER)
 	vp.add_child(cam)
 	cam.current = true
 

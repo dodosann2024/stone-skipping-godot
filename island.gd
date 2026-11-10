@@ -29,6 +29,7 @@ var glow_mat: ShaderMaterial
 var cloud_mat: ShaderMaterial
 var campfire_pos := Vector3.ZERO
 var water_mi: MeshInstance3D
+var terrain_mi: MeshInstance3D
 var campfire: Campfire
 var sign_board: MeshInstance3D
 ## places to sit: {name, top (seat surface under the pelvis), face (where the sitter looks), approach, hint}
@@ -401,7 +402,9 @@ func _build_terrain() -> void:
 	st.generate_normals()
 	terrain_mat = ShaderMaterial.new()
 	terrain_mat.shader = load("res://shaders/terrain.gdshader")
-	_mi(st.commit(), terrain_mat)
+	terrain_mi = _mi(st.commit(), terrain_mat)
+	# the island's gentle slopes never shade anything worth a shadow-map pass of the whole terrain
+	terrain_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	# deep floor beyond the terrain patch
 	var bed = PlaneMesh.new()
 	bed.size = Vector2(1400, 1400)
@@ -409,6 +412,7 @@ func _build_terrain() -> void:
 	bm.albedo_color = Color(0.25, 0.42, 0.5)
 	var bmi = _mi(bed, bm)
 	bmi.position.y = -5.8
+	bmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 func _build_water() -> void:
 	var pm = PlaneMesh.new()

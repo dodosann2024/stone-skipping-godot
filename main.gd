@@ -325,6 +325,10 @@ func _build_environment() -> void:
 	sun.shadow_blur = 2.5
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
+	if is_web:
+		# phones: one shadow map pass instead of two; the far split only shaded palms 40+ m away
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+		sun.directional_shadow_max_distance = 50.0
 	add_child(sun)
 	camera = Camera3D.new()
 	camera.fov = 55.0
@@ -365,6 +369,7 @@ func _build_stone() -> void:
 		d.mesh = dot
 		d.material_override = dm
 		d.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		d.layers = 1 | WaterReflection.SKIP_LAYER
 		d.visible = false
 		add_child(d)
 		preview_dots.append(d)
@@ -384,6 +389,8 @@ func _build_birds() -> void:
 		body.mesh = sm
 		body.scale = Vector3(0.8, 0.7, 2.0)
 		body.material_override = white
+		body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		body.layers = 1 | WaterReflection.SKIP_LAYER
 		root.add_child(body)
 		var wings: Array = []
 		for sgn in [-1.0, 1.0]:
@@ -395,6 +402,8 @@ func _build_birds() -> void:
 			pm.size = Vector3(0.55, 0.02, 0.28)
 			w.mesh = pm
 			w.material_override = grey
+			w.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			w.layers = 1 | WaterReflection.SKIP_LAYER
 			w.position = Vector3(0.28 * sgn, 0, 0)
 			w.rotation = Vector3(0, 0, 0)
 			piv.add_child(w)
@@ -1630,6 +1639,7 @@ func _splash(p: Vector3, strength: float, big: bool, vel: Vector3) -> void:
 	crown.emission_ring_height = 0.02
 	add_child(crown)
 	crown.global_position = p
+	crown.layers = 1 | WaterReflection.SKIP_LAYER
 	crown.emitting = true
 	get_tree().create_timer(2.0).timeout.connect(crown.queue_free)
 	if vel.length() > 0.5:
@@ -1649,6 +1659,7 @@ func _splash(p: Vector3, strength: float, big: bool, vel: Vector3) -> void:
 		spray.scale_amount_max = 0.9
 		add_child(spray)
 		spray.global_position = p
+		spray.layers = 1 | WaterReflection.SKIP_LAYER
 		spray.emitting = true
 		get_tree().create_timer(1.5).timeout.connect(spray.queue_free)
 	_add_ripple(p, 1.0 if big else (0.75 if strength > 0.4 else 0.3))
@@ -2138,7 +2149,9 @@ func _apply_camera() -> void:
 # ------------------------------------------------------------------ water reflection
 
 var refl: WaterReflection
-var refl_level := 0      # 0 full, 1 lighter (smaller, every other frame), 2 off (the shader's approximations)
+## 0 full, 1 lighter reflection (smaller, every other frame), 2 reflection off (the shader's approximations),
+## 3 also no sun shadows (the kid keeps his blob shadow)
+var refl_level := 0
 var refl_auto := true
 var fps_t := 0.0
 var fps_n := 0
@@ -2173,6 +2186,8 @@ func _build_reflection() -> void:
 	var want := _opt("refl", "auto")
 	refl_auto = want == "auto"
 	_set_refl_level({"0": 2, "low": 1}.get(want, 0))
+	if _opt("shadow") == "0":
+		_set_refl_level(3)
 	# lights whose glitter streaks across the waves at night: the campfire, the lighthouse, then the lamps
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
@@ -2202,8 +2217,10 @@ func _set_refl_level(l: int) -> void:
 	refl.every = 1 if l == 0 else 2
 	refl.set_enabled(l < 2)
 	island.water_mat.set_shader_parameter("refl_on", 1.0 if l < 2 else 0.0)
+	sun.shadow_enabled = l < 3
 
-## a phone that cannot keep up drops the reflection to the lighter setting, then to the approximations
+## a phone that cannot keep up drops the reflection to the lighter setting, then to the approximations,
+## then the sun's shadow maps
 func _watch_fps(delta: float) -> void:
 	fps_t += delta
 	fps_n += 1
@@ -2214,11 +2231,11 @@ func _watch_fps(delta: float) -> void:
 	fps_n = 0
 	# two slow windows in a row (4 s), so one hitch such as a first-use shader compile does not count
 	fps_low = fps_low + 1 if fps_avg < 26.0 else 0
-	if refl_auto and not demo_mode and gt > 5.0 and fps_low >= 2 and refl_level < 2:
+	if refl_auto and not demo_mode and gt > 5.0 and fps_low >= 2 and refl_level < 3:
 		_set_refl_level(refl_level + 1)
 		fps_low = 0
 	if lbl_fps:
-		lbl_fps.text = "%.0f fps · 倒影 %s" % [fps_avg, ["高", "低", "关"][refl_level]]
+		lbl_fps.text = "%.0f fps · 倒影 %s" % [fps_avg, ["高", "低", "关", "关 · 无阴影"][refl_level]]
 		var dc := Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME
 		var vt := Viewport.RENDER_INFO_TYPE_VISIBLE
 		print("FPS %.1f refl %d night %d draws %d+%d size %s" % [fps_avg, refl_level, int(night_on),
