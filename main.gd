@@ -2491,9 +2491,9 @@ func _video_seg(seg: String) -> void:
 				await _wait(0.8 if side else 2.0)
 			_free_cam()
 		"bump":
-			# walking into things: palm, log by the fire, the lounger, a rock, then wading against the dock
+			# walking into things: palm, log by the fire, the lounger, a rock, wading against the dock, the bench, the fire ring
 			var tests: Array = []
-			for nm: String in ["椰子树", "坐木", "躺椅", "礁石", "码头", "钓鱼小屋"]:
+			for nm: String in ["椰子树", "坐木", "躺椅", "礁石", "码头", "长椅", "篝火"]:
 				for w: Array in island.walls:
 					if w[6] != nm:
 						continue
