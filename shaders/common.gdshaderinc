@@ -20,6 +20,24 @@ float vnoise(vec2 p) {
 	return mix(mix(hash12(i), hash12(i + vec2(1.0, 0.0)), u.x),
 			mix(hash12(i + vec2(0.0, 1.0)), hash12(i + vec2(1.0, 1.0)), u.x), u.y);
 }
-float swash(vec2 p, float t) { // how far the wash creeps up the beach (0..~0.8 m)
-	return 0.38 + 0.32 * sin(t * 0.75 + vnoise(p * 0.35) * 4.0 + atan(p.y, p.x) * 3.0);
+// gentle swell height; the water plane's vertices and the beach wash use the same sea level
+float sea_y(vec2 p, float t) {
+	return 0.03 * sin(dot(vec2(0.82, 0.57), p) * 0.5 + t * 0.9) + 0.02 * sin(dot(vec2(-0.45, 0.89), p) * 0.8 + t * 1.2);
+}
+// island.gd ground_h() close to the waterline (the inland hills start further up)
+float ground_near(vec2 p, float d) {
+	float n = 0.07 * sin(p.x * 0.9 + p.y * 0.4) + 0.05 * cos(p.y * 1.3 - p.x * 0.5) + 0.04 * sin(p.x * 2.1 - p.y * 1.7);
+	if (d > 0.0) {
+		return -seabed_depth(d) + n * 0.6;
+	}
+	return 0.9 * smoothstep(0.0, 6.0, -d) + n * (0.6 + 0.4 * smoothstep(0.0, 3.0, -d));
+}
+// surf cycle along the beach: at 0 a foam line reaches the sand, the wash runs up, then drains back.
+// 6 sets around the island (integer, so there is no seam where atan wraps) plus slow local jitter.
+float wash_cycle(vec2 p, float t) {
+	return fract(t * 0.105 + vnoise(p * 0.18) * 0.6 + atan(p.y, p.x) * (6.0 / 6.2831853));
+}
+// how high (m above the sea level) the wash has climbed at cycle phase c: quick run-up, slow drain
+float runup(float c) {
+	return 0.07 * smoothstep(0.0, 0.26, c) * (1.0 - smoothstep(0.26, 0.9, c));
 }
