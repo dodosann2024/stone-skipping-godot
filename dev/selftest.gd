@@ -6,6 +6,8 @@ extends RefCounted
 ## and a glancing walk must slide along instead of sticking.
 ## godot --headless --path . --fixed-fps 30 -- --selftest      (exit code 0 = pass)
 
+const ArmClearance := preload("res://dev/arm_clearance.gd")
+
 var m: Node
 var fails: Array[String] = []
 
@@ -307,6 +309,15 @@ func _sit(i: int, from: String, lie: bool) -> void:
 	var pel: Vector3 = (m.boy.parts["pelvis"] as Node3D).global_position
 	var sit_h := pel.y - top.y
 	var note := "sat (pelvis %.2f m over the seat" % sit_h
+	if st["two_sided"]:
+		# the logs rest on levelled sand: no slope under the log ends or the feet on either side
+		var base: float = top.y - m.island.SEAT_TOP
+		var worst := 0.0
+		for o: Vector3 in [face * 0.4, -face * 0.4, side * 0.65, -side * 0.65]:
+			worst = maxf(worst, absf(Island.ground_h(top.x + o.x, top.z + o.z) - base))
+		note += ", ground off level %.3f m" % worst
+		if worst > 0.01:
+			fails.append("ground not level under " + tag)
 	if lie:
 		if not m.lie_btn.visible:
 			fails.append("no lie button on " + tag)
@@ -331,9 +342,32 @@ func _sit(i: int, from: String, lie: bool) -> void:
 	print("SELFTEST seat %-26s %s)" % [tag, note])
 	await _can_walk("after " + tag)
 
+## every frame of the throws (charge, release, follow-through, recovery) and the locomotion cycles:
+## no part of either arm inside the torso, the other arm or the legs (game cm = skeleton m x 85)
+func _arm_check() -> void:
+	const MARGIN := {"r": 0.01, "l": 0.01, "r_ua": -0.01, "l_ua": -0.01, "arms": 0.01, "legs": 0.0}
+	const NAMES := {"r": "R elbow/forearm/hand", "l": "L elbow/forearm/hand", "r_ua": "R upper arm", "l_ua": "L upper arm",
+		"arms": "arm-arm", "legs": "arm-legs"}
+	var res: Dictionary = ArmClearance.new().run(m, ["throw_stand", "throw_crouch", "cheer", "oops", "idle", "walk", "run"])
+	for clip: String in res:
+		var w: Dictionary = res[clip]
+		var bad: Array[String] = []
+		var parts: Array[String] = []
+		for k: String in MARGIN:
+			var c: float = w[k][0]
+			parts.append("%s %+.1f cm" % [NAMES[k], c * 85.0])
+			if c < MARGIN[k]:
+				bad.append("%s %+.1f cm (%s at %.2f s)" % [NAMES[k], c * 85.0, w[k][1], w[k][2]])
+		var tag := "arm clearance " + clip
+		print("SELFTEST %-28s %s  (%d frames; min %s)" % [tag, "ok" if bad.is_empty() else "FAIL", w["frames"], ", ".join(parts)])
+		if not bad.is_empty():
+			fails.append(tag + ": " + "; ".join(bad))
+
+
 func run(main: Node) -> void:
 	m = main
 	await _wait(0.5)
+	_arm_check()
 	_gait_check()
 	await _can_walk("start")
 	# towel: from both sides and from the sea end

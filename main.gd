@@ -147,9 +147,11 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v9"
+var shot_dir := "v10"
 var night_k := 0.0
 var night_on := false
+var saved_night := false
+var settle_t := 1.0
 var night_btn: Button
 var night_fx: NightFx
 var night_amb: AudioStreamPlayer
@@ -203,6 +205,10 @@ func _ready() -> void:
 		if a.begins_with("--video4="):
 			demo_seg = a.substr(9)
 	demo_mode = "--demo4" in args or demo_seg != "" or "--selftest" in args
+	if saved_night and not demo_mode and not night_on:
+		night_on = true
+		night_k = 1.0
+		_update_night(0.0, true)
 	_snap_explore_cam()
 	if demo_mode:
 		_start_audio()
@@ -986,6 +992,14 @@ func _explore_tick(delta: float) -> void:
 		if wading:
 			spd *= 0.6
 		target_v = wish.normalized() * spd
+		settle_t = 0.0
+	elif settle_t < 0.6:
+		# let go mid-stride: finish the step at a stroll, so the planted foot is not dragged into idle
+		if boy.settling():
+			settle_t += delta
+			target_v = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * 0.5
+		else:
+			settle_t = 1.0
 	# ease into a run (a kid needs a couple of steps), stop a little quicker; the gait matches the speed
 	var acc := (6.5 if move_vel.length() < WALK_MAX else 4.5) if target_v.length() > move_vel.length() else 10.0
 	move_vel = move_vel.move_toward(target_v, acc * delta)
@@ -1754,6 +1768,7 @@ func _audio_tick(delta: float) -> void:
 
 func _toggle_night() -> void:
 	night_on = not night_on
+	_save_best()
 	_toast("夜晚：篝火和灯都亮起来了" if night_on else "天亮了", 1.6)
 	_update_ui()
 
@@ -2102,13 +2117,16 @@ func _load_best() -> void:
 	if cf.load(SAVE_PATH) == OK:
 		best_skips = int(cf.get_value("best", "skips", 0))
 		best_dist = float(cf.get_value("best", "dist", 0.0))
+		saved_night = bool(cf.get_value("settings", "night", false))
 
+## best record and settings (night mode); user:// is IndexedDB in the web build, so it survives reloads
 func _save_best() -> void:
 	if demo_mode:
 		return
 	var cf := ConfigFile.new()
 	cf.set_value("best", "skips", best_skips)
 	cf.set_value("best", "dist", best_dist)
+	cf.set_value("settings", "night", night_on)
 	cf.save(SAVE_PATH)
 
 # ------------------------------------------------------------------ test hooks
@@ -2482,6 +2500,11 @@ func _v9_sequence(pre: String, part: String) -> void:
 		_place(c + Vector3(2.4, 0, 2.4), 0.0)
 		await _wait(0.3)
 		_shot(pre + "40_day_ui")
+		_fixed_cam(c + Vector3(0, 0.4, 0), 0.7, 0.25, 4.2)
+		await _wait(0.4)
+		_shot(pre + "40b_day_fire")
+		_free_cam()
+		await _wait(0.2)
 		_toggle_night()
 		await _wait(1.25)
 		_shot(pre + "41_dusk_transition")
@@ -2745,6 +2768,68 @@ func _video_seg(seg: String) -> void:
 				await _walk_to(g1, true, 4.0)
 				_stop_walk()
 				await _wait(1.2)
+			_free_cam()
+
+		"gait10":
+			# walk -> run -> stop seen from the front, then side-on, then a zig-zag (turns) in the game camera
+			for view in ["front", "side", "game"]:
+				var g0 := island.shore_pt(-1.38, 2.4)
+				var gm := island.shore_pt(-1.15, 2.4)
+				var g1 := island.shore_pt(-0.86, 2.6)
+				var gd := (gm - g0).normalized()
+				_place(g0, atan2(-gd.x, -gd.z))
+				ex_yaw = face_yaw
+				_snap_cam_now()
+				_toast({"front": "正面：走 → 跑 → 停", "side": "侧面：走 → 跑 → 停", "game": "转弯：走、跑"}[view], 1.6)
+				if view == "game":
+					_free_cam()
+					await _wait(0.4)
+					var sd := gd.cross(Vector3.UP)
+					await _walk_to(g0 + gd * 2.5 + sd * 1.2, false, 4.0)
+					await _walk_to(g0 + gd * 4.5 - sd * 1.0, false, 4.0)
+					await _walk_to(g0 + gd * 8.0 + sd * 1.5, true, 4.0)
+					await _walk_to(g0 + gd * 11.0 - sd * 1.5, true, 4.0)
+					_stop_walk()
+					await _wait(1.2)
+				else:
+					demo_cam = true
+					demo_track = [PI + 0.25 if view == "front" else PI * 0.5, 0.06, 2.6, 0.62]
+					await _wait(0.6)
+					await _walk_to(gm, false, 5.0)
+					await _walk_to(g1, true, 4.0)
+					_stop_walk()
+					await _wait(1.4)
+			_free_cam()
+
+		"throw10":
+			# standing and half-kneeling throws, each from the front, side-on (throwing arm side) and from above
+			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.0)
+			await _wait(0.3)
+			_enter_throw()
+			for k in 6:
+				var crouch := k >= 3
+				if crouch != (boy.stance == "crouch"):
+					_toggle_stance()
+				await _wait(1.0)
+				var v := k % 3
+				demo_cam = true
+				var hgt := 0.62 if not crouch else 0.45
+				demo_track = [[aim_yaw + PI + 0.15, 0.05, 2.7, hgt, true], [aim_yaw - PI * 0.5, 0.05, 2.7, hgt, true],
+					[aim_yaw + PI * 0.8, 1.15, 2.6, hgt, true]][v]
+				_toast(("半蹲" if crouch else "站立") + ["投掷 · 正面", "投掷 · 侧面", "投掷 · 俯视"][v], 1.6)
+				_begin_aim(Vector2.ZERO)
+				aim_pitch = 3.0
+				var t0 := gt
+				while gt - t0 < 1.0:
+					charge_t = minf((gt - t0) / 0.9, 1.0) * 0.9 * POWER_CYCLE * 0.5
+					await get_tree().process_frame
+				charge_t = 0.9 * POWER_CYCLE * 0.5
+				_throw()
+				fly_t = 0.0
+				await _wait(2.6)
+				while state != State.READY:
+					await get_tree().process_frame
+				await _wait(0.4)
 			_free_cam()
 
 		"throw8":

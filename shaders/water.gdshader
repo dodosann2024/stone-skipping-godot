@@ -109,13 +109,14 @@ void fragment() {
 		float roll = smoothstep(0.5, 1.0, c);
 		float dl = mix(2.6, 0.0, roll) + (vnoise(p * 0.8 + vec2(t * 0.05, 0.0)) - 0.5) * 0.5;
 		vec2 q = p * 3.6 + rn * (roll * 6.0) + vec2(t * 0.04, 0.0);
-		float form = smoothstep(0.5, 0.68, c);
+		// every term goes to zero at both ends of the cycle: the phase wraps (fract) along a moving seam
+		float form = smoothstep(0.5, 0.68, c) * (1.0 - smoothstep(0.9, 1.0, c));
 		float band = exp(-pow((d - dl) / 0.22, 2.0)) * (0.55 + 0.45 * lace(q * 0.7, 0.0));
 		band *= smoothstep(0.15, 0.5, vnoise(p * 1.7 + vec2(t * 0.12, 0.0)) + 0.1);
 		float wake = lace(q, 0.35) * smoothstep(dl, dl + 0.15, d) * (1.0 - smoothstep(dl + 0.3, dl + 1.6, d));
 		foam = (band * 0.9 + wake * 0.45) * form;
 		// after the wave has broken, lace spreads over the shallows and slowly pops
-		float spent = 1.0 - smoothstep(0.0, 0.55, c);
+		float spent = smoothstep(0.0, 0.06, c) * (1.0 - smoothstep(0.06, 0.55, c));
 		float drift = lace(p * 3.1 + vec2(t * 0.05, t * 0.03), mix(0.3, 0.9, 1.0 - spent));
 		foam = max(foam, drift * (1.0 - smoothstep(0.1, 1.4, d)) * smoothstep(-0.3, 0.1, d) * (0.15 + 0.35 * spent));
 	}
@@ -141,10 +142,26 @@ void fragment() {
 	float glint = pow(gd, 300.0) * tw * 6.0 + pow(gd, 40.0) * 0.12 * (1.0 + night * 2.5);
 	glint *= (1.0 - foam_v) * glint_gain;
 
+	// at night the engine's sky reflection is off (its radiance has no stars or moon); the water mirrors
+	// the night dome of night_sky.gdshader instead: its blue gradient, the moon halo and a wave-broken disc
+	vec3 emis = glint_col * glint;
+	if (night > 0.001) {
+		float fr = 0.02 + 0.98 * pow(1.0 - clamp(dot(nw, vw), 0.0, 1.0), 5.0);
+		float ry = max(rw.y, 0.0);
+		vec3 nsky = mix(vec3(0.09, 0.14, 0.25), vec3(0.025, 0.05, 0.13), smoothstep(0.0, 0.5, ry));
+		col = mix(col, nsky, fr * night * (1.0 - foam_v));
+		float ma = acos(clamp(dot(rw, normalize(glint_dir)), -1.0, 1.0));
+		vec3 moon = vec3(0.55, 0.65, 0.9) * (exp(-ma / 0.06) * 0.28 + exp(-ma / 0.32) * 0.07);
+		moon += vec3(1.0, 0.97, 0.88) * (1.0 - smoothstep(0.035, 0.05, ma)) * 1.1;
+		float sc = step(0.985, hash12(gc + 11.0 + floor(t * 0.7 + hash12(gc + 5.0) * 3.0))) * (1.0 - smoothstep(0.03, 0.12, length(gf)));
+		moon += vec3(0.75, 0.82, 1.0) * sc * 0.35 * smoothstep(0.05, 0.4, ry);
+		emis += moon * (0.25 + 0.75 * fr) * night * (1.0 - foam_v);
+	}
+
 	ALBEDO = col;
-	EMISSION = glint_col * glint;
+	EMISSION = emis;
 	ROUGHNESS = mix(0.3, 0.7, foam_v);
-	SPECULAR = 0.2 * (1.0 - 0.85 * night);
+	SPECULAR = 0.2 * (1.0 - night);
 	METALLIC = 0.0;
 	// clear over the sand, greener and more opaque with depth; a soft fade where it thins onto the beach
 	float a = mix(0.16, 0.62, smoothstep(0.0, 0.9, depth));

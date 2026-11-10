@@ -76,6 +76,16 @@ var blink_timer := 2.5
 var expr := "smile"
 var rng := RandomNumberGenerator.new()
 var frozen := false
+# turning pivots about the planted foot: the root yaws about its own origin, which would drag a planted
+# foot sideways, so the model is shifted (world-space offset, bled back to zero) to keep that contact put
+var model_base := Vector3.ZERO
+var plant_off := Vector3.ZERO
+var plant_prev_yaw := 0.0
+var plant_lag := 0.0
+var prev_at: Array[Variant] = [null, null]
+var turn_lean := 0.0
+var settle_ph := 0.0
+var contacts: Array = []      # per side: [foot bone, heel offset, ball bone, toe offset]
 
 func _ready() -> void:
 	rng.seed = 7
@@ -86,8 +96,17 @@ func _ready() -> void:
 	model.rotation.y = PI
 	model.scale = Vector3.ONE * SCALE
 	model.position.y = -float(meta["ground"]) * SCALE
+	model_base = model.position
 	add_child(model)
 	skel = model.find_child("Skeleton3D") as Skeleton3D
+	for sd in ["l", "r"]:
+		var fb := skel.find_bone("foot_" + sd)
+		var bb := skel.find_bone("ball_" + sd)
+		var fr := skel.get_bone_global_rest(fb)
+		var br := skel.get_bone_global_rest(bb)
+		var g := float(meta["ground"])
+		contacts.append([fb, fr.affine_inverse() * Vector3(fr.origin.x, g, fr.origin.z - 0.035),
+			bb, br.affine_inverse() * Vector3(br.origin.x, g, br.origin.z + 0.02)])
 	_setup_materials()
 	_setup_parts()
 	_setup_tree()
@@ -409,7 +428,7 @@ func _tick(delta: float) -> void:
 	var run: Dictionary = clips["run"]
 	match anim:
 		"move":
-			run_k = move_toward(run_k, smoothstep(RUN_FROM, RUN_TO, speed_s), delta * 3.0)
+			run_k = move_toward(run_k, smoothstep(RUN_FROM, RUN_TO, speed_s), delta * 5.0)
 			var stride := lerpf(float(walk["stride"]), float(run["stride"]), run_k) * SCALE
 			var still := move_speed < 0.05 and speed_s < 0.12
 			if still:
@@ -472,6 +491,7 @@ func _tick(delta: float) -> void:
 	elif anim == "move" or anim == "idle":
 		expr = "smile"
 	_apply_mixer()
+	_plant_turn(delta)
 	_update_props()
 	_update_face(delta)
 
@@ -484,10 +504,86 @@ func _apply_mixer() -> void:
 	tree.set("parameters/a_s/seek_request", slot_t[0])
 	tree.set("parameters/b_s/seek_request", slot_t[1])
 	tree.set("parameters/wr/blend_amount", run_k)
-	tree.set("parameters/move/blend_amount", move_w)
+	tree.set("parameters/move/blend_amount", smoothstep(0.0, 1.0, move_w))
 	tree.set("parameters/ab/blend_amount", ab_w)
 	tree.set("parameters/act/blend_amount", act_w)
 	tree.advance(0.0)
+	if absf(turn_lean) > 0.001:
+		# lean the upper body into the turn (legs untouched, so the planted feet stay put)
+		var bi := skel.find_bone("spine_01")
+		var par := skel.get_bone_global_pose(skel.get_bone_parent(bi)).basis
+		var axis := (par.inverse() * Vector3(0, 0, 1)).normalized()
+		skel.set_bone_pose_rotation(bi, Quaternion(axis, turn_lean) * skel.get_bone_pose_rotation(bi))
+
+## planted contact (skeleton space, lowest of heel / toe pad) of one foot, or null when it is lifted
+func _contact(i: int) -> Variant:
+	var c: Array = contacts[i]
+	var heel: Vector3 = skel.get_bone_global_pose(c[0]) * (c[1] as Vector3)
+	var toe: Vector3 = skel.get_bone_global_pose(c[2]) * (c[3] as Vector3)
+	var g := float(meta["ground"])
+	if heel.y < g + 0.006 and toe.y < g + 0.006:
+		return (heel + toe) * 0.5
+	if heel.y < g + 0.006:
+		return heel
+	if toe.y < g + 0.006:
+		return toe
+	return null
+
+func _plant_turn(delta: float) -> void:
+	var yaw := global_rotation.y
+	var dyaw := wrapf(yaw - plant_prev_yaw, -PI, PI)
+	plant_prev_yaw = yaw
+	if absf(dyaw) > 0.3:
+		dyaw = 0.0
+	var moving := anim == "move" and move_w > 0.5
+	var lean_to := 0.0
+	if moving and delta > 0.0:
+		lean_to = -clampf(0.5 * speed_s * (dyaw / delta) / 9.8, -0.1, 0.1) * move_w
+	turn_lean = lerpf(turn_lean, lean_to, 1.0 - exp(-delta * 5.0))
+	var down: Array[Variant] = [_contact(0), _contact(1)]
+	var n := int(down[0] != null) + int(down[1] != null)
+	# a turn happens on one foot: with both feet down the body keeps its heading (the lag is caught up in
+	# single support / flight), and in single support it pivots about the stance foot
+	var turn := dyaw
+	if moving and n == 2:
+		plant_lag -= dyaw
+		turn = 0.0
+	else:
+		var keep := plant_lag * exp(-delta * (12.0 if moving else 8.0))
+		turn = dyaw + (keep - plant_lag)
+		plant_lag = keep
+	plant_lag = clampf(plant_lag, -0.35, 0.35)
+	if absf(turn) > 0.0 and moving:
+		var piv := -1
+		for i in 2:
+			if down[i] != null and down[1 - i] == null and prev_at[i] != null:
+				piv = i
+		if piv >= 0:
+			var pa: Vector3 = prev_at[piv]
+			var o := model.global_position
+			o.y = pa.y
+			plant_off += (pa - o) - (pa - o).rotated(Vector3.UP, turn)
+	plant_off = plant_off.lerp(Vector3.ZERO, 1.0 - exp(-delta * (2.0 if moving else 6.0)))
+	plant_off.y = 0.0
+	plant_off = plant_off.limit_length(0.1)
+	model.rotation.y = PI + plant_lag
+	model.position = model_base + global_basis.inverse() * plant_off
+	for i in 2:
+		var c: Variant = _contact(i)
+		prev_at[i] = skel.global_transform * (c as Vector3) if c != null else null
+
+## mid-stride when the stick is let go: main.gd keeps creeping forward until the passing pose (one foot
+## under the hips, the other in the air), so the cross-fade to idle never drags a planted foot
+func settling() -> bool:
+	if anim != "move" or move_w < 0.5:
+		return false
+	var p := fposmod(phase, 0.5)
+	var q := fposmod(settle_ph, 0.5)
+	settle_ph = phase
+	if p >= 0.27 and p <= 0.36:
+		return false
+	# at a low frame rate one tick can step right over the window
+	return not (q < 0.27 and p > 0.36 and p - q < 0.25)
 
 func _update_props() -> void:
 	var want: Node3D = hat_head_parent

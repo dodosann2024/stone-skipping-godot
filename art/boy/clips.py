@@ -59,15 +59,19 @@ class Gait:
         else:
             k = (u - D) / (1 - D)
             m = minjerk(k)
-            y = self.y_off + (self.y_strike - self.y_off) * m
+            # leave and land moving backwards at the stance speed (zero ground speed): the foot keeps going back
+            # a little after toe-off and reaches past the strike point, then retracts onto it
+            vk = (self.y_off - self.y_strike) * (1 - D) / D
+            q = 7 if self.run else 4
+            y = self.y_off + (self.y_strike - self.y_off) * m + vk * (k * (1 - k) ** q - (1 - k) * k ** q)
             if self.run:
                 # heel kicks up behind, knee drives forward, foot reaches out under the knee
-                back = 0.16 * bump(k, 0.35, 0.22)
+                back = 0.11 * bump(k, 0.38, 0.22)
                 y += back
                 z = a0.z + 0.07 * math.sin(math.pi * k) + 0.20 * bump(k, 0.38, 0.22)
                 pitch = -0.75 * (1 - sm(k / 0.35)) + 0.15 * sm((k - 0.6) / 0.4) - 0.5 * bump(k, 0.35, 0.18)
             else:
-                z = a0.z + 0.045 * math.sin(math.pi * min(k * 1.15, 1.0)) ** 1.5 + 0.03 * bump(k, 0.25, 0.15)
+                z = a0.z + 0.045 * math.sin(math.pi * k) ** 1.2 + 0.03 * bump(k, 0.25, 0.15)
                 pitch = -0.62 * (1 - sm(k / 0.4)) + 0.38 * sm((k - 0.55) / 0.45)
         return V(x, y, z), pitch, u
 
@@ -77,51 +81,65 @@ class Gait:
         fl, pl, ul = self.foot("l", ph)
         fr, pr, ur = self.foot("r", ph)
         c = math.cos(TAU * ph)
-        s2 = math.sin(TAU * ph)
-        # vertical: walk is lowest just after each contact and highest at mid-stance (passing),
-        # run is lowest at mid-stance and highest in the flight phase
+        # vertical: walk is lowest at each contact (double support) and highest at mid-stance;
+        # run is lowest at mid-stance (loading) and highest in the flight phase
         if run:
-            pz = -0.075 + 0.032 * math.cos(TAU * 2 * (ph - 0.18 - 0.25))
+            pz = -0.075 + 0.028 * math.cos(TAU * 2 * (ph - 0.18 - 0.25))
+            bob = math.cos(TAU * 2 * (ph - 0.18))           # +1 at mid-stance
         else:
-            pz = -0.035 + 0.016 * math.cos(TAU * 2 * (ph - 0.27))
-        yaw = -(0.07 if run else 0.11) * c
-        roll = -(0.035 if run else 0.06) * math.sin(TAU * (ph - 0.04))
-        px = (0.006 if run else 0.017) * math.sin(TAU * (ph - 0.06))
-        lean = 0.17 if run else 0.04
-        # counter-rotating chest, steady head
-        sp_yaw = (0.30 if run else 0.24) * c
-        sp_roll = -roll * 0.9
+            pz = -0.035 + 0.014 * math.cos(TAU * 2 * (ph - 0.27))
+            bob = -math.cos(TAU * 2 * (ph - 0.27))          # +1 at contact
+        # pelvis: turns with the swinging leg, drops on the swing side, sways over the stance foot
+        yaw = -(0.10 if run else 0.075) * c
+        roll = -(0.035 if run else 0.055) * math.sin(TAU * (ph - 0.04))
+        px = (0.007 if run else 0.016) * math.sin(TAU * (ph - 0.06))
+        lean = 0.15 if run else 0.045
+        # shoulders counter-rotate a little against the pelvis (world: about 4 deg walking, 8 deg running);
+        # the chest dips a touch at each loading and the spine takes out most of the pelvis roll
+        sp_yaw = (0.24 if run else 0.135) * c
         chest_yaw = yaw + sp_yaw
-        head_yaw = -chest_yaw * 0.85
-        # arms swing contralaterally (left heel strike at phase 0 = right arm forward), slightly lagging
-        A = 0.42 if run else 0.28
+        sp_roll = -roll * 0.85
+        sp_pitch = (0.05 + 0.025 * bob) if run else (0.008 + 0.008 * bob)
+        # the head keeps the eyes level and pointed down the path
+        chest_pitch = lean + sp_pitch
+        head_yaw = -chest_yaw
+        head_roll = -(roll + sp_roll) * 0.9
+        head_pitch = -chest_pitch * 0.75 - (0.015 if run else 0.006) * bob
+        # arms: contralateral (left heel strike at phase 0 = right arm forward), lagging the legs a little;
+        # the swing comes from the shoulder, more behind than in front, the elbow bends more as the arm comes
+        # forward (a touch later than the shoulder, so the forearm follows through) and much more when running
+        lag = 0.035 if run else 0.05
         out = {}
         for s, sgn in (("l", 1.0), ("r", -1.0)):
-            ph_a = ph - (0.04 if not run else 0.03)
-            swing = A * math.cos(TAU * ph_a) * (-1.0 if s == "l" else 1.0)
-            # swing > 0: arm forward
-            sh = V(0.153 * sgn, -0.014, 1.092)
+            side = -1.0 if s == "l" else 1.0
+            cs = math.cos(TAU * (ph - lag)) * side                  # +1 = arm fully forward
+            ce = math.cos(TAU * (ph - lag - 0.07)) * side
+            fwd = 0.5 + 0.5 * ce
             if run:
-                ua, la = 0.22, 0.20
-                elbow = 1.45 - 0.25 * swing
-                ang = -0.2 + swing * 1.4
+                ang = -0.17 + 0.50 * cs
+                elbow = 1.18 + 0.36 * sm(fwd)
+                abd, inward = 0.21, 0.16 * fwd - 0.20 * (1.0 - fwd)
             else:
-                ua, la = 0.195, 0.198
-                elbow = 0.22 + 0.32 * max(swing, 0.0) / A
-                ang = swing * 1.1
-            # upper arm direction: down, rotated forward by ang, slightly out
-            du = V(0.12 * sgn, -math.sin(ang), -math.cos(ang)).normalized()
+                ang = -0.05 + 0.29 * cs
+                elbow = 0.26 + 0.26 * sm(fwd)
+                abd, inward = 0.25, -0.06
+            sh = V(0.153 * sgn, -0.014, 1.092)
+            du = V(abd * sgn, -math.sin(ang), -math.cos(ang)).normalized()
             el = sh + du * 0.195
             fa = ang + elbow
-            dl = V(0.05 * sgn if not run else -0.08 * sgn, -math.sin(fa), -math.cos(fa)).normalized()
+            dl = V(-inward * sgn, -math.sin(fa), -math.cos(fa)).normalized()
             out["h" + s] = el + dl * 0.198
-            out["e" + s] = V(0.3 * sgn, 1.0, -0.3)
-        g = 0.55 if run else 0.3
+            out["e" + s] = V(0.35 * sgn, 1.0, -0.25)
+            # the shoulder blade rides forward with the arm
+            out["c" + s] = (0.0, (0.02 if run else 0.0) * max(cs, 0.0), -(0.045 if run else 0.03) * cs * sgn)
+            out["w" + s] = (0.10 + 0.08 * (1.0 - fwd), 0.0, 0.0)
+        g = 0.5 if run else 0.3
         return pose(
             pel=V(px, 0.0, pz), prot=(lean, roll, yaw),
-            sp=(0.04 if run else 0.0, sp_roll, sp_yaw), neck=(-0.1 if run else -0.02, 0, head_yaw * 0.4),
-            head=(-lean * 0.6, -sp_roll * 0.5, head_yaw * 0.6),
+            sp=(sp_pitch, sp_roll, sp_yaw), neck=(head_pitch * 0.4, head_roll * 0.4, head_yaw * 0.45),
+            head=(head_pitch * 0.6, head_roll * 0.6, head_yaw * 0.55),
             hl=out["hl"], hr=out["hr"], el=out["el"], er=out["er"], gl=g, gr=g,
+            clav_l=out["cl"], clav_r=out["cr"], wl=out["wl"], wr=out["wr"],
             fl=fl, fr=fr, pl=pl, pr=pr, yl=0.06, yr=-0.06,
         )
 
@@ -179,6 +197,15 @@ def _idle_hand_r(rig, i):
     return M["hand_r"].translation.copy()
 
 
+def _chest_hand(rig, p, hc):
+    """root-space right-hand target for a point given in the pose's own chest frame (rest coordinates that
+    turn and bend with spine_03). Follow-through targets are authored this way so the hand path wraps in
+    front of the chest however far the shoulders have turned, and still interpolates in root space."""
+    M, _ = solve(rig, P(p, hrw=1.0))
+    chest = M["spine_03"] @ rig.rest["spine_03"].inverted()
+    return P(p, hr=chest @ hc, hrw=1.0)
+
+
 def _recover(rig, i, last, t0, fl_from):
     """from `last` (arm already falling, torso unwinding): the relaxed arm swings past the right side like a
     pendulum, overshoots a little behind the hip, swings back and settles while the back foot steps up, the
@@ -187,7 +214,7 @@ def _recover(rig, i, last, t0, fl_from):
     loose_l = dict(hl=V(0.21, 0.0, 0.75), hlw=0.0, el=i["el"], gl=0.3)
     swing = P(last, fr=V(-0.12, 0.10, 0.10), pr=-0.25, yr=-0.15, kr=None, pel=V(0.03, -0.08, -0.07),
               prot=(0.10, 0.02, 0.20), sp=(0.05, 0.0, 0.10), neck=(0.0, 0.0, -0.12), head=(0.02, 0.0, -0.12),
-              hr=R0 + V(0.06, -0.09, 0.012), hrw=1.0, er=V(-0.3, 1.0, 0.0), wr=(0.10, 0.0, 0.0), gr=0.3,
+              hr=R0 + V(0.03, -0.13, 0.02), hrw=1.0, er=V(-0.3, 1.0, 0.0), wr=(0.10, 0.0, 0.0), gr=0.3,
               clav_r=(0.0, 0.0, 0.0), **loose_l)
     behind = P(swing, fr=i["fr"], pr=0.0, yr=i["yr"], pel=V(0.01, -0.05, -0.036), prot=(0.05, 0.02, 0.07),
                sp=(0.01, 0.0, 0.03), neck=(0.0, 0.0, -0.04), head=(0.03, 0.0, -0.04),
@@ -209,14 +236,14 @@ def throw_stand(rig):
     st = dict(fl=ST_L, fr=ST_R, yl=-0.35, yr=-1.1)
     ready = P(i, pel=V(-0.02, 0.04, -0.05), prot=(0.10, -0.02, -0.55), sp=(0.06, 0.0, -0.12),
               neck=(0.0, 0.0, 0.28), head=(0.05, 0.0, 0.32),
-              hr=V(-0.22, -0.06, 0.74), er=V(-0.5, 0.6, -0.5), hl=V(0.20, -0.14, 0.80), el=V(0.5, 0.6, -0.4),
+              hr=V(-0.25, -0.08, 0.75), er=V(-0.5, 0.6, -0.5), hl=V(0.20, -0.14, 0.80), el=V(0.5, 0.6, -0.4),
               gr=0.85, gl=0.35, **st)
     charge = P(ready, pel=V(-0.07, 0.11, -0.12), prot=(0.20, -0.07, -0.85), sp=(0.18, -0.10, -0.40),
                neck=(0.0, 0.0, 0.52), head=(0.05, 0.05, 0.58),
-               hr=V(-0.30, 0.36, 0.66), hrw=1.0, er=V(-0.2, 0.4, -1.0), wr=(0.0, 0.0, -0.5), gr=0.95,
+               hr=V(-0.34, 0.36, 0.66), hrw=1.0, er=V(-0.2, 0.4, -1.0), wr=(0.0, 0.0, -0.5), gr=0.95,
                hl=V(0.10, -0.34, 0.95), hlw=1.0, el=V(0.6, 0.2, -0.6), gl=0.15, pl=-0.25)
     stride = P(charge, pel=V(-0.05, 0.05, -0.12), prot=(0.22, -0.07, -0.62), sp=(0.20, -0.14, -0.42),
-               fl=(ST_L + ST_L2) * 0.5 + V(0, 0, 0.04), pl=0.1, yl=-0.3, hr=V(-0.36, 0.32, 0.62), wr=(0.0, 0.0, -0.65))
+               fl=(ST_L + ST_L2) * 0.5 + V(0, 0, 0.04), pl=0.1, yl=-0.3, hr=V(-0.40, 0.32, 0.62), wr=(0.0, 0.0, -0.65))
     # foot down: hips already square to the target, chest still closed, hand lags behind the leading elbow
     plant = P(charge, pel=V(-0.01, -0.06, -0.15), prot=(0.26, -0.05, -0.12), sp=(0.24, -0.18, -0.42),
               neck=(0.0, 0.0, 0.3), head=(0.0, 0.0, 0.3), fl=ST_L2, pl=0.0, yl=-0.25,
@@ -236,24 +263,30 @@ def throw_stand(rig):
               hr=V(-0.24, -0.76, 0.68), wr=(0.0, 0.0, 0.6), er=V(-0.2, 0.2, -1.0), gr=0.3,
               hl=V(0.22, 0.02, 0.84), pr=-0.85, yr=-0.5)
     reach2 = P(reach, pel=V(0.035, -0.19, -0.145), prot=(0.34, 0.025, 0.45), sp=(0.28, -0.07, 0.29),
-               hr=V(-0.13, -0.74, 0.68), wr=(0.0, 0.0, 0.45), er=V(-0.1, 0.4, -1.0), pr=-0.92, yr=-0.4)
-    # deceleration: the arm sweeps across to the left side, the chest keeps turning and bends over
-    sweep = P(reach2, pel=V(0.04, -0.19, -0.14), prot=(0.34, 0.03, 0.55), sp=(0.24, -0.04, 0.32),
-              neck=(-0.05, 0.0, -0.4), head=(-0.05, 0.0, -0.42),
-              hr=V(0.10, -0.54, 0.66), wr=(0.0, 0.0, 0.3), er=V(0.0, 0.6, -1.0), gr=0.25,
-              hl=V(0.20, -0.04, 0.82), pr=-1.0, yr=-0.3)
-    wrap = P(sweep, pel=V(0.05, -0.16, -0.11), prot=(0.24, 0.04, 0.62), sp=(0.16, 0.0, 0.36),
-             neck=(0.0, 0.0, -0.4), head=(0.0, 0.0, -0.45),
-             hr=V(0.30, -0.20, 0.72), er=V(0.3, 1.0, -0.4), wr=(0.0, 0.0, 0.0), hl=V(0.20, -0.08, 0.80), pr=-1.0, yr=-0.2,
-             clav_r=(0.10, 0.0, 0.06))
-    # the arm has run out of speed: it goes limp (elbow folds, shoulder drops) and starts to fall while the
+               hr=V(-0.13, -0.74, 0.68), wr=(0.0, 0.0, 0.45), er=V(-0.5, 0.1, -0.9), pr=-0.92, yr=-0.4,
+               clav_r=(0.0, 0.0, 0.10))
+    # deceleration: the chest keeps turning left so the arm has room; the hand stays in front of the chest
+    # (chest space) while the shoulders swing it across towards the left, the elbow folds pointing out and down
+    sweep = P(reach2, pel=V(0.04, -0.19, -0.14), prot=(0.34, 0.03, 0.62), sp=(0.24, -0.04, 0.46),
+              neck=(-0.05, 0.0, -0.5), head=(-0.05, 0.0, -0.52),
+              wr=(0.0, 0.0, 0.3), er=V(-0.7, -0.2, -0.7), gr=0.25, clav_r=(0.0, 0.0, 0.10),
+              hl=V(0.22, 0.0, 0.82), pr=-1.0, yr=-0.3)
+    sweep = _chest_hand(rig, sweep, V(-0.13, -0.28, 0.90))
+    wrap = P(sweep, pel=V(0.05, -0.16, -0.11), prot=(0.24, 0.04, 0.68), sp=(0.16, 0.0, 0.54),
+             neck=(0.0, 0.0, -0.52), head=(0.0, 0.0, -0.56),
+             er=V(-0.8, -0.1, -0.6), wr=(0.0, 0.0, 0.0), hl=V(0.22, 0.02, 0.80), pr=-1.0, yr=-0.2,
+             clav_r=(0.04, 0.0, 0.12))
+    wrap = _chest_hand(rig, wrap, V(-0.04, -0.25, 0.97))
+    # the arm has run out of speed: it goes limp (shoulder drops) and falls in front of the belly while the
     # chest unwinds back towards the target
-    loose = P(wrap, pel=V(0.05, -0.155, -0.105), prot=(0.20, 0.04, 0.56), sp=(0.13, 0.0, 0.32),
-              neck=(0.0, 0.0, -0.36), head=(0.02, 0.0, -0.40),
-              hr=V(0.26, -0.16, 0.70), er=V(0.1, 1.0, -0.5), wr=(0.2, 0.0, 0.0), gr=0.35, clav_r=(0.04, 0.0, 0.0))
-    fall = P(loose, pel=V(0.045, -0.13, -0.09), prot=(0.15, 0.03, 0.40), sp=(0.09, 0.0, 0.22),
-             neck=(0.0, 0.0, -0.25), head=(0.02, 0.0, -0.28),
-             hr=V(0.04, -0.20, 0.69), er=V(-0.2, 1.0, -0.2), wr=(0.15, 0.0, 0.0), clav_r=(0.0, 0.0, 0.0), pr=-0.7, yr=-0.4)
+    loose = P(wrap, pel=V(0.05, -0.155, -0.105), prot=(0.20, 0.04, 0.60), sp=(0.13, 0.0, 0.44),
+              neck=(0.0, 0.0, -0.44), head=(0.02, 0.0, -0.46),
+              er=V(-0.8, 0.0, -0.6), wr=(0.2, 0.0, 0.0), gr=0.35, clav_r=(0.02, 0.0, 0.14))
+    loose = _chest_hand(rig, loose, V(-0.11, -0.28, 0.89))
+    fall = P(loose, pel=V(0.045, -0.13, -0.09), prot=(0.15, 0.03, 0.42), sp=(0.09, 0.0, 0.28),
+             neck=(0.0, 0.0, -0.28), head=(0.02, 0.0, -0.30),
+             er=V(-0.6, 0.3, -0.7), wr=(0.15, 0.0, 0.0), clav_r=(0.0, 0.0, 0.08), pr=-0.7, yr=-0.4)
+    fall = _chest_hand(rig, fall, V(-0.21, -0.165, 0.79))
     keys = [(0.0, ready), (T_CHARGE, charge), (0.555, stride), (0.60, plant), (0.625, accel), (T_RELEASE, release),
             (0.71, reach), (0.76, reach2), (0.86, sweep), (0.99, wrap), (1.11, loose), (1.25, fall)] + _recover(rig, i, fall, 1.40, ST_L2)
     return keyed(keys), keys[-1][0]
@@ -265,12 +298,12 @@ def throw_crouch(rig):
     st = dict(fl=CR_L, fr=CR_R, yl=-0.35, yr=-0.6, pr=-1.1, kr=V(0, -1, -0.8))
     ready = P(i, pel=V(-0.02, 0.06, -0.30), prot=(0.30, -0.03, -0.5), sp=(0.12, 0.0, -0.15),
               neck=(0.0, 0.0, 0.3), head=(0.0, 0.0, 0.35),
-              hr=V(-0.24, -0.10, 0.74), er=V(-0.4, 0.8, -0.3), hl=V(0.22, -0.12, 0.78), el=V(0.5, 0.6, -0.4),
+              hr=V(-0.24, -0.10, 0.74), er=V(-0.4, 0.8, -0.3), hl=V(0.29, -0.08, 0.84), el=V(0.5, 0.6, -0.4),
               gr=0.85, gl=0.3, **st)
     charge = P(ready, pel=V(-0.06, 0.10, -0.35), prot=(0.40, -0.10, -0.85), sp=(0.25, -0.10, -0.40),
                neck=(0.0, 0.0, 0.55), head=(-0.05, 0.05, 0.6),
                hr=V(-0.30, 0.34, 0.36), hrw=1.0, er=V(-0.2, 0.4, -1.0), wr=(0.0, 0.0, -0.5), gr=0.95,
-               hl=V(0.12, -0.42, 0.70), hlw=1.0, el=V(0.6, 0.2, -0.6), gl=0.15)
+               hl=V(0.16, -0.42, 0.88), hlw=1.0, el=V(0.6, 0.2, -0.6), gl=0.15)
     drive = P(charge, pel=V(-0.03, 0.03, -0.36), prot=(0.42, -0.08, -0.45), sp=(0.28, -0.14, -0.42),
               hr=V(-0.38, 0.26, 0.32), wr=(0.0, 0.0, -0.65))
     plant = P(charge, pel=V(-0.01, -0.02, -0.36), prot=(0.42, -0.06, -0.12), sp=(0.30, -0.16, -0.42),
@@ -288,22 +321,26 @@ def throw_crouch(rig):
               hr=V(-0.24, -0.70, 0.34), wr=(0.0, 0.0, 0.6), er=V(-0.2, 0.2, -1.0), gr=0.3, hl=V(0.22, 0.02, 0.84))
     reach2 = P(reach, pel=V(0.025, -0.115, -0.34), prot=(0.50, 0.025, 0.45), sp=(0.36, -0.05, 0.28),
                hr=V(-0.13, -0.68, 0.35), wr=(0.0, 0.0, 0.45), er=V(-0.1, 0.4, -1.0))
-    sweep = P(reach2, pel=V(0.03, -0.11, -0.34), prot=(0.50, 0.03, 0.52), sp=(0.34, -0.03, 0.30),
-              neck=(-0.05, 0.0, -0.4), head=(-0.1, 0.0, -0.42),
-              hr=V(0.10, -0.50, 0.38), wr=(0.0, 0.0, 0.3), er=V(0.0, 0.6, -1.0), gr=0.25, hl=V(0.20, -0.04, 0.82))
-    wrap = P(sweep, pel=V(0.04, -0.09, -0.33), prot=(0.45, 0.04, 0.58), sp=(0.30, 0.0, 0.34),
-             neck=(0.0, 0.0, -0.4), head=(-0.05, 0.0, -0.45),
-             hr=V(0.28, -0.20, 0.46), er=V(0.3, 1.0, -0.4), wr=(0.0, 0.0, 0.0), hl=V(0.20, -0.08, 0.80),
-             clav_r=(0.10, 0.0, 0.06))
-    loose = P(wrap, pel=V(0.04, -0.095, -0.325), prot=(0.47, 0.04, 0.52), sp=(0.30, 0.0, 0.30),
-              hr=V(0.24, -0.16, 0.42), er=V(0.1, 1.0, -0.5), wr=(0.2, 0.0, 0.0), gr=0.35, clav_r=(0.04, 0.0, 0.0))
+    sweep = P(reach2, pel=V(0.03, -0.11, -0.34), prot=(0.50, 0.03, 0.58), sp=(0.34, -0.03, 0.42),
+              neck=(-0.05, 0.0, -0.48), head=(-0.1, 0.0, -0.5),
+              wr=(0.0, 0.0, 0.3), er=V(-0.7, -0.2, -0.7), gr=0.25, clav_r=(0.0, 0.0, 0.10), hl=V(0.22, 0.0, 0.82))
+    sweep = _chest_hand(rig, sweep, V(-0.27, -0.34, 1.14))
+    wrap = P(sweep, pel=V(0.04, -0.09, -0.33), prot=(0.45, 0.04, 0.64), sp=(0.30, 0.0, 0.50),
+             neck=(0.0, 0.0, -0.5), head=(-0.05, 0.0, -0.55),
+             er=V(-0.8, -0.1, -0.6), wr=(0.0, 0.0, 0.0), hl=V(0.22, 0.02, 0.80), clav_r=(0.04, 0.0, 0.12))
+    wrap = _chest_hand(rig, wrap, V(-0.02, -0.30, 1.05))
+    loose = P(wrap, pel=V(0.04, -0.095, -0.325), prot=(0.47, 0.04, 0.56), sp=(0.30, 0.0, 0.42),
+              er=V(-0.8, 0.0, -0.6), wr=(0.2, 0.0, 0.0), gr=0.35, clav_r=(0.02, 0.0, 0.14))
+    loose = _chest_hand(rig, loose, V(-0.20, -0.26, 1.10))
     # stand up: weight onto the front foot, push off the back knee; the limp arm falls past the front knee
-    lean = P(loose, pel=V(0.02, -0.13, -0.30), prot=(0.60, 0.02, 0.28), sp=(0.22, 0.0, 0.14),
-             hr=V(0.04, -0.27, 0.43), er=V(-0.2, 1.0, -0.2), wr=(0.15, 0.0, 0.0), clav_r=(0.0, 0.0, 0.0),
-             hl=V(0.18, -0.30, 0.62), hlw=0.0, el=i["el"],
-             neck=(0.0, 0.0, -0.22), head=(-0.15, 0.0, -0.22), gr=0.3, gl=0.3)
+    lean = P(loose, pel=V(0.02, -0.13, -0.30), prot=(0.60, 0.02, 0.32), sp=(0.22, 0.0, 0.20),
+             er=V(-0.6, 0.3, -0.7), wr=(0.15, 0.0, 0.0), clav_r=(0.0, 0.0, 0.08),
+             hl=V(0.29, -0.26, 0.68), hlw=0.0, el=i["el"],
+             neck=(0.0, 0.0, -0.26), head=(-0.15, 0.0, -0.26), gr=0.3, gl=0.3)
+    lean = _chest_hand(rig, lean, V(-0.32, -0.28, 0.91))
     rise = P(lean, pel=V(0.02, -0.11, -0.15), prot=(0.28, 0.02, 0.22), fr=V(-0.13, 0.18, 0.10), pr=-0.5, kr=None,
-             hr=V(-0.10, -0.22, 0.62), hl=V(0.21, -0.06, 0.74), head=(-0.05, 0.0, -0.18))
+             hl=V(0.21, -0.06, 0.74), head=(-0.05, 0.0, -0.18))
+    rise = _chest_hand(rig, rise, V(-0.23, -0.08, 0.86))
     keys = [(0.0, ready), (T_CHARGE, charge), (0.56, drive), (0.60, plant), (0.625, accel), (T_RELEASE, release),
             (0.71, reach), (0.76, reach2), (0.86, sweep), (0.99, wrap), (1.11, loose), (1.29, lean), (1.49, rise)] \
         + _recover(rig, i, rise, 1.65, CR_L)
@@ -329,22 +366,27 @@ def cheer(rig):
         sgn = 1 if n % 2 == 0 else -1
         wave.append((t + 0.15 + n * w, P(i, pel=V(0.0, 0, -0.01), sp=(-0.05, 0.04 * sgn, 0.05 * sgn), head=(-0.15, -0.05 * sgn, 0.1 * sgn),
                                          hr=V(-0.22 - 0.12 * sgn, -0.05, 1.5), er=V(-1.0, 0.3, -0.2), gr=0.1,
-                                         hl=V(0.2, 0.0, 0.82), gl=0.4)))
-    keys += wave + [(t + 0.15 + 4 * w + 0.35, i)]
+                                         hl=V(0.235, -0.01, 0.84), gl=0.4)))
+    # the waving hand comes down out to the side, not across the chest
+    down = P(i, pel=V(0.0, 0, -0.01), hr=V(-0.36, -0.08, 1.02), er=V(-1.0, 0.3, -0.2), gr=0.3, hl=V(0.235, -0.01, 0.82), gl=0.4)
+    keys += wave + [(t + 0.15 + 4 * w + 0.12, down), (t + 0.15 + 4 * w + 0.4, i)]
     return keyed(keys), keys[-1][0] + 0.2
 
 
 def oops(rig):
     i = I(rig)
-    hands = dict(hl=V(0.12, -0.06, 1.36), hr=V(-0.12, -0.06, 1.36), el=V(1.0, -0.2, 0.1), er=V(-1.0, -0.2, 0.1), gl=0.2, gr=0.2)
+    hands = dict(hl=V(0.14, -0.06, 1.36), hr=V(-0.14, -0.06, 1.36), el=V(1.0, -0.2, 0.1), er=V(-1.0, -0.2, 0.1), gl=0.2, gr=0.2)
     grab = P(i, pel=V(0, 0.02, -0.04), prot=(0.08, 0, 0), sp=(0.15, 0, 0), neck=(0.15, 0, 0), head=(0.2, 0, 0), **hands)
-    keys = [(0.0, i), (0.3, grab)]
+    rise = P(i, pel=V(0, 0.01, -0.02), hl=V(0.31, -0.10, 1.02), hr=V(-0.31, -0.10, 1.02), el=V(1.0, 0.3, -0.2), er=V(-1.0, 0.3, -0.2))
+    keys = [(0.0, i), (0.13, rise), (0.3, grab)]
     for n in range(4):
         sgn = 1 if n % 2 == 0 else -1
         keys.append((0.5 + n * 0.22, P(grab, neck=(0.15, 0, 0.12 * sgn), head=(0.22, 0.04 * sgn, 0.18 * sgn))))
     slump = P(i, pel=V(0, 0.0, -0.025), prot=(0.05, 0, 0), sp=(0.2, 0, 0), head=(0.25, 0, 0), clav_l=(0.1, 0, 0), clav_r=(0.1, 0, 0),
-              hl=V(0.18, -0.02, 0.73), hr=V(-0.18, -0.02, 0.73))
-    keys += [(1.55, slump), (2.1, slump), (2.6, i)]
+              hl=V(0.235, -0.03, 0.75), hr=V(-0.235, -0.03, 0.75), el=V(1.0, 0.3, -0.2), er=V(-1.0, 0.3, -0.2))
+    # hands leave the head outwards and drop beside the body (never down the face and chest)
+    let_go = P(grab, hl=V(0.32, -0.10, 1.12), hr=V(-0.32, -0.10, 1.12), el=V(1.0, 0.3, -0.2), er=V(-1.0, 0.3, -0.2), gl=0.3, gr=0.3)
+    keys += [(1.3, let_go), (1.6, slump), (2.1, slump), (2.6, i)]
     return keyed(keys), 2.6
 
 
