@@ -1060,9 +1060,9 @@ func _explore_tick(delta: float) -> void:
 	var wish_yaw := atan2(-wish.x, -wish.z)
 	var need := wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0
 	var spd_now := move_vel.length()
-	if mag > 0.05 and ((absf(need) > 1.1 and spd_now < 0.4) or (absf(need) > 2.0 and spd_now < 0.9)):
+	if mag > 0.05 and Boy.wants_spot_turn(need, spd_now):
 		spot_turning = true
-	if spot_turning and (mag <= 0.05 or absf(need) < 0.25):
+	if spot_turning and (mag <= 0.05 or (absf(need) < 0.03 and not boy.spin_busy())):
 		spot_turning = false
 		spot_rate = 0.0
 	if mag > 0.05 and not spot_turning:
@@ -1078,20 +1078,21 @@ func _explore_tick(delta: float) -> void:
 			target_v = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * 0.5
 		else:
 			settle_t = 1.0
-	# ease into a run (a kid needs a couple of steps), stop a little quicker; the gait matches the speed
-	var acc := (6.5 if move_vel.length() < WALK_MAX else 4.5) if target_v.length() > move_vel.length() else 10.0
-	move_vel = move_vel.move_toward(target_v, acc * delta)
-	# turn toward the walking direction; while turning hard, slow down a little
+	# he walks the way he faces: the heading turns towards the stick as fast as his feet can corner (slowing
+	# into a sharp turn), the speed eases into a run (a kid needs a couple of steps) and stops a little quicker
+	var s := move_vel.length()
+	var spd_t := target_v.length()
 	if spot_turning:
 		var st := Boy.spot_turn(face_yaw, face_yaw + need, spot_rate, delta)
 		face_yaw = st[0]
 		spot_rate = st[1]
-	elif move_vel.length() > 0.05:
-		var want_yaw := atan2(-move_vel.x, -move_vel.z)
-		var diff := absf(wrapf(want_yaw - face_yaw, -PI, PI))
-		face_yaw = lerp_angle(face_yaw, want_yaw, 1.0 - exp(-delta * 9.0))
-		if diff > 1.2:
-			move_vel *= 1.0 - minf(delta * 4.0, 0.5)
+	elif spd_t > 0.05:
+		var mt := Boy.move_turn(face_yaw, atan2(-target_v.x, -target_v.z), s, delta)
+		face_yaw = mt[0]
+		spd_t *= float(mt[1])
+	var acc := (6.5 if s < WALK_MAX else 4.5) if spd_t > s else 10.0
+	s = move_toward(s, spd_t, acc * delta)
+	move_vel = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * s
 	var from := player.position
 	var to := _try_move(from, move_vel * delta)
 	var real := (to - from) / maxf(delta, 1e-4)
@@ -2036,6 +2037,7 @@ func _process(delta: float) -> void:
 	island.foliage_mat.set_shader_parameter("focus", focus)
 	island.leaf_mat.set_shader_parameter("focus", focus)
 	island.static_mat.set_shader_parameter("focus", focus)
+	island.torch_mat.set_shader_parameter("focus", focus)
 	_update_prints()
 	_update_audio(delta)
 	_audio_tick(delta)
@@ -2336,6 +2338,10 @@ func _run_sim_report() -> void:
 		print("SIM stance ", stc, " release ", boy.release_local)
 		_sim_block()
 	print("SIM obstacles=%d palms=%d" % [island.obstacles.size(), island.palm_spots.size()])
+	# gait stress test (dev/ is not exported, so only where the sources are)
+	if ResourceLoader.exists("res://dev/gait_probe.gd"):
+		for line in load("res://dev/gait_probe.gd").stress(self):
+			print("SIM ", line)
 
 func _sim_block() -> void:
 	for pw in [0.5, 0.7, 0.85, 1.0]:

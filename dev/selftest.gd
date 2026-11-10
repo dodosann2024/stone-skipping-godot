@@ -40,8 +40,8 @@ func _drag(pos: Vector2, rel: Vector2) -> void:
 	e.relative = rel
 	m.get_viewport().push_input(e, true)
 
-## push the on-screen stick (real touch events, like a phone) in four directions;
-## the kid has to get somewhere and the walk cycle has to run
+## push the on-screen stick (real touch events, like a phone) in four directions, 1.3 s each (long enough
+## to turn round on the spot first); the kid has to get somewhere and the walk cycle has to run
 func _can_walk(tag: String) -> void:
 	var best := 0.0
 	var saw_move := false
@@ -53,7 +53,7 @@ func _can_walk(tag: String) -> void:
 		_touch(c, true)
 		await _frames(1)
 		_drag(c + dir * 55.0, dir * 55.0)
-		for i in 24:
+		for i in 40:
 			await m.get_tree().process_frame
 			if m.boy.anim == "move":
 				saw_move = true
@@ -128,7 +128,7 @@ func _gait_check() -> void:
 ## planted feet through walk / run transitions, turns, game-speed zig-zags and stops (dev/gait_probe.gd):
 ## no heel / toe pad may slide more than 5 mm in a frame, at 30 and at 20 fps
 func _slide_check() -> void:
-	for fps: int in [30, 20]:
+	for fps: int in [30, 20, 60]:
 		var b := Boy.new()
 		m.add_child(b)
 		var probe := GaitProbe.new(b, Vector3(0, 60, 0))
@@ -142,12 +142,12 @@ func _slide_check() -> void:
 			if v > worst:
 				worst = v
 				worst_seg = sg[2]
-		var ok := worst < 0.005 and probe.slide_n > 300
+		var ok := worst < 0.005 and probe.slide_n > 300 and b.steps_taken == 0
 		print("SELFTEST %-28s %s  (worst %.1f mm/frame in '%s'; per segment mm: %s; %d planted frames, %d quick steps, %d steps on the spot)" % [
 			"foot slide @%d fps" % fps, "ok" if ok else "FAIL", worst * 1000.0, worst_seg, " ".join(parts), probe.slide_n, b.steps_taken, b.spot_steps])
 		if not ok:
-			fails.append("planted foot slides %.1f mm/frame (%s, %d fps)" % [worst * 1000.0, worst_seg, fps])
-		var pok := probe.prints >= probe.steps - 3 and probe.prints > 20 and probe.print_err < 0.02
+			fails.append("planted foot slides %.1f mm/frame (%s, %d fps), %d quick steps" % [worst * 1000.0, worst_seg, fps, b.steps_taken])
+		var pok := probe.prints >= probe.steps - 3 and probe.prints > 20 and probe.print_err < 0.01
 		print("SELFTEST %-28s %s  (%d prints for %d footsteps, print spot drifts at most %.1f mm while the foot is down)" % [
 			"footprints @%d fps" % fps, "ok" if pok else "FAIL", probe.prints, probe.steps, probe.print_err * 1000.0])
 		if not pok:
@@ -155,8 +155,8 @@ func _slide_check() -> void:
 		m.remove_child(b)
 		b.free()
 
-## a 180° flick of the stick from standing is a turn on the spot: small alternating steps while the
-## head and chest lead, no shuffle of quick steps, no drifting, then he walks off the new way
+## a 180° flick of the stick from standing is a turn on the spot: two or three alternating steps (open,
+## turn, close) while the head and chest lead, no shuffle of quick steps, no drifting
 func _turn_check() -> void:
 	await _frames(20)
 	var b: Boy = m.boy
@@ -182,7 +182,7 @@ func _turn_check() -> void:
 	var spot := b.spot_steps - s0
 	var quick := b.steps_taken - q0
 	var left := absf(wrapf(m.face_yaw - atan2(-back.x, -back.z), -PI, PI))
-	var ok := spot >= 2 and spot <= 6 and quick == 0 and drift < 0.12 and left < 0.3 and t < 2.5
+	var ok := spot >= 2 and spot <= 3 and quick == 0 and drift < 0.12 and left < 0.3 and t < 2.5
 	print("SELFTEST %-28s %s  (180° in %.2f s with %d steps on the spot, %d quick steps, body drift %.1f cm, %.0f° short)" % [
 		"turn on the spot", "ok" if ok else "FAIL", t, spot, quick, drift * 100.0, rad_to_deg(left)])
 	if not ok:
