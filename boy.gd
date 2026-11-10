@@ -84,6 +84,7 @@ var plant_prev_yaw := 0.0
 var plant_lag := 0.0
 var prev_at: Array[Variant] = [null, null]
 var turn_lean := 0.0
+var settle_ph := 0.0
 var contacts: Array = []      # per side: [foot bone, heel offset, ball bone, toe offset]
 
 func _ready() -> void:
@@ -577,7 +578,12 @@ func settling() -> bool:
 	if anim != "move" or move_w < 0.5:
 		return false
 	var p := fposmod(phase, 0.5)
-	return p < 0.27 or p > 0.36
+	var q := fposmod(settle_ph, 0.5)
+	settle_ph = phase
+	if p >= 0.27 and p <= 0.36:
+		return false
+	# at a low frame rate one tick can step right over the window
+	return not (q < 0.27 and p > 0.36 and p - q < 0.25)
 
 func _update_props() -> void:
 	var want: Node3D = hat_head_parent

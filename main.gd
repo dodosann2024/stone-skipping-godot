@@ -151,6 +151,7 @@ var shot_dir := "v10"
 var night_k := 0.0
 var night_on := false
 var saved_night := false
+var settle_t := 1.0
 var night_btn: Button
 var night_fx: NightFx
 var night_amb: AudioStreamPlayer
@@ -991,9 +992,14 @@ func _explore_tick(delta: float) -> void:
 		if wading:
 			spd *= 0.6
 		target_v = wish.normalized() * spd
-	elif boy.settling():
+		settle_t = 0.0
+	elif settle_t < 0.6:
 		# let go mid-stride: finish the step at a stroll, so the planted foot is not dragged into idle
-		target_v = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * 0.5
+		if boy.settling():
+			settle_t += delta
+			target_v = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * 0.5
+		else:
+			settle_t = 1.0
 	# ease into a run (a kid needs a couple of steps), stop a little quicker; the gait matches the speed
 	var acc := (6.5 if move_vel.length() < WALK_MAX else 4.5) if target_v.length() > move_vel.length() else 10.0
 	move_vel = move_vel.move_toward(target_v, acc * delta)
