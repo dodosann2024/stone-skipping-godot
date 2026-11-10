@@ -74,6 +74,7 @@ var boy: Boy
 var face_yaw := 0.0
 var move_vel := Vector3.ZERO
 var spot_turning := false
+var spot_goal := 0.0
 var spot_rate := 0.0
 var ground_y := 0.0
 var cur_speed := 0.0
@@ -1056,22 +1057,27 @@ func _explore_tick(delta: float) -> void:
 	var right := Vector3(cos(ex_yaw), 0, -sin(ex_yaw))
 	var wish := right * inp.x - fwd * inp.y
 	var target_v := Vector3.ZERO
-	# a sharp turn from (nearly) standing is a turn on the spot: he stops, steps round, then sets off
+	# a sharp turn from (nearly) standing is a turn on the spot: he stops, steps round, then sets off. Once
+	# begun it goes round to the heading the stick last pointed at, even if the stick is let go
 	var wish_yaw := atan2(-wish.x, -wish.z)
 	var need := wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0
 	var spd_now := move_vel.length()
 	if mag > 0.05 and Boy.wants_spot_turn(need, spd_now):
 		spot_turning = true
-	if spot_turning and (mag <= 0.05 or (absf(need) < 0.03 and not boy.spin_busy())):
-		spot_turning = false
-		spot_rate = 0.0
+	if spot_turning:
+		if mag > 0.05:
+			spot_goal = wish_yaw
+		need = wrapf(spot_goal - face_yaw, -PI, PI)
+		if absf(need) < 0.03 and not boy.spin_busy():
+			spot_turning = false
+			spot_rate = 0.0
 	if mag > 0.05 and not spot_turning:
 		var spd := RUN_SPEED if running else lerpf(0.55, WALK_MAX, clampf(mag / 0.85, 0.0, 1.0))
 		if wading:
 			spd *= 0.6
 		target_v = wish.normalized() * spd
 		settle_t = 0.0
-	elif settle_t < 0.6:
+	elif settle_t < 0.6 and not spot_turning:
 		# let go mid-stride: finish the step at a stroll, so the planted foot is not dragged into idle
 		if boy.settling():
 			settle_t += delta
@@ -1108,7 +1114,7 @@ func _explore_tick(delta: float) -> void:
 	wading = not _on_dock(to.x, to.z) and h < -0.03
 	boy.wading = wading
 	boy.pivoting = spot_turning
-	boy.turn_ahead = wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0
+	boy.turn_ahead = need if spot_turning else (wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0)
 	boy.set_move(cur_speed)
 	if cur_speed < 0.05:
 		boy.set_idle()
