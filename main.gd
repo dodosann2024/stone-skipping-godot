@@ -147,9 +147,10 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v9"
+var shot_dir := "v10"
 var night_k := 0.0
 var night_on := false
+var saved_night := false
 var night_btn: Button
 var night_fx: NightFx
 var night_amb: AudioStreamPlayer
@@ -203,6 +204,10 @@ func _ready() -> void:
 		if a.begins_with("--video4="):
 			demo_seg = a.substr(9)
 	demo_mode = "--demo4" in args or demo_seg != "" or "--selftest" in args
+	if saved_night and not demo_mode and not night_on:
+		night_on = true
+		night_k = 1.0
+		_update_night(0.0, true)
 	_snap_explore_cam()
 	if demo_mode:
 		_start_audio()
@@ -1757,6 +1762,7 @@ func _audio_tick(delta: float) -> void:
 
 func _toggle_night() -> void:
 	night_on = not night_on
+	_save_best()
 	_toast("夜晚：篝火和灯都亮起来了" if night_on else "天亮了", 1.6)
 	_update_ui()
 
@@ -2105,13 +2111,16 @@ func _load_best() -> void:
 	if cf.load(SAVE_PATH) == OK:
 		best_skips = int(cf.get_value("best", "skips", 0))
 		best_dist = float(cf.get_value("best", "dist", 0.0))
+		saved_night = bool(cf.get_value("settings", "night", false))
 
+## best record and settings (night mode); user:// is IndexedDB in the web build, so it survives reloads
 func _save_best() -> void:
 	if demo_mode:
 		return
 	var cf := ConfigFile.new()
 	cf.set_value("best", "skips", best_skips)
 	cf.set_value("best", "dist", best_dist)
+	cf.set_value("settings", "night", night_on)
 	cf.save(SAVE_PATH)
 
 # ------------------------------------------------------------------ test hooks
