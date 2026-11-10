@@ -102,6 +102,9 @@ func _gait_check() -> void:
 		for i in 40:
 			hips.append(s["thigh_l"][i] - s["thigh_r"][i])
 			shoulders.append(s["upperarm_l"][i] - s["upperarm_r"][i])
+		if "--gaitcsv" in OS.get_cmdline_user_args():
+			for i in 40:
+				print("GAITCSV %s,%.3f,%.4f,%.4f,%.4f,%.4f" % ["run" if run else "walk", i / 40.0, s["foot_l"][i], s["foot_r"][i], s["hand_l"][i], s["hand_r"][i]])
 		var c_ll := _corr(s["foot_l"], s["hand_l"])
 		var c_rr := _corr(s["foot_r"], s["hand_r"])
 		var c_lr := _corr(s["foot_l"], s["hand_r"])
