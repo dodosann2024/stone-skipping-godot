@@ -9,7 +9,11 @@ var dock_start_z := 0.0
 var dock_end_z := 0.0
 var player_spot := Vector3.ZERO
 var cam_blockers: Array = []
-var walk_blockers: Array = []   # [Vector2 centre, radius] extra things the boy can't walk through
+## solid shapes the boy can't walk into (ground plan + a height band): [kind, a, b, r, y0, y1, name]
+##   "c" circle: centre a, radius r   "s" capsule: segment a..b, radius r   "b" box: centre a, half size b, yaw r
+var walls: Array = []
+var wall_grid := {}   # Vector2i cell -> wall indices
+const WALL_CELL := 3.0
 var hammock_a := Vector3.ZERO
 var hammock_b := Vector3.ZERO
 var hammock_node: Node3D
@@ -19,6 +23,9 @@ var umbrella_pos := Vector3.ZERO
 var hut_pos := Vector3.ZERO
 var lighthouse_pos := Vector3.ZERO
 var campfire_pos := Vector3.ZERO
+## places to sit: {name, top (seat surface under the pelvis), face (where the sitter looks), approach, hint}
+var seats: Array[Dictionary] = []
+const SEAT_TOP := 0.35   # seat height the boy's sitting clips are authored for
 var obstacles: Array = []   # [Vector2 centre, radius, top_y, name]
 var palm_spots: Array = []  # crowns, for screenshots
 var trunks: Array = []   # palm trunk polylines (camera line-of-sight checks)
@@ -142,6 +149,7 @@ func build(font: Font) -> void:
 	_build_vegetation()
 	_build_far()
 	_build_buoys()
+	_index_walls()
 	_flush()
 	_build_water()
 
@@ -361,8 +369,80 @@ func _bake_obstacle_foam() -> ImageTexture:
 				img.set_pixel(i, j, Color(v, v, v))
 	return ImageTexture.create_from_image(img)
 
-func add_obstacle(c: Vector2, r: float, top: float, name: String, bottom := -99.0) -> void:
+func add_obstacle(c: Vector2, r: float, top: float, name: String, bottom := -99.0, walk := true) -> void:
 	obstacles.append([c, r, top, name, bottom])
+	if walk:
+		wall_c(c, r, bottom, top, name)
+
+# ---- walking collision
+
+func wall_c(c: Vector2, r: float, y0: float, y1: float, name: String) -> void:
+	walls.append(["c", c, c, r, y0, y1, name])
+
+func wall_s(a: Vector2, b: Vector2, r: float, y0: float, y1: float, name: String) -> void:
+	walls.append(["s", a, b, r, y0, y1, name])
+
+func wall_b(c: Vector2, half: Vector2, yaw: float, y0: float, y1: float, name: String) -> void:
+	walls.append(["b", c, half, yaw, y0, y1, name])
+
+## same yaw convention as Basis(Vector3.UP, yaw) acting on (x, z)
+static func _rot(v: Vector2, yaw: float) -> Vector2:
+	return Vector2(cos(yaw) * v.x + sin(yaw) * v.y, -sin(yaw) * v.x + cos(yaw) * v.y)
+
+## signed ground-plan distance from p to wall w (negative inside) and the outward normal: (dist, nx, nz)
+static func wall_dist(w: Array, p: Vector2) -> Vector3:
+	var a: Vector2 = w[1]
+	match w[0] as String:
+		"c", "s":
+			var b: Vector2 = w[2]
+			var ab := b - a
+			var t := 0.0 if ab.length_squared() < 1e-8 else clampf((p - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
+			var d := p - (a + ab * t)
+			var L := d.length()
+			var n := d / L if L > 1e-5 else (ab.orthogonal().normalized() if ab.length_squared() > 1e-8 else Vector2(1, 0))
+			return Vector3(L - float(w[3]), n.x, n.y)
+		_:
+			var half: Vector2 = w[2]
+			var yaw: float = w[3]
+			var l := _rot(p - a, -yaw)
+			var q := Vector2(absf(l.x), absf(l.y)) - half
+			var nl: Vector2
+			var dist: float
+			if q.x > 0.0 or q.y > 0.0:
+				var o := Vector2(maxf(q.x, 0.0), maxf(q.y, 0.0))
+				dist = o.length()
+				nl = Vector2(o.x * signf(l.x), o.y * signf(l.y)) / maxf(dist, 1e-6)
+			else:
+				dist = maxf(q.x, q.y)
+				nl = Vector2(signf(l.x) if l.x != 0.0 else 1.0, 0.0) if q.x > q.y else Vector2(0.0, signf(l.y) if l.y != 0.0 else 1.0)
+			var n2 := _rot(nl, yaw)
+			return Vector3(dist, n2.x, n2.y)
+
+func _wall_rect(w: Array) -> Rect2:
+	var a: Vector2 = w[1]
+	match w[0] as String:
+		"c", "s":
+			var b: Vector2 = w[2]
+			var r: float = w[3]
+			return Rect2(a, Vector2.ZERO).expand(b).grow(r)
+		_:
+			var e: float = (w[2] as Vector2).length()
+			return Rect2(a - Vector2(e, e), Vector2(e, e) * 2.0)
+
+func _index_walls() -> void:
+	wall_grid.clear()
+	for i in walls.size():
+		var r := _wall_rect(walls[i]).grow(0.5)
+		for cx in range(floori(r.position.x / WALL_CELL), floori(r.end.x / WALL_CELL) + 1):
+			for cz in range(floori(r.position.y / WALL_CELL), floori(r.end.y / WALL_CELL) + 1):
+				var k := Vector2i(cx, cz)
+				if not wall_grid.has(k):
+					wall_grid[k] = []
+				(wall_grid[k] as Array).append(i)
+
+## indices of walls whose (grown) bounds touch the cell around p
+func walls_near(p: Vector2) -> Array:
+	return wall_grid.get(Vector2i(floori(p.x / WALL_CELL), floori(p.y / WALL_CELL)), [])
 
 # ------------------------------------------------------------------ dock
 
@@ -415,7 +495,14 @@ func _build_dock() -> void:
 			var p = a.lerp(b, t) + Vector3(0, -0.22 * sin(PI * t), 0)
 			tube(SB, prev, p, 0.025, 0.025, 4, Color(0.85, 0.75, 0.55))
 			prev = p
+		wall_s(Vector2(1.2, zr), Vector2(1.2, zr - 4.8), 0.04, DECK_Y, DECK_Y + 0.6, "护栏绳")
 		zr -= 4.8
+	# the deck is solid from below: wading kids go round it, they only get on at the beach end
+	var zs := dock_start_z
+	while zs > dock_end_z + 3.6 and minf(ground_h(-1.15, zs), ground_h(1.15, zs)) > DECK_Y - 0.4:
+		zs -= 0.1
+	wall_b(Vector2(0, (zs + dock_end_z + 3.6) * 0.5), Vector2(1.15, (zs - dock_end_z - 3.6) * 0.5), 0.0, -9.0, DECK_Y - 0.12, "码头")
+	wall_b(Vector2(0, dock_end_z + 1.92), Vector2(3.1, 2.04), 0.0, -9.0, DECK_Y - 0.12, "码头")
 	# lanterns on the platform corners (tall posts)
 	for sx in [-3.0, 3.0]:
 		var base = Vector3(sx, DECK_Y + 0.7, dock_end_z + 0.15)
@@ -433,9 +520,8 @@ func _build_dock() -> void:
 		[Vector3(-2.6, DECK_Y + 1.85, dock_end_z + 0.15), 0.5], [Vector3(2.6, DECK_Y + 1.85, dock_end_z + 0.15), 0.5],
 		[Vector3(-3.0, DECK_Y + 1.4, dock_end_z + 0.15), 0.35], [Vector3(3.0, DECK_Y + 1.4, dock_end_z + 0.15), 0.35],
 	]
-	walk_blockers.append([Vector2(pc.x + 0.35, pc.z + 0.05), 0.72])
-	walk_blockers.append([Vector2(2.47, dock_end_z + 2.6), 0.62])
-	walk_blockers.append([Vector2(1.8, dock_end_z + 3.3), 0.2])
+	wall_c(Vector2(1.8, dock_end_z + 3.3), 0.18, DECK_Y, DECK_Y + 0.32, "水桶")
+	wall_s(Vector2(-1.6, dock_end_z + 3.3), Vector2(-1.95, dock_end_z + 3.39), 0.04, DECK_Y, DECK_Y + 1.6, "鱼竿")
 	_crate(pc + Vector3(0, 0.3, 0), 0.6, 0.2)
 	_crate(pc + Vector3(0.75, 0.25, 0.1), 0.5, -0.3)
 	_crate(pc + Vector3(0.15, 0.85, 0.05), 0.48, 0.6)
@@ -464,11 +550,18 @@ func _build_dock() -> void:
 	add_child(lbl)
 	lbl.position = sp + Vector3(0, 1.55, -0.05)
 	lbl.rotation = Vector3(0, 0.15 + PI, 0)
-	add_obstacle(Vector2(sp.x, sp.z), 0.4, sp.y + 1.8, "路牌")
+	add_obstacle(Vector2(sp.x, sp.z), 0.4, sp.y + 1.8, "路牌", -99.0, false)
+	wall_c(Vector2(sp.x, sp.z), 0.08, sp.y - 0.3, sp.y + 1.8, "路牌")
+
+func _add_seat(name: String, top: Vector3, face: Vector3, front: float, hint: String) -> void:
+	var ap := top + face * front
+	ap.y = ground_h(ap.x, ap.z)
+	seats.append({"name": name, "top": top, "face": face, "approach": ap, "hint": hint})
 
 func _crate(c: Vector3, s: float, yaw: float) -> void:
 	var xf = Transform3D(Basis(Vector3.UP, yaw), c)
 	boxb(SB, Vector3(s, s, s), xf, _wood(-0.05))
+	wall_b(Vector2(c.x, c.z), Vector2(s, s) * 0.5, yaw, c.y - s * 0.5, c.y + s * 0.5, "木箱")
 	var dark = Color(0.45, 0.31, 0.19)
 	for e in [Vector3(0, s * 0.5, 0), Vector3(0, -s * 0.5, 0)]:
 		for f in [Vector3(0, 0, s * 0.5), Vector3(0, 0, -s * 0.5)]:
@@ -476,6 +569,7 @@ func _crate(c: Vector3, s: float, yaw: float) -> void:
 	boxb(SB, Vector3(s * 1.02, s * 0.1, s * 1.15), xf * Transform3D(Basis(Vector3.FORWARD, 0.78), Vector3.ZERO), dark)
 
 func _barrel(p: Vector3) -> void:
+	wall_c(Vector2(p.x, p.z), 0.3, p.y - 0.1, p.y + 0.8, "木桶")
 	cyl(SB, 0.27, 0.27, 0.8, 9, p + Vector3(0, 0.4, 0), Vector3.ZERO, Color(0.55, 0.36, 0.2))
 	for y in [0.12, 0.68]:
 		cyl(SB, 0.285, 0.285, 0.06, 9, p + Vector3(0, y, 0), Vector3.ZERO, Color(0.25, 0.25, 0.27))
@@ -510,7 +604,10 @@ func _boat(p: Vector3, yaw: float, stripe: Color, tilt := 0.0) -> void:
 	for sz in [-0.6, 0.5]:
 		boxb(SB, Vector3(1.0, 0.05, 0.25), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.08, sz)), _wood())
 	boxb(SB, Vector3(0.06, 0.04, 2.0), xf * Transform3D(Basis(Vector3.UP, 0.25), Vector3(0.2, 0.15, 0.0)), _wood(-0.1))
-	add_obstacle(Vector2((xf * Vector3.ZERO).x, (xf * Vector3.ZERO).z), 0.9, p.y + 0.35, "小船")
+	add_obstacle(Vector2((xf * Vector3.ZERO).x, (xf * Vector3.ZERO).z), 0.9, p.y + 0.35, "小船", -99.0, false)
+	var bow: Vector3 = xf * Vector3(0, 0, 1.25)
+	var stern: Vector3 = xf * Vector3(0, 0, -1.25)
+	wall_s(Vector2(stern.x, stern.z), Vector2(bow.x, bow.z), 0.64, p.y - 0.6, p.y + 0.4, "小船")
 
 # ------------------------------------------------------------------ hut
 
@@ -633,7 +730,12 @@ func _build_hut(th: float) -> void:
 	add_child(lbl)
 	lbl.global_transform = xf * Transform3D(Basis.IDENTITY, Vector3(0, floor_y + wall_h + 0.3, 1.62))
 	var c2 = Vector2(base.x, base.z)
-	add_obstacle(c2, 2.6, base.y + floor_y + wall_h + 1.4, "钓鱼小屋")
+	add_obstacle(c2, 2.6, base.y + floor_y + wall_h + 1.4, "钓鱼小屋", -99.0, false)
+	var hc: Vector3 = xf * Vector3(0, 0, 0.65)
+	wall_b(Vector2(hc.x, hc.z), Vector2(1.95, 2.3), yaw, base.y - 2.0, base.y + floor_y + wall_h + 1.4, "钓鱼小屋")
+	var stc: Vector3 = xf * Vector3(0.45, 0, 3.55)
+	wall_b(Vector2(stc.x, stc.z), Vector2(0.58, 0.62), yaw, base.y - 2.0, base.y + floor_y, "钓鱼小屋")
+	wall_s(Vector2(n0.x, n0.z), Vector2(n1.x, n1.z), 0.07, minf(n0.y, n1.y) - 0.2, n0.y + 2.0, "渔网")
 
 # ------------------------------------------------------------------ lighthouse & campfire
 
@@ -658,23 +760,25 @@ func _build_lighthouse() -> void:
 	blob(SB, p + Vector3(0, h + 1.68, 0), Vector3(0.08, 0.08, 0.08), Color(0.9, 0.8, 0.3), 0.0, 6, 3, 0.0)
 	cyl(SB, 0.06, 0.06, 0.6, 6, p + Vector3(0.35, 0.9, 0.95), Vector3.ZERO, Color(0.3, 0.22, 0.15))
 	box(SB, Vector3(0.55, 1.0, 0.06), p + Vector3(0.0, 0.95, 0.96), Vector3.ZERO, Color(0.35, 0.5, 0.62))
-	add_obstacle(Vector2(p.x, p.z), 1.3, p.y + h + 1.7, "灯塔")
+	add_obstacle(Vector2(p.x, p.z), 1.3, p.y + h + 1.7, "灯塔", -99.0, false)
+	wall_c(Vector2(p.x, p.z), 1.38, p.y - 1.0, p.y + h + 1.7, "灯塔")
 	# bench looking out to sea
 	var bp = p + Vector3(-2.2, 0, -2.0)
 	bp.y = ground_h(bp.x, bp.z)
 	var bxf = Transform3D(Basis(Vector3.UP, 0.7), bp)
-	boxb(SB, Vector3(1.4, 0.07, 0.4), bxf * Transform3D(Basis.IDENTITY, Vector3(0, 0.45, 0)), _wood())
-	boxb(SB, Vector3(1.4, 0.3, 0.06), bxf * Transform3D(Basis(Vector3.RIGHT, -0.2), Vector3(0, 0.75, 0.2)), _wood())
+	var seat_y := SEAT_TOP - 0.035
+	boxb(SB, Vector3(1.4, 0.07, 0.4), bxf * Transform3D(Basis.IDENTITY, Vector3(0, seat_y, 0)), _wood())
+	boxb(SB, Vector3(1.4, 0.3, 0.06), bxf * Transform3D(Basis(Vector3.RIGHT, -0.2), Vector3(0, seat_y + 0.3, 0.2)), _wood())
 	for bx in [-0.6, 0.6]:
-		boxb(SB, Vector3(0.07, 0.45, 0.35), bxf * Transform3D(Basis.IDENTITY, Vector3(bx, 0.22, 0)), Color(0.42, 0.29, 0.18))
+		boxb(SB, Vector3(0.07, seat_y, 0.35), bxf * Transform3D(Basis.IDENTITY, Vector3(bx, seat_y * 0.5, 0)), Color(0.42, 0.29, 0.18))
+	var bc: Vector3 = bxf * Vector3(0, 0, 0.03)
+	wall_b(Vector2(bc.x, bc.z), Vector2(0.72, 0.24), 0.7, bp.y - 0.3, bp.y + 0.75, "长椅")
+	var bface: Vector3 = bxf.basis * Vector3(0, 0, -1)
+	_add_seat("长椅", bxf * Vector3(0, SEAT_TOP, 0.03), bface, 0.5, "灯塔边的长椅：点「坐下」看看海")
 
 func _build_campfire() -> void:
 	var c = campfire_pos
-	walk_blockers.append([Vector2(c.x, c.z), 0.85])
-	for a0 in [0.6, 2.7, 4.8]:
-		walk_blockers.append([Vector2(c.x + cos(a0) * 1.7, c.z + sin(a0) * 1.7), 0.4])
-	for a1 in [1.5, -1.6]:
-		walk_blockers.append([Vector2(c.x + cos(a1) * 2.6, c.z + sin(a1) * 2.6), 0.08])
+	wall_c(Vector2(c.x, c.z), 0.82, c.y - 0.5, c.y + 0.9, "篝火")
 	for i in 9:
 		var a = TAU * i / 9.0
 		blob(SB, c + Vector3(cos(a) * 0.65, 0.08, sin(a) * 0.65), Vector3(0.17, 0.12, 0.15), Color(0.5, 0.48, 0.45))
@@ -687,11 +791,17 @@ func _build_campfire() -> void:
 		var a = 0.6 + i * 2.1
 		var lp = c + Vector3(cos(a) * 1.7, 0, sin(a) * 1.7)
 		lp.y = ground_h(lp.x, lp.z)
-		tube(SB, lp + Vector3(-sin(a) * 0.7, 0.18, cos(a) * 0.7), lp + Vector3(sin(a) * 0.7, 0.18, -cos(a) * 0.7), 0.17, 0.17, 7, Color(0.5, 0.34, 0.2), 1.0, 1.0, Color(0.6, 0.45, 0.3))
+		var la: Vector3 = lp + Vector3(-sin(a) * 0.7, SEAT_TOP - 0.17, cos(a) * 0.7)
+		var lb: Vector3 = lp + Vector3(sin(a) * 0.7, SEAT_TOP - 0.17, -cos(a) * 0.7)
+		tube(SB, la, lb, 0.17, 0.17, 7, Color(0.5, 0.34, 0.2), 1.0, 1.0, Color(0.6, 0.45, 0.3))
+		wall_s(Vector2(la.x, la.z), Vector2(lb.x, lb.z), 0.18, lp.y - 0.3, lp.y + SEAT_TOP + 0.35, "坐木")
+		var to_fire := Vector3(c.x - lp.x, 0, c.z - lp.z).normalized()
+		_add_seat("坐木", lp + Vector3(0, SEAT_TOP, 0) + to_fire * 0.03, to_fire, 0.45, "篝火边的木头：点「坐下」烤烤火")
 	# tiki torches
 	for a in [1.5, -1.6]:
 		var tp = c + Vector3(cos(a) * 2.6, 0, sin(a) * 2.6)
 		tp.y = ground_h(tp.x, tp.z)
+		wall_c(Vector2(tp.x, tp.z), 0.07, tp.y - 0.2, tp.y + 2.0, "火把")
 		tube(SB, tp, tp + Vector3(0, 1.6, 0), 0.04, 0.04, 5, Color(0.4, 0.28, 0.16))
 		cyl(SB, 0.1, 0.07, 0.22, 6, tp + Vector3(0, 1.65, 0), Vector3.ZERO, Color(0.55, 0.42, 0.25))
 		cyl(GB, 0.0, 0.08, 0.25, 5, tp + Vector3(0, 1.88, 0), Vector3.ZERO, Color(1.0, 0.65, 0.2))
@@ -706,7 +816,7 @@ func _build_beach_life() -> void:
 	# umbrella + towel + deck chair
 	var up = shore_pt(-0.15, 4.0)
 	umbrella_pos = up
-	walk_blockers.append([Vector2(up.x, up.z), 0.12])
+	wall_c(Vector2(up.x, up.z), 0.06, up.y - 0.2, up.y + 2.5, "遮阳伞")
 	tube(SB, up, up + Vector3(0, 2.3, 0), 0.03, 0.03, 5, Color(0.95, 0.95, 0.95))
 	for i in 8:
 		var a0 = TAU * i / 8.0
@@ -731,7 +841,12 @@ func _build_beach_life() -> void:
 	var cp = tw + out.cross(Vector3.UP).normalized() * 1.15 + out * 0.1
 	cp.y = ground_h(cp.x, cp.z)
 	var cxf = Transform3D(Basis(Vector3.UP, tyaw), cp)
-	walk_blockers.append([Vector2(cp.x, cp.z), 0.55])
+	var lc: Vector3 = cxf * Vector3(0, 0, -0.08)
+	wall_b(Vector2(lc.x, lc.z), Vector2(0.33, 0.62), tyaw, cp.y - 0.3, cp.y + 0.9, "躺椅")
+	var lface: Vector3 = cxf.basis * Vector3(1, 0, 0)
+	if lface.dot(towel_pos - cp) > 0.0:
+		lface = -lface   # sit on the edge away from the towel, looking along the beach
+	_add_seat("躺椅", cp + lface * 0.1 + Vector3(0, 0.325, 0) + cxf.basis * Vector3(0, 0, 0.12), lface, 0.55, "蓝色躺椅：点「坐下」歇一会儿")
 	boxb(SB, Vector3(0.6, 0.05, 1.0), cxf * Transform3D(Basis(Vector3.RIGHT, 0.1), Vector3(0, 0.3, 0)), Color(0.3, 0.55, 0.85))
 	boxb(SB, Vector3(0.6, 0.05, 0.7), cxf * Transform3D(Basis(Vector3.RIGHT, -0.9), Vector3(0, 0.55, -0.6)), Color(0.3, 0.55, 0.85))
 	for lx in [-0.28, 0.28]:
@@ -739,6 +854,7 @@ func _build_beach_life() -> void:
 			boxb(SB, Vector3(0.04, 0.3, 0.04), cxf * Transform3D(Basis.IDENTITY, Vector3(lx, 0.15, lz)), Color(0.9, 0.9, 0.9))
 	# surfboard stuck in the sand
 	var sp = shore_pt(0.55, 3.5)
+	wall_c(Vector2(sp.x, sp.z), 0.17, sp.y - 0.2, sp.y + 2.0, "冲浪板")
 	SB.prim(_sphm(10, 5), Transform3D(Basis(Vector3.UP, 0.4) * Basis(Vector3.RIGHT, -0.12) * Basis.IDENTITY.scaled(Vector3(0.28, 1.1, 0.05)), sp + Vector3(0, 0.95, 0)), Color(0.98, 0.7, 0.25))
 	# starfish and shells scattered on the wet sand and in the shallows
 	for i in 40:
@@ -788,7 +904,9 @@ func _build_rocks_and_reef() -> void:
 		var a = rng.randf() * TAU
 		var p = gp(2.0 + cos(a) * rng.randf_range(3.5, 7.0), 3.0 + sin(a) * rng.randf_range(3.5, 7.0))
 		if path_dist(p.x, p.z) > 1.2:
-			blob(SB, p, Vector3(0.35, 0.25, 0.3) * rng.randf_range(0.6, 1.4), Color(0.55, 0.54, 0.5))
+			var k := rng.randf_range(0.6, 1.4)
+			blob(SB, p, Vector3(0.35, 0.25, 0.3) * k, Color(0.55, 0.54, 0.5))
+			wall_c(Vector2(p.x, p.z), 0.3 * k, p.y - 0.3, p.y + 0.25 * k, "石头")
 	# coral reef patches in the lagoon
 	var coral_cols = [Color(0.86, 0.1, 0.2), Color(0.95, 0.36, 0.04), Color(0.42, 0.1, 0.72), Color(0.95, 0.66, 0.0), Color(0.06, 0.6, 0.52), Color(0.78, 0.12, 0.48)]
 	for patch in [[-1.05, 6.0], [-0.85, 8.5], [-2.0, 6.5], [-2.25, 9.0], [0.55, 6.5], [2.4, 7.0], [-1.9, 4.5], [-1.25, 4.2]]:
@@ -821,7 +939,9 @@ func _build_rocks_and_reef() -> void:
 		if rng.randf() < 0.6:
 			_seaweed(p)
 		else:
-			blob(SB, p, Vector3(0.35, 0.22, 0.3) * rng.randf_range(0.6, 1.6), Color(0.5, 0.52, 0.48))
+			var k2 := rng.randf_range(0.6, 1.6)
+			blob(SB, p, Vector3(0.35, 0.22, 0.3) * k2, Color(0.5, 0.52, 0.48))
+			wall_c(Vector2(p.x, p.z), 0.3 * k2, p.y - 0.3, p.y + 0.22 * k2, "石头")
 
 func _branch(p: Vector3, dir: Vector3, length: float, r: float, depth: int, col: Color) -> void:
 	var e = p + dir * length
@@ -1009,10 +1129,10 @@ func _build_palms() -> void:
 	hmi.mesh = HB.commit()
 	hmi.material_override = hsm
 	hammock_node.add_child(hmi)
-	# the hanging bed blocks walking (a few circles along it)
-	for k in 5:
-		var q2 = a.lerp(b, 0.2 + 0.15 * k)
-		walk_blockers.append([Vector2(q2.x, q2.z), 0.32])
+	# the hanging bed blocks walking
+	var qa: Vector3 = a.lerp(b, 0.2)
+	var qb: Vector3 = a.lerp(b, 0.8)
+	wall_s(Vector2(qa.x, qa.z), Vector2(qb.x, qb.z), 0.32, hammock_bed().y - 1.0, hammock_bed().y + 0.4, "吊床")
 
 ## lowest point of the hammock bed (world, at rest)
 func hammock_bed() -> Vector3:
@@ -1029,6 +1149,7 @@ func swing_hammock(ang: float) -> Transform3D:
 # ------------------------------------------------------------------ vegetation
 
 func _bush(p: Vector3, s: float) -> void:
+	wall_c(Vector2(p.x, p.z), 0.34 * s, p.y - 0.3, p.y + 0.8 * s, "灌木")
 	var g = [Color(0.36, 0.64, 0.28), Color(0.42, 0.7, 0.3), Color(0.3, 0.58, 0.3)][rng.randi() % 3]
 	for k in rng.randi_range(3, 5):
 		var o = Vector3(rng.randf_range(-0.5, 0.5), rng.randf_range(0.2, 0.5), rng.randf_range(-0.5, 0.5)) * s
@@ -1117,6 +1238,7 @@ func _build_vegetation() -> void:
 			if s > 0:
 				var q0 = a.lerp(b, float(s - 1) / max(segn, 1)) + n
 				var g0 = gp(q0.x, q0.y)
+				wall_s(q0, q, 0.05, minf(g0.y, gpq.y) - 0.2, maxf(g0.y, gpq.y) + 0.7, "栅栏")
 				tube(SB, g0 + Vector3(0, 0.6, 0), gpq + Vector3(0, 0.6, 0), 0.018, 0.018, 3, Color(0.85, 0.75, 0.55))
 	# lantern posts along the beach path to the hut
 	var bp: Array = paths[0]
@@ -1125,6 +1247,7 @@ func _build_vegetation() -> void:
 		var o: Vector2 = (bp[i] - bp[i - 1]).normalized().orthogonal() * 1.0
 		var g = gp(q.x + o.x, q.y + o.y)
 		tube(SB, g, g + Vector3(0, 1.1, 0), 0.04, 0.035, 5, Color(0.4, 0.28, 0.16))
+		wall_c(Vector2(g.x, g.z), 0.06, g.y - 0.2, g.y + 1.35, "路灯")
 		box(GB, Vector3(0.14, 0.2, 0.14), g + Vector3(0, 1.2, 0), Vector3.ZERO, Color(1.0, 0.78, 0.4))
 		box(SB, Vector3(0.18, 0.03, 0.18), g + Vector3(0, 1.32, 0), Vector3.ZERO, Color(0.2, 0.2, 0.22))
 

@@ -90,6 +90,7 @@ var rest_lie_b := Basis.IDENTITY
 var rest_root_sit := Vector3.ZERO
 var rest_side := Vector3.ZERO
 var rest_cam_yaw := INF
+var seat_i := -1   # island.seats entry near the kid / being sat on
 var swing_amp := 0.0
 var zzz: Label3D
 
@@ -559,7 +560,7 @@ func _update_ui() -> void:
 		joy._end()
 	var act := ""
 	if mode == Mode.EXPLORE:
-		act = {"throw": "打水漂", "sleep": "睡觉", "sun": "晒太阳"}.get(action_kind, "")
+		act = {"throw": "打水漂", "sleep": "睡觉", "sun": "晒太阳", "seat": "坐下"}.get(action_kind, "")
 	elif mode == Mode.REST and rest_phase == 4:
 		act = "起来"
 	action_btn.visible = act != ""
@@ -576,14 +577,17 @@ func _update_ui() -> void:
 					h = "椰子树间的吊床，点「睡觉」躺上去打个盹"
 				"sun":
 					h = "沙滩毛巾，点「晒太阳」躺下晒一会儿"
+				"seat":
+					h = island.seats[seat_i]["hint"]
 				_:
 					if _tall():
 						h = "左下摇杆走路，推到底就跑 · 拖屏幕转视角\n打水漂要去码头尽头"
 					else:
-						h += "\n打水漂要走到码头尽头；吊床可以睡觉，沙滩毛巾可以晒太阳"
+						h += "\n打水漂要走到码头尽头；吊床可以睡觉，沙滩毛巾可以晒太阳，长椅和篝火边可以坐"
 			lbl_hint.text = h
 		Mode.REST:
-			lbl_hint.text = ("呼……睡着了 · 轻点屏幕或「起来」叫醒他" if rest_kind == "sleep" else "晒太阳中 · 轻点屏幕或「起来」站起来") if rest_phase == 4 else ""
+			var rh := {"sleep": "呼……睡着了 · 轻点屏幕或「起来」叫醒他", "sun": "晒太阳中 · 轻点屏幕或「起来」站起来", "seat": "坐着歇一会儿 · 轻点屏幕或「起来」站起来"}
+			lbl_hint.text = rh[rest_kind] if rest_phase == 4 else ""
 		_:
 			match state:
 				State.READY:
@@ -662,6 +666,19 @@ func _update_action_kind() -> void:
 		var tp := island.towel_pos
 		if Vector2(p.x - tp.x, p.z - tp.z).length() < 1.7:
 			k = "sun"
+		var best := 1.25
+		for i in island.seats.size():
+			var st: Dictionary = island.seats[i]
+			var ap: Vector3 = st["approach"]
+			var dd := Vector2(p.x - ap.x, p.z - ap.z).length()
+			var top: Vector3 = st["top"]
+			var front := (p - top).dot(st["face"] as Vector3)
+			if dd < best and front > 0.15:
+				best = dd
+				k = "seat"
+				if seat_i != i:
+					seat_i = i
+					action_kind = ""
 	if k != action_kind:
 		action_kind = k
 		_update_ui()
@@ -675,7 +692,7 @@ func _on_action() -> void:
 	match action_kind:
 		"throw":
 			_enter_throw()
-		"sleep", "sun":
+		"sleep", "sun", "seat":
 			_begin_rest(action_kind)
 
 var throw_walk := false
@@ -777,43 +794,73 @@ func _can_stand(from_h: float, x: float, z: float) -> bool:
 		return false
 	return true
 
+const BOY_R := 0.19   # walking radius of the kid (feet to shoulders)
+
+## does wall w stand in the way of a kid whose feet are at height y?
+static func _wall_hits_y(w: Array, y: float) -> bool:
+	return float(w[5]) > y + 0.12 and float(w[4]) < y + 1.2
+
+## pushes p out of every solid thing around it (a few relaxation passes, so corners between two
+## shapes settle instead of fighting); returns the resolved point and how deep it still overlaps
+func _push_out(p: Vector3) -> Array:
+	var q := Vector2(p.x, p.z)
+	var ids := island.walls_near(q)
+	var worst := 0.0
+	for it in 4:
+		worst = 0.0
+		for i in ids:
+			var w: Array = island.walls[i]
+			if not _wall_hits_y(w, p.y):
+				continue
+			var dn := Island.wall_dist(w, q)
+			var pen := BOY_R - dn.x
+			if pen > 0.0:
+				q += Vector2(dn.y, dn.z) * (pen + 1e-4)
+				worst = maxf(worst, pen)
+		if worst <= 0.0:
+			break
+	if worst > 0.0:
+		# re-measure after the last pass
+		worst = 0.0
+		for i in ids:
+			var w2: Array = island.walls[i]
+			if _wall_hits_y(w2, p.y):
+				worst = maxf(worst, BOY_R - Island.wall_dist(w2, q).x)
+	return [Vector3(q.x, p.y, q.y), worst]
+
 func _blocked_by(p: Vector3) -> Vector3:
-	# pushes p out of every blocking circle (trees, hut, lighthouse, rocks, props)
-	var q := p
-	for ob in island.obstacles:
-		var top: float = ob[2]
-		var bottom: float = ob[4]
-		if top < q.y + 0.15 or bottom > q.y + 1.0:
-			continue
-		var c: Vector2 = ob[0]
-		var r: float = float(ob[1]) + 0.17
-		var d := Vector2(q.x - c.x, q.z - c.y)
-		if d.length() < r:
-			var n := d.normalized() if d.length() > 1e-4 else Vector2(1, 0)
-			q.x = c.x + n.x * r
-			q.z = c.y + n.y * r
-	for wb in island.walk_blockers:
-		var c2: Vector2 = wb[0]
-		var r2: float = float(wb[1]) + 0.17
-		var d2 := Vector2(q.x - c2.x, q.z - c2.y)
-		if d2.length() < r2:
-			var n2 := d2.normalized() if d2.length() > 1e-4 else Vector2(1, 0)
-			q.x = c2.x + n2.x * r2
-			q.z = c2.y + n2.y * r2
-	return q
+	return _push_out(p)[0]
+
+## how far the kid at p overlaps solid things (0 = clear); used by the self test
+func penetration(p: Vector3) -> float:
+	var q := Vector2(p.x, p.z)
+	var worst := 0.0
+	for i in island.walls_near(q):
+		var w: Array = island.walls[i]
+		if _wall_hits_y(w, p.y):
+			worst = maxf(worst, BOY_R - Island.wall_dist(w, q).x)
+	return worst
 
 func _try_move(from: Vector3, d: Vector3) -> Vector3:
 	var fh := _surface(from.x, from.z)
-	# already overlapping something (e.g. put down there after an action): let him walk out
-	var inside := _blocked_by(from).distance_to(from) > 0.01
+	# already overlapping something (put down there after an action): ease out of it
+	var r0: Array = _push_out(from)
+	if (r0[0] as Vector3).distance_to(from) > 0.005:
+		var out: Vector3 = r0[0]
+		var step := (out - from).limit_length(maxf(d.length(), 0.03))
+		return from + step if _can_stand(fh, from.x + step.x, from.z + step.z) else from + d
+	# move, then slide along whatever is in the way; terrain limits (deep water, dock edge) slide on the axes
 	for cand: Vector3 in [d, Vector3(d.x, 0, 0), Vector3(0, 0, d.z)]:
 		if cand.length() < 1e-6:
 			continue
-		var p := _blocked_by(from + cand)
-		if not inside and (p - from).length() > cand.length() * 1.6 + 0.02:
-			continue
-		if inside and (p - from).length() > 0.25:
-			p = from + (p - from).normalized() * 0.25
+		var r: Array = _push_out(from + cand)
+		var p: Vector3 = r[0]
+		if float(r[1]) > 0.004:
+			continue   # wedged between things: no room here
+		if (p - from).length() > cand.length() * 1.05 + 0.002:
+			p = from + (p - from).normalized() * cand.length()
+			if penetration(p) > 0.004:
+				continue
 		if _can_stand(fh, p.x, p.z):
 			p.y = from.y
 			return p
@@ -913,6 +960,17 @@ func _begin_rest(kind: String) -> void:
 		rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
 		rest_lie_b = _lie_basis(along)
 		rest_approach = rest_seat + side * 0.26
+	elif kind == "seat":
+		var st: Dictionary = island.seats[seat_i]
+		var face: Vector3 = st["face"]
+		rest_side = face.cross(Vector3.UP).normalized()
+		rest_sit_b = Basis(Vector3.UP, atan2(-face.x, -face.z))
+		rest_approach = st["approach"]
+		var pl0 := boy.activity("seat", 1.0, 0.0, 0.0)
+		# the clips sit on a SEAT_TOP high seat: put the pelvis over the seat point at that height
+		rest_seat = (st["top"] as Vector3) + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
+		rest_lie = rest_seat
+		rest_lie_b = rest_sit_b
 	else:
 		var td := island.towel_dir
 		var tp := island.towel_pos
@@ -927,6 +985,8 @@ func _begin_rest(kind: String) -> void:
 	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
 	var pl := boy.activity(kind, 1.0, 0.0, 0.0)
 	rest_root_sit = rest_seat - rest_sit_b * pl
+	if kind == "seat":
+		rest_root_sit.y = (island.seats[seat_i]["top"] as Vector3).y - Island.SEAT_TOP
 	boy.end_activity()
 	boy.rotation = Vector3(0, face_yaw, 0)
 	_update_ui()
@@ -940,7 +1000,7 @@ func _lie_basis(head_dir: Vector3) -> Basis:
 
 func _wake() -> void:
 	if mode == Mode.REST and rest_phase == 4:
-		rest_phase = 5
+		rest_phase = 6 if rest_kind == "seat" else 5
 		rest_t = 0.0
 		_update_ui()
 
@@ -964,7 +1024,9 @@ func _rest_tick(delta: float) -> void:
 				var spd := minf(1.0, d.length() * 3.0 + 0.3)
 				move_vel = move_vel.move_toward(d.normalized() * spd, 8.0 * delta)
 				face_yaw = lerp_angle(face_yaw, atan2(-d.x, -d.z), 1.0 - exp(-delta * 10.0))
-				var to := player.position + move_vel * delta
+				var to := _try_move(player.position, move_vel * delta)
+				if to.distance_to(player.position) < move_vel.length() * delta * 0.2 and rest_t > 0.5:
+					to = player.position + move_vel * delta   # wedged: the spot is right there, just go
 				var h := _surface(to.x, to.z)
 				ground_y = lerpf(ground_y, h, 1.0 - exp(-delta * 18.0))
 				to.y = ground_y
@@ -994,7 +1056,8 @@ func _rest_tick(delta: float) -> void:
 			if rest_t >= dur:
 				rest_t = 0.0
 				if rest_phase == 2:
-					rest_phase = 3
+					rest_phase = 4 if rest_kind == "seat" else 3
+					_update_ui()
 				else:
 					boy.end_activity()
 					player.position = _blocked_by(rest_approach)
@@ -1022,6 +1085,9 @@ func _rest_tick(delta: float) -> void:
 				rest_t = 0.0
 				rest_phase = 4 if rest_phase == 3 else 6
 				_update_ui()
+		4 when rest_kind == "seat":
+			boy.activity("seat", 1.0, 1.0, rest_t)
+			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 		4:
 			var pl3 := boy.activity(rest_kind, 1.0, 1.0, gt)
 			if sleep:
@@ -1712,6 +1778,8 @@ func _rest_cam() -> Array:
 			off = rest_side
 			var along := (island.hammock_b - island.hammock_a).normalized()
 			off = (off + Vector3(along.x, 0, along.z) * 0.45).normalized()
+		elif rest_kind == "seat":
+			off = ((island.seats[seat_i]["face"] as Vector3) * 0.85 + rest_side * 0.55).normalized()
 		else:
 			off = (rest_side * 0.75 + island.towel_dir * 0.75).normalized()
 		rest_cam_yaw = _clear_yaw(t, atan2(off.x, off.z), 0.42, dist)
@@ -1720,6 +1788,8 @@ func _rest_cam() -> Array:
 ## the yaw closest to `pref` from which no palm trunk stands between the camera and the resting kid
 func _clear_yaw(t: Vector3, pref: float, pitch: float, dist: float) -> float:
 	var along := island.towel_dir * 0.7 if rest_kind != "sleep" else (island.hammock_b - island.hammock_a).normalized() * 0.7
+	if rest_kind == "seat":
+		along = rest_side * 0.3
 	var looks: Array[Vector3] = [t, t + along, t - along]
 	var best := pref
 	var best_cost := INF

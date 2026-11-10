@@ -276,7 +276,8 @@ func foot_points(side: int) -> Array:
 	var ball := skel.global_transform * skel.get_bone_global_pose(skel.find_bone("ball" + sx)).origin
 	return [heel, ball]
 
-## kind: "sleep" | "sun"; sit_k: 0 stand -> 1 seated; lie_k: 0 seated -> 1 lying. Returns the pelvis in boy space.
+## kind: "sleep" | "sun" | "seat"; sit_k: 0 stand -> 1 seated; lie_k: 0 seated -> 1 lying ("seat": 1 = sitting
+## idle, tt counted from when it started). Returns the pelvis in boy space.
 func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	if anim != "activity":
 		pre_act = [anim, act_w, act_target, slot_clip.duplicate(), slot_t.duplicate(), cur_slot, ab_w]
@@ -284,10 +285,13 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 		prev_sit = 0.0 if sit_k < 1.0 else 1.0
 		prev_lie = 0.0
 	anim = "activity"
-	var pre := "hammock_" if kind == "sleep" else "sun_"
+	var pre: String = {"sleep": "hammock_", "sun": "sun_", "seat": "seat_"}[kind]
 	var clip: String
 	var u: float
-	if lie_k <= 0.0:
+	if kind == "seat" and lie_k >= 1.0:
+		clip = "seat_rest"
+		u = fposmod(tt, 4.0) / 4.0
+	elif lie_k <= 0.0:
 		var down := sit_k >= prev_sit
 		clip = pre + ("sit" if down else "stand")
 		u = smoothstep(0.0, 1.0, sit_k) if down else 1.0 - smoothstep(0.0, 1.0, sit_k)
@@ -301,7 +305,8 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	prev_sit = sit_k
 	prev_lie = lie_k
 	var L := float(clips[clip]["length"])
-	_play(clip, u * L, 0.0)
+	# the sitting idle loop can be mid foot-swing when he gets up: blend out of it
+	_play(clip, u * L, 0.25 if kind == "seat" and slot_clip[cur_slot] == "seat_rest" and clip != "seat_rest" else 0.0)
 	act_target = 1.0
 	act_w = 1.0 if sit_k > 0.02 or lie_k > 0.0 else act_w
 	act_rate = 8.0
