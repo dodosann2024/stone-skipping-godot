@@ -82,13 +82,22 @@ Image 3 (our v5 boy) is the counter-example.
 
 | Reference trait | v6 implementation |
 | --- | --- |
-| Slender ~6.5-head teen, skinned mesh | MakeHuman/MPFB2 CC0 base (male, ~13 y), low-poly proxy + one subdivision, ~12k tris, scaled to 1.25 m |
+| Slender ~6.5-head teen, skinned mesh | MakeHuman/MPFB2 CC0 base (male, ~13 y), low-poly proxy + one subdivision: 6.4 heads, 1.23 m in game, ~19k tris for body + clothes + props, no textures |
 | Real skeleton + clips | MPFB "game_engine" skeleton (53 bones); clips authored in Blender by script (`art/boy/`), exported as GLB; Godot `AnimationTree` mixes them |
 | Natural gait, no sliding | Walk/run cycles with contact–down–passing–up keys, heel strike, toe-off, pelvis drop/rotation and counter-rotating shoulders; playback is phase-driven from the real ground speed (stride-matched) |
 | Simple modeled clothes | Shell meshes offset from the body: white tank top, open red vest, yellow shorts with flared hem, flip-flops; separate volumetric hair and a woven straw hat |
 | Soft smooth shading | Custom character shader: wrap diffuse, soft terminator, cool ambient, warm ground bounce, faint rim; procedural face drawn in shader (blink / sleep / smile) |
-| High camera | Explore camera pitch ~58°, longer focal length |
-| Low sun, long soft shadows, haze | Lower sun, soft PCF shadows, cool shadow tint, light fog and a muted grade |
-| Sand grain, footprints, wet band | Terrain shader: grain noise, darker wet band driven by the wash, footprint decals stamped where the feet plant |
-| Milky jade water, crisp foam line, flecks | Water shader rewritten: opaque-ish jade gradient by depth, one thin wavy foam line + faint secondary line, scattered flecks |
-| Ringed palm trunks | Palm trunks rebuilt as stacked flared rings with dark grooves |
+| High camera | Explore camera pitch 56° (0.98 rad), vertical FOV 36° landscape / 44° portrait; foliage between camera and kid is dithered out |
+| Low sun, long soft shadows, haze | Sun at 38° elevation, shadow blur 2.5, cool sky ambient, light fog, grade: saturation 0.85 / contrast 0.92 |
+| Sand grain, footprints, wet band | Terrain shader: grain speckle + mottling, darker cooler wet band above the highest wash, flip-flop footprints (24-slot ring buffer stamped on each sand footstep, fade after 45 s) |
+| Milky jade water, crisp foam line, flecks | Water: opaque-ish jade gradient by depth (alpha 0.62 at the shore → 0.97), low specular; the crisp wavy foam line is the wash front drawn on the sand (slides up and down); faint second line rolls in each surf cycle; drifting flecks |
+| Ringed palm trunks | 13 flared 8-sided rings per trunk, warm grey-brown, darker grooves |
+
+## 4. Known gaps vs. the reference
+
+- The reference character has hand-painted-looking texture detail and a backpack; our boy keeps
+  flat per-material colours (no textures, to stay light on iPhone).
+- Our island keeps its palms, hut, dock and props, so the frame is busier than the reference's
+  open beach; the see-through dither is visible when a crown is between camera and kid.
+- The face is drawn by the shader on a MakeHuman head: it reads well from the game camera but in
+  extreme close-ups the head shape is closer to "realistic teen" than "cute".
