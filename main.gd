@@ -3091,6 +3091,53 @@ func _video_seg(seg: String) -> void:
 				await _wait(1.2)
 			_free_cam()
 
+		"turn12":
+			# turning on the spot: stick flicks of 180 / 90 / 135 degrees from a stand, a reversal out of a
+			# walk, the 180 again in slow motion, then the same in the game camera
+			var push := func(dirv: Vector3, mag: float, dur: float) -> void:
+				var fwd := Vector3(-sin(ex_yaw), 0, -cos(ex_yaw))
+				var right := Vector3(cos(ex_yaw), 0, -sin(ex_yaw))
+				demo_input = Vector2(dirv.dot(right), -dirv.dot(fwd)) * mag
+				await _wait(dur)
+				demo_input = Vector2.ZERO
+			var g0 := island.shore_pt(-1.2, 2.4)
+			var gd := (island.shore_pt(-1.0, 2.4) - g0).normalized()
+			var sd := gd.cross(Vector3.UP)
+			var sea_side := Island.dir_at(-1.2)
+			for view in ["side", "slow", "game"]:
+				_place(g0, atan2(-gd.x, -gd.z))
+				ex_yaw = face_yaw
+				_snap_cam_now()
+				if view == "game":
+					_free_cam()
+				else:
+					demo_cam = true
+					demo_track = [atan2(sea_side.x, sea_side.z) + (0.35 if view == "side" else -0.3), 0.16, 3.2, 0.55, true]
+				await _wait(0.8)
+				if view == "slow":
+					_toast("慢放 0.4×：原地转身 180°", 1.6)
+					Engine.time_scale = 0.4
+					await push.call(-gd, 0.45, 0.5)
+					await _wait(1.6)
+					Engine.time_scale = 1.0
+					await _wait(0.5)
+					continue
+				_toast("原地转身 180°", 1.2)
+				await push.call(-gd, 0.45, 0.4)
+				await _wait(1.8)
+				_toast("左转 90°", 1.0)
+				await push.call(sd, 0.45, 0.4)
+				await _wait(1.5)
+				_toast("右后方 135°", 1.0)
+				await push.call((-sd + gd).normalized(), 0.45, 0.4)
+				await _wait(1.8)
+				_toast("走着突然掉头", 1.2)
+				var f := Vector3(-sin(face_yaw), 0, -cos(face_yaw))
+				await push.call(f, 0.6, 1.4)
+				await push.call(-f, 0.6, 1.6)
+				await _wait(1.2)
+			_free_cam()
+
 		"gait10":
 			# walk -> run -> stop seen from the front, then side-on, then a zig-zag (turns) in the game camera
 			for view in ["front", "side", "game"]:
