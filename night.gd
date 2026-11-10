@@ -111,6 +111,7 @@ func build(island: Island) -> void:
 	flies.material_override = fly_mat
 	flies.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	flies.extra_cull_margin = 2.0
+	flies.layers = 1 | WaterReflection.SKIP_LAYER
 	add_child(flies)
 	apply(0.0, Vector3.ZERO, Vector3(0, 0.47, -0.88), 0.0)
 

@@ -92,6 +92,7 @@ func _sparks() -> void:
 	p.color_ramp = g
 	p.position = Vector3(0, 0.25, 0)
 	p.local_coords = false
+	p.layers = 1 | 16
 	add_child(p)
 
 func _smoke() -> void:
@@ -119,6 +120,7 @@ func _smoke() -> void:
 	p.color_ramp = g
 	p.position = Vector3(0, 0.95, 0)
 	p.local_coords = false
+	p.layers = 1 | 16
 	add_child(p)
 
 func _process(delta: float) -> void:

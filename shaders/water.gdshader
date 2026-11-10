@@ -22,6 +22,7 @@ uniform float night = 0.0;
 uniform sampler2D refl_tex : source_color, filter_linear, repeat_disable, hint_default_black;
 uniform float refl_on = 0.0;
 uniform float refl_gain = 1.0;
+uniform float refl_guard = 0.1;
 // night lights that streak across the waves: xyz, w = strength (0 off); rgb colour
 uniform vec4 lamp_pos[12];
 uniform vec4 lamp_col[12];
@@ -153,12 +154,19 @@ void fragment() {
 	float fr = 0.02 + 0.98 * pow(1.0 - clamp(dot(nw, vw), 0.0, 1.0), 5.0);
 	float rk = 0.0;
 	if (refl_on > 0.5) {
-		// the mirrored scene, shifted by how far the wave normal leans (in screen space) and faded towards
-		// the screen edges where the mirror image has nothing to show
+		// the mirrored scene, shifted by how far the wave normal leans (in screen space). The mirror image is
+		// overscanned by refl_guard each side and the shift kept inside that band, so it never runs off the
+		// image at a screen edge; what still comes near its border blends into a plain sky
 		vec3 n0 = (VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
 		vec2 off = (NORMAL.xy - n0.xy) * vec2(0.22, -0.22);
-		vec2 ruv = vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y) + off;
-		vec3 R = texture(refl_tex, clamp(ruv, vec2(0.002), vec2(0.998))).rgb;
+		float ol = length(off);
+		off *= min(1.0, refl_guard * 0.8 / max(ol, 1e-5));
+		vec2 ruv = 0.5 + (vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y) + off - 0.5) / (1.0 + 2.0 * refl_guard);
+		vec3 R = texture(refl_tex, clamp(ruv, vec2(0.001), vec2(0.999))).rgb;
+		vec2 eb = min(ruv, 1.0 - ruv);
+		float ek = smoothstep(0.0, 0.012, min(eb.x, eb.y));
+		vec3 fb = mix(c_sky, mix(vec3(0.09, 0.14, 0.25), vec3(0.025, 0.05, 0.13), smoothstep(0.0, 0.5, max(rw.y, 0.0))), night);
+		R = mix(fb, R, ek);
 		rk = clamp(fr * 1.6 + 0.07, 0.0, 1.0) * (1.0 - foam_v) * refl_gain;
 		col *= 1.0 - rk;
 		emis += R * rk;

@@ -61,6 +61,7 @@ var pinch_d := 0.0
 var mouse_drag := false
 var dragging := false
 var demo_cam := false
+var demo_nocut := false   # showcase stills of a prop: no see-through cut-out towards the boy
 var ex_yaw := 0.0
 # high, slightly telephoto follow camera (the reference looks down at ~55-60 degrees)
 var ex_pitch := 0.98
@@ -72,6 +73,8 @@ var player: Node3D
 var boy: Boy
 var face_yaw := 0.0
 var move_vel := Vector3.ZERO
+var spot_turning := false
+var spot_rate := 0.0
 var ground_y := 0.0
 var cur_speed := 0.0
 var wading := false
@@ -147,7 +150,7 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v11"
+var shot_dir := "v12"
 var night_k := 0.0
 var night_on := false
 var saved_night := false
@@ -323,6 +326,10 @@ func _build_environment() -> void:
 	sun.shadow_blur = 2.5
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
+	if is_web:
+		# phones: one shadow map pass instead of two; the far split only shaded palms 40+ m away
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+		sun.directional_shadow_max_distance = 50.0
 	add_child(sun)
 	camera = Camera3D.new()
 	camera.fov = 55.0
@@ -363,6 +370,7 @@ func _build_stone() -> void:
 		d.mesh = dot
 		d.material_override = dm
 		d.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		d.layers = 1 | WaterReflection.SKIP_LAYER
 		d.visible = false
 		add_child(d)
 		preview_dots.append(d)
@@ -382,6 +390,8 @@ func _build_birds() -> void:
 		body.mesh = sm
 		body.scale = Vector3(0.8, 0.7, 2.0)
 		body.material_override = white
+		body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		body.layers = 1 | WaterReflection.SKIP_LAYER
 		root.add_child(body)
 		var wings: Array = []
 		for sgn in [-1.0, 1.0]:
@@ -393,6 +403,8 @@ func _build_birds() -> void:
 			pm.size = Vector3(0.55, 0.02, 0.28)
 			w.mesh = pm
 			w.material_override = grey
+			w.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			w.layers = 1 | WaterReflection.SKIP_LAYER
 			w.position = Vector3(0.28 * sgn, 0, 0)
 			w.rotation = Vector3(0, 0, 0)
 			piv.add_child(w)
@@ -594,29 +606,84 @@ func _build_ui() -> void:
 		small.offset_top = 110; small.offset_left = 16; small.offset_right = -16
 		start_overlay.add_child(small)
 	get_viewport().size_changed.connect(_layout_ui)
+	bottom_box.resized.connect(_fit_action)
 	_layout_ui()
 
 func _tall() -> bool:
 	var vs := get_viewport().get_visible_rect().size
 	return vs.x < vs.y
 
-## portrait: smaller title, action button a bit higher; landscape: roomier
+## Screen insets (notch / Dynamic Island, home indicator, rounded corners) in UI units: top, right,
+## bottom, left. The page asks for viewport-fit=cover and reports env(safe-area-inset-*) (export
+## head_include); `--safe=t,r,b,l` (CSS px) fakes a phone's insets for desktop checks.
+var safe := Vector4.ZERO
+var safe_css := ""
+var safe_t := 0.0
+
+func _read_safe_area() -> bool:
+	var raw := ""
+	var css_h := float(DisplayServer.window_get_size().y)
+	if OS.has_feature("web"):
+		raw = str(JavaScriptBridge.eval("window.__safeArea ? window.__safeArea() : ''", true))
+	else:
+		for a0 in OS.get_cmdline_user_args():
+			if a0.begins_with("--safe="):
+				raw = a0.substr(7) + ",0," + str(css_h)
+	if raw == safe_css:
+		return false
+	safe_css = raw
+	var v := raw.split(",")
+	if v.size() < 6 or float(v[5]) <= 0.0:
+		safe = Vector4.ZERO
+		return true
+	var k := get_viewport().get_visible_rect().size.y / float(v[5])
+	safe = Vector4(float(v[0]), float(v[1]), float(v[2]), float(v[3])) * k
+	return true
+
+## The context buttons sit bottom right; on a tall screen the hint spans the width, so they stand on top of it.
+func _fit_action() -> void:
+	var tall := _tall()
+	var base := 56.0 if tall else 36.0
+	if tall and is_instance_valid(bottom_box) and lbl_hint.text != "":
+		base = maxf(base, 14.0 + bottom_box.size.y + 14.0)
+	action_btn.offset_right = -24 - safe.y
+	action_btn.offset_left = action_btn.offset_right - 190
+	action_btn.offset_bottom = -base - safe.z
+	action_btn.offset_top = action_btn.offset_bottom - 94
+	lie_btn.offset_left = action_btn.offset_left; lie_btn.offset_right = action_btn.offset_right
+	lie_btn.offset_bottom = action_btn.offset_top - 16
+	lie_btn.offset_top = lie_btn.offset_bottom - 80
+
+## portrait: smaller title, action button a bit higher; landscape: roomier. Everything anchored to an
+## edge keeps clear of the safe-area insets.
 func _layout_ui() -> void:
 	if not is_instance_valid(action_btn):
 		return
+	_read_safe_area()
+	var st := safe.x
+	var sr := safe.y
+	var sb := safe.z
+	var sl := safe.w
 	var tall := _tall()
 	lbl_title.add_theme_font_size_override("font_size", 24 if tall else 26)
 	lbl_stats.add_theme_font_size_override("font_size", 28 if tall else 32)
-	top_box.offset_right = -184
-	action_btn.offset_top = -150 if tall else -130
-	action_btn.offset_bottom = -56 if tall else -36
-	lie_btn.offset_left = -214; lie_btn.offset_right = -24
-	lie_btn.offset_bottom = action_btn.offset_top - 16
-	lie_btn.offset_top = lie_btn.offset_bottom - 80
+	top_box.offset_left = 18 + sl
+	top_box.offset_top = 12 + st
+	top_box.offset_right = -184 - sr
+	right_box.offset_top = 14 + st
+	right_box.offset_right = -14 - sr
+	right_box.offset_left = right_box.offset_right - 162
+	_fit_action()
 	joy.anchor_top = 0.6 if tall else 0.45
 	joy.anchor_right = 0.62 if tall else 0.45
+	joy.offset_left = sl
+	joy.offset_bottom = -sb
 	joy.radius = 66.0 if tall else 72.0
-	tip_box.offset_top = 170 if tall else 120
+	joy.lift = 62.0 if tall else 0.0
+	bottom_box.offset_left = 18 + sl
+	bottom_box.offset_right = -18 - sr
+	bottom_box.offset_bottom = -14 - sb
+	tip_box.offset_top = (170 if tall else 120) + st
 
 func _toast(t: String, dur := 1.4) -> void:
 	lbl_toast.text = t
@@ -989,7 +1056,16 @@ func _explore_tick(delta: float) -> void:
 	var right := Vector3(cos(ex_yaw), 0, -sin(ex_yaw))
 	var wish := right * inp.x - fwd * inp.y
 	var target_v := Vector3.ZERO
-	if mag > 0.05:
+	# a sharp turn from (nearly) standing is a turn on the spot: he stops, steps round, then sets off
+	var wish_yaw := atan2(-wish.x, -wish.z)
+	var need := wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0
+	var spd_now := move_vel.length()
+	if mag > 0.05 and ((absf(need) > 1.1 and spd_now < 0.4) or (absf(need) > 2.0 and spd_now < 0.9)):
+		spot_turning = true
+	if spot_turning and (mag <= 0.05 or absf(need) < 0.25):
+		spot_turning = false
+		spot_rate = 0.0
+	if mag > 0.05 and not spot_turning:
 		var spd := RUN_SPEED if running else lerpf(0.55, WALK_MAX, clampf(mag / 0.85, 0.0, 1.0))
 		if wading:
 			spd *= 0.6
@@ -1006,7 +1082,11 @@ func _explore_tick(delta: float) -> void:
 	var acc := (6.5 if move_vel.length() < WALK_MAX else 4.5) if target_v.length() > move_vel.length() else 10.0
 	move_vel = move_vel.move_toward(target_v, acc * delta)
 	# turn toward the walking direction; while turning hard, slow down a little
-	if move_vel.length() > 0.05:
+	if spot_turning:
+		var st := Boy.spot_turn(face_yaw, face_yaw + need, spot_rate, delta)
+		face_yaw = st[0]
+		spot_rate = st[1]
+	elif move_vel.length() > 0.05:
 		var want_yaw := atan2(-move_vel.x, -move_vel.z)
 		var diff := absf(wrapf(want_yaw - face_yaw, -PI, PI))
 		face_yaw = lerp_angle(face_yaw, want_yaw, 1.0 - exp(-delta * 9.0))
@@ -1026,6 +1106,8 @@ func _explore_tick(delta: float) -> void:
 	player.rotation.y = face_yaw
 	wading = not _on_dock(to.x, to.z) and h < -0.03
 	boy.wading = wading
+	boy.pivoting = spot_turning
+	boy.turn_ahead = wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0
 	boy.set_move(cur_speed)
 	if cur_speed < 0.05:
 		boy.set_idle()
@@ -1613,6 +1695,7 @@ func _splash(p: Vector3, strength: float, big: bool, vel: Vector3) -> void:
 	crown.emission_ring_height = 0.02
 	add_child(crown)
 	crown.global_position = p
+	crown.layers = 1 | WaterReflection.SKIP_LAYER
 	crown.emitting = true
 	get_tree().create_timer(2.0).timeout.connect(crown.queue_free)
 	if vel.length() > 0.5:
@@ -1632,6 +1715,7 @@ func _splash(p: Vector3, strength: float, big: bool, vel: Vector3) -> void:
 		spray.scale_amount_max = 0.9
 		add_child(spray)
 		spray.global_position = p
+		spray.layers = 1 | WaterReflection.SKIP_LAYER
 		spray.emitting = true
 		get_tree().create_timer(1.5).timeout.connect(spray.queue_free)
 	_add_ripple(p, 1.0 if big else (0.75 if strength > 0.4 else 0.3))
@@ -1803,6 +1887,8 @@ func _update_night(delta: float, force := false) -> void:
 	island.glow_mat.set_shader_parameter("boost", lerpf(1.5, 3.4, k))
 	island.cloud_mat.set_shader_parameter("tint", Color(1, 1, 1).lerp(Color(0.13, 0.16, 0.26), k))
 	island.campfire.night = k
+	for tn in island.torches:
+		tn.night = k
 	for b in birds:
 		(b["node"] as Node3D).visible = k < 0.5
 	if night_amb:
@@ -1872,6 +1958,12 @@ func _update_audio(_delta: float) -> void:
 # ------------------------------------------------------------------ loop
 
 func _process(delta: float) -> void:
+	if OS.has_feature("web"):
+		safe_t += delta
+		if safe_t > 1.0:
+			safe_t = 0.0
+			if _read_safe_area():
+				_layout_ui()
 	gt += delta
 	island.set_time(gt)
 	var tall := _tall()
@@ -1907,6 +1999,10 @@ func _process(delta: float) -> void:
 	# the stick only exists while exploring; never leave it hidden (or shown) after a mode change
 	if joy.visible != (mode == Mode.EXPLORE):
 		_update_ui()
+	if mode != Mode.EXPLORE:
+		spot_turning = false
+		boy.pivoting = false
+		boy.turn_ahead = 0.0
 	match mode:
 		Mode.EXPLORE:
 			_explore_tick(delta)
@@ -1935,7 +2031,10 @@ func _process(delta: float) -> void:
 		player.rotation.y = lerp_angle(player.rotation.y, aim_yaw, 1.0 - exp(-delta * 10.0))
 	_update_camera(delta)
 	var focus := player.global_position + Vector3(0, 0.7, 0)
+	if demo_nocut:
+		focus.y = -100.0
 	island.foliage_mat.set_shader_parameter("focus", focus)
+	island.leaf_mat.set_shader_parameter("focus", focus)
 	island.static_mat.set_shader_parameter("focus", focus)
 	_update_prints()
 	_update_audio(delta)
@@ -2117,7 +2216,9 @@ func _apply_camera() -> void:
 # ------------------------------------------------------------------ water reflection
 
 var refl: WaterReflection
-var refl_level := 0      # 0 full, 1 lighter (smaller, every other frame), 2 off (the shader's approximations)
+## 0 full, 1 lighter reflection (smaller, every other frame), 2 reflection off (the shader's approximations),
+## 3 also no sun shadows (the kid keeps his blob shadow)
+var refl_level := 0
 var refl_auto := true
 var fps_t := 0.0
 var fps_n := 0
@@ -2148,9 +2249,12 @@ func _build_reflection() -> void:
 	add_child(refl)
 	refl.setup(camera, sun)
 	island.water_mat.set_shader_parameter("refl_tex", refl.texture())
+	island.water_mat.set_shader_parameter("refl_guard", WaterReflection.GUARD)
 	var want := _opt("refl", "auto")
 	refl_auto = want == "auto"
 	_set_refl_level({"0": 2, "low": 1}.get(want, 0))
+	if _opt("shadow") == "0":
+		_set_refl_level(3)
 	# lights whose glitter streaks across the waves at night: the campfire, the lighthouse, then the lamps
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
@@ -2180,8 +2284,10 @@ func _set_refl_level(l: int) -> void:
 	refl.every = 1 if l == 0 else 2
 	refl.set_enabled(l < 2)
 	island.water_mat.set_shader_parameter("refl_on", 1.0 if l < 2 else 0.0)
+	sun.shadow_enabled = l < 3
 
-## a phone that cannot keep up drops the reflection to the lighter setting, then to the approximations
+## a phone that cannot keep up drops the reflection to the lighter setting, then to the approximations,
+## then the sun's shadow maps
 func _watch_fps(delta: float) -> void:
 	fps_t += delta
 	fps_n += 1
@@ -2192,11 +2298,11 @@ func _watch_fps(delta: float) -> void:
 	fps_n = 0
 	# two slow windows in a row (4 s), so one hitch such as a first-use shader compile does not count
 	fps_low = fps_low + 1 if fps_avg < 26.0 else 0
-	if refl_auto and not demo_mode and gt > 5.0 and fps_low >= 2 and refl_level < 2:
+	if refl_auto and not demo_mode and gt > 5.0 and fps_low >= 2 and refl_level < 3:
 		_set_refl_level(refl_level + 1)
 		fps_low = 0
 	if lbl_fps:
-		lbl_fps.text = "%.0f fps · 倒影 %s" % [fps_avg, ["高", "低", "关"][refl_level]]
+		lbl_fps.text = "%.0f fps · 倒影 %s" % [fps_avg, ["高", "低", "关", "关 · 无阴影"][refl_level]]
 		var dc := Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME
 		var vt := Viewport.RENDER_INFO_TYPE_VISIBLE
 		print("FPS %.1f refl %d night %d draws %d+%d size %s" % [fps_avg, refl_level, int(night_on),
@@ -2689,6 +2795,77 @@ func _v11_sequence(pre: String, part: String) -> void:
 			_shot(pre + "54_log_%d_outside" % i)
 		_free_cam()
 
+## v12 stills: the reflection at the screen edges, day and night, round 360 degrees and zoomed in / out
+func _v12_sequence(pre: String, part: String) -> void:
+	if part == "" or part == "bush":
+		var best: Array = island.bush_spots[0]
+		for b: Array in island.bush_spots:
+			if _hd(b[0], island.hut_pos) < _hd(best[0], island.hut_pos) and _hd(b[0], island.hut_pos) > 4.5:
+				best = b
+		var bp: Vector3 = best[0]
+		var bs: float = best[1]
+		var away := Vector3(bp.x - island.hut_pos.x, 0, bp.z - island.hut_pos.z).normalized()
+		var yaw := atan2(away.x, away.z)
+		_place(bp + away * (0.9 + 0.5 * bs), yaw)
+		_fixed_cam(bp + Vector3(0, 0.55 * bs, 0), yaw + 0.5, 0.2, 2.6 * bs)
+		await _wait(0.6)
+		_shot(pre + "80_bush_close")
+		_fixed_cam(bp + Vector3(0, 0.45 * bs, 0), yaw + 2.4, 0.08, 2.0 * bs)
+		await _wait(0.4)
+		_shot(pre + "81_bush_close_side")
+		_fixed_cam(bp + away * 1.2 + Vector3(0, 0.15, 0), yaw - 1.2, 0.05, 1.6)
+		await _wait(0.4)
+		_shot(pre + "82_grass_low")
+		_free_cam()
+		_snap_explore_cam()
+		await _wait(1.0)
+		_shot(pre + "83_bush_game_view")
+
+	if part == "" or part == "edges":
+		for night in [false, true]:
+			var tag := "night" if night else "day"
+			if night:
+				_toggle_night()
+				await _wait(2.9)
+			var c := Vector3(0, 1.0, island.dock_end_z + 1.0)
+			for k in 8:
+				_fixed_cam(c, k * TAU / 8.0, 0.1, 9.0)
+				await _wait(0.35)
+				_shot(pre + "70_%s_yaw%d" % [tag, k * 45])
+			for z: Array in [[3.5, 0.06, "near"], [30.0, 0.16, "far"]]:
+				_fixed_cam(c, 0.6, z[1], z[0])
+				await _wait(0.35)
+				_shot(pre + "71_%s_zoom_%s" % [tag, z[2]])
+			_fixed_cam(Vector3(0, 1.5, island.dock_start_z - 4.0), PI + 0.15, 0.07, 30.0)
+			await _wait(0.35)
+			_shot(pre + "72_%s_low_from_sea" % tag)
+			if night:
+				_toggle_night()
+				await _wait(2.9)
+		_free_cam()
+	if part == "" or part == "torch":
+		var c := island.campfire_pos
+		_place(c + Vector3(5.0, 0, 5.0), 0.0)
+		demo_nocut = true
+		for night in [false, true]:
+			var tag := "night" if night else "day"
+			if night:
+				_toggle_night()
+				await _wait(2.9)
+			var tp := island.torches[0].global_position
+			var out := Vector3(tp.x - c.x, 0, tp.z - c.z).normalized()
+			var yaw := atan2(out.x, out.z)
+			for sh: Array in [[tp + Vector3(0, -0.05, 0), yaw + PI - 0.5, 0.12, 0.9, "90_%s_torch_head"], [tp + Vector3(0, -0.05, 0), yaw + 0.6, 0.1, 0.9, "90_%s_torch_head_back"], [tp + Vector3(0, -0.8, 0), yaw + PI - 0.9, 0.1, 2.6, "91_%s_torch_full"], [c + Vector3(0, 0.6, 0), yaw + 1.3, 0.22, 7.5, "92_%s_torches_camp"]]:
+				var cy: float = sh[1]
+				_fixed_cam(sh[0], cy, sh[2], sh[3])
+				await _wait(0.5)
+				_shot(pre + (sh[4] as String) % tag)
+			if night:
+				_toggle_night()
+				await _wait(2.9)
+		demo_nocut = false
+		_free_cam()
+
 ## gameplay follow camera along the beach (style checks): walk, run, then stand
 func _explore_sequence(pre: String) -> void:
 	var a := island.shore_pt(-1.3, 2.2)
@@ -2729,6 +2906,8 @@ func _run_demo4() -> void:
 				await _v8_sequence(pre)
 			elif what.begins_with("v9"):
 				await _v9_sequence(pre, what.substr(2).trim_prefix("_"))
+			elif what.begins_with("v12"):
+				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
 				await _v11_sequence(pre, what.substr(3).trim_prefix("_"))
 			else:
@@ -2909,6 +3088,52 @@ func _video_seg(seg: String) -> void:
 				await _walk_to(gm, false, 5.0)
 				await _walk_to(g1, true, 4.0)
 				_stop_walk()
+				await _wait(1.2)
+			_free_cam()
+
+		"turn12":
+			# turning on the spot: stick flicks of 180 / 90 / 135 degrees from a stand, a reversal out of a
+			# walk, the 180 again in slow motion, then the same in the game camera
+			var push := func(dirv: Vector3, mag: float, dur: float) -> void:
+				var fwd := Vector3(-sin(ex_yaw), 0, -cos(ex_yaw))
+				var right := Vector3(cos(ex_yaw), 0, -sin(ex_yaw))
+				demo_input = Vector2(dirv.dot(right), -dirv.dot(fwd)) * mag
+				await _wait(dur)
+				demo_input = Vector2.ZERO
+			# mid-dock: open, flat, and the camera can stand off to the side over the water
+			var g0 := Vector3(0.0, 0.0, lerpf(island.dock_start_z, island.dock_end_z, 0.45))
+			var gd := Vector3(0, 0, signf(island.dock_end_z - island.dock_start_z))
+			var sd := gd.cross(Vector3.UP)
+			for view in ["side", "slow", "game"]:
+				_place(g0, atan2(-gd.x, -gd.z))
+				ex_yaw = face_yaw
+				_snap_cam_now()
+				if view == "game":
+					_free_cam()
+				else:
+					demo_cam = true
+					demo_track = [atan2(sd.x, sd.z) + (0.45 if view == "side" else -0.35), 0.16, 3.2, 0.55, true]
+				await _wait(0.8)
+				if view == "slow":
+					_toast("慢放 0.4×：原地转身 180°", 1.6)
+					Engine.time_scale = 0.4
+					await push.call(-gd, 0.45, 0.5)
+					await _wait(1.6)
+					Engine.time_scale = 1.0
+					await _wait(0.5)
+					continue
+				_toast("原地转身 180°", 1.2)
+				await push.call(-gd, 0.45, 0.4)
+				await _wait(1.8)
+				_toast("左转 90°", 1.0)
+				await push.call(sd, 0.45, 0.4)
+				await _wait(1.5)
+				_toast("右后方 135°", 1.0)
+				await push.call((-sd + gd).normalized(), 0.45, 0.4)
+				await _wait(1.8)
+				_toast("走着突然掉头", 1.2)
+				await push.call(gd, 0.6, 1.4)
+				await push.call(-gd, 0.6, 1.6)
 				await _wait(1.2)
 			_free_cam()
 
