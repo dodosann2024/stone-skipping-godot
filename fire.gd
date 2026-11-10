@@ -1,0 +1,128 @@
+class_name Campfire
+extends Node3D
+## The campfire's live parts: layered flame tongues, a glowing coal bed, rising sparks, a thin smoke
+## plume and a warm flickering light. All cheap enough for phones (a few quads, CPU particles, one light).
+
+var light: OmniLight3D
+var flames: Array[MeshInstance3D] = []
+var t := 0.0
+
+func build() -> void:
+	var flame_sh: Shader = load("res://shaders/flame.gdshader")
+	var quad := QuadMesh.new()
+	quad.size = Vector2(1, 1)
+	quad.center_offset = Vector3(0, 0.5, 0)
+	# [offset, width, height, seed, speed, strength, tint]
+	var layers := [
+		[Vector3(0.0, 0.0, 0.0), 0.85, 1.3, 0.0, 1.5, 0.4, Color(1.0, 0.6, 0.45)],
+		[Vector3(0.13, 0.0, 0.07), 0.52, 0.95, 1.7, 1.9, 0.55, Color(1.0, 0.85, 0.75)],
+		[Vector3(-0.12, 0.0, -0.05), 0.55, 1.05, 3.3, 1.75, 0.55, Color(1.0, 0.85, 0.75)],
+		[Vector3(0.02, 0.0, -0.11), 0.44, 0.78, 5.1, 2.2, 0.6, Color(1, 0.9, 0.8)],
+		[Vector3(0.0, 0.0, 0.04), 0.34, 0.58, 7.9, 2.5, 0.75, Color(1.0, 1.0, 0.9)],
+	]
+	for l: Array in layers:
+		var mi := MeshInstance3D.new()
+		mi.mesh = quad
+		var mat := ShaderMaterial.new()
+		mat.shader = flame_sh
+		mat.set_shader_parameter("seed", l[3])
+		mat.set_shader_parameter("speed", l[4])
+		mat.set_shader_parameter("strength", l[5])
+		mat.set_shader_parameter("tint", l[6])
+		mi.material_override = mat
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.position = (l[0] as Vector3) + Vector3(0, 0.1, 0)
+		mi.scale = Vector3(l[1], l[2], 1.0)
+		mi.extra_cull_margin = 1.0
+		add_child(mi)
+		flames.append(mi)
+	# coal bed
+	var bed := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(0.95, 0.95)
+	bed.mesh = pm
+	var bm := ShaderMaterial.new()
+	bm.shader = load("res://shaders/ember_bed.gdshader")
+	bed.material_override = bm
+	bed.position = Vector3(0, 0.035, 0)
+	add_child(bed)
+	_sparks()
+	_smoke()
+	light = OmniLight3D.new()
+	light.light_color = Color(1.0, 0.62, 0.3)
+	light.omni_range = 6.5
+	light.omni_attenuation = 1.4
+	light.light_energy = 1.6
+	light.shadow_enabled = false
+	light.position = Vector3(0, 0.55, 0)
+	add_child(light)
+
+func _particle_mat(additive: bool) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = load("res://shaders/particle_add.gdshader" if additive else "res://shaders/particle.gdshader")
+	return m
+
+func _sparks() -> void:
+	var p := CPUParticles3D.new()
+	p.amount = 26
+	p.lifetime = 1.7
+	p.randomness = 0.6
+	p.lifetime_randomness = 0.5
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	p.emission_sphere_radius = 0.22
+	p.direction = Vector3.UP
+	p.spread = 22.0
+	p.initial_velocity_min = 0.5
+	p.initial_velocity_max = 1.5
+	p.gravity = Vector3(0, 0.5, 0)
+	p.damping_min = 0.3
+	p.damping_max = 0.9
+	p.tangential_accel_min = -0.8
+	p.tangential_accel_max = 0.8
+	p.scale_amount_min = 0.6
+	p.scale_amount_max = 1.3
+	var q := QuadMesh.new()
+	q.size = Vector2(0.05, 0.05)
+	q.material = _particle_mat(true)
+	p.mesh = q
+	var g := Gradient.new()
+	g.offsets = PackedFloat32Array([0.0, 0.35, 0.75, 1.0])
+	g.colors = PackedColorArray([Color(1.0, 0.75, 0.3, 1.0), Color(1.0, 0.45, 0.08, 1.0), Color(0.9, 0.22, 0.04, 0.8), Color(0.4, 0.05, 0.0, 0.0)])
+	p.color_ramp = g
+	p.position = Vector3(0, 0.25, 0)
+	p.local_coords = false
+	add_child(p)
+
+func _smoke() -> void:
+	var p := CPUParticles3D.new()
+	p.amount = 12
+	p.lifetime = 4.5
+	p.lifetime_randomness = 0.3
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	p.emission_sphere_radius = 0.12
+	p.direction = Vector3.UP
+	p.spread = 12.0
+	p.initial_velocity_min = 0.35
+	p.initial_velocity_max = 0.55
+	p.gravity = Vector3(0.12, 0.05, 0.05)   # drifts off with the sea breeze
+	p.damping_min = 0.05
+	p.damping_max = 0.1
+	var q := QuadMesh.new()
+	q.size = Vector2(0.6, 0.6)
+	q.material = _particle_mat(false)
+	q.material.set_shader_parameter("grow", Vector2(0.35, 1.6))
+	p.mesh = q
+	var g := Gradient.new()
+	g.offsets = PackedFloat32Array([0.0, 0.15, 0.6, 1.0])
+	g.colors = PackedColorArray([Color(0.5, 0.47, 0.45, 0.0), Color(0.55, 0.53, 0.52, 0.2), Color(0.72, 0.72, 0.72, 0.1), Color(0.85, 0.85, 0.85, 0.0)])
+	p.color_ramp = g
+	p.position = Vector3(0, 0.95, 0)
+	p.local_coords = false
+	add_child(p)
+
+func _process(delta: float) -> void:
+	t += delta
+	# two incommensurate wobbles plus a quick shimmer: reads as a living fire, never as a strobe
+	var f := 0.55 * sin(t * 7.3) + 0.3 * sin(t * 12.9 + 1.3) + 0.15 * sin(t * 23.1 + 0.4)
+	light.light_energy = 1.55 + 0.35 * f
+	light.position = Vector3(0.04 * sin(t * 5.1), 0.55 + 0.04 * f, 0.04 * cos(t * 4.3))

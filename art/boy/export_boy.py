@@ -4,7 +4,7 @@ import posekit, clips
 from mathutils import Vector
 
 FPS = 30
-LOOPS = {"idle", "walk", "run", "hammock_sleep", "sun_rest"}
+LOOPS = {"idle", "walk", "run", "hammock_sleep", "sun_rest", "seat_rest"}
 RIGID = ("Hat", "Glasses", "Stone")      # bone-parented props (BoneAttachment3D in Godot)
 
 
@@ -86,6 +86,8 @@ def bake_clips(rig_obj, meta):
         todo.append((k, f, 4.0 if k in LOOPS else 1.0))
     for k, f in clips.towel_clips(rig).items():
         todo.append((k, f, 4.0 if k in LOOPS else 1.0))
+    for k, f in clips.seat_clips(rig).items():
+        todo.append((k, f, 4.0 if k in LOOPS else 1.0))
     meta["clips"] = {}
     for name, fn, L in todo:
         frames = int(round(L * FPS))
@@ -95,7 +97,7 @@ def bake_clips(rig_obj, meta):
         if name in ("walk", "run"):
             g = walk if name == "walk" else run
             m.update({"period": g.T, "stride": g.S, "speed": g.S / g.T, "duty": g.duty})
-        if name.startswith("hammock") or name.startswith("sun"):
+        if name.startswith(("hammock", "sun", "seat")):
             m["pelvis"] = [list(p) for p in info["pelvis"]]
         if name.startswith("throw"):
             fr = int(round(clips.T_RELEASE * FPS))

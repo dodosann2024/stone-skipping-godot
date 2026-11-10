@@ -1,7 +1,49 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v7 走路不顺拐 + 侧手打水漂 + 浪冲脚印
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v8 手臂前送 + 实体碰撞 + 坐长椅 / 木头 + 真实篝火 + 涂鸦路牌
 
 低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩由 Blender 脚本（`art/boy/`）建模、绑定骨骼、制作动画后导出 glTF；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+## v8 改动
+在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（导出文件改名为 `game_v8.*`）。截图与视频见 `screenshots/v8/`。
+
+### 1. 投掷：右手向前送出去，再甩到身体左侧（`clips.throw_stand` / `clips.throw_crouch`）
+- 按侧手投掷的动力链重新做了关键帧：跨步踩实 → 骨盆转开 → 上身跟转 → 肩关节由外旋转为内旋（手落后于肘，“甩鞭”）→ 肘伸直 → 前臂 / 手腕甩出 → 手臂在身体前方减速并横扫到左侧。
+- 出手（`anim_t` 0.15）之后新增“前送”两帧（0.21 / 0.26）：手臂伸直、指向前方水面，手离骨盆向前约 0.75 m，比 v7 远很多；之后才横扫（0.32）到左髋（0.46），最后收回待机。半蹲版本同样，手的高度贴近水面。
+- 出手时间与出手高度不变（`--sim`：站立 0.51 m，半蹲 0.23 m），同力度 / 角度的弹跳次数与 v7 基本一致。
+
+### 2. 实体碰撞：不再穿过东西
+- `island.gd` 为每个实体道具登记“走路墙”：圆柱（椰子树、石头、灯塔、篝火、木桩、灯柱、火把、灌木……）、胶囊（坐木、小船、吊床、护栏绳、渔网、冲浪板……）、旋转长方体（长椅、躺椅、木箱、钓鱼小屋及台阶、码头下方）。每面墙带高度范围，所以能在码头上走、在浅水里蹚水，但不能从码头下面穿过去。
+- `main.gd` 用 3 m 空间网格查附近的墙，以小男孩半径 0.19 m 做推出（4 次松弛迭代），移动时依次尝试“原方向 / 只沿 x / 只沿 z”，于是撞到斜面会沿着它顺滑滑开，不抖、不卡住；万一已经卡在里面会被平滑推出。
+- `--selftest` 新增碰撞测试：每种障碍（最多 2 个）先正面跑向它 1.6 s，再斜着走 2.4 s，检查最深嵌入 ≤ 1 cm、确实滑开 > 0.6 m、没有来回抖动。25 种全部通过（最深嵌入 0.000 m，回退 0 次）；只有鱼竿立在码头尽头的栏杆外，走不到。
+
+### 3. 坐长椅 / 篝火边的木头 / 躺椅边
+- 走到蓝色长椅、篝火边的三根木头或躺椅边会出现「坐下」按钮（和吊床 / 毛巾同样的提示）。小男孩走到座位前、转身、坐下（Blender 制作的 `seat_sit`），坐着时轻轻呼吸、晃脚、东张西望（`seat_rest` 循环），轻点屏幕或「起来」站起（`seat_stand`），控制权一定回到玩家。
+- 坐下时镜头转到侧面，不会被篝火挡住；草帽保持戴在头上。
+- `--selftest` 为每个座位检查：提示出现 → 坐下 → 起身 → 能继续走。
+
+### 4. 篝火
+- 原来的橙黄色圆锥换成：5 层朝向镜头的火舌（`shaders/flame.gdshader`，噪声向上滚动，把火焰顶端撕成会闪动的火苗，外层偏红、内核偏黄白）、发红的炭床（`ember_bed.gdshader`）、烧焦的木柴搭成的小锥堆、向上飘的火星（CPUParticles3D，26 个）、少量随海风飘走的淡烟（12 个），以及一个闪烁的暖色点光源照亮周围的石头和地面。
+- 火焰用普通透明混合而非叠加：叠加在白天的沙滩上会洗成一片白，而且环境色调调整会把“透明”的黑色提亮成一个个方框。
+- 新增合成的噼啪声 `audio/fire_loop.ogg`（`tools/synth_audio.py --fire`），音量随离篝火的距离变化。
+- 开销：5 个四边形 + 38 个粒子 + 1 个点光源，适合 iPhone。
+
+### 5. 路牌：没有文字的破木板 + 打水漂涂鸦
+- 删除了文字。木板是一块旧的灰褐色木板：一角缺了，右端是断裂的毛边，有裂缝、木纹和一颗生锈的钉子，挂得有点歪；断下来的一块掉在柱子脚下，柱顶也劈开了。
+- 正面是手画的涂鸦：一个小人站在码头上扔石头，石头在水面上一跳一跳，还有一个太阳（`tools/make_sign.py` 生成 `textures/sign_board.png`），背面只有木纹。
+
+### 6. 截图与视频（`screenshots/v8/`）
+- `throw_stand_crouch.mp4`、`00_throw_strip.png`：站立和半蹲投掷，各有游戏相机和侧面视角；`27_throw_*`：各阶段静帧（蓄力 / 出手 / 前送 / 横扫 / 收手）。
+- `collision_bump.mp4`：撞椰子树、坐木、躺椅、礁石、码头（蹚水时）、长椅、篝火并沿着滑开。
+- `sit_bench_log.mp4`：坐长椅、篝火边的木头、躺椅边并站起；`25_*` / `26_*`：提示与坐姿。
+- `campfire.mp4`、`23_fire_close.png`、`24_fire_wide.png`：篝火近景。
+- `20_sign_close.png`、`21_sign_post.png`、`22_sign_back.png`：路牌。
+- `demo.mp4`：以上片段合集；`web_*`：单线程网页版在 iPhone 尺寸无头浏览器里的截图（走路、半蹲蓄力、打出 6 连跳、离开码头）。
+
+### 已知问题
+- 鱼竿在码头栏杆外，不在碰撞测试范围内（走不到）。
+- 篝火的木头放在缓坡上，坐下时身体会随地形略微倾斜几度。
+- 稳定走路时支撑脚仍有约 1 cm 的滑动（与 v7 相同）。
+- 白天点光源的效果比较弱，傍晚 / 夜里才明显。
 
 ## v7 改动
 在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（导出文件改名为 `game_v7.*`）。截图与视频见 `screenshots/v7/`。
@@ -176,7 +218,7 @@ xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resoluti
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --write-movie w.avi -- --video4=walk     # 视频片段 walk/throw/sleep/sun/getup/gait
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . -s res://dev/boy_view.gd -- --out=/tmp/pose            # 角色姿势图
 godot --headless --path . --fixed-fps 30 -s res://dev/gait_view.gd                                    # 步态滑步检查（加 --out=/tmp/g 输出帧）
-godot --headless --path . --export-release "Web" build/web/game_v6.html   # 然后复制到 docs/，index.html = game_v6.html
+godot --headless --path . --export-release "Web" build/web/game_v8.html   # 然后复制到 docs/，index.html = game_v8.html
 python3 tools/browser_check_v4.py "https://dodosann2024.github.io/stone-skipping-godot/?v=6" /tmp/web   # 模拟 iPhone 测试（含真实出声检测）
 ```
 

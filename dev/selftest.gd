@@ -1,7 +1,9 @@
 extends RefCounted
-## Regression check: every action (hammock, towel, dock throw + cheer / oops, view mode) must hand control
-## back - afterwards the joystick has to move the kid and the walk animation has to play. The walk / run
-## cycles must swing the arms contralaterally (left foot forward = right arm forward).
+## Regression check: every action (hammock, towel, benches / logs, dock throw + cheer / oops, view mode)
+## must hand control back - afterwards the joystick has to move the kid and the walk animation has to play.
+## The walk / run cycles must swing the arms contralaterally (left foot forward = right arm forward).
+## Walking into every kind of solid thing (trees, rocks, logs, hut, boats, dock...) must never overlap it,
+## and a glancing walk must slide along instead of sticking.
 ## godot --headless --path . --fixed-fps 30 -- --selftest      (exit code 0 = pass)
 
 var m: Node
@@ -136,6 +138,165 @@ func _rest(kind: String, approach: Vector3) -> void:
 	await _frames(3)
 	await _can_walk("after " + kind + " from " + str(approach.snapped(Vector3.ONE * 0.1)))
 
+var jitter := 0
+
+## steer the kid with the virtual stick towards a world direction for `sec` seconds; returns the
+## worst overlap with any solid thing seen on the way (frames where he snaps backwards go to `jitter`)
+func _drive(dir: Vector3, sec: float, run_: bool) -> float:
+	var worst := 0.0
+	jitter = 0
+	var last := Vector3.ZERO
+	var prev_p: Vector3 = m.player.position
+	m.demo_run = run_
+	for i in int(sec * 30.0):
+		var yaw: float = m.ex_yaw
+		var fwd := Vector3(-sin(yaw), 0, -cos(yaw))
+		var right := Vector3(cos(yaw), 0, -sin(yaw))
+		m.demo_input = Vector2(dir.dot(right), -dir.dot(fwd)) * (1.0 if run_ else 0.75)
+		await m.get_tree().process_frame
+		var pp: Vector3 = m.player.position
+		var stp := Vector3(pp.x - prev_p.x, 0, pp.z - prev_p.z)
+		if stp.length() > 0.004 and last.length() > 0.004 and stp.dot(last) < -0.2 * stp.length() * last.length():
+			jitter += 1
+		if stp.length() > 0.004:
+			last = stp
+		prev_p = pp
+		var pn: float = m.penetration(pp)
+		if pn > 0.01 and "--bumpdbg" in OS.get_cmdline_user_args():
+			for wi: int in m.island.walls_near(Vector2(pp.x, pp.z)):
+				var ww: Array = m.island.walls[wi]
+				var dd: float = Island.wall_dist(ww, Vector2(pp.x, pp.z)).x
+				if m._wall_hits_y(ww, pp.y) and dd < m.BOY_R:
+					print("BUMPDBG ", ww, " d ", dd, " at ", pp, " mode ", m.mode, " frame ", i)
+		worst = maxf(worst, pn)
+	m.demo_input = Vector2.ZERO
+	m.demo_run = false
+	await _frames(2)
+	return worst
+
+static func _wall_centre(w: Array) -> Vector2:
+	return ((w[1] as Vector2) + (w[2] as Vector2)) * 0.5 if w[0] == "s" else (w[1] as Vector2)
+
+static func _wall_extent(w: Array) -> float:
+	match w[0] as String:
+		"c": return float(w[3])
+		"s": return ((w[2] as Vector2) - (w[1] as Vector2)).length() * 0.5 + float(w[3])
+		_: return (w[2] as Vector2).length()
+
+## candidate (start, direction) pairs that run straight at the wall: radial for posts / trees, square on
+## to the sides (and ends) of logs, boats, boxes
+static func _approaches(w: Array) -> Array:
+	var out: Array = []
+	var a: Vector2 = w[1]
+	match w[0] as String:
+		"c":
+			for k in 8:
+				var d := Vector2(cos(k * TAU / 8.0 + 0.2), sin(k * TAU / 8.0 + 0.2))
+				out.append([a + d * (float(w[3]) + 1.3), -d])
+		"s":
+			var b: Vector2 = w[2]
+			var n := (b - a).orthogonal().normalized()
+			var r: float = w[3]
+			for t: float in [0.5, 0.25, 0.75]:
+				for sg: float in [1.0, -1.0]:
+					out.append([a.lerp(b, t) + n * sg * (r + 1.3), -n * sg])
+			var ax := (b - a).normalized()
+			out.append([b + ax * (r + 1.3), -ax])
+			out.append([a - ax * (r + 1.3), ax])
+		_:
+			var half: Vector2 = w[2]
+			var yaw: float = w[3]
+			for t: float in [0.0, 0.5, -0.5, 0.8, -0.8]:
+				for side in 4:
+					var nl := [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)][side] as Vector2
+					var along := Vector2(nl.y, nl.x) * t * (half.y if side < 2 else half.x)
+					var lp := Vector2(nl.x * (half.x + 1.3), nl.y * (half.y + 1.3)) + Vector2(along.x * (1 if side >= 2 else 0), along.y * (1 if side < 2 else 0))
+					out.append([a + Island._rot(lp, yaw), -Island._rot(nl, yaw)])
+	return out
+
+## a start spot from which the kid can walk straight at the wall over plain ground
+func _approach_spot(w: Array, cand: Array) -> Array:
+	var s: Vector2 = cand[0]
+	var dir: Vector2 = cand[1]
+	var h: float = m._surface(s.x, s.y)
+	var sp := Vector3(s.x, h, s.y)
+	if not m._can_stand(h, s.x, s.y) or m.penetration(sp) > 0.0 or not m._wall_hits_y(w, h):
+		return []
+	var prev := h
+	for j in range(1, 13):
+		var q := s + dir * (1.3 * j / 12.0)
+		var hq: float = m._surface(q.x, q.y)
+		if not m._can_stand(prev, q.x, q.y) and j < 12:
+			return []
+		prev = hq
+	return [sp, Vector3(dir.x, 0, dir.y)]
+
+func _collision_check() -> void:
+	var walls: Array = m.island.walls
+	var tested := {}
+	var kinds := {}
+	for w: Array in walls:
+		kinds[w[6]] = true
+	for i in walls.size():
+		var w: Array = walls[i]
+		var nm: String = w[6]
+		if int(tested.get(nm, 0)) >= 2:
+			continue
+		var cands := _approaches(w)
+		for k in cands.size():
+			var a := _approach_spot(w, cands[k])
+			if a.is_empty():
+				continue
+			var sp: Vector3 = a[0]
+			var dir: Vector3 = a[1]
+			# head on (running), then a glancing walk that has to slide past
+			m._place(sp, atan2(-dir.x, -dir.z))
+			await _frames(3)
+			var pen := await _drive(dir, 1.6, true)
+			var gap: float = Island.wall_dist(w, Vector2(m.player.position.x, m.player.position.z)).x - m.BOY_R
+			if gap > 0.08:
+				continue   # something else stopped him first: try another side
+			var side := dir.rotated(Vector3.UP, 0.75 if k % 2 == 0 else -0.75)
+			m._place(sp, atan2(-side.x, -side.z))
+			await _frames(3)
+			var p0: Vector3 = m.player.position
+			pen = maxf(pen, await _drive(side, 2.4, false))
+			var moved: float = Vector2(m.player.position.x - p0.x, m.player.position.z - p0.z).length()
+			var ok := pen <= 0.01 and moved > 0.6 and jitter <= 1
+			print("SELFTEST %-28s %s  (deepest overlap %.3f m, glancing walk slid %.2f m, back-steps %d)" % ["bump " + nm, "ok" if ok else "FAIL", pen, moved, jitter])
+			if not ok:
+				fails.append("bump " + nm)
+			tested[nm] = int(tested.get(nm, 0)) + 1
+			break
+	var missing: Array = []
+	for nm: String in kinds:
+		if not tested.has(nm):
+			missing.append(nm)
+	print("SELFTEST bump: %d kinds tested, not reachable on foot: %s" % [tested.size(), ", ".join(missing)])
+	for need: String in ["椰子树", "礁石", "坐木", "篝火", "长椅", "躺椅", "路牌", "钓鱼小屋", "小船", "码头", "码头木桩", "灌木", "灯塔"]:
+		if not tested.has(need):
+			fails.append("bump %s never tested" % need)
+
+func _sit(i: int) -> void:
+	var st: Dictionary = m.island.seats[i]
+	var face: Vector3 = st["face"]
+	m._place((st["approach"] as Vector3) + face * 0.5 + face.cross(Vector3.UP) * 0.4, 0.0)
+	await _frames(5)
+	if m.action_kind != "seat" or m.seat_i != i:
+		fails.append("no sit prompt at %s %d" % [st["name"], i])
+		return
+	m._on_action()
+	if not await _until(func() -> bool: return m.rest_phase == 4, 12.0):
+		fails.append("never sat on %s" % st["name"])
+		return
+	await _wait(1.0)
+	m._wake()
+	if not await _until(func() -> bool: return m.mode == m.Mode.EXPLORE, 6.0):
+		fails.append("never got up from %s" % st["name"])
+		return
+	await _frames(3)
+	await _can_walk("after sitting on %s %d" % [st["name"], i])
+
 func run(main: Node) -> void:
 	m = main
 	await _wait(0.5)
@@ -150,6 +311,10 @@ func run(main: Node) -> void:
 	var hs: Array = m._hammock_spot()
 	for s: float in [1.6, -1.6]:
 		await _rest("sleep", hs[0] + hs[2] * s)
+	# bench, campfire logs, lounger
+	for i in m.island.seats.size():
+		await _sit(i)
+	await _collision_check()
 	# dock: throw (cheer / oops), throw from the half-crouch, then leave
 	for crouch: bool in [false, true]:
 		m._place(Vector3(0.3, 0, m.island.dock_end_z + 1.6), 0.1)
