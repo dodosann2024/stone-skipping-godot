@@ -388,5 +388,21 @@ func run(main: Node) -> void:
 	await _wait(0.8)
 	m._toggle_view()
 	await _can_walk("after view mode")
+	# night: the button fades everything over, the lamps / beams come on, and back to day
+	m.night_btn.pressed.emit()
+	await _wait(3.0)
+	var lit: bool = m.night_fx.visible and m.night_fx.beacon_light.visible and m.night_fx.beam_pivot.visible
+	var moon_e: float = m.sun.light_energy
+	print("SELFTEST night                 %s  (k %.2f, button '%s', moonlight %.2f, fire %.2f, lamps+beams %s)" % [
+			"ok" if m.night_k > 0.999 and lit else "FAIL", m.night_k, m.night_btn.text, moon_e, m.island.campfire.light.light_energy, lit])
+	if m.night_k < 0.999 or not lit or m.night_btn.text != "白天":
+		fails.append("night mode did not come on")
+	await _can_walk("at night")
+	m.night_btn.pressed.emit()
+	await _wait(3.0)
+	print("SELFTEST day again             %s  (k %.2f, button '%s', fx %s)" % ["ok" if m.night_k < 0.001 and not m.night_fx.visible else "FAIL", m.night_k, m.night_btn.text, m.night_fx.visible])
+	if m.night_k > 0.001 or m.night_fx.visible:
+		fails.append("day did not come back")
+	await _can_walk("after night")
 	print("SELFTEST %s" % ("PASS" if fails.is_empty() else "FAIL: " + ", ".join(fails)))
 	m.get_tree().quit(0 if fails.is_empty() else 1)

@@ -2852,6 +2852,144 @@ func _video_seg(seg: String) -> void:
 			_stop_walk()
 			await _wait(22.0)
 
+		"recover":
+			# the arm after the release: stand and half-kneel, side-on from the throwing side, each once at
+			# full speed and once at half speed
+			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.0)
+			await _wait(0.3)
+			_enter_throw()
+			for k in 4:
+				var crouch := k >= 2
+				if crouch != (boy.stance == "crouch"):
+					_toggle_stance()
+				await _wait(1.0)
+				demo_cam = true
+				demo_track = [aim_yaw + PI * 0.5 + 0.35, 0.08, 2.2, 0.62 if not crouch else 0.45, true]
+				_toast(("半蹲" if crouch else "站立") + ("投掷 · 慢放 0.5×" if k % 2 == 1 else "投掷"), 1.6)
+				_begin_aim(Vector2.ZERO)
+				aim_pitch = 3.0
+				var t0 := gt
+				while gt - t0 < 1.0:
+					charge_t = minf((gt - t0) / 0.9, 1.0) * 0.9 * POWER_CYCLE * 0.5
+					await get_tree().process_frame
+				charge_t = 0.9 * POWER_CYCLE * 0.5
+				if k % 2 == 1:
+					Engine.time_scale = 0.5
+				_throw()
+				fly_t = 0.0
+				await _wait(2.6)
+				Engine.time_scale = 1.0
+				while state != State.READY:
+					await get_tree().process_frame
+				await _wait(0.4)
+			_free_cam()
+		"lie":
+			# the bench, then the three logs by the fire (front, back, front): sit, lie back with the hat on
+			# the face and a leg crossed, nap a moment, get up
+			for i: int in [0, 1, 2, 3]:
+				var st: Dictionary = island.seats[i]
+				var face: Vector3 = st["face"]
+				var from_back := i == 2
+				var spot: Vector3 = (st["back_approach"] as Vector3) - face * 1.6 if from_back else (st["approach"] as Vector3) + face * 1.6
+				_place(_blocked_by(spot), 0.0)
+				var to := (st["top"] as Vector3) - player.position
+				face_yaw = atan2(-to.x, -to.z)
+				player.rotation.y = face_yaw
+				ex_yaw = face_yaw + 0.5
+				_snap_cam_now()
+				_toast("%s · 坐下 → 躺下 → 起来" % ("长椅" if i == 0 else "篝火边的木头 %d%s" % [i, "（从背面坐）" if from_back else ""]), 2.0)
+				await _walk_to(_blocked_by((st["back_approach"] as Vector3) - face * 0.6 if from_back else (st["approach"] as Vector3) + face * 0.6), false, 2.5)
+				await _wait(0.3)
+				_on_action()
+				while rest_phase != 4:
+					await get_tree().process_frame
+				await _wait(1.2)
+				_lie_down()
+				await _wait(SEAT_LIE_DUR * 0.4)
+				_fixed_cam(rest_lie + Vector3(0, 0.15, 0), atan2(seat_face.x, seat_face.z) + 0.45, 0.32, 2.2)
+				while rest_phase != 4:
+					await get_tree().process_frame
+				await _wait(3.2 if i == 0 else 2.2)
+				_wake()
+				while mode != Mode.EXPLORE:
+					await get_tree().process_frame
+				_free_cam()
+				await _wait(0.6)
+		"shore":
+			# a full surf cycle from above, then low along the beach
+			var sea := Island.dir_at(-1.05)
+			var p := island.shore_pt(-1.05, 1.4)
+			var along := sea.cross(Vector3.UP)
+			_place(p, atan2(-sea.x, -sea.z) + 0.5)
+			_fixed_cam(p + sea * 1.6 + Vector3(0, 0.2, 0), atan2(sea.x, sea.z) + 0.55, 0.62, 5.0)
+			await _wait(10.5)
+			_fixed_cam(p + sea * 1.0 + Vector3(0, 0.3, 0), atan2(along.x, along.z) - 0.5, 0.16, 3.6)
+			await _wait(10.5)
+			var sea2 := Island.dir_at(2.2)
+			var p2 := island.shore_pt(2.2, 1.4)
+			_place(p2, atan2(-sea2.x, -sea2.z) + 0.5)
+			_fixed_cam(p2 + sea2 * 1.2 + Vector3(0, 0.2, 0), atan2(sea2.x, sea2.z) - 0.4, 0.35, 4.5)
+			await _wait(10.0)
+			_free_cam()
+		"wade":
+			# walk into the sea by the dock: legs go under, tinted and wobbling; foam collar + rings follow
+			var a := island.shore_pt(-1.2, 0.6)
+			var b := island.shore_pt(-1.24, -1.9)
+			var dv := (b - a).normalized()
+			_place(a, atan2(-dv.x, -dv.z))
+			demo_cam = true
+			demo_track = [atan2(dv.x, dv.z) + PI * 0.5 + 0.4, 0.14, 2.3, 0.35, true]
+			await _walk_to(b, false, 7.0)
+			await _wait(2.5)
+			await _walk_to(island.shore_pt(-1.34, -2.2), false, 4.0)
+			_free_cam()
+			await _wait(0.5)
+			await _walk_to(island.shore_pt(-1.2, -1.2), false, 4.0)
+			await _wait(2.0)
+		"night":
+			# dusk falls by the campfire, fireflies, sit by the fire, then the dock: the moon path on the sea
+			var c := island.campfire_pos
+			_place(c + Vector3(2.6, 0, 2.6), 0.0)
+			_fixed_cam(c + Vector3(0, 0.5, 0), 0.7, 0.28, 5.2)
+			await _wait(1.2)
+			_toggle_night()
+			await _wait(4.5)
+			var st: Dictionary = island.seats[1]
+			_free_cam()
+			await _walk_to(_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.6), false, 3.0)
+			_on_action()
+			while rest_phase != 4:
+				await get_tree().process_frame
+			_fixed_cam(c + Vector3(0, 0.45, 0), atan2((st["face"] as Vector3).x, (st["face"] as Vector3).z) + 2.2, 0.18, 3.4)
+			await _wait(4.0)
+			_wake()
+			while mode != Mode.EXPLORE:
+				await get_tree().process_frame
+			_free_cam()
+			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.1)
+			await _wait(0.5)
+			_enter_throw()
+			await _wait(1.5)
+			_begin_aim(Vector2.ZERO)
+			aim_pitch = 3.0
+			var t0 := gt
+			while gt - t0 < 1.2:
+				charge_t = minf((gt - t0) / 1.1, 1.0) * 0.9 * POWER_CYCLE * 0.5
+				await get_tree().process_frame
+			_throw()
+			while state != State.READY:
+				await get_tree().process_frame
+			await _wait(1.0)
+			_leave_throw()
+			_fixed_cam(Vector3(0, 1.0, island.dock_start_z - 2.0), 2.6, 0.32, 26.0)
+			var t1 := gt
+			while gt - t1 < 5.0:
+				_fixed_cam(Vector3(0, 1.0, island.dock_start_z - 2.0), 2.6 + (gt - t1) * 0.08, 0.32, 26.0)
+				await get_tree().process_frame
+			_toggle_night()
+			await _wait(3.5)
+			_free_cam()
+
 ## steer with the stick towards a world direction (camera-relative, like a player would)
 func _drive_dir(dir: Vector3, sec: float, run: bool) -> void:
 	demo_run = run
