@@ -34,6 +34,7 @@ var leaves: Array = []    # [Transform3D, Color tint (a = sway), Color(outward n
 var leaf_mat: ShaderMaterial
 var terrain_mi: MeshInstance3D
 var campfire: Campfire
+var torches: Array[Torch] = []
 var sign_board: MeshInstance3D
 ## places to sit: {name, top (seat surface under the pelvis), face (where the sitter looks), approach, hint}
 var seats: Array[Dictionary] = []
@@ -1037,9 +1038,170 @@ func _build_campfire() -> void:
 		var tp = c + Vector3(cos(a) * 2.6, 0, sin(a) * 2.6)
 		tp.y = ground_h(tp.x, tp.z)
 		wall_c(Vector2(tp.x, tp.z), 0.07, tp.y - 0.2, tp.y + 2.0, "火把")
-		tube(SB, tp, tp + Vector3(0, 1.6, 0), 0.04, 0.04, 5, Color(0.4, 0.28, 0.16))
-		cyl(SB, 0.1, 0.07, 0.22, 6, tp + Vector3(0, 1.65, 0), Vector3.ZERO, Color(0.55, 0.42, 0.25))
-		cyl(GB, 0.0, 0.08, 0.25, 5, tp + Vector3(0, 1.88, 0), Vector3.ZERO, Color(1.0, 0.65, 0.2))
+		_torch(tp, torches.size())
+
+## Lathe a smooth tube through ring centres `cs` (radii `rs`); `colf.call(ring, side)` gives each vertex colour.
+func _lathe(b: MeshBuilder, cs: Array, rs: Array, seg: int, colf: Callable, cap := false, jit := 0.0) -> void:
+	var rings: Array = []
+	for i in cs.size():
+		var ax: Vector3 = ((cs[mini(i + 1, cs.size() - 1)] as Vector3) - (cs[maxi(i - 1, 0)] as Vector3)).normalized()
+		var u := ax.cross(Vector3.RIGHT if absf(ax.x) < 0.9 else Vector3.FORWARD).normalized()
+		var v := ax.cross(u)
+		var ring: Array = []
+		for j in seg:
+			var a := TAU * j / seg
+			var d := u * cos(a) + v * sin(a)
+			var jr := 1.0 + jit * (_fract(sin(i * 12.9898 + j * 78.233) * 43758.5453) * 2.0 - 1.0)
+			ring.append([(cs[i] as Vector3) + d * float(rs[i]) * jr, d, colf.call(i, j)])
+		rings.append(ring)
+	for i in cs.size() - 1:
+		for j in seg:
+			var j1 := (j + 1) % seg
+			var A: Array = rings[i][j]
+			var B: Array = rings[i][j1]
+			var C: Array = rings[i + 1][j1]
+			var D: Array = rings[i + 1][j]
+			b.tri_sm(A[0], B[0], C[0], A[1], B[1], C[1], A[2], B[2], C[2])
+			b.tri_sm(A[0], C[0], D[0], A[1], C[1], D[1], A[2], C[2], D[2])
+	if cap:
+		var last: Array = rings[cs.size() - 1]
+		var top: Vector3 = cs[cs.size() - 1]
+		var n := (top - (cs[cs.size() - 2] as Vector3)).normalized()
+		for j in seg:
+			var A: Array = last[j]
+			var B: Array = last[(j + 1) % seg]
+			b.tri_sm(top, A[0], B[0], n, n, n, A[2], A[2], B[2])
+
+## A twine/cloth band: a thin torus round `c` about `ax`, its tube radius `r` squashed along the axis by `flat`.
+func _band(b: MeshBuilder, c: Vector3, ax: Vector3, R: float, r: float, col: Color, seg := 12, flat := 1.0, col2 = null) -> void:
+	var u := ax.cross(Vector3.RIGHT if absf(ax.x) < 0.9 else Vector3.FORWARD).normalized()
+	var v := ax.cross(u)
+	var sides := 4
+	var pts: Array = []
+	for i in seg + 1:
+		var a := TAU * i / seg
+		var d := u * cos(a) + v * sin(a)
+		var row: Array = []
+		for k in sides:
+			var q := TAU * k / sides + PI / sides
+			var n := (d * cos(q) + ax * sin(q)).normalized()
+			row.append([c + d * (R + r * cos(q)) + ax * (r * flat * sin(q)), n])
+		pts.append(row)
+	for i in seg:
+		var ci: Color = col if col2 == null or i % 2 == 0 else col2
+		for k in sides:
+			var k1 := (k + 1) % sides
+			var A: Array = pts[i][k]
+			var B: Array = pts[i + 1][k]
+			var C: Array = pts[i + 1][k1]
+			var D: Array = pts[i][k1]
+			b.tri_sm(A[0], B[0], C[0], A[1], B[1], C[1], ci, ci, ci)
+			b.tri_sm(A[0], C[0], D[0], A[1], C[1], D[1], ci, ci, ci)
+
+## A tiki torch: a weathered, cracked pole; a bamboo cup lashed on with twine; an oil-soaked cloth wick
+## wound into the cup with a singed tail hanging over the rim. The flame, embers and light are a Torch node.
+func _torch(tp: Vector3, idx: int) -> void:
+	var lr := RandomNumberGenerator.new()
+	lr.seed = 7100 + idx * 31
+	var top_y := 1.5
+	# pole: slightly crooked, thicker at the foot, grey-brown weathered grain with a damp dark foot
+	var cs: Array = []
+	var rs: Array = []
+	var nr := 9
+	var bend := Vector3(lr.randf_range(-1, 1), 0, lr.randf_range(-1, 1)).normalized() * 0.025
+	for i in nr:
+		var f := float(i) / (nr - 1)
+		cs.append(tp + Vector3(0, -0.12 + (top_y + 0.12) * f, 0) + bend * sin(f * PI) + Vector3(0.004 * sin(f * 11.0 + idx), 0, 0.004 * cos(f * 9.0)))
+		rs.append(lerpf(0.046, 0.035, f) * (1.0 + 0.04 * sin(f * 17.0 + idx * 2.0)))
+	var grain: Array = []
+	for j in 12:
+		grain.append(lr.randf_range(-0.07, 0.07))
+	var wood := Color(0.58, 0.5, 0.4)
+	var colf := func(i: int, j: int) -> Color:
+		var f := float(i) / (nr - 1)
+		var g: float = grain[j] + 0.035 * sin(j * 2.3 + i * 1.7)
+		var c0 := Color(wood.r + g, wood.g + g * 0.9, wood.b + g * 0.75)
+		c0 = c0.lerp(Color(0.28, 0.23, 0.18), (1.0 - smoothstep(0.0, 0.16, f)) * 0.7)
+		return c0.lerp(Color(0.3, 0.24, 0.18), smoothstep(0.9, 1.0, f) * 0.35)
+	_lathe(SB, cs, rs, 12, colf)
+	# cracks: dark, slightly sunken-looking slivers running with the grain
+	for k in 4:
+		var a0 := lr.randf() * TAU
+		var y0 := lr.randf_range(0.15, 1.1)
+		var ln := lr.randf_range(0.14, 0.32)
+		var prev := Vector3.ZERO
+		var steps := 5
+		for s in steps + 1:
+			var f := (y0 + ln * s / steps + 0.12) / (top_y + 0.12)
+			var a := a0 + 0.05 * sin(s * 2.1 + k)
+			var r := lerpf(0.046, 0.035, f) + 0.0012
+			var cpos := tp + Vector3(0, y0 + ln * s / steps, 0) + bend * sin(f * PI) + Vector3(cos(a), 0, sin(a)) * r
+			if s > 0:
+				var out := Vector3(cos(a), 0, sin(a))
+				var side := Vector3(-sin(a), 0, cos(a)) * (0.0035 * sin(PI * s / steps) + 0.001)
+				var cc := Color(0.13, 0.1, 0.08)
+				SB.face(prev - side, prev + side, cpos + side, cc, cc, cc, out)
+				SB.face(prev - side, cpos + side, cpos - side, cc, cc, cc, out)
+			prev = cpos
+	var head := tp + Vector3(0, top_y, 0) + bend * 0.0
+	# bamboo cup: a closed node at the bottom, a raised node ring, a cut rim and a dark inside
+	var cup_b := head + Vector3(0, -0.05, 0)
+	var cup_h := 0.23
+	var bamboo := Color(0.7, 0.6, 0.38)
+	var bcol := func(i: int, j: int) -> Color:
+		var g := 0.07 * sin(j * 3.7 + idx) + 0.04 * sin(j * 1.3) + (0.05 if j % 3 == 0 else 0.0)
+		var c0 := Color(bamboo.r + g, bamboo.g + g, bamboo.b + g * 0.6)
+		# oil runs and soot darken the cup towards the rim, unevenly round it
+		var soot_k: float = [0.0, 0.05, 0.25, 0.7][i] * (0.75 + 0.25 * sin(j * 2.2 + idx))
+		return c0.lerp(Color(0.2, 0.15, 0.1), soot_k)
+	_lathe(SB, [cup_b + Vector3(0, -0.03, 0), cup_b, cup_b + Vector3(0, cup_h * 0.5, 0), cup_b + Vector3(0, cup_h, 0)], [0.042, 0.061, 0.063, 0.062], 14, bcol)
+	_lathe(SB, [cup_b + Vector3(0, cup_h, 0), cup_b + Vector3(0, cup_h * 0.55, 0)], [0.054, 0.054], 14, func(_i: int, _j: int) -> Color: return Color(0.2, 0.15, 0.1))
+	_band(SB, cup_b + Vector3(0, cup_h, 0), Vector3.UP, 0.058, 0.0045, Color(0.78, 0.68, 0.46), 14, 0.6)
+	_band(SB, cup_b + Vector3(0, 0.125, 0), Vector3.UP, 0.0625, 0.0055, Color(0.62, 0.52, 0.32), 14, 0.5)
+	# twine lashing: tight turns round the pole under the cup and round the cup's foot, two cross strands
+	var twine := Color(0.68, 0.58, 0.42)
+	var twine2 := Color(0.58, 0.49, 0.35)
+	for k in 7:
+		var y := -0.21 + k * 0.011
+		_band(SB, head + Vector3(0, y, 0), Vector3(0.06 * sin(k * 1.9), 1, 0.06 * cos(k * 1.3)).normalized(), 0.0365, 0.0042, twine if k % 2 == 0 else twine2, 10, 1.0, twine2)
+	for k in 4:
+		var y := -0.035 + k * 0.012
+		_band(SB, head + Vector3(0, y, 0), Vector3(0.05 * sin(k * 2.7), 1, 0.05 * cos(k * 1.1)).normalized(), 0.0625, 0.0042, twine, 14, 1.0, twine2)
+	for k in 2:
+		var a := 0.8 + k * PI + idx
+		var p0 := head + Vector3(cos(a) * 0.039, -0.14, sin(a) * 0.039)
+		var p1 := head + Vector3(cos(a + 0.9) * 0.05, -0.04, sin(a + 0.9) * 0.05)
+		tube(SB, p0, p1, 0.004, 0.004, 4, twine, 0.0, 0.0)
+	# oil-soaked cloth wick: a ragged rag bundle stuffed in the cup and bulging over the rim, wound
+	# with a few tilted wraps whose singed edges catch the light, charred black where it burns
+	var wb := cup_b + Vector3(0, cup_h - 0.03, 0)
+	var soot := Color(0.17, 0.12, 0.09)
+	var singe := Color(0.42, 0.33, 0.23)
+	var rag := Color(0.3, 0.22, 0.15)
+	_lathe(SB, [wb, wb + Vector3(0, 0.035, 0), wb + Vector3(0, 0.07, 0), wb + Vector3(0, 0.1, 0), wb + Vector3(0, 0.122, 0)], [0.05, 0.064, 0.06, 0.045, 0.016], 11,
+		func(i: int, j: int) -> Color: return rag.lerp(singe, 0.35 * float((j * 7 + i * 3) % 4 == 0)).lerp(Color(0.07, 0.055, 0.045), float([0.0, 0.1, 0.35, 0.8, 1.0][i])), true, 0.12)
+	for k in 3:
+		var tilt := Vector3(0.18 * sin(k * 2.4 + idx), 1, 0.18 * cos(k * 1.7 + idx)).normalized()
+		var ry := 0.02 + 0.027 * k
+		_band(SB, wb + Vector3(0, ry, 0), tilt, [0.06, 0.059, 0.05][k], 0.009, rag.lerp(singe, 0.25 - 0.1 * k).lerp(soot, 0.25 * k), 16, 0.9 + 0.4 * k)
+	var ta := lr.randf() * TAU
+	var tail := [wb + Vector3(cos(ta) * 0.062, 0.045, sin(ta) * 0.062), wb + Vector3(cos(ta) * 0.071, 0.0, sin(ta) * 0.071), wb + Vector3(cos(ta + 0.12) * 0.069, -0.07, sin(ta + 0.12) * 0.069)]
+	for s in 2:
+		var p0: Vector3 = tail[s]
+		var p1: Vector3 = tail[s + 1]
+		var out := Vector3(cos(ta), 0, sin(ta))
+		var side := Vector3(-sin(ta), 0, cos(ta)) * (0.017 - 0.004 * s)
+		var cc := soot.lerp(singe, 0.5 * s)
+		SB.face(p0 - side, p0 + side, p1 + side * 0.8, soot, soot, cc, out)
+		SB.face(p0 - side, p1 + side * 0.8, p1 - side * 0.8, soot, cc, cc, out)
+		SB.face(p0 - side, p0 + side, p1 + side * 0.8, soot, soot, cc, -out)
+		SB.face(p0 - side, p1 + side * 0.8, p1 - side * 0.8, soot, cc, cc, -out)
+	GB.prim(_sphm(6, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.02, 0.01, 0.02)), wb + Vector3(0, 0.118, 0)), Color(1.0, 0.5, 0.14))
+	var tn := Torch.new()
+	add_child(tn)
+	tn.position = wb + Vector3(0, 0.1, 0)
+	tn.build(float(idx) * 3.1)
+	torches.append(tn)
 
 # ------------------------------------------------------------------ beach life
 

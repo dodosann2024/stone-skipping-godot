@@ -61,6 +61,7 @@ var pinch_d := 0.0
 var mouse_drag := false
 var dragging := false
 var demo_cam := false
+var demo_nocut := false   # showcase stills of a prop: no see-through cut-out towards the boy
 var ex_yaw := 0.0
 # high, slightly telephoto follow camera (the reference looks down at ~55-60 degrees)
 var ex_pitch := 0.98
@@ -1831,6 +1832,8 @@ func _update_night(delta: float, force := false) -> void:
 	island.glow_mat.set_shader_parameter("boost", lerpf(1.5, 3.4, k))
 	island.cloud_mat.set_shader_parameter("tint", Color(1, 1, 1).lerp(Color(0.13, 0.16, 0.26), k))
 	island.campfire.night = k
+	for tn in island.torches:
+		tn.night = k
 	for b in birds:
 		(b["node"] as Node3D).visible = k < 0.5
 	if night_amb:
@@ -1967,6 +1970,8 @@ func _process(delta: float) -> void:
 		player.rotation.y = lerp_angle(player.rotation.y, aim_yaw, 1.0 - exp(-delta * 10.0))
 	_update_camera(delta)
 	var focus := player.global_position + Vector3(0, 0.7, 0)
+	if demo_nocut:
+		focus.y = -100.0
 	island.foliage_mat.set_shader_parameter("focus", focus)
 	island.leaf_mat.set_shader_parameter("focus", focus)
 	island.static_mat.set_shader_parameter("focus", focus)
@@ -2776,6 +2781,28 @@ func _v12_sequence(pre: String, part: String) -> void:
 			if night:
 				_toggle_night()
 				await _wait(2.9)
+		_free_cam()
+	if part == "" or part == "torch":
+		var c := island.campfire_pos
+		_place(c + Vector3(5.0, 0, 5.0), 0.0)
+		demo_nocut = true
+		for night in [false, true]:
+			var tag := "night" if night else "day"
+			if night:
+				_toggle_night()
+				await _wait(2.9)
+			var tp := island.torches[0].global_position
+			var out := Vector3(tp.x - c.x, 0, tp.z - c.z).normalized()
+			var yaw := atan2(out.x, out.z)
+			for sh: Array in [[tp + Vector3(0, -0.05, 0), yaw + PI - 0.5, 0.12, 0.9, "90_%s_torch_head"], [tp + Vector3(0, -0.05, 0), yaw + 0.6, 0.1, 0.9, "90_%s_torch_head_back"], [tp + Vector3(0, -0.8, 0), yaw + PI - 0.9, 0.1, 2.6, "91_%s_torch_full"], [c + Vector3(0, 0.6, 0), yaw + 1.3, 0.22, 7.5, "92_%s_torches_camp"]]:
+				var cy: float = sh[1]
+				_fixed_cam(sh[0], cy, sh[2], sh[3])
+				await _wait(0.5)
+				_shot(pre + (sh[4] as String) % tag)
+			if night:
+				_toggle_night()
+				await _wait(2.9)
+		demo_nocut = false
 		_free_cam()
 
 ## gameplay follow camera along the beach (style checks): walk, run, then stand
