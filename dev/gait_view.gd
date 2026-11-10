@@ -72,6 +72,7 @@ func _process(dt: float) -> bool:
 	if not probe.step(dt):
 		print("GAIT slide max %.4f m  mean %.4f m over %d planted frames, %d quick steps" % [probe.slide_max,
 			probe.slide_sum / maxf(probe.slide_n, 1), probe.slide_n, int(boy.get("steps_taken") if boy.get("steps_taken") != null else 0)])
+		print("GAIT footprints %d for %d footsteps, spot drift max %.1f mm" % [probe.prints, probe.steps, probe.print_err * 1000.0])
 		for line in probe.report():
 			print("GAIT ", line)
 		return true

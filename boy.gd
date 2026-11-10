@@ -10,6 +10,8 @@ extends Node3D
 
 signal released
 signal footstep(side: int, running: bool)
+## a walking / running foot has just come down flat (heel and ball on the ground): where its print goes
+signal foot_flat(side: int)
 
 const SCALE := 0.85
 const MODEL := preload("res://boy/boy.glb")
@@ -96,6 +98,7 @@ var lock_on: Array[bool] = [false, false]
 var lock_prev: Array = [null, null]   # last frame's corrected [heel, toe] world points and foot heading
 var lock_pos := Vector3.ZERO
 var lock_enabled := true
+var flat_sent := [false, false]
 var pivot_w: Array[float] = [0.0, 0.0]
 var step_t: Array[float] = [-1.0, -1.0]
 var steps_taken := 0
@@ -732,6 +735,7 @@ func _foot_lock(delta: float) -> void:
 				step_t[i] = 0.0
 				step_from[i] = [lock_c[i], lock_yaw[i]]
 				steps_taken += 1
+				flat_sent[i] = false
 				planted = false
 		var lift := 0.0
 		if step_t[i] >= 0.0:
@@ -770,6 +774,12 @@ func _foot_lock(delta: float) -> void:
 		var tw := S * toe_c
 		var fw2 := S.basis * (R * (B.origin - A))
 		lock_prev[i] = [hw, tw, atan2(fw2.x, fw2.z)]
+		if hd and td and step_t[i] < 0.0 and not flat_sent[i]:
+			flat_sent[i] = true
+			if anim == "move" and move_w > 0.5:
+				foot_flat.emit(i)
+		elif not hd and not td:
+			flat_sent[i] = false
 
 ## two-bone IK (skeleton space): ankle to `ankle`, foot to `foot_b`; the knee stays in the animated leg's
 ## plane, turned with the foot by `twist`

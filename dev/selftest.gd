@@ -147,6 +147,11 @@ func _slide_check() -> void:
 			"foot slide @%d fps" % fps, "ok" if ok else "FAIL", worst * 1000.0, worst_seg, " ".join(parts), probe.slide_n, b.steps_taken])
 		if not ok:
 			fails.append("planted foot slides %.1f mm/frame (%s, %d fps)" % [worst * 1000.0, worst_seg, fps])
+		var pok := probe.prints >= probe.steps - 3 and probe.prints > 20 and probe.print_err < 0.02
+		print("SELFTEST %-28s %s  (%d prints for %d footsteps, print spot drifts at most %.1f mm while the foot is down)" % [
+			"footprints @%d fps" % fps, "ok" if pok else "FAIL", probe.prints, probe.steps, probe.print_err * 1000.0])
+		if not pok:
+			fails.append("footprints: %d for %d steps, drift %.1f mm (%d fps)" % [probe.prints, probe.steps, probe.print_err * 1000.0, fps])
 		m.remove_child(b)
 		b.free()
 

@@ -45,11 +45,19 @@ var seg_sum := {}
 var seg_n := {}
 var worst := 0.0      # this frame's worst planted slide
 var log_slides := false
+var steps := 0          # footstep sounds
+var prints := 0         # foot_flat events (footprints)
+var print_err := 0.0    # worst drift of a footprint spot over the next 0.06 s of stance
+var _pend: Array = []
 
 func _init(b: Boy, at := Vector3.ZERO) -> void:
 	boy = b
 	origin = at
 	boy.frozen = true
+	boy.footstep.connect(func(_s: int, _r: bool) -> void: steps += 1)
+	boy.foot_flat.connect(func(side: int) -> void:
+		prints += 1
+		_pend.append([side, _print_spot(side), t]))
 	boy.position = origin
 	var sk := boy.skel
 	var g := float(boy.meta["ground"])
@@ -93,8 +101,21 @@ func step(dt: float) -> bool:
 		boy.set_idle()
 	boy._tick(dt)
 	_measure()
+	# a quick step picks the foot up again: it gets a fresh print where it lands
+	_pend = _pend.filter(func(pd: Array) -> bool: return float(boy.step_t[pd[0]]) < 0.0)
+	for pd in _pend:
+		if t - float(pd[2]) >= 0.06:
+			print_err = maxf(print_err, (_print_spot(pd[0]) - (pd[1] as Vector2)).length())
+	_pend = _pend.filter(func(pd: Array) -> bool: return t - float(pd[2]) < 0.06)
 	frame += 1
 	return true
+
+## the spot main.gd stamps a footprint on (60 % of the way from heel to ball)
+func _print_spot(side: int) -> Vector2:
+	var fp := boy.foot_points(side)
+	var h: Vector3 = fp[0]
+	var b: Vector3 = fp[1]
+	return Vector2(h.x, h.z) + Vector2(b.x - h.x, b.z - h.z) * 0.6
 
 func _measure() -> void:
 	worst = 0.0

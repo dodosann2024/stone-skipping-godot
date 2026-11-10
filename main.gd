@@ -271,6 +271,7 @@ func _build_player() -> void:
 	ground_y = sp.y
 	boy.released.connect(_launch)
 	boy.footstep.connect(_on_footstep)
+	boy.foot_flat.connect(_stamp_footprint)
 	zzz = Label3D.new()
 	zzz.font = ui_font
 	zzz.font_size = 64
@@ -1035,8 +1036,6 @@ func _on_footstep(_side: int, running: bool) -> void:
 	var kind := _surface_kind(p.x, p.z)
 	var i := rng.randi() % 2
 	var vol := -9.0 if running else -14.0
-	if kind != "wood":
-		_stamp_footprint(_side)
 	match kind:
 		"wood":
 			vol += 1.5
