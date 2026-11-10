@@ -91,6 +91,10 @@ var rest_root_sit := Vector3.ZERO
 var rest_side := Vector3.ZERO
 var rest_cam_yaw := INF
 var seat_i := -1   # island.seats entry near the kid / being sat on
+var seat_face := Vector3.FORWARD   # the way he sits on it (logs: whichever side he came from)
+var seat_ap := Vector3.ZERO
+var seat_lying := false   # lying back along the bench / log
+var lie_btn: Button
 var swing_amp := 0.0
 var zzz: Label3D
 
@@ -425,6 +429,10 @@ func _build_ui() -> void:
 	action_btn.offset_left = -214; action_btn.offset_right = -24; action_btn.offset_top = -134; action_btn.offset_bottom = -40
 	action_btn.pressed.connect(_on_action)
 	root.add_child(action_btn)
+	lie_btn = _btn("躺下", 30, true)
+	lie_btn.anchor_left = 1.0; lie_btn.anchor_right = 1.0; lie_btn.anchor_top = 1.0; lie_btn.anchor_bottom = 1.0
+	lie_btn.pressed.connect(_lie_down)
+	root.add_child(lie_btn)
 
 	bottom_box = VBoxContainer.new()
 	bottom_box.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
@@ -534,6 +542,9 @@ func _layout_ui() -> void:
 	top_box.offset_right = -184
 	action_btn.offset_top = -150 if tall else -130
 	action_btn.offset_bottom = -56 if tall else -36
+	lie_btn.offset_left = -214; lie_btn.offset_right = -24
+	lie_btn.offset_bottom = action_btn.offset_top - 16
+	lie_btn.offset_top = lie_btn.offset_bottom - 80
 	joy.anchor_top = 0.6 if tall else 0.45
 	joy.anchor_right = 0.62 if tall else 0.45
 	joy.radius = 66.0 if tall else 72.0
@@ -566,6 +577,8 @@ func _update_ui() -> void:
 		act = "起来"
 	action_btn.visible = act != ""
 	action_btn.text = act
+	lie_btn.visible = mode == Mode.REST and rest_phase == 4 and rest_kind == "seat" and not seat_lying \
+		and seat_i >= 0 and island.seats[seat_i]["can_lie"]
 	match mode:
 		Mode.VIEW:
 			lbl_hint.text = "观景：单指拖动 360° 旋转，双指捏合缩放（电脑：拖鼠标 / 滚轮）\n点右上角「返回」继续玩"
@@ -587,8 +600,15 @@ func _update_ui() -> void:
 						h += "\n打水漂要走到码头尽头；吊床可以睡觉，沙滩毛巾可以晒太阳，长椅和篝火边可以坐"
 			lbl_hint.text = h
 		Mode.REST:
-			var rh := {"sleep": "呼……睡着了 · 轻点屏幕或「起来」叫醒他", "sun": "晒太阳中 · 轻点屏幕或「起来」站起来", "seat": "坐着歇一会儿 · 轻点屏幕或「起来」站起来"}
-			lbl_hint.text = rh[rest_kind] if rest_phase == 4 else ""
+			var rh := {"sleep": "呼……睡着了 · 轻点屏幕或「起来」叫醒他", "sun": "晒太阳中 · 轻点屏幕或「起来」站起来", "seat": "坐着歇一会儿 · 轻点屏幕或「起来」站起来",
+				"seatcan": "坐着歇一会儿 · 点「躺下」翘腿躺一会儿，轻点屏幕或「起来」站起来",
+				"seatlie": "草帽盖脸，翘着腿躺着 · 轻点屏幕或「起来」起身"}
+			var rk := rest_kind
+			if rest_kind == "seat" and seat_lying:
+				rk = "seatlie"
+			elif rest_kind == "seat" and island.seats[seat_i]["can_lie"]:
+				rk = "seatcan"
+			lbl_hint.text = rh[rk] if rest_phase == 4 else ""
 		_:
 			match state:
 				State.READY:
@@ -670,15 +690,26 @@ func _update_action_kind() -> void:
 		var best := 1.25
 		for i in island.seats.size():
 			var st: Dictionary = island.seats[i]
-			var ap: Vector3 = st["approach"]
-			var dd := Vector2(p.x - ap.x, p.z - ap.z).length()
+			var face: Vector3 = st["face"]
 			var top: Vector3 = st["top"]
-			var front := (p - top).dot(st["face"] as Vector3)
-			if dd < best and front > 0.15:
+			var front := (p - top).dot(face)
+			var ap: Vector3 = st["approach"]
+			var lim := 1.25
+			if st["two_sided"]:
+				# a log: sit on whichever side he is on; from the ends too (the approach is mid-log)
+				lim = 1.35
+				if front < -0.05:
+					face = -face
+					ap = st["back_approach"]
+				front = absf(front) + 0.2
+			var dd := Vector2(p.x - ap.x, p.z - ap.z).length()
+			if dd < minf(best, lim) and front > 0.15:
 				best = dd
 				k = "seat"
-				if seat_i != i:
+				if seat_i != i or not seat_face.is_equal_approx(face):
 					seat_i = i
+					seat_face = face
+					seat_ap = ap
 					action_kind = ""
 	if k != action_kind:
 		action_kind = k
@@ -963,15 +994,18 @@ func _begin_rest(kind: String) -> void:
 		rest_approach = rest_seat + side * 0.26
 	elif kind == "seat":
 		var st: Dictionary = island.seats[seat_i]
-		var face: Vector3 = st["face"]
+		var face: Vector3 = seat_face
+		seat_lying = false
 		rest_side = face.cross(Vector3.UP).normalized()
 		rest_sit_b = Basis(Vector3.UP, atan2(-face.x, -face.z))
-		rest_approach = st["approach"]
+		rest_approach = seat_ap
 		var pl0 := boy.activity("seat", 1.0, 0.0, 0.0)
 		# the clips sit on a SEAT_TOP high seat: put the pelvis over the seat point at that height
-		rest_seat = (st["top"] as Vector3) + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
-		rest_lie = rest_seat
-		rest_lie_b = rest_sit_b
+		var top: Vector3 = st["top"]
+		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
+		# lying back: head towards his right, pelvis a little towards the foot end, back on the seat
+		rest_lie = top + Vector3(0, LIE_BACK, 0) - rest_side * 0.1
+		rest_lie_b = _lie_basis(rest_side)
 	else:
 		var td := island.towel_dir
 		var tp := island.towel_pos
@@ -992,6 +1026,23 @@ func _begin_rest(kind: String) -> void:
 	boy.rotation = Vector3(0, face_yaw, 0)
 	_update_ui()
 
+const LIE_BACK := 0.085   # pelvis centre above the seat when lying on the back
+const SEAT_LIE_DUR := 1.6
+
+## sit -> lie back along the bench / log (the seated boy's「躺下」)
+func _lie_down() -> void:
+	if mode != Mode.REST or rest_kind != "seat" or rest_phase != 4 or seat_lying:
+		return
+	if not island.seats[seat_i]["can_lie"]:
+		return
+	seat_lying = true
+	rest_phase = 3
+	rest_t = 0.0
+	_update_ui()
+
+func _act_kind() -> String:
+	return "seatlie" if rest_kind == "seat" and seat_lying else rest_kind
+
 ## lying on the back: local +Y (head) along head_dir, local -Z (chest) facing the sky
 func _lie_basis(head_dir: Vector3) -> Basis:
 	var y := (head_dir.normalized() + Vector3(0, 0.12, 0)).normalized()
@@ -1001,7 +1052,7 @@ func _lie_basis(head_dir: Vector3) -> Basis:
 
 func _wake() -> void:
 	if mode == Mode.REST and rest_phase == 4:
-		rest_phase = 6 if rest_kind == "seat" else 5
+		rest_phase = 6 if rest_kind == "seat" and not seat_lying else 5
 		rest_t = 0.0
 		_update_ui()
 
@@ -1070,12 +1121,12 @@ func _rest_tick(delta: float) -> void:
 					_update_action_kind()
 					_update_ui()
 		3, 5:
-			var dur2 := 1.0
+			var dur2 := SEAT_LIE_DUR if rest_kind == "seat" else 1.0
 			var k2 := clampf(rest_t / dur2, 0.0, 1.0)
 			if rest_phase == 5:
 				k2 = 1.0 - k2
 			var ks2 := smoothstep(0.0, 1.0, k2)
-			var pl2 := boy.activity(rest_kind, 1.0, k2, gt)
+			var pl2 := boy.activity(_act_kind(), 1.0, k2, gt)
 			var b := rest_sit_b.slerp(rest_lie_b, ks2)
 			var w := rest_seat.lerp(rest_lie, ks2) + Vector3(0, 0.07 * sin(PI * k2), 0)
 			if sleep:
@@ -1085,12 +1136,14 @@ func _rest_tick(delta: float) -> void:
 			if rest_t >= dur2:
 				rest_t = 0.0
 				rest_phase = 4 if rest_phase == 3 else 6
+				if rest_phase == 6 and rest_kind == "seat":
+					seat_lying = false
 				_update_ui()
-		4 when rest_kind == "seat":
+		4 when rest_kind == "seat" and not seat_lying:
 			boy.activity("seat", 1.0, 1.0, rest_t)
 			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 		4:
-			var pl3 := boy.activity(rest_kind, 1.0, 1.0, gt)
+			var pl3 := boy.activity(_act_kind(), 1.0, 1.0, gt)
 			if sleep:
 				swing_amp = lerpf(swing_amp, 0.07, 1.0 - exp(-delta * 1.0))
 				swing = island.swing_hammock(swing_amp * sin(gt * 1.3))
@@ -1795,7 +1848,7 @@ func _rest_cam() -> Array:
 			var along := (island.hammock_b - island.hammock_a).normalized()
 			off = (off + Vector3(along.x, 0, along.z) * 0.45).normalized()
 		elif rest_kind == "seat":
-			off = ((island.seats[seat_i]["face"] as Vector3) * 0.45 + rest_side * 0.9).normalized()
+			off = (seat_face * 0.45 + rest_side * 0.9).normalized()
 		else:
 			off = (rest_side * 0.75 + island.towel_dir * 0.75).normalized()
 		rest_cam_yaw = _clear_yaw(t, atan2(off.x, off.z), 0.42, dist)

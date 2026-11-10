@@ -553,10 +553,15 @@ func _build_dock() -> void:
 	add_obstacle(Vector2(sp.x, sp.z), 0.4, sp.y + 1.8, "路牌", -99.0, false)
 	wall_c(Vector2(sp.x, sp.z), 0.08, sp.y - 0.3, sp.y + 1.8, "路牌")
 
-func _add_seat(name: String, top: Vector3, face: Vector3, front: float, hint: String) -> void:
+## two_sided: a log can be sat on from either side (facing away from the fire too); can_lie: long enough to
+## lie back along it
+func _add_seat(name: String, top: Vector3, face: Vector3, front: float, hint: String, two_sided := false, can_lie := false) -> void:
 	var ap := top + face * front
 	ap.y = ground_h(ap.x, ap.z)
-	seats.append({"name": name, "top": top, "face": face, "approach": ap, "hint": hint})
+	var back := top - face * front
+	back.y = ground_h(back.x, back.z)
+	seats.append({"name": name, "top": top, "face": face, "approach": ap, "back_approach": back, "front": front,
+		"hint": hint, "two_sided": two_sided, "can_lie": can_lie})
 
 ## the weathered sign board: a slab with a chipped corner and a ragged broken end, doodle texture on both faces
 func _sign_board(c: Vector3, yaw: float) -> void:
@@ -836,7 +841,7 @@ func _build_lighthouse() -> void:
 	var bc: Vector3 = bxf * Vector3(0, 0, 0.03)
 	wall_b(Vector2(bc.x, bc.z), Vector2(0.72, 0.24), 0.7, bp.y - 0.3, bp.y + 0.75, "长椅")
 	var bface: Vector3 = bxf.basis * Vector3(0, 0, -1)
-	_add_seat("长椅", bxf * Vector3(0, SEAT_TOP, 0.03), bface, 0.5, "灯塔边的长椅：点「坐下」看看海")
+	_add_seat("长椅", bxf * Vector3(0, SEAT_TOP, 0.03), bface, 0.5, "灯塔边的长椅：点「坐下」看看海，坐下后还能躺下", false, true)
 
 func _build_campfire() -> void:
 	var c = campfire_pos
@@ -870,7 +875,7 @@ func _build_campfire() -> void:
 		tube(SB, la, lb, 0.17, 0.17, 7, Color(0.5, 0.34, 0.2), 1.0, 1.0, Color(0.6, 0.45, 0.3))
 		wall_s(Vector2(la.x, la.z), Vector2(lb.x, lb.z), 0.18, lp.y - 0.3, lp.y + SEAT_TOP + 0.35, "坐木")
 		var to_fire := Vector3(c.x - lp.x, 0, c.z - lp.z).normalized()
-		_add_seat("坐木", lp + Vector3(0, SEAT_TOP, 0) + to_fire * 0.03, to_fire, 0.45, "篝火边的木头：点「坐下」烤烤火")
+		_add_seat("坐木", lp + Vector3(0, SEAT_TOP, 0), to_fire, 0.45, "篝火边的木头：点「坐下」烤烤火，坐下后还能躺下", true, true)
 	# tiki torches
 	for a in [1.5, -1.6]:
 		var tp = c + Vector3(cos(a) * 2.6, 0, sin(a) * 2.6)
