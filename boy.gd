@@ -240,7 +240,8 @@ func charge(p: float) -> void:
 		anim = "charge"
 		anim_t = 0.0
 		act_target = 1.0
-		act_rate = 6.0
+		# kneeling down takes a moment; stepping into the standing set-up is quick
+		act_rate = 3.2 if stance == "crouch" else 6.0
 		_play(_throw_clip(), 0.0, 0.0)
 	power = p
 
