@@ -4,7 +4,7 @@ import posekit, clips
 from mathutils import Vector
 
 FPS = 30
-LOOPS = {"idle", "walk", "run", "hammock_sleep", "sun_rest", "seat_rest"}
+LOOPS = {"idle", "walk", "run", "hammock_sleep", "sun_rest", "seat_rest", "seat_nap"}
 RIGID = ("Hat", "Glasses", "Stone")      # bone-parented props (BoneAttachment3D in Godot)
 
 
