@@ -2,3 +2,4 @@
 build/
 screenshots/v3/audio_preview/*.wav
 tools/_chars.txt
+__pycache__/

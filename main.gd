@@ -40,6 +40,8 @@ var best_skips := 0
 var best_dist := 0.0
 var ripple_buf := PackedVector4Array()
 var ripple_i := 0
+var print_buf := PackedVector4Array()   # footprints on the sand: x, z, yaw, time stamped
+var print_i := 0
 
 # camera
 var camera: Camera3D
@@ -57,8 +59,9 @@ var mouse_drag := false
 var dragging := false
 var demo_cam := false
 var ex_yaw := 0.0
-var ex_pitch := 0.3
-var ex_dist := 4.2
+# high, slightly telephoto follow camera (the reference looks down at ~55-60 degrees)
+var ex_pitch := 0.98
+var ex_dist := 6.2
 var last_drag := -10.0
 
 # explore
@@ -135,12 +138,13 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v5"
+var shot_dir := "v6"
 var demo_release_pending := 0
 var demo_input := Vector2.ZERO
 var demo_run := false
 var demo_track: Array = []
 var demo_seg := ""
+var selftest: RefCounted
 
 func _ready() -> void:
 	rng.seed = 99
@@ -157,6 +161,9 @@ func _ready() -> void:
 	_build_audio()
 	_build_ui()
 	ripple_buf.resize(8)
+	print_buf.resize(24)
+	for i in 24:
+		print_buf[i] = Vector4(0, 0, 0, -1000.0)
 	var args := OS.get_cmdline_user_args()
 	if "--sim" in args:
 		_run_sim_report()
@@ -166,11 +173,15 @@ func _ready() -> void:
 	for a in args:
 		if a.begins_with("--video4="):
 			demo_seg = a.substr(9)
-	demo_mode = "--demo4" in args or demo_seg != ""
+	demo_mode = "--demo4" in args or demo_seg != "" or "--selftest" in args
 	_snap_explore_cam()
 	if demo_mode:
 		_start_audio()
-		_run_demo4.call_deferred()
+		if "--selftest" in args:
+			selftest = load("res://dev/selftest.gd").new()
+			selftest.run.call_deferred(self)
+		else:
+			_run_demo4.call_deferred()
 	_apply_camera()
 	_update_ui()
 
@@ -203,33 +214,38 @@ func _build_environment() -> void:
 	var env := Environment.new()
 	var sky := Sky.new()
 	var sm := ProceduralSkyMaterial.new()
-	sm.sky_top_color = Color(0.2, 0.46, 0.84)
-	sm.sky_horizon_color = Color(0.66, 0.83, 0.95)
-	sm.ground_horizon_color = Color(0.66, 0.83, 0.95)
-	sm.ground_bottom_color = Color(0.12, 0.36, 0.55)
+	sm.sky_top_color = Color(0.40, 0.58, 0.76)
+	sm.sky_horizon_color = Color(0.78, 0.85, 0.88)
+	sm.ground_horizon_color = Color(0.78, 0.85, 0.88)
+	sm.ground_bottom_color = Color(0.30, 0.46, 0.52)
 	sm.sun_angle_max = 25.0
 	sm.sky_energy_multiplier = 1.0
 	sky.sky_material = sm
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.55
+	env.ambient_light_energy = 0.75
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 1.0
-	env.tonemap_white = 4.0
+	env.tonemap_white = 3.2
+	# muted, slightly lifted pastel grade
+	env.adjustment_enabled = true
+	env.adjustment_saturation = 0.85
+	env.adjustment_contrast = 0.92
+	env.adjustment_brightness = 1.0
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.68, 0.83, 0.95)
-	env.fog_density = 0.0022
+	env.fog_light_color = Color(0.80, 0.86, 0.88)
+	env.fog_density = 0.0045
 	env.fog_sky_affect = 0.0
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-46, 128, 0)
-	sun.light_energy = 1.05
-	sun.light_color = Color(1.0, 0.95, 0.86)
+	sun.rotation_degrees = Vector3(-38, 135, 0)
+	sun.light_energy = 1.0
+	sun.light_color = Color(1.0, 0.93, 0.82)
 	sun.shadow_enabled = true
-	sun.shadow_blur = 1.5
+	sun.shadow_blur = 2.5
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
 	add_child(sun)
@@ -783,12 +799,16 @@ func _blocked_by(p: Vector3) -> Vector3:
 
 func _try_move(from: Vector3, d: Vector3) -> Vector3:
 	var fh := _surface(from.x, from.z)
+	# already overlapping something (e.g. put down there after an action): let him walk out
+	var inside := _blocked_by(from).distance_to(from) > 0.01
 	for cand: Vector3 in [d, Vector3(d.x, 0, 0), Vector3(0, 0, d.z)]:
 		if cand.length() < 1e-6:
 			continue
 		var p := _blocked_by(from + cand)
-		if (p - from).length() > cand.length() * 1.6 + 0.02:
+		if not inside and (p - from).length() > cand.length() * 1.6 + 0.02:
 			continue
+		if inside and (p - from).length() > 0.25:
+			p = from + (p - from).normalized() * 0.25
 		if _can_stand(fh, p.x, p.z):
 			p.y = from.y
 			return p
@@ -855,6 +875,8 @@ func _on_footstep(_side: int, running: bool) -> void:
 	var kind := _surface_kind(p.x, p.z)
 	var i := rng.randi() % 2
 	var vol := -9.0 if running else -14.0
+	if kind == "sand":
+		_stamp_footprint(_side)
 	match kind:
 		"wood":
 			vol += 1.5
@@ -970,10 +992,14 @@ func _rest_tick(delta: float) -> void:
 					rest_phase = 3
 				else:
 					boy.end_activity()
-					player.position = rest_approach
+					player.position = _blocked_by(rest_approach)
 					player.rotation = Vector3(0, face_yaw, 0)
+					ground_y = _surface(player.position.x, player.position.z)
+					move_vel = Vector3.ZERO
 					mode = Mode.EXPLORE
 					ex_yaw = face_yaw
+					_update_action_kind()
+					_update_ui()
 		3, 5:
 			var dur2 := 1.0
 			var k2 := clampf(rest_t / dur2, 0.0, 1.0)
@@ -1055,19 +1081,19 @@ func _explore_cam_input(event: InputEvent) -> void:
 			var ps: Array = touches.values()
 			var d: float = (ps[0] - ps[1]).length()
 			if pinch_d > 1.0 and d > 1.0:
-				ex_dist = clamp(ex_dist * pinch_d / d, 2.4, 10.0)
+				ex_dist = clamp(ex_dist * pinch_d / d, 3.0, 14.0)
 			pinch_d = d
 	elif event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION:
 		if event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT:
 			mouse_drag = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			ex_dist = clamp(ex_dist * 0.9, 2.4, 10.0)
+			ex_dist = clamp(ex_dist * 0.9, 3.0, 14.0)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			ex_dist = clamp(ex_dist * 1.11, 2.4, 10.0)
+			ex_dist = clamp(ex_dist * 1.11, 3.0, 14.0)
 	elif event is InputEventMouseMotion and event.device != InputEvent.DEVICE_ID_EMULATION and mouse_drag:
 		_explore_orbit(event.relative)
 	elif event is InputEventMagnifyGesture:
-		ex_dist = clamp(ex_dist / event.factor, 2.4, 10.0)
+		ex_dist = clamp(ex_dist / event.factor, 3.0, 14.0)
 
 func _explore_orbit(rel: Vector2) -> void:
 	var vs := get_viewport().get_visible_rect().size
@@ -1309,6 +1335,18 @@ func _finish() -> void:
 	finish_hold = 1.2
 	_update_ui()
 
+func _stamp_footprint(side: int) -> void:
+	var fp := boy.foot_points(side)
+	var heel: Vector3 = fp[0]
+	var ball: Vector3 = fp[1]
+	var f := Vector2(ball.x - heel.x, ball.z - heel.z)
+	if f.length() < 0.03:
+		return
+	var c := Vector2(heel.x, heel.z) + f * 0.6
+	print_buf[print_i] = Vector4(c.x, c.y, atan2(f.y, f.x), gt)
+	print_i = (print_i + 1) % print_buf.size()
+	island.terrain_mat.set_shader_parameter("prints", print_buf)
+
 func _add_ripple(p: Vector3, strength: float, delay := 0.0) -> void:
 	ripple_buf[ripple_i] = Vector4(p.x, p.z, gt + delay, strength)
 	ripple_i = (ripple_i + 1) % 8
@@ -1543,7 +1581,10 @@ func _process(delta: float) -> void:
 	island.set_time(gt)
 	var tall := _tall()
 	camera.keep_aspect = Camera3D.KEEP_HEIGHT
-	camera.fov = 66.0 if tall else 52.0
+	var fov_want := (66.0 if tall else 52.0)
+	if mode == Mode.EXPLORE and not demo_cam:
+		fov_want = 44.0 if tall else 36.0
+	camera.fov = fov_want if gt < 0.1 else lerpf(camera.fov, fov_want, 1.0 - exp(-delta * 3.0))
 	for bn in island.buoys:
 		var ph: float = bn.get_meta("phase")
 		bn.position.y = sin(gt * 1.7 + ph) * 0.08
@@ -1564,6 +1605,9 @@ func _process(delta: float) -> void:
 		toast_timer -= delta
 		if toast_timer < 0.5:
 			lbl_toast.modulate.a = max(toast_timer / 0.5, 0.0)
+	# the stick only exists while exploring; never leave it hidden (or shown) after a mode change
+	if joy.visible != (mode == Mode.EXPLORE):
+		_update_ui()
 	match mode:
 		Mode.EXPLORE:
 			_explore_tick(delta)
@@ -1591,6 +1635,9 @@ func _process(delta: float) -> void:
 	elif mode == Mode.THROW and (state == State.READY or state == State.AIMING):
 		player.rotation.y = lerp_angle(player.rotation.y, aim_yaw, 1.0 - exp(-delta * 10.0))
 	_update_camera(delta)
+	var focus := player.global_position + Vector3(0, 0.7, 0)
+	island.foliage_mat.set_shader_parameter("focus", focus)
+	island.static_mat.set_shader_parameter("focus", focus)
 	_update_audio(delta)
 	_audio_tick(delta)
 
@@ -1618,8 +1665,8 @@ func _throw_cam() -> Array:
 
 func _explore_cam() -> Array:
 	var tall := _tall()
-	var t := player.global_position + Vector3(0, 0.85, 0)
-	return [t, ex_yaw, ex_pitch, ex_dist * (1.05 if tall else 1.0)]
+	var t := player.global_position + Vector3(0, 0.55, 0)
+	return [t, ex_yaw, ex_pitch, ex_dist * (1.1 if tall else 1.0)]
 
 func _rest_cam() -> Array:
 	var tall := _tall()
@@ -1731,10 +1778,11 @@ func _update_camera(delta: float) -> void:
 	_apply_camera()
 
 func _cam_blocked(q: Vector3) -> bool:
-	for bl in island.cam_blockers:
-		if q.distance_to(bl[0]) < float(bl[1]):
-			return true
 	if mode == Mode.THROW or mode == Mode.VIEW:
+		# the high follow camera ignores these small dock props: the cut-out shader dithers them instead
+		for bl in island.cam_blockers:
+			if q.distance_to(bl[0]) < float(bl[1]):
+				return true
 		return false
 	for ob in island.obstacles:
 		var c: Vector2 = ob[0]
@@ -1825,7 +1873,7 @@ func _demo_shot(name: String) -> void:
 
 # ------------------------------------------------------------------ v4/v5 scripted demo (screenshots / video)
 # godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 [--portrait] [--shotdir=/abs/dir]
-# godot --path . --fixed-fps 30 --write-movie x.avi -- --video4=walk|throw|sleep|sun
+# godot --path . --fixed-fps 30 --write-movie x.avi -- --video4=walk|throw|sleep|sun|getup|gait
 
 func _wait(sec: float) -> void:
 	var t0 := gt
@@ -1958,6 +2006,7 @@ func _rest_sequence(pre: String, kind: String, close: bool) -> void:
 	_begin_rest(kind)
 	while rest_phase < 3:
 		await get_tree().process_frame
+	_shot(pre + kind + "_seated")
 	await _wait(0.45)
 	_shot(pre + kind + "_lying_down")
 	while rest_phase < 4:
@@ -2004,6 +2053,25 @@ func _shore_sequence(pre: String) -> void:
 	_shot(pre + "16_wading")
 	_stop_walk()
 
+## gameplay follow camera along the beach (style checks): walk, run, then stand
+func _explore_sequence(pre: String) -> void:
+	var a := island.shore_pt(-1.3, 2.2)
+	_place(a, 0.0)
+	var b := island.shore_pt(-0.95, 2.2)
+	var dirv := (b - a).normalized()
+	face_yaw = atan2(-dirv.x, -dirv.z)
+	player.rotation.y = face_yaw
+	_snap_explore_cam()
+	_walk_to.call(b, false)
+	await _wait(2.5)
+	_shot(pre + "e1_walk")
+	_walk_to.call(island.shore_pt(-0.4, 3.6), true)
+	await _wait(2.0)
+	_shot(pre + "e2_run")
+	_stop_walk()
+	await _wait(1.5)
+	_shot(pre + "e3_stand")
+
 func _run_demo4() -> void:
 	await _wait(0.5)
 	if demo_seg != "":
@@ -2019,6 +2087,8 @@ func _run_demo4() -> void:
 				await _throw_sequence(pre + "08_", true, close)
 			elif what == "shore":
 				await _shore_sequence(pre)
+			elif what == "explore":
+				await _explore_sequence(pre)
 			else:
 				await _rest_sequence(pre + ("10_" if what == "sleep" else "11_"), what, close)
 			get_tree().quit()
@@ -2149,6 +2219,69 @@ func _video_seg(seg: String) -> void:
 			while rest_phase < 4:
 				await get_tree().process_frame
 			await _wait(2.2)
+		"getup":
+			# sunbathe -> get up -> walk away on the real touch stick (the v5 bug: stuck after getting up)
+			var td2 := island.towel_dir
+			var sd2 := td2.cross(Vector3.UP).normalized()
+			_place(island.towel_pos + sd2 * 1.4 + td2 * 0.4, atan2(sd2.x, sd2.z))
+			_snap_cam_now()
+			_begin_rest("sun")
+			while rest_phase < 4:
+				await get_tree().process_frame
+			await _wait(1.8)
+			_toast("点「起来」", 1.0)
+			_wake()
+			while mode != Mode.EXPLORE:
+				await get_tree().process_frame
+			await _wait(0.4)
+			await _stick_walk([Vector2(0.2, -1), Vector2(1, -0.3), Vector2(0.4, 1)], 1.6)
+			await _wait(0.8)
+		"gait":
+			# side-on camera out over the water: walk, run, stop; then the same stretch in the game camera
+			var sea_side := Island.dir_at(-1.1)
+			for game_cam: bool in [false, true]:
+				var g0 := island.shore_pt(-1.38, 2.4)
+				var gm := island.shore_pt(-1.15, 2.4)
+				var g1 := island.shore_pt(-0.86, 2.6)
+				var gd := (gm - g0).normalized()
+				_place(g0, atan2(-gd.x, -gd.z))
+				ex_yaw = face_yaw
+				_snap_cam_now()
+				if game_cam:
+					_free_cam()
+				else:
+					demo_cam = true
+					demo_track = [atan2(sea_side.x, sea_side.z), 0.08, 3.0, 0.62, true]
+				await _wait(0.6)
+				await _walk_to(gm, false, 5.0)
+				await _walk_to(g1, true, 4.0)
+				_stop_walk()
+				await _wait(1.2)
+			_free_cam()
+
+## drive the on-screen joystick with real touch events (like a finger on the phone)
+func _stick_walk(dirs: Array, sec_each: float) -> void:
+	var vs := get_viewport().get_visible_rect().size
+	var c := Vector2(vs.x * 0.14, vs.y * 0.86)
+	var keep := demo_mode
+	demo_mode = false
+	var ev := InputEventScreenTouch.new()
+	ev.index = 0; ev.position = c; ev.pressed = true
+	get_viewport().push_input(ev, true)
+	var last := c
+	for dv: Vector2 in dirs:
+		var t0 := gt
+		while gt - t0 < sec_each:
+			var to := c + dv.normalized() * 50.0
+			var dr := InputEventScreenDrag.new()
+			dr.index = 0; dr.position = last.lerp(to, 0.3); dr.relative = dr.position - last
+			last = dr.position
+			get_viewport().push_input(dr, true)
+			await get_tree().process_frame
+	var up := InputEventScreenTouch.new()
+	up.index = 0; up.position = last; up.pressed = false
+	get_viewport().push_input(up, true)
+	demo_mode = keep
 
 func _snap_cam_now() -> void:
 	var c := _explore_cam()

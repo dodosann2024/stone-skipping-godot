@@ -12,9 +12,10 @@ var t := 0.0
 var frame := 0
 var speed := 0.0
 var yaw := 0.0
-var prev_ankle: Array = [Vector3.ZERO, Vector3.ZERO]
-var prev_plant: Array = [0.0, 0.0]
-var prev_sgn: Array = [true, true]
+const POINTS := ["foot_l", "ball_l", "foot_r", "ball_r"]   # heel (ankle) and ball joints
+var rest_h: Array = []
+var prev_pt: Array = []
+var prev_down: Array = []
 var slide_max := 0.0
 var slide_sum := 0.0
 var slide_n := 0
@@ -88,22 +89,24 @@ func _process(dt: float) -> bool:
 	if tg[0] < 0.0:
 		print("GAIT slide max %.4f m  mean %.4f m over %d planted frames" % [slide_max, slide_sum / maxf(slide_n, 1), slide_n])
 		return true
-	# measure the rendered ankles while the foot claims to be planted
-	for i in 2:
-		var key := "foot_l" if i == 0 else "foot_r"
-		var piv := Vector3(0, -Boy.ANKLE_H, -0.075) if float(boy.foot_pitch[i]) >= 0.0 else Vector3(0, -Boy.ANKLE_H, 0.06)
-		var an: Vector3 = (boy.parts[key] as Node3D).global_transform * piv
-		var sgn := float(boy.foot_pitch[i]) >= 0.0
-		if float(boy.plant[i]) >= 1.0 and float(prev_plant[i]) >= 1.0 and frame > 3 and sgn == prev_sgn[i]:
-			var d := Vector2(an.x - prev_ankle[i].x, an.z - prev_ankle[i].z).length()
+	# a heel / ball joint counts as planted while it sits at its standing height; measure its drift
+	boy.tree.advance(0.0)
+	for i in POINTS.size():
+		var bi := boy.skel.find_bone(POINTS[i])
+		var pt: Vector3 = boy.skel.global_transform * boy.skel.get_bone_global_pose(bi).origin
+		if rest_h.size() < POINTS.size():
+			rest_h.append(pt.y); prev_pt.append(pt); prev_down.append(false)
+			continue
+		var down: bool = pt.y < float(rest_h[i]) + 0.006
+		if down and prev_down[i] and frame > 3:
+			var d := Vector2(pt.x - prev_pt[i].x, pt.z - prev_pt[i].z).length()
 			if d > 0.008:
-				print("  slide t=%.2f foot=%d d=%.3f anim=%s spd=%.2f fw=%s pitch=%.2f" % [t, i, d, boy.anim, speed, boy.fw[i], boy.foot_pitch[i]])
+				print("  slide t=%.2f %s d=%.3f anim=%s spd=%.2f" % [t, POINTS[i], d, boy.anim, speed])
 			slide_max = maxf(slide_max, d)
 			slide_sum += d
 			slide_n += 1
-		prev_ankle[i] = an
-		prev_plant[i] = boy.plant[i]
-		prev_sgn[i] = sgn
+		prev_pt[i] = pt
+		prev_down[i] = down
 	var acc := 6.0 if tg[0] > speed else 9.0
 	speed = move_toward(speed, tg[0], acc * dt)
 	yaw += float(tg[1]) * dt * minf(speed / 1.0, 1.0)

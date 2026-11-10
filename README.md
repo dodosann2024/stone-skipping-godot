@@ -1,7 +1,31 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v5 新角色 + 自然动画 + 清澈浅海
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v6 写实骨骼角色 + 参考图画风
 
-低多边形热带海岛小游戏。场景、角色、道具全部由 GDScript 代码生成，水面为自写着色器，所有声音均为代码合成。
+低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩由 Blender 脚本（`art/boy/`）建模、绑定骨骼、制作动画后导出 glTF；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+## v6 改动
+在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（导出文件改名为 `game_v6.*`）。参考图分析见 `docs/STYLE_v6.md`，截图与视频见 `screenshots/v6/`。
+
+### 1. 修复：晒太阳 / 吊床起身后不能走
+- 原因：起身结束时没有刷新 UI，摇杆一直是隐藏状态。现在起身结束统一调用 `_update_ui()`，并且每帧检查「摇杆可见 ⇔ 自由走动模式」。
+- 回归测试 `dev/selftest.gd`（`godot --headless --path . --fixed-fps 30 -- --selftest`）：毛巾四个方向、吊床两侧、码头站立 / 半蹲投掷（欢呼 / 失望）、进出码头、观景模式之后，都用真实触摸事件推摇杆，要求小男孩能走且播放走路动画。
+
+### 2. 新小男孩（`art/boy/*.py` → `boy/boy.glb`）
+- 用 Blender 4.5 + MPFB2（MakeHuman，CC0 资产）脚本生成约 13 岁、约 6.4 头身的少年（身高 1.23 m），53 根骨骼（game_engine 骨架），约 1.9 万三角形，无贴图（顶点色 AO + 着色器）。
+- 衣服是贴合身体的壳网格：白背心、敞开的红马甲、黄色沙滩短裤（裤脚外扩）、人字拖；独立的头发；草帽（编织纹理 + 红带，往后戴，俯视也能看到脸）。
+- 脸由 `shaders/boy.gdshader` 画出（眨眼、笑、咬牙、惊讶、睡着），柔和包裹光照 + 暖色明暗交界 + 轻微边缘光。
+
+### 3. 动画（Blender 中用 IK 姿势工具 `posekit.py` 生成，烘焙为 17 个片段）
+- 走路：接触 / 下沉 / 经过 / 上升，脚跟着地 → 滚过前脚掌 → 脚尖离地，骨盆下沉与旋转，肩膀反向转动，手臂反向摆动。跑步：腾空期、更大前倾和摆臂。
+- 待机、站立投掷、半蹲投掷、欢呼、失望、吊床（坐 → 躺 → 睡 → 起 → 站）、晒太阳（坐 → 躺 → 休息 → 起 → 站）。
+- Godot 里 `AnimationTree` 作为混合器：走 / 跑按速度混合，步态相位按实际移动距离 ÷ 步幅推进，支撑脚不滑。
+
+### 4. 画面（对照参考图）
+- 相机：自由走动时约 56° 高俯视、长焦（窄视角），树冠挡住时在相机到人物之间做网点镂空。
+- 光照：太阳更低、阴影更长更柔，冷色天光，轻雾，整体降低饱和度与对比度。
+- 沙滩：细颗粒、低频明暗、脚印（走过的地方留下人字拖脚印，45 秒后消失），水线上方一条更暗更冷的湿沙带。
+- 海水：乳白玉绿色、几乎不透明的渐变，高光很少；沙滩上一条细、亮、波浪形的泡沫线随浪上下；后面一条淡的第二道线，近岸漂浮的泡沫点。
+- 椰子树：更多环节、暖灰褐色、节间更深的沟。吊床降低，坐上去脚能接近沙面。
 
 ## v5 改动
 在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（导出文件改名为 `game_v5.*`，旧缓存不会干扰）。截图与视频见 `screenshots/v5/`（`00_compare_v4_v5.png` 为前后对比，`demo.mp4` 为走路 / 投掷 / 吊床 / 晒太阳片段）。
@@ -95,11 +119,12 @@
 
 ## 目录
 - `main.gd`：模式（自由走动 / 投掷 / 观景 / 休息）、移动与碰撞、相机、UI、声音、演示脚本。
-- `boy.gd`：小男孩骨架与程序化动画（待机、站立 / 半蹲投掷、走 / 跑步态、反应、坐 / 躺）；`boy_mesh.gd`：小男孩模型（脸、表情、马甲等）。
+- `boy.gd`：加载 `boy/boy.glb`，用 AnimationTree 混合动画片段（步态相位按移动距离推进）、表情、草帽 / 墨镜 / 石头道具。
+- `art/boy/`：Blender 脚本——`build_boy.py`（建模 + 骨骼 + 衣服 + 道具）、`posekit.py`（IK 姿势工具）、`clips.py`（所有动画）、`export_boy.py`（AO 烘焙、动画烘焙、glTF 导出）、`test_*.py`（预览图）。
 - `joystick.gd`：虚拟摇杆；`island.gd`：整岛程序化生成（含可摇晃的吊床、毛巾、行走碰撞体）；`mesh_builder.gd`；`shaders/`。
 - `web/audio_unlock.js`：iOS 音频解锁脚本（压缩后写在 `export_presets.cfg` 的 head_include 中）。
 - `tools/`：音效合成 / 检查、字体子集、浏览器（模拟 iPhone）测试脚本。
-- `dev/boy_view.gd`：角色姿势检查；`dev/gait_view.gd`：步态检查（走 / 跑 / 转弯 / 急停，输出支撑脚滑移量），均不会被导出。
+- `dev/boy_view.gd`：角色姿势检查；`dev/gait_view.gd`：步态检查（走 / 跑 / 转弯 / 急停，输出支撑脚滑移量）；`dev/selftest.gd`：起身后能否行走的回归测试；均不会被导出。
 - `docs/`：Web 导出结果（GitHub Pages 从这里发布）。
 
 ## 命令
@@ -107,18 +132,21 @@
 godot --headless --path . --import
 godot --headless --path . -- --sim                                    # 站立 / 半蹲物理参数表
 python3 tools/synth_audio.py && python3 tools/check_audio.py           # 重新合成并检查音效
-xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4            # v5 截图（screenshots/v5）
+blender -b --python art/boy/build_boy.py -- --export boy                # 重新生成小男孩（需要 Blender 4.5 + MPFB2 扩展）
+godot --headless --path . --fixed-fps 30 -- --selftest                 # 回归测试：每个动作结束后都能用摇杆走
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4            # v6 截图（screenshots/v6）
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 --from=explore # 游戏相机下走 / 跑
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 --from=shore # 海岸 / 浅海截图
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 585x1266 -- --demo4 --portrait # 竖屏截图
-xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --write-movie w.avi -- --video4=walk     # 视频片段 walk/throw/sleep/sun
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --write-movie w.avi -- --video4=walk     # 视频片段 walk/throw/sleep/sun/getup/gait
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . -s res://dev/boy_view.gd -- --out=/tmp/pose            # 角色姿势图
 godot --headless --path . --fixed-fps 30 -s res://dev/gait_view.gd                                    # 步态滑步检查（加 --out=/tmp/g 输出帧）
-godot --headless --path . --export-release "Web" build/web/game_v5.html   # 然后复制到 docs/，index.html = game_v5.html
-python3 tools/browser_check_v4.py "https://dodosann2024.github.io/stone-skipping-godot/?v=5" /tmp/web   # 模拟 iPhone 测试（含真实出声检测）
+godot --headless --path . --export-release "Web" build/web/game_v6.html   # 然后复制到 docs/，index.html = game_v6.html
+python3 tools/browser_check_v4.py "https://dodosann2024.github.io/stone-skipping-godot/?v=6" /tmp/web   # 模拟 iPhone 测试（含真实出声检测）
 ```
 
 ## 素材与许可
-- 所有 3D 模型、贴图、着色器均为本项目代码生成，无第三方美术素材。
+- 场景、道具、着色器均为本项目代码生成。小男孩的基础人体网格（male1591 代理网格）、体型目标和 game_engine 骨架来自 MakeHuman / MPFB2 资产，CC0 协议；衣服、草帽、动画等由 `art/boy/` 脚本生成。
 - 所有声音均由 `tools/synth_audio.py` 程序合成（噪声 + 滤波 + 模态合成），无第三方录音素材。
 - 字体：Noto Sans CJK SC Bold（仅子集化项目用到的字符为 `fonts/ui.otf`），SIL Open Font License 1.1，© Google / Adobe。许可文本见 `fonts/NOTO_LICENSE.txt`。
 - 引擎：Godot Engine（MIT License）。
