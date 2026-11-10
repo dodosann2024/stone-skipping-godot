@@ -59,7 +59,20 @@ static func island_R(th: float) -> float:
 static func shore_d(x: float, z: float) -> float:
 	return Vector2(x, z).length() - island_R(atan2(z, x))
 
+## level pads under the campfire logs: [a, b] (xz ends of the log axis), flat height; see _make_pads
+static var pads: Array = []
+
 static func ground_h(x: float, z: float) -> float:
+	var h := _ground_raw(x, z)
+	for pd: Array in pads:
+		var q := Vector2(x, z)
+		var a: Vector2 = pd[0]
+		var ab: Vector2 = (pd[1] as Vector2) - a
+		var dist := q.distance_to(a + ab * clampf((q - a).dot(ab) / ab.length_squared(), 0.0, 1.0))
+		h = lerpf(float(pd[2]), h, smoothstep(0.75, 1.4, dist))
+	return h
+
+static func _ground_raw(x: float, z: float) -> float:
 	var d = shore_d(x, z)
 	var n = 0.07 * sin(x * 0.9 + z * 0.4) + 0.05 * cos(z * 1.3 - x * 0.5) + 0.04 * sin(x * 2.1 - z * 1.7)
 	if d > 0.0:
@@ -140,6 +153,7 @@ func build(font: Font) -> void:
 	hut_pos = shore_pt(hth, 3.6)
 	lighthouse_pos = gp(2.0, 3.0)
 	campfire_pos = shore_pt(1.75, 5.0)
+	_make_pads()
 	SB = MeshBuilder.new()
 	FB = MeshBuilder.new()
 	GB = MeshBuilder.new()
@@ -159,6 +173,17 @@ func build(font: Font) -> void:
 	_index_walls()
 	_flush()
 	_build_water()
+
+## the logs round the campfire stand on a slope: flatten the sand under each one (and under the feet of
+## whoever sits on it, from either side) to the height at its middle
+func _make_pads() -> void:
+	pads.clear()
+	var c := campfire_pos
+	for i in 3:
+		var a := 0.6 + i * 2.1
+		var lp := c + Vector3(cos(a) * 1.7, 0, sin(a) * 1.7)
+		var t := Vector2(-sin(a), cos(a)) * 0.7
+		pads.append([Vector2(lp.x, lp.z) + t, Vector2(lp.x, lp.z) - t, _ground_raw(lp.x, lp.z)])
 
 func _flush() -> void:
 	static_mat = ShaderMaterial.new()

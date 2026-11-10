@@ -309,6 +309,15 @@ func _sit(i: int, from: String, lie: bool) -> void:
 	var pel: Vector3 = (m.boy.parts["pelvis"] as Node3D).global_position
 	var sit_h := pel.y - top.y
 	var note := "sat (pelvis %.2f m over the seat" % sit_h
+	if st["two_sided"]:
+		# the logs rest on levelled sand: no slope under the log ends or the feet on either side
+		var base: float = top.y - m.island.SEAT_TOP
+		var worst := 0.0
+		for o: Vector3 in [face * 0.4, -face * 0.4, side * 0.65, -side * 0.65]:
+			worst = maxf(worst, absf(Island.ground_h(top.x + o.x, top.z + o.z) - base))
+		note += ", ground off level %.3f m" % worst
+		if worst > 0.01:
+			fails.append("ground not level under " + tag)
 	if lie:
 		if not m.lie_btn.visible:
 			fails.append("no lie button on " + tag)
