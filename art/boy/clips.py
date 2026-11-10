@@ -165,67 +165,99 @@ def keyed(keys):
     return lambda t: catmull(keys, t)
 
 
-# throwing stances (left foot forward, right foot back), flat-ankle positions
-ST_L, ST_R = V(0.075, -0.20, 0.055), V(-0.20, 0.15, 0.055)
+# throwing stances: left foot forward, right foot back, body side-on to the target (-Y)
+ST_L, ST_R = V(0.10, -0.12, 0.055), V(-0.17, 0.24, 0.055)   # set-up; the weight rocks back onto the right foot
+ST_L2 = V(0.12, -0.30, 0.055)                               # front foot after the stride into the throw
 CR_L, CR_R = V(0.11, -0.30, 0.055), V(-0.14, 0.34, 0.055)
 T_CHARGE = 0.5      # charge part of the throw clips: seek 0..T_CHARGE by power
 T_RELEASE = 0.65    # stone leaves the hand
 
 
+def _recover(i, last, t0, fl_from):
+    """after the follow-through: back foot steps up, front foot steps back, settle into idle (t0 = first key)"""
+    relax = dict(hr=V(-0.20, -0.02, 0.76), hrw=0.0, wr=(0.0, 0.0, 0.0), er=i["er"], gr=0.3,
+                 hl=V(0.21, 0.0, 0.76), hlw=0.0, el=i["el"], gl=0.3)
+    step_r = P(last, fr=V(-0.12, 0.10, 0.10), pr=-0.25, yr=-0.15, kr=None, pel=V(0.03, -0.10, -0.08),
+               prot=(0.18, 0.02, 0.32), sp=(0.10, 0.0, 0.12), neck=(0.0, 0.0, -0.18), head=(0.0, 0.0, -0.2), **relax)
+    land_r = P(step_r, fr=i["fr"], pr=0.0, yr=i["yr"], pel=V(0.01, -0.07, -0.04), prot=(0.07, 0.02, 0.12),
+               sp=(0.02, 0.0, 0.05), neck=(0.0, 0.0, -0.08), head=(0.03, 0.0, -0.08))
+    step_l = P(land_r, fl=(fl_from + i["fl"]) * 0.5 + V(0, 0, 0.045), pl=-0.2, yl=0.05, pel=V(-0.01, -0.03, -0.03),
+               prot=(0.03, 0.03, 0.04), sp=(0.0, 0.0, 0.0), neck=(0.0, 0.0, 0.0), head=(0.04, 0.0, 0.0))
+    land_l = P(i, pel=V(0.0, 0.0, -0.022), prot=(0.01, 0.0, 0.0), sp=(-0.02, 0.0, 0.0))
+    return [(t0, step_r), (t0 + 0.14, land_r), (t0 + 0.30, step_l), (t0 + 0.44, land_l), (t0 + 0.66, i), (t0 + 0.8, i)]
+
+
 def throw_stand(rig):
+    """sidearm skip throw: coil onto the back foot with the stone drawn back low, stride, hips then chest
+    unwind, low flat release with a wrist flick, the arm wraps across the body, step up and settle"""
     i = I(rig)
-    st = dict(fl=ST_L, fr=ST_R, yl=-0.25, yr=-0.7)
-    ready = P(i, pel=V(-0.03, 0.0, -0.05), prot=(0.08, -0.02, -0.22), sp=(0.05, 0.0, -0.15),
-              neck=(0.0, 0.0, 0.12), head=(0.05, 0.0, 0.2),
-              hr=V(-0.21, -0.10, 0.76), er=V(-0.4, 0.8, -0.3), hl=V(0.21, -0.06, 0.78), gr=0.85, gl=0.3, **st)
-    charge = P(ready, pel=V(-0.07, 0.07, -0.13), prot=(0.16, -0.08, -0.5), sp=(0.16, -0.06, -0.45),
-               neck=(0.0, 0.0, 0.4), head=(0.05, 0.06, 0.45),
-               hr=V(-0.30, 0.27, 0.80), er=V(-0.3, 0.5, -1.0), hl=V(0.22, -0.32, 0.93), el=V(0.6, 0.2, -0.6),
-               pl=0.12, gr=0.95)
-    whip = P(charge, pel=V(-0.02, 0.0, -0.12), prot=(0.2, -0.03, -0.1), sp=(0.18, 0.0, -0.1),
-             hr=V(-0.34, 0.02, 0.70), pl=0.0, pr=-0.2, neck=(0, 0, 0.1), head=(0.0, 0.0, 0.1))
-    release = P(charge, pel=V(0.02, -0.05, -0.10), prot=(0.24, 0.02, 0.24), sp=(0.2, 0.05, 0.25),
-                neck=(-0.05, 0.0, -0.2), head=(0.0, 0.0, -0.25),
-                hr=V(-0.30, -0.38, 0.52), hrw=1.0, er=V(-0.5, 0.5, -1.0), hl=V(0.30, 0.06, 0.84), el=V(0.6, 0.8, 0.0),
-                pl=0.0, pr=-0.4, gr=0.4)
-    follow = P(release, pel=V(0.04, -0.08, -0.09), prot=(0.3, 0.04, 0.5), sp=(0.3, 0.05, 0.35),
-               neck=(-0.05, 0.0, -0.3), head=(-0.1, 0.0, -0.45),
-               hr=V(0.10, -0.33, 0.60), er=V(-0.3, 1.0, -0.3), hl=V(0.27, 0.2, 0.78), pr=-0.9, gr=0.2)
-    hold = P(follow, pel=V(0.03, -0.06, -0.06), prot=(0.14, 0.02, 0.4), sp=(0.1, 0.0, 0.2),
-             neck=(0.0, 0.0, -0.3), head=(0.0, 0.0, -0.4), hr=V(-0.06, -0.2, 0.76), hrw=0.0, hl=V(0.22, 0.05, 0.76), pr=-0.7, gr=0.25)
-    step_r = P(hold, fr=V(-0.13, -0.05, 0.11), pr=-0.3, yr=-0.3, pel=V(0.04, -0.06, -0.04), prot=(0.08, 0.03, 0.25))
-    land_r = P(i, fl=ST_L, yl=-0.25, pel=V(0.03, -0.06, -0.025), prot=(0.05, 0.04, 0.1))
-    step_l = P(land_r, fl=V(0.11, -0.10, 0.10), pl=-0.3, yl=0.0, pel=V(-0.01, -0.03, -0.02))
-    keys = [(0.0, ready), (T_CHARGE, charge), (0.56, whip), (T_RELEASE, release), (0.82, follow), (1.25, hold), (1.4, hold),
-            (1.55, step_r), (1.7, land_r), (1.85, step_l), (2.0, i), (2.3, i)]
-    return keyed(keys), 2.3
+    st = dict(fl=ST_L, fr=ST_R, yl=-0.35, yr=-1.1)
+    ready = P(i, pel=V(-0.02, 0.04, -0.05), prot=(0.10, -0.02, -0.55), sp=(0.06, 0.0, -0.12),
+              neck=(0.0, 0.0, 0.28), head=(0.05, 0.0, 0.32),
+              hr=V(-0.22, -0.06, 0.74), er=V(-0.5, 0.6, -0.5), hl=V(0.20, -0.14, 0.80), el=V(0.5, 0.6, -0.4),
+              gr=0.85, gl=0.35, **st)
+    charge = P(ready, pel=V(-0.07, 0.11, -0.12), prot=(0.20, -0.07, -0.85), sp=(0.18, -0.10, -0.40),
+               neck=(0.0, 0.0, 0.52), head=(0.05, 0.05, 0.58),
+               hr=V(-0.30, 0.36, 0.66), hrw=1.0, er=V(-0.2, 0.4, -1.0), wr=(0.0, 0.0, -0.5), gr=0.95,
+               hl=V(0.10, -0.34, 0.95), hlw=1.0, el=V(0.6, 0.2, -0.6), gl=0.15, pl=-0.25)
+    stride = P(charge, pel=V(-0.05, 0.05, -0.12), prot=(0.22, -0.07, -0.62), sp=(0.20, -0.14, -0.42),
+               fl=(ST_L + ST_L2) * 0.5 + V(0, 0, 0.04), pl=0.1, yl=-0.3, hr=V(-0.36, 0.32, 0.62), wr=(0.0, 0.0, -0.65))
+    plant = P(charge, pel=V(-0.01, -0.06, -0.15), prot=(0.26, -0.05, -0.18), sp=(0.24, -0.18, -0.40),
+              neck=(0.0, 0.0, 0.3), head=(0.0, 0.0, 0.3), fl=ST_L2, pl=0.0, yl=-0.25,
+              hr=V(-0.44, 0.12, 0.60), wr=(0.0, 0.0, -0.7), er=V(-0.2, 0.2, -1.0),
+              hl=V(0.22, -0.20, 0.86), pr=-0.3, yr=-0.95)
+    release = P(plant, pel=V(0.02, -0.12, -0.15), prot=(0.30, 0.0, 0.15), sp=(0.28, -0.20, 0.10),
+                neck=(-0.05, 0.0, -0.15), head=(0.0, 0.0, -0.1),
+                hr=V(-0.40, -0.24, 0.61), wr=(0.0, 0.0, 0.5), er=V(-0.3, 0.6, -1.0), gr=0.4,
+                hl=V(0.24, -0.06, 0.86), hlw=0.0, el=V(0.8, 0.6, -0.2), pr=-0.6, yr=-0.7)
+    follow = P(release, pel=V(0.04, -0.15, -0.14), prot=(0.32, 0.03, 0.50), sp=(0.24, -0.05, 0.30),
+               neck=(-0.05, 0.0, -0.35), head=(-0.05, 0.0, -0.4),
+               hr=V(-0.05, -0.40, 0.62), wr=(0.0, 0.0, 0.3), er=V(-0.2, 0.9, -0.5), gr=0.25,
+               hl=V(0.21, -0.14, 0.86), pr=-0.9, yr=-0.4)
+    wrap = P(follow, pel=V(0.05, -0.15, -0.11), prot=(0.24, 0.04, 0.60), sp=(0.16, 0.0, 0.35),
+             neck=(0.0, 0.0, -0.4), head=(0.0, 0.0, -0.45),
+             hr=V(0.16, -0.22, 0.70), er=V(0.2, 1.0, -0.4), wr=(0.0, 0.0, 0.0), hl=V(0.20, -0.10, 0.80), pr=-1.0, yr=-0.2)
+    keys = [(0.0, ready), (T_CHARGE, charge), (0.555, stride), (0.60, plant), (T_RELEASE, release), (0.74, follow),
+            (0.90, wrap)] + _recover(i, wrap, 1.08, ST_L2)
+    return keyed(keys), keys[-1][0]
 
 
 def throw_crouch(rig):
+    """the same sidearm skip from a half kneel (right knee down): lower and flatter, then stand up and settle"""
     i = I(rig)
-    st = dict(fl=CR_L, fr=CR_R, yl=-0.2, yr=-0.3, pr=-1.1, kr=V(0, -1, -0.8))
-    ready = P(i, pel=V(-0.02, 0.04, -0.30), prot=(0.3, -0.03, -0.2), sp=(0.1, 0.0, -0.15),
-              neck=(0.0, 0.0, 0.12), head=(0.0, 0.0, 0.2),
-              hr=V(-0.24, -0.10, 0.74), er=V(-0.4, 0.8, -0.3), hl=V(0.22, -0.12, 0.78), gr=0.85, gl=0.3, **st)
-    charge = P(ready, pel=V(-0.05, 0.08, -0.36), prot=(0.36, -0.08, -0.45), sp=(0.25, -0.05, -0.45),
-               neck=(0.0, 0.0, 0.4), head=(-0.05, 0.06, 0.45),
-               hr=V(-0.32, 0.24, 0.78), er=V(-0.3, 0.5, -1.0), hl=V(0.24, -0.34, 0.9), el=V(0.6, 0.2, -0.6), gr=0.95)
-    whip = P(charge, pel=V(-0.03, 0.03, -0.35), prot=(0.38, -0.03, -0.1), sp=(0.3, 0.0, -0.1),
-             hr=V(-0.34, 0.02, 0.66), neck=(0, 0, 0.1), head=(0.0, 0.0, 0.1))
-    release = P(charge, pel=V(0.0, -0.02, -0.34), prot=(0.4, 0.03, 0.22), sp=(0.35, 0.05, 0.22),
-                neck=(-0.05, 0.0, -0.2), head=(-0.1, 0.0, -0.25),
-                hr=V(-0.30, -0.24, 0.20), hrw=1.0, er=V(-0.5, 0.5, -1.0), hl=V(0.30, 0.06, 0.84), el=V(0.6, 0.8, 0.0), gr=0.4)
-    follow = P(release, pel=V(0.02, -0.04, -0.33), prot=(0.45, 0.05, 0.45), sp=(0.4, 0.05, 0.35),
-               neck=(-0.05, 0.0, -0.3), head=(-0.15, 0.0, -0.45),
-               hr=V(0.06, -0.27, 0.26), er=V(-0.3, 1.0, -0.3), hl=V(0.27, 0.2, 0.78), gr=0.2)
-    hold = P(follow, pel=V(0.0, 0.0, -0.31), prot=(0.3, 0.02, 0.3), sp=(0.2, 0.0, 0.15),
-             neck=(0.0, 0.0, -0.3), head=(0.0, 0.0, -0.4), hr=V(-0.12, -0.25, 0.72), hrw=0.0, hl=V(0.2, -0.2, 0.76), gr=0.25)
-    rise = P(hold, pel=V(0.0, 0.0, -0.12), prot=(0.15, 0.0, 0.15), fr=V(-0.13, 0.1, 0.13), pr=-0.4, kr=None)
-    land_r = P(i, fl=CR_L, yl=-0.2, pel=V(0.02, -0.08, -0.04), prot=(0.06, 0.03, 0.08))
-    step_l = P(land_r, fl=V(0.11, -0.13, 0.10), pl=-0.3, yl=0.0, pel=V(-0.01, -0.03, -0.02))
-    keys = [(0.0, ready), (T_CHARGE, charge), (0.56, whip), (T_RELEASE, release), (0.82, follow), (1.25, hold), (1.45, hold),
-            (1.7, rise), (1.85, land_r), (2.0, step_l), (2.15, i), (2.4, i)]
-    return keyed(keys), 2.4
+    st = dict(fl=CR_L, fr=CR_R, yl=-0.35, yr=-0.6, pr=-1.1, kr=V(0, -1, -0.8))
+    ready = P(i, pel=V(-0.02, 0.06, -0.30), prot=(0.30, -0.03, -0.5), sp=(0.12, 0.0, -0.15),
+              neck=(0.0, 0.0, 0.3), head=(0.0, 0.0, 0.35),
+              hr=V(-0.24, -0.10, 0.74), er=V(-0.4, 0.8, -0.3), hl=V(0.22, -0.12, 0.78), el=V(0.5, 0.6, -0.4),
+              gr=0.85, gl=0.3, **st)
+    charge = P(ready, pel=V(-0.06, 0.10, -0.35), prot=(0.40, -0.10, -0.85), sp=(0.25, -0.10, -0.40),
+               neck=(0.0, 0.0, 0.55), head=(-0.05, 0.05, 0.6),
+               hr=V(-0.30, 0.34, 0.36), hrw=1.0, er=V(-0.2, 0.4, -1.0), wr=(0.0, 0.0, -0.5), gr=0.95,
+               hl=V(0.12, -0.42, 0.70), hlw=1.0, el=V(0.6, 0.2, -0.6), gl=0.15)
+    drive = P(charge, pel=V(-0.03, 0.03, -0.36), prot=(0.42, -0.08, -0.45), sp=(0.28, -0.14, -0.42),
+              hr=V(-0.38, 0.26, 0.32), wr=(0.0, 0.0, -0.65))
+    plant = P(charge, pel=V(-0.01, -0.02, -0.36), prot=(0.42, -0.06, -0.18), sp=(0.30, -0.16, -0.40),
+              neck=(0.0, 0.0, 0.3), head=(0.0, 0.0, 0.3),
+              hr=V(-0.44, 0.10, 0.30), wr=(0.0, 0.0, -0.7), er=V(-0.2, 0.2, -1.0), hl=V(0.22, -0.22, 0.66))
+    release = P(plant, pel=V(0.01, -0.07, -0.35), prot=(0.45, 0.0, 0.15), sp=(0.35, -0.18, 0.10),
+                neck=(-0.05, 0.0, -0.15), head=(-0.08, 0.0, -0.1),
+                hr=V(-0.40, -0.22, 0.26), wr=(0.0, 0.0, 0.5), er=V(-0.3, 0.6, -1.0), gr=0.4,
+                hl=V(0.24, -0.06, 0.86), hlw=0.0, el=V(0.8, 0.6, -0.2))
+    follow = P(release, pel=V(0.03, -0.09, -0.34), prot=(0.48, 0.03, 0.45), sp=(0.38, -0.05, 0.30),
+               neck=(-0.05, 0.0, -0.35), head=(-0.1, 0.0, -0.4),
+               hr=V(-0.05, -0.40, 0.36), wr=(0.0, 0.0, 0.3), er=V(-0.2, 0.9, -0.5), gr=0.25, hl=V(0.21, -0.14, 0.86))
+    wrap = P(follow, pel=V(0.04, -0.09, -0.33), prot=(0.45, 0.04, 0.55), sp=(0.30, 0.0, 0.32),
+             neck=(0.0, 0.0, -0.4), head=(-0.05, 0.0, -0.45),
+             hr=V(0.14, -0.24, 0.46), er=V(0.2, 1.0, -0.4), wr=(0.0, 0.0, 0.0), hl=V(0.20, -0.10, 0.80))
+    # stand up: weight onto the front foot, push off the back knee
+    lean = P(wrap, pel=V(0.02, -0.12, -0.31), prot=(0.62, 0.02, 0.3), sp=(0.2, 0.0, 0.15),
+             hr=V(-0.16, -0.30, 0.62), hrw=0.0, wr=(0.0, 0.0, 0.0), er=i["er"], hl=V(0.18, -0.30, 0.62), hlw=0.0, el=i["el"],
+             neck=(0.0, 0.0, -0.25), head=(-0.15, 0.0, -0.25), gr=0.3, gl=0.3)
+    rise = P(lean, pel=V(0.02, -0.12, -0.16), prot=(0.30, 0.02, 0.25), fr=V(-0.13, 0.18, 0.10), pr=-0.5, kr=None,
+             hr=V(-0.20, -0.08, 0.74), hl=V(0.21, -0.06, 0.74), head=(-0.05, 0.0, -0.2))
+    keys = [(0.0, ready), (T_CHARGE, charge), (0.56, drive), (0.60, plant), (T_RELEASE, release), (0.74, follow),
+            (0.90, wrap), (1.10, lean), (1.30, rise)] + _recover(i, rise, 1.46, CR_L)
+    return keyed(keys), keys[-1][0]
 
 
 def cheer(rig):
