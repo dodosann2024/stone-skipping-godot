@@ -1,6 +1,7 @@
 extends RefCounted
 ## Regression check: every action (hammock, towel, dock throw + cheer / oops, view mode) must hand control
-## back - afterwards the joystick has to move the kid and the walk animation has to play.
+## back - afterwards the joystick has to move the kid and the walk animation has to play. The walk / run
+## cycles must swing the arms contralaterally (left foot forward = right arm forward).
 ## godot --headless --path . --fixed-fps 30 -- --selftest      (exit code 0 = pass)
 
 var m: Node
@@ -61,6 +62,65 @@ func _can_walk(tag: String) -> void:
 	if not ok:
 		fails.append(tag)
 
+static func _corr(a: Array[float], b: Array[float]) -> float:
+	var ma := 0.0
+	var mb := 0.0
+	for i in a.size():
+		ma += a[i] / a.size()
+		mb += b[i] / b.size()
+	var sab := 0.0
+	var saa := 0.0
+	var sbb := 0.0
+	for i in a.size():
+		sab += (a[i] - ma) * (b[i] - mb)
+		saa += (a[i] - ma) * (a[i] - ma)
+		sbb += (b[i] - mb) * (b[i] - mb)
+	return sab / maxf(sqrt(saa * sbb), 1e-9)
+
+## contralateral gait: sample the imported walk / run cycles through the real mixer and correlate the
+## forward offsets (along the kid's facing, relative to the pelvis) of feet, hands, hips and shoulders
+func _gait_check() -> void:
+	var b: Boy = m.boy
+	var sk: Skeleton3D = b.skel
+	var fwd: Vector3 = -b.global_basis.z.normalized()
+	for run: bool in [false, true]:
+		var s := {}
+		for k in ["foot_l", "foot_r", "hand_l", "hand_r", "thigh_l", "thigh_r", "upperarm_l", "upperarm_r"]:
+			s[k] = [] as Array[float]
+		for i in 40:
+			b.act_w = 0.0
+			b.move_w = 1.0
+			b.run_k = 1.0 if run else 0.0
+			b.phase = i / 40.0
+			b._apply_mixer()
+			var pel := sk.global_transform * sk.get_bone_global_pose(sk.find_bone("pelvis")).origin
+			for k: String in s:
+				var p := sk.global_transform * sk.get_bone_global_pose(sk.find_bone(k)).origin
+				(s[k] as Array[float]).append((p - pel).dot(fwd))
+		var hips: Array[float] = []
+		var shoulders: Array[float] = []
+		for i in 40:
+			hips.append(s["thigh_l"][i] - s["thigh_r"][i])
+			shoulders.append(s["upperarm_l"][i] - s["upperarm_r"][i])
+		if "--gaitcsv" in OS.get_cmdline_user_args():
+			for i in 40:
+				print("GAITCSV %s,%.3f,%.4f,%.4f,%.4f,%.4f" % ["run" if run else "walk", i / 40.0, s["foot_l"][i], s["foot_r"][i], s["hand_l"][i], s["hand_r"][i]])
+		var c_ll := _corr(s["foot_l"], s["hand_l"])
+		var c_rr := _corr(s["foot_r"], s["hand_r"])
+		var c_lr := _corr(s["foot_l"], s["hand_r"])
+		var c_hip := _corr(s["foot_l"], hips)
+		var c_sh := _corr(s["foot_l"], shoulders)
+		var ok := c_ll < -0.5 and c_rr < -0.5 and c_lr > 0.5 and c_hip > 0.5 and c_sh < -0.5
+		var tag := "gait " + ("run" if run else "walk")
+		print("SELFTEST %-28s %s  (footL~handL %.2f, footR~handR %.2f, footL~handR %.2f, hips %.2f, shoulders %.2f)" % [tag, "ok" if ok else "FAIL", c_ll, c_rr, c_lr, c_hip, c_sh])
+		if not ok:
+			fails.append(tag + " not contralateral")
+	b.move_w = 0.0
+	b.run_k = 0.0
+	b.phase = 0.0
+	b._to_idle()
+	b._apply_mixer()
+
 func _rest(kind: String, approach: Vector3) -> void:
 	m._place(approach, 0.0)
 	await _frames(5)
@@ -79,6 +139,7 @@ func _rest(kind: String, approach: Vector3) -> void:
 func run(main: Node) -> void:
 	m = main
 	await _wait(0.5)
+	_gait_check()
 	await _can_walk("start")
 	# towel: from both sides and from the sea end
 	var td: Vector3 = m.island.towel_dir
@@ -105,6 +166,8 @@ func run(main: Node) -> void:
 			if not await _until(func() -> bool: return m.state == m.State.READY, 20.0):
 				fails.append("throw never finished")
 				return
+			if m.boy.anim == "throw" or m.boy.act_w > 0.05 and m.boy.anim != "react":
+				fails.append("throw clip did not hand back to idle (anim %s, act_w %.2f)" % [m.boy.anim, m.boy.act_w])
 			await _wait(3.2)
 		m._leave_throw()
 		await _frames(3)

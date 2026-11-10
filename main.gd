@@ -40,7 +40,10 @@ var best_skips := 0
 var best_dist := 0.0
 var ripple_buf := PackedVector4Array()
 var ripple_i := 0
+const PRINTS := 48
+const PRINT_LIFE := 75.0
 var print_buf := PackedVector4Array()   # footprints on the sand: x, z, yaw, time stamped
+var print_wash := PackedFloat32Array()  # when the swash first ran over each print (-1: not yet)
 var print_i := 0
 
 # camera
@@ -138,7 +141,7 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v6"
+var shot_dir := "v7"
 var demo_release_pending := 0
 var demo_input := Vector2.ZERO
 var demo_run := false
@@ -161,9 +164,11 @@ func _ready() -> void:
 	_build_audio()
 	_build_ui()
 	ripple_buf.resize(8)
-	print_buf.resize(24)
-	for i in 24:
+	print_buf.resize(PRINTS)
+	print_wash.resize(PRINTS)
+	for i in PRINTS:
 		print_buf[i] = Vector4(0, 0, 0, -1000.0)
+		print_wash[i] = -1.0
 	var args := OS.get_cmdline_user_args()
 	if "--sim" in args:
 		_run_sim_report()
@@ -875,7 +880,7 @@ func _on_footstep(_side: int, running: bool) -> void:
 	var kind := _surface_kind(p.x, p.z)
 	var i := rng.randi() % 2
 	var vol := -9.0 if running else -14.0
-	if kind == "sand":
+	if kind != "wood":
 		_stamp_footprint(_side)
 	match kind:
 		"wood":
@@ -1343,9 +1348,37 @@ func _stamp_footprint(side: int) -> void:
 	if f.length() < 0.03:
 		return
 	var c := Vector2(heel.x, heel.z) + f * 0.6
+	# only on dry or wet sand: not on the dock, the grass, in the sea or under the running wash
+	if _surface_kind(c.x, c.y) != "sand" or Island.wash_covers(c.x, c.y, gt, 0.012):
+		return
 	print_buf[print_i] = Vector4(c.x, c.y, atan2(f.y, f.x), gt)
-	print_i = (print_i + 1) % print_buf.size()
+	print_wash[print_i] = -1.0
+	print_i = (print_i + 1) % PRINTS
+	_upload_prints()
+
+## the swash erases the prints it runs over (same wash front as the terrain shader); old ones fade out
+func _update_prints() -> void:
+	var dirty := false
+	for i in PRINTS:
+		var fp := print_buf[i]
+		if print_wash[i] < 0.0 and gt - fp.w < PRINT_LIFE and Island.wash_covers(fp.x, fp.y, gt, 0.004):
+			print_wash[i] = gt
+			dirty = true
+	if dirty:
+		_upload_prints()
+
+func _upload_prints() -> void:
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for i in PRINTS:
+		var fp := print_buf[i]
+		if gt - fp.w < PRINT_LIFE and (print_wash[i] < 0.0 or gt - print_wash[i] < 1.0):
+			lo = lo.min(Vector2(fp.x, fp.y))
+			hi = hi.max(Vector2(fp.x, fp.y))
+	var box := Vector4(lo.x - 0.25, lo.y - 0.25, hi.x + 0.25, hi.y + 0.25) if lo.x < INF else Vector4(1, 1, -1, -1)
 	island.terrain_mat.set_shader_parameter("prints", print_buf)
+	island.terrain_mat.set_shader_parameter("print_wash", print_wash)
+	island.terrain_mat.set_shader_parameter("print_box", box)
 
 func _add_ripple(p: Vector3, strength: float, delay := 0.0) -> void:
 	ripple_buf[ripple_i] = Vector4(p.x, p.z, gt + delay, strength)
@@ -1638,6 +1671,7 @@ func _process(delta: float) -> void:
 	var focus := player.global_position + Vector3(0, 0.7, 0)
 	island.foliage_mat.set_shader_parameter("focus", focus)
 	island.static_mat.set_shader_parameter("focus", focus)
+	_update_prints()
 	_update_audio(delta)
 	_audio_tick(delta)
 
@@ -1873,7 +1907,7 @@ func _demo_shot(name: String) -> void:
 
 # ------------------------------------------------------------------ v4/v5 scripted demo (screenshots / video)
 # godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 [--portrait] [--shotdir=/abs/dir]
-# godot --path . --fixed-fps 30 --write-movie x.avi -- --video4=walk|throw|sleep|sun|getup|gait
+# godot --path . --fixed-fps 30 --write-movie x.avi -- --video4=walk|throw|sleep|sun|getup|gait|prints
 
 func _wait(sec: float) -> void:
 	var t0 := gt
@@ -2177,26 +2211,37 @@ func _video_seg(seg: String) -> void:
 			await _walk_to(Vector3(0, 0, island.dock_end_z + 2.2), true, 3.0)
 			await _wait(0.3)
 		"throw":
+			# standing and half-kneeling throws seen from the front-right (the throwing side), then one in the game camera
 			_place(Vector3(0.0, 0, island.dock_end_z + 3.0), 0.0)
 			await _walk_to(Vector3(0.2, 0, island.dock_end_z + 1.5), false, 2.0)
 			await _wait(0.4)
 			_enter_throw()
-			await _wait(0.5)
-			_toggle_stance()
-			await _wait(0.9)
-			_begin_aim(Vector2.ZERO)
-			aim_pitch = 3.0
-			var t0 := gt
-			while gt - t0 < 1.5:
-				charge_t = minf((gt - t0) / 1.2, 1.0) * 0.9 * POWER_CYCLE * 0.5
-				aim_yaw = 0.1 + sin((gt - t0) * 2.0) * 0.04
-				await get_tree().process_frame
-			charge_t = 0.9 * POWER_CYCLE * 0.5
-			_throw()
-			fly_t = 0.0
-			while state != State.READY:
-				await get_tree().process_frame
-			await _wait(3.6)
+			for k in 3:
+				await _wait(0.5)
+				if (k == 1) != (boy.stance == "crouch"):
+					_toggle_stance()
+					await _wait(0.9)
+				if k < 2:
+					demo_cam = true
+					demo_track = [player.rotation.y + PI * 0.5 + 0.55, 0.22, 2.9, 0.5, true]
+				else:
+					_free_cam()
+				_begin_aim(Vector2.ZERO)
+				aim_pitch = 3.0
+				var t0 := gt
+				while gt - t0 < 1.5:
+					charge_t = minf((gt - t0) / 1.2, 1.0) * 0.9 * POWER_CYCLE * 0.5
+					aim_yaw = 0.1 + sin((gt - t0) * 2.0) * 0.04
+					await get_tree().process_frame
+				charge_t = 0.9 * POWER_CYCLE * 0.5
+				_throw()
+				fly_t = 0.0
+				if k < 2:
+					await _wait(3.2)
+				while state != State.READY:
+					await get_tree().process_frame
+				await _wait(1.0 if k < 2 else 3.0)
+			_free_cam()
 		"sleep":
 			var hs := _hammock_spot()
 			var bed: Vector3 = hs[0]
@@ -2251,13 +2296,30 @@ func _video_seg(seg: String) -> void:
 					_free_cam()
 				else:
 					demo_cam = true
-					demo_track = [atan2(sea_side.x, sea_side.z), 0.08, 3.0, 0.62, true]
+					demo_track = [atan2(sea_side.x, sea_side.z), 0.08, 2.3, 0.62, true]
 				await _wait(0.6)
 				await _walk_to(gm, false, 5.0)
 				await _walk_to(g1, true, 4.0)
 				_stop_walk()
 				await _wait(1.2)
 			_free_cam()
+
+		"prints":
+			# footprints along the waterline: the swash wipes out the low ones, the dry ones stay (and fade slowly)
+			var a := island.shore_pt(-1.30, 2.0)
+			var b := island.shore_pt(-1.27, 0.95)
+			var c := island.shore_pt(-1.14, 0.95)
+			var e := island.shore_pt(-1.11, 2.0)
+			var f := island.shore_pt(-1.06, 2.1)
+			var mid := island.shore_pt(-1.19, 1.45)
+			var sea := Island.dir_at(-1.19)
+			_place(a, 0.0)
+			_fixed_cam(mid + Vector3(0, 0.1, 0), atan2(sea.x, sea.z), 1.08, 4.6)
+			await _wait(0.4)
+			for w in [b, c, e, f]:
+				await _walk_to(w, false, 6.0)
+			_stop_walk()
+			await _wait(22.0)
 
 ## drive the on-screen joystick with real touch events (like a finger on the phone)
 func _stick_walk(dirs: Array, sec_each: float) -> void:
