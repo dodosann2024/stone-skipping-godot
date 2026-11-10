@@ -244,12 +244,13 @@ def solve(rig, p):
         yaw, pitch = p["y" + s], p["p" + s]
         G = rot(-pitch, 0.0, yaw)
         Rz = rot(0, 0, yaw)
-        # pivot: heel when the toes are up, ball when the heel is up
+        # pivot: heel when the toes are up; the ball joint itself when the heel is up, so the flat toes
+        # hinge in place instead of sliding forward as the heel rises
         a0 = rig.ankle0[s]
         if pitch >= 0:
             piv0 = rig.heel0[s]
         else:
-            piv0 = rig.ballg0[s]
+            piv0 = rig.ball0[s]
         piv = flat + Rz @ (piv0 - a0)
         ankle = piv + G @ (a0 - piv0)
         kp = p["k" + s]
