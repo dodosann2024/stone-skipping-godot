@@ -97,7 +97,7 @@ void fragment() {
 	col *= 1.0 + (vnoise(p * 0.35 + vec2(t * 0.02, 0.0)) - 0.5) * 0.06;
 	float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
 	col *= mix(vec3(1.0), vec3(0.32, 0.42, 0.62), night);
-	col = mix(col, mix(c_sky, vec3(0.10, 0.15, 0.28), night), fres * 0.2);
+	col = mix(col, mix(c_sky, vec3(0.10, 0.15, 0.28), night), fres * 0.14);
 
 	// --- foam
 	float foam = 0.0;
@@ -144,12 +144,12 @@ void fragment() {
 	ALBEDO = col;
 	EMISSION = glint_col * glint;
 	ROUGHNESS = mix(0.3, 0.7, foam_v);
-	SPECULAR = 0.25 * (1.0 - 0.85 * night);
+	SPECULAR = 0.2 * (1.0 - 0.85 * night);
 	METALLIC = 0.0;
 	// clear over the sand, greener and more opaque with depth; a soft fade where it thins onto the beach
 	float a = mix(0.16, 0.62, smoothstep(0.0, 0.9, depth));
 	a = mix(a, 0.9, smoothstep(1.2, 3.2, depth));
 	a = mix(a, 0.97, smoothstep(3.8, 5.5, depth));
 	a *= smoothstep(0.0, 0.07, th);
-	ALPHA = clamp(a + fres * 0.18 * smoothstep(0.0, 0.05, th) + foam_v + glint, 0.0, 1.0);
+	ALPHA = clamp(a + fres * 0.14 * smoothstep(0.0, 0.05, th) + foam_v + glint, 0.0, 1.0);
 }

@@ -2442,8 +2442,8 @@ func _v9_sequence(pre: String, part: String) -> void:
 		_fixed_cam(bp + Vector3(0, 0.2, 0), face_yaw + 0.5, 0.55, 2.2)
 		await _wait(0.3)
 		_shot(pre + "34_wading_high")
-		var dp := Vector3(1.4, 0, island.dock_start_z + 6.0)
-		_fixed_cam(dp + Vector3(0, -0.1, 0), 1.2, 0.25, 4.0)
+		var dp := Vector3(0.0, 0.0, lerpf(island.dock_start_z, island.dock_end_z, 0.35))
+		_fixed_cam(dp + Vector3(0, -0.2, 0), 1.3, 0.22, 4.2)
 		await _wait(0.3)
 		_shot(pre + "35_dock_posts")
 		_free_cam()
@@ -2864,7 +2864,7 @@ func _video_seg(seg: String) -> void:
 					_toggle_stance()
 				await _wait(1.0)
 				demo_cam = true
-				demo_track = [aim_yaw + PI * 0.5 + 0.35, 0.08, 2.2, 0.62 if not crouch else 0.45, true]
+				demo_track = [aim_yaw + PI - 0.7, 0.1, 2.6, 0.62 if not crouch else 0.45, true]
 				_toast(("半蹲" if crouch else "站立") + ("投掷 · 慢放 0.5×" if k % 2 == 1 else "投掷"), 1.6)
 				_begin_aim(Vector2.ZERO)
 				aim_pitch = 3.0
@@ -2960,7 +2960,6 @@ func _video_seg(seg: String) -> void:
 			_on_action()
 			while rest_phase != 4:
 				await get_tree().process_frame
-			_fixed_cam(c + Vector3(0, 0.45, 0), atan2((st["face"] as Vector3).x, (st["face"] as Vector3).z) + 2.2, 0.18, 3.4)
 			await _wait(4.0)
 			_wake()
 			while mode != Mode.EXPLORE:
