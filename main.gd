@@ -1,5 +1,5 @@
 extends Node3D
-## 海岛打水漂 v4 — walk / run around a little tropical island, nap in the hammock, sunbathe on the
+## 海岛打水漂 v5 — walk / run around a little tropical island, nap in the hammock, sunbathe on the
 ## beach towel, and skip stones from the end of the dock (standing or half-kneeling).
 
 const GRAVITY := 9.8
@@ -135,7 +135,7 @@ var demo_mode := false
 var demo_t := 0.0
 var demo_shots := {}
 var portrait_demo := false
-var shot_dir := "v4"
+var shot_dir := "v5"
 var demo_release_pending := 0
 var demo_input := Vector2.ZERO
 var demo_run := false
@@ -1823,7 +1823,7 @@ func _demo_shot(name: String) -> void:
 	img.save_png(path)
 	print("DEMO screenshot ", path)
 
-# ------------------------------------------------------------------ v4 scripted demo (screenshots / video)
+# ------------------------------------------------------------------ v4/v5 scripted demo (screenshots / video)
 # godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 [--portrait] [--shotdir=/abs/dir]
 # godot --path . --fixed-fps 30 --write-movie x.avi -- --video4=walk|throw|sleep|sun
 
