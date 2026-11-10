@@ -125,6 +125,7 @@ func _process(delta: float) -> void:
 	t += delta
 	# two incommensurate wobbles plus a quick shimmer: reads as a living fire, never as a strobe
 	var f := 0.55 * sin(t * 7.3) + 0.3 * sin(t * 12.9 + 1.3) + 0.15 * sin(t * 23.1 + 0.4)
-	light.light_energy = (1.55 + 0.35 * f) * (1.0 + 1.1 * night)
-	light.omni_range = 6.5 + 3.0 * night
+	# by day it has to compete with the sun: brighter but shorter reach, so the logs and stones still glow
+	light.light_energy = (1.0 + 0.22 * f) * lerpf(3.0, 3.4, night)
+	light.omni_range = lerpf(5.0, 9.5, night)
 	light.position = Vector3(0.04 * sin(t * 5.1), 0.55 + 0.04 * f, 0.04 * cos(t * 4.3))
