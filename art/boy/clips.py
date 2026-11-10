@@ -236,45 +236,51 @@ def throw_stand(rig):
     st = dict(fl=ST_L, fr=ST_R, yl=-0.35, yr=-1.1)
     ready = P(i, pel=V(-0.02, 0.04, -0.05), prot=(0.10, -0.02, -0.55), sp=(0.06, 0.0, -0.12),
               neck=(0.0, 0.0, 0.28), head=(0.05, 0.0, 0.32),
-              hr=V(-0.25, -0.08, 0.75), er=V(-0.5, 0.6, -0.5), hl=V(0.20, -0.14, 0.80), el=V(0.5, 0.6, -0.4),
+              hr=V(-0.25, -0.08, 0.75), er=V(-0.5, 0.6, -0.5), hl=V(0.19, -0.27, 0.86), hlw=1.0, el=V(0.7, 0.1, -0.8),
               gr=0.85, gl=0.35, **st)
+    # the glove arm points at the target for balance while the stone is drawn back: in root space, about
+    # 85 % of its reach out from the shoulder along -Y, the elbow a little bent and hanging down
     charge = P(ready, pel=V(-0.07, 0.11, -0.12), prot=(0.20, -0.07, -0.85), sp=(0.18, -0.10, -0.40),
                neck=(0.0, 0.0, 0.52), head=(0.05, 0.05, 0.58),
                hr=V(-0.34, 0.36, 0.66), hrw=1.0, er=V(-0.2, 0.4, -1.0), wr=(0.0, 0.0, -0.5), gr=0.95,
-               hl=V(0.10, -0.34, 0.95), hlw=1.0, el=V(0.6, 0.2, -0.6), gl=0.15, pl=-0.25)
+               hl=V(-0.09, -0.34, 0.99), hlw=1.0, el=V(0.4, 0.1, -1.0), wl=(0.0, 0.0, 0.15), gl=0.12, pl=-0.25)
     stride = P(charge, pel=V(-0.05, 0.05, -0.12), prot=(0.22, -0.07, -0.62), sp=(0.20, -0.14, -0.42),
-               fl=(ST_L + ST_L2) * 0.5 + V(0, 0, 0.04), pl=0.1, yl=-0.3, hr=V(-0.40, 0.32, 0.62), wr=(0.0, 0.0, -0.65))
+               fl=(ST_L + ST_L2) * 0.5 + V(0, 0, 0.04), pl=0.1, yl=-0.3, hr=V(-0.40, 0.32, 0.62), wr=(0.0, 0.0, -0.65),
+               hl=V(-0.05, -0.42, 0.98))
     # foot down: hips already square to the target, chest still closed, hand lags behind the leading elbow
     plant = P(charge, pel=V(-0.01, -0.06, -0.15), prot=(0.26, -0.05, -0.12), sp=(0.24, -0.18, -0.42),
               neck=(0.0, 0.0, 0.3), head=(0.0, 0.0, 0.3), fl=ST_L2, pl=0.0, yl=-0.25,
               hr=V(-0.46, 0.08, 0.62), wr=(0.0, 0.0, -0.75), er=V(-0.2, -0.4, -1.0),
-              hl=V(0.22, -0.20, 0.86), pr=-0.3, yr=-0.95)
+              hl=V(0.07, -0.54, 0.92), el=V(0.4, 0.3, -1.0), pr=-0.3, yr=-0.95)
+    # glove tuck: as the shoulders turn, the glove arm pulls in and down to the front of the left hip,
+    # the elbow folding back past the ribs (it helps the chest round instead of flying out to the side)
     accel = P(plant, pel=V(0.0, -0.10, -0.15), prot=(0.28, -0.02, 0.05), sp=(0.26, -0.20, -0.15),
               neck=(0.0, 0.0, 0.1), head=(0.0, 0.0, 0.05),
               hr=V(-0.46, -0.18, 0.62), wr=(0.0, 0.0, -0.4), er=V(-0.4, 0.2, -1.0),
-              hl=V(0.26, -0.10, 0.86), hlw=0.0, el=V(0.8, 0.6, -0.2), pr=-0.45, yr=-0.8)
+              hl=V(0.20, -0.46, 0.80), el=V(0.5, 0.9, -0.8), wl=(0.0, 0.0, 0.0), gl=0.4, pr=-0.45, yr=-0.8)
     release = P(accel, pel=V(0.02, -0.14, -0.15), prot=(0.30, 0.0, 0.18), sp=(0.30, -0.18, 0.12),
                 neck=(-0.05, 0.0, -0.15), head=(0.0, 0.0, -0.12),
                 hr=V(-0.38, -0.44, 0.61), wr=(0.0, 0.0, 0.5), er=V(-0.3, 0.3, -1.0), gr=0.4,
-                hl=V(0.24, -0.04, 0.86), pr=-0.6, yr=-0.7)
-    # the arm keeps travelling out towards the water, nearly straight
+                hl=V(0.25, -0.36, 0.72), el=V(0.4, 1.0, -0.6), pr=-0.6, yr=-0.7)
+    # the arm keeps travelling out towards the water, nearly straight; the glove hangs loose by the hip
     reach = P(release, pel=V(0.03, -0.19, -0.15), prot=(0.34, 0.02, 0.36), sp=(0.30, -0.10, 0.26),
               neck=(-0.05, 0.0, -0.3), head=(-0.05, 0.0, -0.32),
               hr=V(-0.24, -0.76, 0.68), wr=(0.0, 0.0, 0.6), er=V(-0.2, 0.2, -1.0), gr=0.3,
-              hl=V(0.22, 0.02, 0.84), pr=-0.85, yr=-0.5)
+              hl=V(0.28, -0.27, 0.70), el=V(0.4, 1.0, -0.3), gl=0.35, pr=-0.85, yr=-0.5)
     reach2 = P(reach, pel=V(0.035, -0.19, -0.145), prot=(0.34, 0.025, 0.45), sp=(0.28, -0.07, 0.29),
                hr=V(-0.13, -0.74, 0.68), wr=(0.0, 0.0, 0.45), er=V(-0.5, 0.1, -0.9), pr=-0.92, yr=-0.4,
-               clav_r=(0.0, 0.0, 0.10))
+               hl=V(0.29, -0.22, 0.69), clav_r=(0.0, 0.0, 0.10))
     # deceleration: the chest keeps turning left so the arm has room; the hand stays in front of the chest
     # (chest space) while the shoulders swing it across towards the left, the elbow folds pointing out and down
     sweep = P(reach2, pel=V(0.04, -0.19, -0.14), prot=(0.34, 0.03, 0.62), sp=(0.24, -0.04, 0.46),
               neck=(-0.05, 0.0, -0.5), head=(-0.05, 0.0, -0.52),
               wr=(0.0, 0.0, 0.3), er=V(-0.7, -0.2, -0.7), gr=0.25, clav_r=(0.0, 0.0, 0.10),
-              hl=V(0.22, 0.0, 0.82), pr=-1.0, yr=-0.3)
+              hl=V(0.30, -0.15, 0.69), pr=-1.0, yr=-0.3)
     sweep = _chest_hand(rig, sweep, V(-0.13, -0.28, 0.90))
+    # from here the glove hand rides with the chest again, hanging relaxed by the left side
     wrap = P(sweep, pel=V(0.05, -0.16, -0.11), prot=(0.24, 0.04, 0.68), sp=(0.16, 0.0, 0.54),
              neck=(0.0, 0.0, -0.52), head=(0.0, 0.0, -0.56),
-             er=V(-0.8, -0.1, -0.6), wr=(0.0, 0.0, 0.0), hl=V(0.22, 0.02, 0.80), pr=-1.0, yr=-0.2,
+             er=V(-0.8, -0.1, -0.6), wr=(0.0, 0.0, 0.0), hl=V(0.23, -0.01, 0.76), hlw=0.0, el=V(0.4, 1.0, 0.0), pr=-1.0, yr=-0.2,
              clav_r=(0.04, 0.0, 0.12))
     wrap = _chest_hand(rig, wrap, V(-0.04, -0.25, 0.97))
     # the arm has run out of speed: it goes limp (shoulder drops) and falls in front of the belly while the
@@ -298,36 +304,41 @@ def throw_crouch(rig):
     st = dict(fl=CR_L, fr=CR_R, yl=-0.35, yr=-0.6, pr=-1.1, kr=V(0, -1, -0.8))
     ready = P(i, pel=V(-0.02, 0.06, -0.30), prot=(0.30, -0.03, -0.5), sp=(0.12, 0.0, -0.15),
               neck=(0.0, 0.0, 0.3), head=(0.0, 0.0, 0.35),
-              hr=V(-0.24, -0.10, 0.74), er=V(-0.4, 0.8, -0.3), hl=V(0.29, -0.08, 0.84), el=V(0.5, 0.6, -0.4),
+              hr=V(-0.24, -0.10, 0.74), er=V(-0.4, 0.8, -0.3), hl=V(0.15, -0.33, 0.62), hlw=1.0, el=V(0.3, 0.0, -1.0),
               gr=0.85, gl=0.3, **st)
+    # glove arm towards the target, then the tuck to the front of the left hip, as in throw_stand
     charge = P(ready, pel=V(-0.06, 0.10, -0.35), prot=(0.40, -0.10, -0.85), sp=(0.25, -0.10, -0.40),
                neck=(0.0, 0.0, 0.55), head=(-0.05, 0.05, 0.6),
                hr=V(-0.30, 0.34, 0.36), hrw=1.0, er=V(-0.2, 0.4, -1.0), wr=(0.0, 0.0, -0.5), gr=0.95,
-               hl=V(0.16, -0.42, 0.88), hlw=1.0, el=V(0.6, 0.2, -0.6), gl=0.15)
+               hl=V(-0.14, -0.39, 0.71), hlw=1.0, el=V(0.4, 0.1, -1.0), wl=(0.0, 0.0, 0.15), gl=0.12)
     drive = P(charge, pel=V(-0.03, 0.03, -0.36), prot=(0.42, -0.08, -0.45), sp=(0.28, -0.14, -0.42),
-              hr=V(-0.38, 0.26, 0.32), wr=(0.0, 0.0, -0.65))
+              hr=V(-0.38, 0.26, 0.32), wr=(0.0, 0.0, -0.65), hl=V(-0.04, -0.50, 0.69))
     plant = P(charge, pel=V(-0.01, -0.02, -0.36), prot=(0.42, -0.06, -0.12), sp=(0.30, -0.16, -0.42),
               neck=(0.0, 0.0, 0.3), head=(0.0, 0.0, 0.3),
-              hr=V(-0.46, 0.08, 0.30), wr=(0.0, 0.0, -0.75), er=V(-0.2, -0.4, -1.0), hl=V(0.22, -0.22, 0.66))
+              hr=V(-0.46, 0.08, 0.30), wr=(0.0, 0.0, -0.75), er=V(-0.2, -0.4, -1.0), hl=V(0.06, -0.56, 0.66),
+              el=V(0.4, 0.3, -1.0))
     accel = P(plant, pel=V(0.0, -0.05, -0.35), prot=(0.44, -0.03, 0.05), sp=(0.32, -0.18, -0.15),
               neck=(0.0, 0.0, 0.1), head=(-0.04, 0.0, 0.05),
               hr=V(-0.46, -0.16, 0.28), wr=(0.0, 0.0, -0.4), er=V(-0.4, 0.2, -1.0),
-              hl=V(0.26, -0.10, 0.86), hlw=0.0, el=V(0.8, 0.6, -0.2))
+              hl=V(0.21, -0.47, 0.55), el=V(0.5, 0.9, -0.8), wl=(0.0, 0.0, 0.0), gl=0.4)
     release = P(accel, pel=V(0.01, -0.08, -0.35), prot=(0.46, 0.0, 0.18), sp=(0.36, -0.16, 0.12),
                 neck=(-0.05, 0.0, -0.15), head=(-0.08, 0.0, -0.12),
-                hr=V(-0.38, -0.40, 0.27), wr=(0.0, 0.0, 0.5), er=V(-0.3, 0.3, -1.0), gr=0.4, hl=V(0.24, -0.04, 0.86))
+                hr=V(-0.38, -0.40, 0.27), wr=(0.0, 0.0, 0.5), er=V(-0.3, 0.3, -1.0), gr=0.4,
+                hl=V(0.26, -0.36, 0.49), el=V(0.4, 1.0, -0.6))
     reach = P(release, pel=V(0.02, -0.12, -0.34), prot=(0.50, 0.02, 0.36), sp=(0.38, -0.08, 0.26),
               neck=(-0.05, 0.0, -0.3), head=(-0.1, 0.0, -0.32),
-              hr=V(-0.24, -0.70, 0.34), wr=(0.0, 0.0, 0.6), er=V(-0.2, 0.2, -1.0), gr=0.3, hl=V(0.22, 0.02, 0.84))
+              hr=V(-0.24, -0.70, 0.34), wr=(0.0, 0.0, 0.6), er=V(-0.2, 0.2, -1.0), gr=0.3,
+              hl=V(0.30, -0.27, 0.47), el=V(0.4, 1.0, -0.3), gl=0.35)
     reach2 = P(reach, pel=V(0.025, -0.115, -0.34), prot=(0.50, 0.025, 0.45), sp=(0.36, -0.05, 0.28),
-               hr=V(-0.13, -0.68, 0.35), wr=(0.0, 0.0, 0.45), er=V(-0.1, 0.4, -1.0))
+               hr=V(-0.13, -0.68, 0.35), wr=(0.0, 0.0, 0.45), er=V(-0.1, 0.4, -1.0), hl=V(0.31, -0.22, 0.47))
     sweep = P(reach2, pel=V(0.03, -0.11, -0.34), prot=(0.50, 0.03, 0.58), sp=(0.34, -0.03, 0.42),
               neck=(-0.05, 0.0, -0.48), head=(-0.1, 0.0, -0.5),
-              wr=(0.0, 0.0, 0.3), er=V(-0.7, -0.2, -0.7), gr=0.25, clav_r=(0.0, 0.0, 0.10), hl=V(0.22, 0.0, 0.82))
+              wr=(0.0, 0.0, 0.3), er=V(-0.7, -0.2, -0.7), gr=0.25, clav_r=(0.0, 0.0, 0.10), hl=V(0.33, -0.15, 0.48))
     sweep = _chest_hand(rig, sweep, V(-0.27, -0.34, 1.14))
     wrap = P(sweep, pel=V(0.04, -0.09, -0.33), prot=(0.45, 0.04, 0.64), sp=(0.30, 0.0, 0.50),
              neck=(0.0, 0.0, -0.5), head=(-0.05, 0.0, -0.55),
-             er=V(-0.8, -0.1, -0.6), wr=(0.0, 0.0, 0.0), hl=V(0.22, 0.02, 0.80), clav_r=(0.04, 0.0, 0.12))
+             er=V(-0.8, -0.1, -0.6), wr=(0.0, 0.0, 0.0), hl=V(0.23, -0.01, 0.76), hlw=0.0, el=V(0.4, 1.0, 0.0),
+             clav_r=(0.04, 0.0, 0.12))
     wrap = _chest_hand(rig, wrap, V(-0.02, -0.30, 1.05))
     loose = P(wrap, pel=V(0.04, -0.095, -0.325), prot=(0.47, 0.04, 0.56), sp=(0.30, 0.0, 0.42),
               er=V(-0.8, 0.0, -0.6), wr=(0.2, 0.0, 0.0), gr=0.35, clav_r=(0.02, 0.0, 0.14))
