@@ -93,6 +93,14 @@ var cloth_off := Vector3.ZERO
 var cloth_vel := Vector3.ZERO
 var cloth_prev := Vector3.ZERO
 var cloth_pv := Vector3.ZERO
+# a slower, softer copy of that spring (parts of a hem lag behind others instead of the whole hem moving
+# as one piece), and one spring per shorts leg on its knee (the leg openings swing with each thigh)
+var cloth_off2 := Vector3.ZERO
+var cloth_vel2 := Vector3.ZERO
+var leg_prev: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
+var leg_pv: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
+var leg_off: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
+var leg_vel: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
 # turning pivots about the planted foot: the root yaws about its own origin, which would drag a planted
 # foot sideways, so the model is shifted (world-space offset, bled back to zero) to keep that contact put
 var model_base := Vector3.ZERO
@@ -258,9 +266,9 @@ func _setup_materials() -> void:
 		"tank": {"fabric": 0, "thread": Color(0.97, 0.96, 0.93), "hem_stitch": 0.006, "fade": 0.0,
 			"wear": 0.15, "sheen": 0.35, "translucency": 0.16},
 		"vest": {"fabric": 1, "thread": Color(0.88, 0.45, 0.37), "binding": Color(0.60, 0.17, 0.14),
-			"binding_w": 0.0055, "hem_stitch": 0.0075, "fade": 0.3, "wear": 0.3, "sheen": 0.25},
+			"binding_w": 0.0055, "hem_stitch": 0.0075, "fade": 0.3, "wear": 0.3, "sheen": 0.25, "wrinkle": 0.003},
 		"shorts": {"fabric": 2, "thread": Color(0.99, 0.89, 0.58), "hem_stitch": 0.011, "fade": 0.25,
-			"wear": 0.3, "sheen": 0.2},
+			"wear": 0.3, "sheen": 0.2, "legs": 1.0},
 	}
 	for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh := mi.mesh
@@ -592,12 +600,34 @@ func _update_cloth(delta: float) -> void:
 	var gust := 0.6 + 0.4 * sin(hair_t * 0.7) * sin(hair_t * 1.9 + 1.0)
 	var target := -acc * 0.0005 + Vector3(0.8, 0.0, 0.45) * (0.0012 * wind * gust)
 	target = target.limit_length(0.004)
-	cloth_vel += ((target - cloth_off) * 110.0 - cloth_vel * 11.0) * minf(delta, 0.05)
-	cloth_off += cloth_vel * minf(delta, 0.05)
+	var dt := minf(delta, 0.05)
+	cloth_vel += ((target - cloth_off) * 110.0 - cloth_vel * 11.0) * dt
+	cloth_off += cloth_vel * dt
 	cloth_off = cloth_off.limit_length(0.005)
+	cloth_vel2 += ((target - cloth_off2) * 45.0 - cloth_vel2 * 6.0) * dt
+	cloth_off2 += cloth_vel2 * dt
+	cloth_off2 = cloth_off2.limit_length(0.005)
+	var legs: Array[Vector3] = []
+	for i in 2:
+		var k := (skel.global_transform * skel.get_bone_global_pose(skel.find_bone(["calf_l", "calf_r"][i]))).origin
+		var lv := (k - leg_prev[i]) / delta
+		var la := (lv - leg_pv[i]) / delta
+		if leg_prev[i] == Vector3.ZERO or la.length() > 120.0:
+			la = Vector3.ZERO
+		leg_prev[i] = k
+		leg_pv[i] = lv
+		# relative to the pelvis: the hem trails its own thigh's swing (half way down to the knee)
+		var lt := (-(la - acc) * 0.00022).limit_length(0.003)
+		leg_vel[i] += ((lt - leg_off[i]) * 90.0 - leg_vel[i] * 8.0) * dt
+		leg_off[i] += leg_vel[i] * dt
+		leg_off[i] = leg_off[i].limit_length(0.004)
+		legs.append(leg_off[i])
 	var inv := hair_mi.global_transform.basis.inverse()
 	for m in cloth_mats:
 		m.set_shader_parameter("sway", inv * cloth_off)
+		m.set_shader_parameter("sway2", inv * cloth_off2)
+		m.set_shader_parameter("sway_l", inv * legs[0])
+		m.set_shader_parameter("sway_r", inv * legs[1])
 		m.set_shader_parameter("flutter", 0.0003 * wind * gust / SCALE)
 		m.set_shader_parameter("game_time", hair_t)
 

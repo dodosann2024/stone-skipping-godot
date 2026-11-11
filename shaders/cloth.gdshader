@@ -3,7 +3,8 @@ render_mode cull_back;
 // v17 clothes: woven / knitted fabric instead of flat painted colour.
 //   UV        body UV (about 1.4 m per unit), tiles the fabric texture
 //   UV2.x     hem sway weight (0 where the garment is held by the body), UV2.y like COLOR.a, a second seam
-//   COLOR.r   baked AO, COLOR.g fold crest (> 0.5) / valley (< 0.5), COLOR.b metres to the garment edge / 30 mm, COLOR.a 0.5 + signed metres to a seam / 30 mm
+//             with wrinkle > 0 (vest): UV2.x < 0 is minus the underarm wrinkle strength, UV2.y their phase
+//   COLOR.r   baked AO, COLOR.g fold crest (> 0.5) / valley (< 0.5), COLOR.b metres to the garment edge / 30 mm, COLOR.a 0.5 + signed metres to a seam / 80 mm
 // fabric.png: R jersey knit (tank), G linen plain weave (vest), B twill (shorts), A fibre noise.
 
 uniform vec3 albedo : source_color = vec3(0.9);
@@ -22,8 +23,15 @@ uniform float translucency = 0.0;      // thin cotton shows skin and lets backli
 uniform vec3 skin : source_color = vec3(0.90, 0.66, 0.52);
 uniform float ao_strength = 0.55;
 uniform vec3 sway = vec3(0.0);
+uniform vec3 sway2 = vec3(0.0);        // a slower spring: the hem lags unevenly along its length
+uniform vec3 sway_l = vec3(0.0);       // per shorts leg (legs = 1), trailing each thigh's swing
+uniform vec3 sway_r = vec3(0.0);
+uniform float legs = 0.0;
 uniform float flutter = 0.0;
 uniform float game_time = 0.0;
+// shading-only relief (no geometry, so the swinging arms keep their clearance): drag lines fanning from
+// the armpit and the armhole binding there, metres of virtual height
+uniform float wrinkle = 0.0;
 #include "res://shaders/underwater.gdshaderinc"
 #include "res://shaders/refl_clip.gdshaderinc"
 
@@ -34,18 +42,25 @@ varying float seam;
 varying float seam2;
 varying vec3 lpos;
 varying vec3 wp0;
+varying float wmask;
+varying float wph;
 
 void vertex() {
 	ao = COLOR.r;
 	fold = COLOR.g;
 	edge = COLOR.b * 0.03;
-	seam = (COLOR.a - 0.5) * 0.03;
-	seam2 = (0.5 - UV2.y) * 0.03;      // glTF stores V flipped
+	seam = (COLOR.a - 0.5) * 0.08;
+	seam2 = wrinkle > 0.0 ? 0.03 : (0.5 - UV2.y) * 0.03;      // glTF stores V flipped
+	wmask = wrinkle > 0.0 ? max(-UV2.x, 0.0) : 0.0;
+	wph = 1.0 - UV2.y;
 	lpos = VERTEX;
 	float w = UV2.x;
 	if (w > 0.0) {
 		float ph = game_time * 6.0 + dot(VERTEX, vec3(23.0, 9.0, 17.0));
-		VERTEX += (sway + vec3(sin(ph), 0.3 * sin(ph * 1.3), cos(ph * 0.8)) * flutter) * w;
+		// which spring a vertex follows varies along the hem (body UV, fixed on the cloth), ~20 cm apart
+		float lag = 0.5 + 0.5 * sin(UV.x * 41.0 + UV.y * 27.0);
+		vec3 s = mix(sway, sway2, lag) + legs * (VERTEX.x > 0.0 ? sway_l : sway_r);
+		VERTEX += (s + vec3(sin(ph), 0.3 * sin(ph * 1.3), cos(ph * 0.8)) * flutter) * w;
 	}
 	wp0 = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	if (wp0.y < 0.12) {
@@ -91,6 +106,17 @@ void fragment() {
 	float stitch = max(line(sm, 0.003, 0.00035), line(edge, hem_stitch, 0.00035)) * mix(1.0, dash, near);
 	stitch *= 1.0 - smoothstep(1.0, 3.0, length(fwidth(vec2(edge, sm))) * 1500.0);
 
+	// underarm drag lines: soft crests, wider valleys, each line its own depth, fading towards the armhole
+	// (where they meet) and into a flat average once they get finer than a few pixels
+	float wr = 0.0;
+	float bind = 0.0;
+	if (wmask > 0.001) {
+		float amp = 0.5 + 0.5 * hash(vec3(floor(wph + 0.25), 3.1, 7.7));
+		float f = 0.5 + 0.5 * sin(wph * 6.2831853);
+		float blur = smoothstep(0.12, 0.35, fwidth(wph));
+		wr = mix(f * f, 0.375, blur) * amp * wmask * smoothstep(0.006, 0.022, edge);
+		bind = wmask * (1.0 - smoothstep(0.0035, 0.0085, edge));
+	}
 	vec3 c = albedo;
 	c *= 1.0 + (vnoise(lpos * 9.0) - 0.5) * 0.10 + (vnoise(lpos * 31.0) - 0.5) * 0.05;
 	c *= mix(1.0, mix(0.90, 1.06, h) * mix(0.97, 1.03, t.a), 0.5 + 0.5 * near);
@@ -103,6 +129,7 @@ void fragment() {
 	c = mix(c, c * 0.92 + vec3(0.05), rim_edge * wear);
 	// soft shadow in the folds' valleys, a little light on their crests
 	c *= 1.0 + clamp(fold - 0.5, -0.5, 0.5) * 0.38;
+	c *= 1.0 + (wr - 0.3 * wmask) * 0.4;
 	c *= 1.0 - 0.28 * groove;
 	c = mix(c, thread, stitch * 0.75);
 	float thin = translucency * smoothstep(0.004, 0.012, edge);
@@ -117,7 +144,7 @@ void fragment() {
 	SPECULAR = 0.08;
 
 	// weave relief + seam groove + raised stitches, as a height bumped through screen derivatives
-	float hb = (h - 0.5) * bump * near - groove * 0.0004 + stitch * 0.00015;
+	float hb = (h - 0.5) * bump * near - groove * 0.0004 + stitch * 0.00015 + (wr + bind * 0.45) * wrinkle;
 	vec3 dpx = dFdx(VERTEX);
 	vec3 dpy = dFdy(VERTEX);
 	vec3 r1 = cross(dpy, NORMAL);

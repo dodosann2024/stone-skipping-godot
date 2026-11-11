@@ -3564,6 +3564,58 @@ func _v17_sequence(pre: String, part: String) -> void:
 	ui_root.visible = true
 	_free_cam()
 
+## v18 close-ups of the four v17 leftovers: the hair in the hat brim's shadow (day, and night by the lamp),
+## the hair card edges very close up, the back of the left armhole (tank top edge under the vest) and the
+## vest's sides under the arms. Camera yaw is relative to his facing: 0 behind him, PI in front, +PI/2 his right.
+func _v18_sequence(pre: String) -> void:
+	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+	await _wait(0.6)
+	demo_nocut = true
+	ui_root.visible = false
+	var y0 := player.rotation.y
+	# [name, pose, p, tt, cam yaw, pitch, dist, bone, up, hat, night]
+	var shots := [
+		["brim_front", "idle", 1.0, 0.3, PI - 0.12, 0.02, 0.4, "head", 0.03, true, false],
+		["brim_34", "idle", 1.0, 0.3, PI * 0.75, 0.05, 0.4, "head", 0.03, true, false],
+		["brim_side", "idle", 1.0, 0.3, PI * 0.5, 0.02, 0.38, "head", 0.03, true, false],
+		["brim_back34", "idle", 1.0, 0.3, PI * 0.25, 0.08, 0.42, "head", 0.03, true, false],
+		["brim_l34", "idle", 1.0, 0.3, -PI * 0.7, 0.04, 0.4, "head", 0.03, true, false],
+		["edge_side", "idle", 1.0, 0.3, PI * 0.5, 0.05, 0.2, "head", 0.06, false, false],
+		["edge_back", "idle", 1.0, 0.3, 0.1, 0.15, 0.2, "head", 0.06, false, false],
+		["edge_fringe", "idle", 1.0, 0.3, PI - 0.35, 0.0, 0.2, "head", 0.0, true, false],
+		["armhole_idle", "idle", 1.0, 0.3, -PI * 0.2, 0.1, 0.32, "upperarm_l", -0.03, true, false],
+		["armhole_charge", "charge", 0.6, 0.3, -PI * 0.2, 0.1, 0.34, "upperarm_l", -0.03, true, false],
+		["armhole_cheer", "cheer", 1.0, 1.0, -PI * 0.15, 0.05, 0.34, "upperarm_l", -0.05, true, false],
+		["armhole_in_charge", "charge", 0.6, 0.3, -PI * 0.62, 0.12, 0.26, "upperarm_l", -0.07, true, false],
+		["armhole_in_crouch", "charge_c", 0.6, 0.3, -PI * 0.62, 0.12, 0.26, "upperarm_l", -0.07, true, false],
+		["underarm_l_idle", "idle", 1.0, 0.3, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
+		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
+		["underarm_r_cheer", "cheer", 1.0, 1.0, PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
+		["underarm_l_charge", "charge", 0.6, 0.3, -PI * 0.45, 0.05, 0.45, "spine_03", 0.08, true, false],
+		["underarm_r_walk", "walk", 1.0, 0.3, PI * 0.5, 0.05, 0.45, "spine_03", 0.08, true, false],
+		["brim_34", "idle", 1.0, 0.3, PI * 0.75, 0.05, 0.4, "head", 0.03, true, true],
+		["brim_front", "idle", 1.0, 0.3, PI - 0.12, 0.02, 0.4, "head", 0.03, true, true],
+		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, true],
+	]
+	for s: Array in shots:
+		if bool(s[10]) != night_on:
+			_toggle_night()
+			await _wait(2.9)
+		boy.hat.visible = bool(s[9])
+		player.rotation.y = y0
+		boy.debug_pose(s[1], s[2], s[3])
+		await get_tree().process_frame
+		_fixed_cam(_bone_pos(s[7], s[8]), y0 + float(s[4]), s[5], s[6])
+		await _wait(0.4)
+		_shot(pre + "v18_%s_%s" % ["night" if night_on else "day", s[0]])
+	boy.hat.visible = true
+	boy.frozen = false
+	if night_on:
+		_toggle_night()
+	demo_nocut = false
+	ui_root.visible = true
+	_free_cam()
+
 ## v15: aiming by swipe - the pad and angle sliders, aiming left / right (arrow, preview, readout, the chest
 ## turning first), cancel, a flicked throw, a too-steep launch, a too-flat stone, a slow release (no spin)
 func _v15_sequence(pre: String) -> void:
@@ -3661,6 +3713,8 @@ func _run_demo4() -> void:
 				await _v16_sequence(pre)
 			elif what.begins_with("v17"):
 				await _v17_sequence(pre, what.substr(3).trim_prefix("_"))
+			elif what == "v18":
+				await _v18_sequence(pre)
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
@@ -3902,6 +3956,49 @@ func _video_seg(seg: String) -> void:
 					tgt = sp if gt - t0 < 0.01 else tgt.lerp(sp, 0.25)
 					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], float(s[7]) * k)
 					await get_tree().process_frame
+			boy.frozen = false
+			demo_nocut = false
+			ui_root.visible = true
+			_free_cam()
+
+		"polish18":
+			# v18 close-ups: the hair under the brim in daylight, the card edges up close (hat off), the vest's
+			# underarm with the arms going up, the hems swaying through a walk and a run, a crouching throw
+			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+			await _wait(0.3)
+			demo_nocut = true
+			ui_root.visible = false
+			var y0 := player.rotation.y
+			var tcc := float(boy.clips["throw_crouch"]["t_charge"])
+			var cl := float(boy.clips["cheer"]["length"])
+			# [pose, from, to, seconds, cam yaw from, cam yaw to, pitch, dist, bone, up, hat]
+			for s: Array in [["idle", 0.0, 3.0, 6.0, PI * 0.95, PI * 0.3, 0.04, 0.42, "head", 0.03, true],
+					["idle", 0.0, 2.0, 4.0, PI * 0.6, PI * 0.15, 0.08, 0.24, "head", 0.06, false],
+					["cheer", 0.0, cl * 0.75, 4.0, PI * 0.5, PI * 0.38, 0.05, 0.5, "spine_03", 0.08, true],
+					["walk", 0.0, 3.0, 4.0, PI * 0.6, PI * 0.4, 0.06, 1.1, "spine_01", 0.0, true],
+					["run", 0.0, 3.0, 3.0, PI * 0.4, PI * 0.6, 0.06, 1.2, "spine_01", 0.0, true],
+					["charge_c", 0.0, 1.0 / tcc * 1.15, 3.5, -PI * 0.3, -PI * 0.55, 0.12, 0.6, "upperarm_l", -0.05, true]]:
+				boy.hat.visible = bool(s[10])
+				var t0 := gt
+				var tgt := Vector3.ZERO
+				while gt - t0 < float(s[3]):
+					var u := (gt - t0) / float(s[3])
+					var v := lerpf(float(s[1]), float(s[2]), u)
+					player.rotation.y = y0
+					match String(s[0]):
+						"cheer":
+							boy.debug_pose("cheer", 1.0, v)
+						"charge_c":
+							boy.debug_pose(s[0], v)
+						"walk", "run":
+							boy.debug_pose(s[0], 1.0, fmod(v, 1.0))
+						_:
+							boy.debug_pose("idle", 1.0, v)
+					var bp := _bone_pos(s[8], s[9])
+					tgt = bp if gt - t0 < 0.01 else tgt.lerp(bp, 0.25)
+					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], s[7])
+					await get_tree().process_frame
+			boy.hat.visible = true
 			boy.frozen = false
 			demo_nocut = false
 			ui_root.visible = true
