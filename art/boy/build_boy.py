@@ -278,6 +278,77 @@ def shell(body, name, select, offset, mat, solid=0.0, relax=8, hug=None, resampl
     return ob
 
 
+def tuck(body, inner, outer, region, gap=0.0028, most=0.0018, reach=0.007, follow=0.75):
+    """keep the inner garment's armhole edges under the outer one: where the outer garment's (coarser)
+    faces cut across the curve of the back closer than gap, pull the inner one in towards the skin, and
+    near the outer garment blend its weights most of the way (follow) to the outer one's, so it can't
+    slide out past its armhole edge in poses (all the way lets the skin through it overhead). region(co) 0..1"""
+    from mathutils.bvhtree import BVHTree
+    from mathutils.kdtree import KDTree
+    from mathutils.interpolate import poly_3d_calc
+
+    def tree(ob):
+        me = ob.data
+        me.calc_loop_triangles()
+        tris = [tuple(t.vertices) for t in me.loop_triangles]
+        return BVHTree.FromPolygons([v.co for v in me.vertices], tris), tris
+
+    skin, _ = tree(body)
+    cloth, otris = tree(outer)
+    ov = outer.data.vertices
+    ogroups = {g.index: g.name for g in outer.vertex_groups}
+    iv = inner.data.vertices
+    shift, wts = {}, {}
+    for v in iv:
+        r = region(v.co)
+        if r <= 0.0:
+            continue
+        loc, n, ti, d = cloth.find_nearest(v.co)
+        sl = skin.find_nearest(v.co)[0]
+        if loc is None or sl is None or d > reach:
+            continue
+        inward = (sl - v.co)
+        if inward.length < 1e-6 or (loc - v.co).dot(inward) > 0.0:
+            continue                       # the outer garment isn't over this point
+        shift[v.index] = (inward.normalized(), r * min(max(gap - d, 0.0), most))
+        tri = otris[ti]
+        bw = poly_3d_calc([ov[i].co for i in tri], loc)
+        acc = {}
+        for i, w in zip(tri, bw):
+            for e in ov[i].groups:
+                acc[ogroups[e.group]] = acc.get(ogroups[e.group], 0.0) + w * e.weight
+        wts[v.index] = (r * fabric.ss(reach, gap, d) * follow, acc)
+    # both walls of the (solidified) inner garment move together
+    kd = KDTree(len(iv))
+    for v in iv:
+        kd.insert(v.co, v.index)
+    kd.balance()
+    amount = {}
+    for i, (dirn, s) in shift.items():
+        for co, j, dd in kd.find_range(iv[i].co, 0.0012):
+            amount[j] = max(amount.get(j, 0.0), s)
+    for j, s in amount.items():
+        sl = skin.find_nearest(iv[j].co)[0]
+        if s > 0.0 and sl is not None:
+            iv[j].co = iv[j].co + (sl - iv[j].co).normalized() * s
+    igroups = {g.name: g for g in inner.vertex_groups}
+    inames = {g.index: g.name for g in inner.vertex_groups}
+    for i, (k, acc) in wts.items():
+        if k <= 0.0:
+            continue
+        cur = {inames[e.group]: e.weight for e in iv[i].groups}
+        for name in set(cur) | set(acc):
+            w = cur.get(name, 0.0) * (1.0 - k) + acc.get(name, 0.0) * k
+            g = igroups.get(name) or inner.vertex_groups.new(name=name)
+            igroups[name] = g
+            if w > 1e-4:
+                g.add([i], w, "REPLACE")
+            elif name in cur:
+                g.remove([i])
+    print("TUCK", inner.name, "moved", sum(1 for s in amount.values() if s > 0), "max %.4f" % max(amount.values(), default=0.0),
+          "reweighted", sum(1 for k, a in wts.values() if k > 0))
+
+
 def fc(f):
     return f.calc_center_median()
 
@@ -370,6 +441,7 @@ def build(rig, body, arm):
 
     vest = shell(body, "Vest", vest_sel, lambda co, n: 0.0085 - 0.0025 * fabric.armpit_side(J, B, co) + max(0.0, (hip_z + 0.2) - co.z) * 0.03, "vest", solid=0.0035, relax=24,
                  hug=lambda co: co.z > neck_z - 0.09 and abs(co.x) > sh_x - 0.055, cloth=fabric.vest(J, B))
+    tuck(body, tank, vest, lambda co: fabric.win(co.z, neck_z - 0.2, neck_z - 0.04, 0.02) * fabric.ss(sh_x - 0.1, sh_x - 0.07, abs(co.x)))
 
     # ---- yellow shorts, flared hem
     hem_z = knee_z + 0.11
