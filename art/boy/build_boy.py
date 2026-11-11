@@ -6,6 +6,7 @@ blender -b --python art/boy/build_boy.py -- [--render DIR] [--save FILE.blend]
 import bpy, bmesh, sys, os, math, random
 from mathutils import Vector, Matrix
 sys.path.insert(0, os.path.dirname(__file__))
+import shoulder
 from bl_ext.user_default.mpfb.services.humanservice import HumanService
 from bl_ext.user_default.mpfb.services.targetservice import TargetService
 
@@ -128,9 +129,12 @@ def scale_head(rig, body):
 
 # ------------------------------------------------------------------ shells
 
-def shell(body, name, select, offset, mat, solid=0.0, relax=8):
+HUG_RINGS = (0.62, 0.76, 0.88, 0.96)
+
+
+def shell(body, name, select, offset, mat, solid=0.0, relax=8, hug=None, resample=False):
     """copy the body faces where select(face) is true, smooth the cut edge along the body surface,
-    push the copy out by offset(co, n)"""
+    push the copy out by offset(co, n); boundary vertices where hug(co) sit closer to the body"""
     from mathutils.bvhtree import BVHTree
     src = bmesh.new()
     src.from_mesh(body.data)
@@ -168,12 +172,45 @@ def shell(body, name, select, offset, mat, solid=0.0, relax=8):
         co = v.co * 0.5 + sum((n.co for n in nb), Vector()) / len(nb) * 0.5
         hit = bvh.find_nearest(co)
         v.co = hit[0] if hit[0] is not None else co
+    # resample: the relaxed vertices take the skin weights of where they slid to, so the skin under
+    # a long-relaxed edge can't poke through it in strong poses
+    from mathutils.interpolate import poly_3d_calc
+    src.faces.ensure_lookup_table()
+    dl_src = src.verts.layers.deform.active
+    dl = bm.verts.layers.deform.active
+    if resample and dl_src is not None and dl is not None:
+        for v in set(bnd) | inner:
+            loc, n, fi, d = bvh.find_nearest(v.co)
+            if fi is None:
+                continue
+            fv = src.faces[fi].verts
+            bw = poly_3d_calc([u.co for u in fv], loc)
+            acc = {}
+            for u, w in zip(fv, bw):
+                for g, x in u[dl_src].items():
+                    acc[g] = acc.get(g, 0.0) + w * x
+            dv = v[dl]
+            dv.clear()
+            for g, x in acc.items():
+                if x > 1e-4:
+                    dv[g] = x
     bm.normal_update()
+    # edges that should lie close on the skin (armholes): offset eased in over a few rings
+    ease = {}
+    if hug:
+        ring = [v for v in bnd if hug(v.co)]
+        for k in HUG_RINGS:
+            nxt = []
+            for v in ring:
+                if v not in ease:
+                    ease[v] = k
+                    nxt += [e.other_vert(v) for e in v.link_edges]
+            ring = [v for v in nxt if v not in ease]
     for v in bm.verts:
         hit = bvh.find_nearest(v.co)
         n = hit[1] if hit[1] is not None else v.normal
         n = (n + v.normal).normalized()
-        v.co = v.co + n * offset(v.co, n)
+        v.co = v.co + n * offset(v.co, n) * ease.get(v, 1.0)
     src.free()
     me = bpy.data.meshes.new(name)
     bm.to_mesh(me)
@@ -206,24 +243,26 @@ def fc(f):
     return f.calc_center_median()
 
 
-def build(rig, body):
-    J = {b.name: Vector(b.head_local) for b in rig.data.bones}
-    neck_z = J["neck_01"].z
-    sh_x = J["upperarm_l"].x
-    knee_z = J["calf_l"].z
-    hip_z = J["pelvis"].z
-
-    # per-vertex arm weight for the armholes
+def arm_weights(body):
+    """per-vertex arm weight (MPFB weights, before the shoulder re-split) — places the armholes"""
     arm = {}
-    deform = body.data
     groups = {g.index: g.name for g in body.vertex_groups}
-    for v in deform.vertices:
+    for v in body.data.vertices:
         a = 0.0
         for e in v.groups:
             n = groups[e.group]
             if n.split("_")[0] in ("upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky"):
                 a += e.weight
         arm[v.index] = a
+    return arm
+
+
+def build(rig, body, arm):
+    J = {b.name: Vector(b.head_local) for b in rig.data.bones}
+    neck_z = J["neck_01"].z
+    sh_x = J["upperarm_l"].x
+    knee_z = J["calf_l"].z
+    hip_z = J["pelvis"].z
 
     def favg(f, d):
         return sum(d[v.index] for v in f.verts) / len(f.verts)
@@ -231,15 +270,14 @@ def build(rig, body):
     # ---- tank top
     def tank_sel(f):
         c = fc(f)
-        if favg(f, arm) > 0.25:
+        if favg(f, arm) > 0.22:
             return False
         if c.z < hip_z + 0.035 or c.z > neck_z + 0.02:
             return False
         ax = abs(c.x)
-        # armhole: cut the side of the chest high up, leaving a strap over the shoulder
-        if c.z > neck_z - 0.10 and ax > sh_x - 0.045:
-            return False
-        if c.z > neck_z - 0.05 and ax > 0.085 and ax < sh_x - 0.045 and False:
+        # armhole: a little deeper and wider than the vest's, so its edge stays tucked under the
+        # vest and the vest armhole opens straight onto skin (no white ring round the arm)
+        if c.z > neck_z - 0.145 and ax > sh_x - 0.06:
             return False
         # scoop neck (front deeper than back)
         if c.y < 0 and c.z > neck_z - 0.075 and ax < 0.07:
@@ -250,7 +288,7 @@ def build(rig, body):
             return False
         return True
 
-    tank = shell(body, "Tank", tank_sel, lambda co, n: 0.004, "tank")
+    tank = shell(body, "Tank", tank_sel, lambda co, n: 0.004, "tank", relax=20, resample=True)
 
     # ---- open red vest
     def vest_sel(f):
@@ -271,7 +309,8 @@ def build(rig, body):
             return False
         return True
 
-    vest = shell(body, "Vest", vest_sel, lambda co, n: 0.0075 + max(0.0, (hip_z + 0.2) - co.z) * 0.03, "vest", solid=0.003)
+    vest = shell(body, "Vest", vest_sel, lambda co, n: 0.0075 + max(0.0, (hip_z + 0.2) - co.z) * 0.03, "vest", solid=0.003, relax=24,
+                 hug=lambda co: co.z > neck_z - 0.09 and abs(co.x) > sh_x - 0.055)
 
     # ---- yellow shorts, flared hem
     hem_z = knee_z + 0.11
@@ -587,7 +626,11 @@ def main():
     close_eyes(rig, body)
     scale_head(rig, body)
     face_uv2(rig, body)
-    parts = build(rig, body)
+    arm = arm_weights(body)
+    shoulder.sculpt(rig, body)
+    shoulder.add_helpers(rig)
+    shoulder.reweight(rig, body)
+    parts = build(rig, body, arm)
     print("TRIS", {o.name: sum(len(p.vertices) - 2 for p in o.data.polygons) for o in bpy.data.objects if o.type == "MESH"})
     save = arg("--save")
     if save:

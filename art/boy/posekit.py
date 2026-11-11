@@ -9,6 +9,7 @@ from mathutils import Vector, Matrix, Quaternion, Euler
 
 GROUND = -0.012          # sole bottom of the flip-flops
 FINGERS = ["thumb", "index", "middle", "ring", "pinky"]
+SHRUG = 0.20             # collar bone lift (rad) with the arm fully overhead
 
 
 def V(*a):
@@ -57,6 +58,11 @@ class Rig:
         a.x = 0.095 if s == "l" else -0.095
         a.y = 0.0
         return a
+
+
+def _smooth(x, a, b):
+    t = min(max((x - a) / (b - a), 0.0), 1.0)
+    return t * t * (3 - 2 * t)
 
 
 def _frame(x, d):
@@ -208,14 +214,22 @@ def solve(rig, p):
     fk("head", local_g("head", p["head"]))
     chest = M["spine_03"] @ rig.rest["spine_03"].inverted()
     over = 0.0
+    down = chest.to_3x3() @ V(0, 0, -1)
     for s in "lr":
-        fk("clavicle_" + s, local_g("clavicle_" + s, p["clav_" + s]))
+        ce = p["clav_" + s]
+        fk("clavicle_" + s, local_g("clavicle_" + s, ce))
         # arm IK in chest space
         sh = (M["clavicle_" + s] @ (rig.rest["clavicle_" + s].inverted() @ rig.rest["upperarm_" + s])).translation
         # hand targets live in the chest frame; hXw blends towards plain root space
         tgt = (chest @ p["h" + s]).lerp(p["h" + s], p["h" + s + "w"])
         pole = chest.to_3x3() @ p["e" + s]
         el, wr, o = two_bone(sh, tgt, rig.__dict__["A1" + s], rig.__dict__["A2" + s], pole)
+        # the collar bone follows a raised arm (scapulohumeral rhythm, kept subtle), then re-solve
+        lift = SHRUG * _smooth((el - sh).angle(down, 0.0), math.radians(75), math.radians(165))
+        if lift > 1e-4:
+            fk("clavicle_" + s, local_g("clavicle_" + s, (ce[0], ce[1] + (lift if s == "r" else -lift), ce[2])))
+            sh = (M["clavicle_" + s] @ (rig.rest["clavicle_" + s].inverted() @ rig.rest["upperarm_" + s])).translation
+            el, wr, o = two_bone(sh, tgt, rig.__dict__["A1" + s], rig.__dict__["A2" + s], pole)
         hinge = (el - sh).cross(wr - el)
         if hinge.length < 1e-5:
             hinge = (wr - sh).cross(pole)
@@ -225,6 +239,15 @@ def solve(rig, p):
         Gl = _frame(hinge, wr - el) @ fl_.inverted()
         M["upperarm_" + s] = Matrix.Translation(sh) @ (Gu @ R["upperarm_" + s]).to_4x4()
         M["lowerarm_" + s] = Matrix.Translation(el) @ (Gl @ R["lowerarm_" + s]).to_4x4()
+        dn = "deltoid_" + s
+        if dn in R:
+            # helper half way between the arm as the collar bone carries it and the actual arm
+            qa = (M["clavicle_" + s].to_3x3() @ R["clavicle_" + s].inverted() @ R["upperarm_" + s]).to_quaternion()
+            qb = (Gu @ R["upperarm_" + s]).to_quaternion()
+            if qa.dot(qb) < 0:
+                qb.negate()
+            q = qa.slerp(qb, 0.5).to_matrix() @ R["upperarm_" + s].inverted() @ R[dn]
+            M[dn] = Matrix.Translation(sh) @ q.to_4x4()
         fk("hand_" + s, local_g("hand_" + s, p["w" + s]))
         g = p["g" + s]
         for f in FINGERS:
