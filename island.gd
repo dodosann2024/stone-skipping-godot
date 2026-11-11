@@ -41,6 +41,13 @@ var sign_board: MeshInstance3D
 var seats: Array[Dictionary] = []
 const SEAT_TOP := 0.35   # seat height the boy's sitting clips are authored for
 var obstacles: Array = []   # [Vector2 centre, radius, top_y, name]
+var dock_boat: MeshInstance3D
+var boat_mat: ShaderMaterial
+var boat_rest := Transform3D.IDENTITY
+var boat_t := 0.0
+var boat_t0 := -1.0
+var boat_q := Vector3.ZERO   # heave (m), pitch, roll (rad)
+var boat_v := Vector3.ZERO
 var palm_spots: Array = []  # crowns, for screenshots
 var trunks: Array = []   # palm trunk polylines (camera line-of-sight checks)
 var water_mat: ShaderMaterial
@@ -302,6 +309,7 @@ func _mi(mesh: Mesh, mat: Material) -> MeshInstance3D:
 
 func set_time(t: float) -> void:
 	RenderingServer.global_shader_parameter_set("sea_time", t)
+	_bob_boat(t)
 	water_mat.set_shader_parameter("game_time", t)
 	terrain_mat.set_shader_parameter("game_time", t)
 	foliage_mat.set_shader_parameter("game_time", t)
@@ -496,6 +504,15 @@ func _build_water() -> void:
 	var arr = PackedVector4Array()
 	arr.resize(8)
 	water_mat.set_shader_parameter("ripples", arr)
+	if dock_boat:
+		var o := boat_rest.origin
+		var yaw := boat_rest.basis.get_euler().y
+		water_mat.set_shader_parameter("boat_c", Vector4(o.x, o.z, cos(yaw), sin(yaw)))
+		var wl := boat_waterline()
+		water_mat.set_shader_parameter("boat_wl", wl)
+		# the rings fade out 0.8 m from the hull
+		water_mat.set_shader_parameter("boat_box", Vector2(wl[8].x, wl[16].y) + Vector2(0.85, 0.85))
+		water_mat.set_shader_parameter("boat_on", 1.0)
 	water_mi = _mi(pm, water_mat)
 	water_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
@@ -512,7 +529,7 @@ func _bake_obstacle_foam() -> ImageTexture:
 		var r: float = o[1]
 		var top: float = o[2]
 		var bottom: float = o[4] if o.size() > 4 else -99.0
-		if top < -0.1 or bottom > 0.15:
+		if top < -0.1 or bottom > 0.15 or o[3] == "小船":
 			continue
 		var reach = r + 3.0
 		var i0 = int((c.x - reach + 64.0) / px)
@@ -699,8 +716,7 @@ func _build_dock() -> void:
 	tor.inner_radius = 0.22; tor.outer_radius = 0.36; tor.rings = 12; tor.ring_segments = 6
 	SB.prim(tor, Transform3D(Basis(Vector3.RIGHT, PI / 2.0), Vector3(-3.0, DECK_Y + 0.4, dock_end_z + 0.02)), Color(0.95, 0.3, 0.25))
 	# rowboat tied alongside
-	_boat(Vector3(2.3, 0.05, (dock_start_z + dock_end_z) * 0.5 - 1.0), 0.06, Color(0.3, 0.6, 0.8))
-	tube(SB, Vector3(1.2, DECK_Y + 0.5, (dock_start_z + dock_end_z) * 0.5 + 0.2), Vector3(2.1, 0.45, (dock_start_z + dock_end_z) * 0.5 + 0.4), 0.02, 0.02, 4, Color(0.85, 0.75, 0.55))
+	_float_boat(Vector3(2.3, 0.05, (dock_start_z + dock_end_z) * 0.5 - 1.0), 0.06, Color(0.3, 0.6, 0.8), Vector3(1.2, DECK_Y + 0.5, (dock_start_z + dock_end_z) * 0.5 + 0.2))
 	# sign at the dock entrance: an old broken board with a kid's doodle of stone skipping, no words
 	var sp = Vector3(-1.6, ground_h(-1.6, dock_start_z + 1.6), dock_start_z + 1.6)
 	var rs := rng.state
@@ -805,39 +821,240 @@ func _barrel(p: Vector3) -> void:
 		cyl(SB, 0.285, 0.285, 0.06, 9, p + Vector3(0, y, 0), Vector3.ZERO, Color(0.25, 0.25, 0.27))
 	cyl(SB, 0.3, 0.3, 0.09, 9, p + Vector3(0, 0.4, 0), Vector3.ZERO, Color(0.25, 0.25, 0.27))
 
+## a small double-ended rowboat, built closed: painted outer planking, a wooden inner skin, a capped
+## gunwale, end posts, a keel, solid floorboards and two thwarts, so it is solid from every side. Boat space:
+## +z bow, y up, the waterline at BOAT_WL. The floorboards sit above the waterline, so the sea (drawn as a
+## see-through plane) is always hidden under them and never shows inside the hull
+const BOAT_SECS := 17
+const BOAT_HALF := 1.7
+const BOAT_WL := -0.2
+const BOAT_FLOOR := -0.13
+const BOAT_SKIN := 0.035
+
+## one hull section at s (-1 stern .. 1 bow): gunwale, chine, keel, chine, gunwale as (x, y)
+static func boat_section(s: float, inner: bool) -> Array[Vector2]:
+	var w := 0.62 * pow(maxf(1.0 - s * s, 0.0), 0.55) + 0.03
+	var dp := 0.42 * (1.0 - 0.35 * s * s)
+	var rise := 0.12 * s * s
+	var t := BOAT_SKIN if inner else 0.0
+	var wg := maxf(w - t, 0.006)
+	var wc := maxf(w * 0.85 - t, 0.004)
+	var yc := -dp * 0.45 + rise + t * 0.7
+	return [Vector2(-wg, 0.18 + rise), Vector2(-wc, yc), Vector2(0.0, -dp + rise + t), Vector2(wc, yc), Vector2(wg, 0.18 + rise)]
+
+## half-width of a section at height y (0 below its keel)
+static func boat_half_width(sec: Array[Vector2], y: float) -> float:
+	var g := sec[0]
+	var c := sec[1]
+	var k := sec[2]
+	if y <= k.y:
+		return 0.0
+	if y <= c.y:
+		return absf(lerpf(k.x, c.x, (y - k.y) / (c.y - k.y)))
+	if y <= g.y:
+		return absf(lerpf(c.x, g.x, (y - c.y) / (g.y - c.y)))
+	return absf(g.x)
+
+## the hull's outline where it meets the water (boat x/z, starboard half): 17 points, stern to bow
+static func boat_waterline() -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	var prev_k := 0.0
+	for i in BOAT_SECS:
+		var sv := -1.0 + 2.0 * i / (BOAT_SECS - 1)
+		var sec := boat_section(sv, false)
+		var z := sv * BOAT_HALF
+		var ky := sec[2].y
+		if i > 0:
+			var zp := z - 2.0 * BOAT_HALF / (BOAT_SECS - 1)
+			if (prev_k > BOAT_WL) != (ky > BOAT_WL):
+				pts.append(Vector2(0.0, lerpf(zp, z, (BOAT_WL - prev_k) / (ky - prev_k))))
+		if ky < BOAT_WL:
+			pts.append(Vector2(boat_half_width(sec, BOAT_WL), z))
+		prev_k = ky
+	return pts
+
+func _boat_mesh(mb: MeshBuilder, xf: Transform3D, stripe: Color, seat_c: Array, oar_c: Color) -> void:
+	var white := Color(0.95, 0.94, 0.9)
+	# alpha 0 marks the inside: the mirror pass (boat.gdshader) paints it the hull colour, since the clipped
+	# waterline would otherwise let the bare wood show through in the reflection
+	var inner := Color(0.62, 0.45, 0.28, 0.0)
+	var cap := Color(0.5, 0.36, 0.23)
+	var keel := Color(0.56, 0.52, 0.47)
+	var floor_c := Color(0.36, 0.26, 0.17, 0.0)
+	var outs: Array = []
+	var ins: Array = []
+	var zs: Array[float] = []
+	for i in BOAT_SECS:
+		var sv := -1.0 + 2.0 * i / (BOAT_SECS - 1)
+		outs.append(boat_section(sv, false))
+		ins.append(boat_section(sv, true))
+		zs.append(sv * BOAT_HALF)
+	var P := func(q: Vector2, z: float) -> Vector3:
+		return xf * Vector3(q.x, q.y, z)
+	var up := xf.basis * Vector3.UP
+	for i in BOAT_SECS - 1:
+		var z0 := zs[i]
+		var z1 := zs[i + 1]
+		var o0: Array[Vector2] = outs[i]
+		var o1: Array[Vector2] = outs[i + 1]
+		var n0: Array[Vector2] = ins[i]
+		var n1: Array[Vector2] = ins[i + 1]
+		for k in 4:
+			# outer planking: the top strake in the boat's colour, the bottom white; inner skin bare wood
+			var mid: Vector2 = (o0[k] + o1[k + 1]) * 0.5
+			var out := xf.basis * Vector3(mid.x, mid.y + 0.1, 0).normalized()
+			var col := stripe if (k == 0 or k == 3) else white
+			var a: Vector3 = P.call(o0[k], z0)
+			var b: Vector3 = P.call(o0[k + 1], z0)
+			var c: Vector3 = P.call(o1[k + 1], z1)
+			var d: Vector3 = P.call(o1[k], z1)
+			mb.face(a, b, c, col, col, col, out)
+			mb.face(a, c, d, col, col, col, out)
+			var ic := Color(inner.darkened(0.05 if (k == 1 or k == 2) else 0.0), 0.0)
+			a = P.call(n0[k], z0)
+			b = P.call(n0[k + 1], z0)
+			c = P.call(n1[k + 1], z1)
+			d = P.call(n1[k], z1)
+			mb.face(a, b, c, ic, ic, ic, -out)
+			mb.face(a, c, d, ic, ic, ic, -out)
+		# gunwale caps join the two skins along the top
+		for k: int in [0, 4]:
+			var a: Vector3 = P.call(o0[k], z0)
+			var b: Vector3 = P.call(n0[k], z0)
+			var c: Vector3 = P.call(n1[k], z1)
+			var d: Vector3 = P.call(o1[k], z1)
+			mb.face(a, b, c, cap, cap, cap, up)
+			mb.face(a, c, d, cap, cap, cap, up)
+		# keel: a narrow strip under the centre line
+		var k0: Vector3 = P.call(o0[2], z0)
+		var k1: Vector3 = P.call(o1[2], z1)
+		var dn := xf.basis * Vector3(0, -0.05, 0)
+		for sx: float in [-1.0, 1.0]:
+			var off := xf.basis * Vector3(0.025 * sx, 0, 0)
+			mb.face(k0 + off, k1 + off, k1 + off + dn, keel, keel, keel, xf.basis * Vector3(sx, 0, 0))
+			mb.face(k0 + off, k1 + off + dn, k0 + off + dn, keel, keel, keel, xf.basis * Vector3(sx, 0, 0))
+		var l := xf.basis * Vector3(0.025, 0, 0)
+		mb.face(k0 - l + dn, k1 - l + dn, k1 + l + dn, keel, keel, keel, -up)
+		mb.face(k0 - l + dn, k1 + l + dn, k0 + l + dn, keel, keel, keel, -up)
+		# floorboards: a solid sole over the bilge with five tapering planks on top
+		var f0 := boat_half_width(n0, BOAT_FLOOR)
+		var f1 := boat_half_width(n1, BOAT_FLOOR)
+		if f0 + f1 > 0.0:
+			var F := func(x: float, z: float, dy: float) -> Vector3:
+				return xf * Vector3(x, BOAT_FLOOR + dy, z)
+			mb.face(F.call(-f0, z0, 0.0), F.call(f0, z0, 0.0), F.call(f1, z1, 0.0), floor_c, floor_c, floor_c, up)
+			mb.face(F.call(-f0, z0, 0.0), F.call(f1, z1, 0.0), F.call(-f1, z1, 0.0), floor_c, floor_c, floor_c, up)
+			for j in 5:
+				var pc := Color(inner.lightened(0.06 if j % 2 == 0 else 0.0), 0.0)
+				var u0 := -1.0 + 2.0 * (j + 0.07) / 5.0
+				var u1 := -1.0 + 2.0 * (j + 0.93) / 5.0
+				var a: Vector3 = F.call(u0 * f0, z0, 0.01)
+				var b: Vector3 = F.call(u1 * f0, z0, 0.01)
+				var c: Vector3 = F.call(u1 * f1, z1, 0.01)
+				var d: Vector3 = F.call(u0 * f1, z1, 0.01)
+				mb.face(a, b, c, pc, pc, pc, up)
+				mb.face(a, c, d, pc, pc, pc, up)
+	# close both ends between the skins, then an end post on each
+	for e: int in [0, BOAT_SECS - 1]:
+		var z := zs[e]
+		var o: Array[Vector2] = outs[e]
+		var n: Array[Vector2] = ins[e]
+		var nz := xf.basis * Vector3(0, 0, signf(z))
+		for k in 4:
+			var col := stripe if (k == 0 or k == 3) else white
+			var a: Vector3 = P.call(o[k], z)
+			var b: Vector3 = P.call(o[k + 1], z)
+			var c: Vector3 = P.call(n[k + 1], z)
+			var d: Vector3 = P.call(n[k], z)
+			mb.face(a, b, c, col, col, col, nz)
+			mb.face(a, c, d, col, col, col, nz)
+		var ky := o[2].y - 0.05
+		var ty := o[0].y + 0.06
+		boxb(mb, Vector3(0.07, ty - ky, 0.08), xf * Transform3D(Basis.IDENTITY, Vector3(0, (ky + ty) * 0.5, z + signf(z) * 0.02)), cap)
+	# thwarts reach the inner skin; an oar lies across them
+	var si := 0
+	for sz: float in [-0.6, 0.5]:
+		var hw := boat_half_width(boat_section(sz / BOAT_HALF, true), 0.06)
+		boxb(mb, Vector3(hw * 2.0, 0.05, 0.25), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.06, sz)), Color(seat_c[si], 0.0))
+		si += 1
+	boxb(mb, Vector3(0.06, 0.04, 2.0), xf * Transform3D(Basis(Vector3.UP, 0.25), Vector3(0.2, 0.105, 0.0)), Color(oar_c, 0.0))
+
+## the beached boat: part of the static mesh
 func _boat(p: Vector3, yaw: float, stripe: Color, tilt := 0.0) -> void:
 	var xf = Transform3D(Basis(Vector3.UP, yaw) * Basis(Vector3.FORWARD, tilt), p)
-	var secs = 9
-	var prof: Array = []
-	for i in secs:
-		var s = -1.0 + 2.0 * i / (secs - 1)
-		var w = 0.62 * pow(max(1.0 - s * s, 0.0), 0.55) + 0.03
-		var dp = 0.42 * (1.0 - 0.35 * s * s)
-		var z = s * 1.7
-		var rise = 0.12 * s * s
-		prof.append([Vector3(-w, 0.18 + rise, z), Vector3(-w * 0.85, -dp * 0.45 + rise, z), Vector3(0, -dp + rise, z), Vector3(w * 0.85, -dp * 0.45 + rise, z), Vector3(w, 0.18 + rise, z)])
-	var white = Color(0.95, 0.94, 0.9)
-	var inner = Color(0.62, 0.45, 0.28)
-	for i in secs - 1:
-		for k in 4:
-			var a: Vector3 = xf * prof[i][k]
-			var b: Vector3 = xf * prof[i][k + 1]
-			var c: Vector3 = xf * prof[i + 1][k + 1]
-			var d: Vector3 = xf * prof[i + 1][k]
-			var mid: Vector3 = (prof[i][k] + prof[i + 1][k + 1]) * 0.5
-			var out = xf.basis * Vector3(mid.x, mid.y + 0.1, 0).normalized()
-			var col = stripe if (k == 0 or k == 3) else white
-			SB.face(a, b, c, col, col, col, out)
-			SB.face(a, c, d, col, col, col, out)
-			SB.face(a, b, c, inner, inner, inner, -out)
-			SB.face(a, c, d, inner, inner, inner, -out)
-	for sz in [-0.6, 0.5]:
-		boxb(SB, Vector3(1.0, 0.05, 0.25), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.08, sz)), _wood())
-	boxb(SB, Vector3(0.06, 0.04, 2.0), xf * Transform3D(Basis(Vector3.UP, 0.25), Vector3(0.2, 0.15, 0.0)), _wood(-0.1))
+	var seat_c := [_wood(), _wood()]
+	_boat_mesh(SB, xf, stripe, seat_c, _wood(-0.1))
 	add_obstacle(Vector2((xf * Vector3.ZERO).x, (xf * Vector3.ZERO).z), 0.9, p.y + 0.35, "小船", -99.0, false)
 	var bow: Vector3 = xf * Vector3(0, 0, 1.25)
 	var stern: Vector3 = xf * Vector3(0, 0, -1.25)
 	wall_s(Vector2(stern.x, stern.z), Vector2(bow.x, bow.z), 0.64, p.y - 0.6, p.y + 0.4, "小船")
+
+## the rowboat moored by the dock floats on the swell (bob_boat): its own mesh, moved every frame, with the
+## mooring line in it. p is where v13's fixed boat stood; the walls and obstacle stay as they were
+func _float_boat(p: Vector3, yaw: float, stripe: Color, tie: Vector3) -> void:
+	var seat_c := [_wood(), _wood()]
+	var mb := MeshBuilder.new()
+	_boat_mesh(mb, Transform3D.IDENTITY, stripe, seat_c, _wood(-0.1))
+	boat_rest = Transform3D(Basis(Vector3.UP, yaw), Vector3(p.x, -BOAT_WL, p.z))
+	var bow := Vector3(0, 0.3, BOAT_HALF - 0.12)
+	tube(mb, bow, boat_rest.affine_inverse() * tie, 0.02, 0.02, 4, Color(0.85, 0.75, 0.55))
+	boat_mat = ShaderMaterial.new()
+	boat_mat.shader = load("res://shaders/boat.gdshader")
+	boat_mat.set_shader_parameter("hull_col", stripe)
+	dock_boat = _mi(mb.commit(), boat_mat)
+	dock_boat.transform = boat_rest
+	var xf := Transform3D(Basis(Vector3.UP, yaw), p)
+	add_obstacle(Vector2(p.x, p.z), 0.9, p.y + 0.35, "小船", -99.0, false)
+	var b2: Vector3 = xf * Vector3(0, 0, 1.25)
+	var s2: Vector3 = xf * Vector3(0, 0, -1.25)
+	wall_s(Vector2(s2.x, s2.z), Vector2(b2.x, b2.z), 0.64, p.y - 0.6, p.y + 0.4, "小船")
+
+## the sea as drawn (water.gdshader on a 1200 m PlaneMesh with 161 cells a side): linear between the plane's
+## vertices, which can be a few cm off sea_y. Matches uw_shown_y in underwater.gdshaderinc
+static func shown_sea_y(x: float, z: float, t: float) -> float:
+	var cell := 1200.0 / 161.0
+	var gx := (x + 600.0) / cell
+	var gz := (z + 600.0) / cell
+	var ix := floorf(gx)
+	var iz := floorf(gz)
+	var fx := gx - ix
+	var fz := gz - iz
+	var x0 := ix * cell - 600.0
+	var z0 := iz * cell - 600.0
+	var h10 := sea_y(x0 + cell, z0, t)
+	var h01 := sea_y(x0, z0 + cell, t)
+	if fx + fz <= 1.0:
+		var h00 := sea_y(x0, z0, t)
+		return h00 + fx * (h10 - h00) + fz * (h01 - h00)
+	var h11 := sea_y(x0 + cell, z0 + cell, t)
+	return h11 + (1.0 - fx) * (h01 - h11) + (1.0 - fz) * (h10 - h11)
+
+## heave, pitch and roll after the water under the bow, stern and both sides, through a soft spring (a
+## moored boat lags the swell a little and rocks on), plus a slow rock of its own
+func _bob_boat(t: float) -> void:
+	if dock_boat == null:
+		return
+	var dt := clampf(t - boat_t, 0.0, 0.1)
+	boat_t = t
+	var b := boat_rest.basis
+	var c := boat_rest.origin
+	var hs: Array[float] = []
+	for q: Vector3 in [Vector3(0, 0, 1.3), Vector3(0, 0, -1.3), Vector3(0.5, 0, 0), Vector3(-0.5, 0, 0)]:
+		var w := c + b * q
+		hs.append(shown_sea_y(w.x, w.z, t))
+	var tgt := Vector3((hs[0] + hs[1] + hs[2] + hs[3]) * 0.25 + 0.004 * sin(t * 2.1),
+		atan2(hs[0] - hs[1], 2.6) + 0.008 * sin(t * 1.1 + 0.5),
+		atan2(hs[2] - hs[3], 1.0) + 0.022 * sin(t * 1.7) + 0.008 * sin(t * 2.9 + 1.0))
+	if boat_t0 < 0.0 or dt <= 0.0:
+		boat_t0 = t
+		boat_q = tgt
+		boat_v = Vector3.ZERO
+	else:
+		var w0 := TAU / 1.7
+		var acc := (tgt - boat_q) * w0 * w0 - boat_v * (2.0 * 0.45 * w0)
+		boat_v += acc * dt
+		boat_q += boat_v * dt
+	dock_boat.transform = Transform3D(b * Basis(Vector3.RIGHT, -boat_q.y) * Basis(Vector3.BACK, boat_q.z), c + Vector3(0, boat_q.x, 0))
 
 # ------------------------------------------------------------------ hut
 

@@ -14,8 +14,7 @@ float uw_depth(vec3 wpos) {
 	return uw_sea_y(wpos.xz) - wpos.y;
 }
 
-vec3 uw_tint(vec3 c, vec3 wpos) {
-	float dep = uw_depth(wpos);
+vec3 uw_tint_d(vec3 c, vec3 wpos, float dep) {
 	if (dep < -0.03) {
 		return c;
 	}
@@ -32,10 +31,13 @@ vec3 uw_tint(vec3 c, vec3 wpos) {
 	return r;
 }
 
+vec3 uw_tint(vec3 c, vec3 wpos) {
+	return uw_tint_d(c, wpos, uw_depth(wpos));
+}
+
 // refraction for vertices under the surface: a small wobble and only a slight lift. The seabed is not
 // refracted, so the full ~1/4 apparent-depth lift would squash the legs and float the feet off the sand
-vec3 uw_refract(vec3 wpos) {
-	float dep = uw_depth(wpos);
+vec3 uw_refract_d(vec3 wpos, float dep) {
 	if (dep <= 0.0) {
 		return vec3(0.0);
 	}
@@ -43,4 +45,26 @@ vec3 uw_refract(vec3 wpos) {
 	float k = smoothstep(0.0, 0.05, dep);
 	vec2 wob = vec2(sin(wpos.y * 18.0 + t * 3.1 + wpos.z * 4.0), sin(wpos.y * 15.0 - t * 2.7 + wpos.x * 4.0)) * 0.012 * k;
 	return vec3(wob.x, min(dep * 0.06, 0.025), wob.y);
+}
+
+vec3 uw_refract(vec3 wpos) {
+	return uw_refract_d(wpos, uw_depth(wpos));
+}
+
+// the water plane as drawn: a 1200 m PlaneMesh with 161 cells a side, so the swell is linear between its
+// vertices (every 7.45 m) and can sit a few cm off uw_sea_y. Things floating on it (the rowboat) use this
+float uw_shown_y(vec2 p) {
+	float cell = 1200.0 / 161.0;
+	vec2 g = (p + vec2(600.0)) / cell;
+	vec2 i = floor(g);
+	vec2 f = g - i;
+	vec2 p0 = i * cell - vec2(600.0);
+	float h10 = uw_sea_y(p0 + vec2(cell, 0.0));
+	float h01 = uw_sea_y(p0 + vec2(0.0, cell));
+	if (f.x + f.y <= 1.0) {
+		float h00 = uw_sea_y(p0);
+		return h00 + f.x * (h10 - h00) + f.y * (h01 - h00);
+	}
+	float h11 = uw_sea_y(p0 + vec2(cell));
+	return h11 + (1.0 - f.x) * (h01 - h11) + (1.0 - f.y) * (h10 - h11);
 }

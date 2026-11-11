@@ -26,6 +26,12 @@ uniform float refl_guard = 0.1;
 // night lights that streak across the waves: xyz, w = strength (0 off); rgb colour
 uniform vec4 lamp_pos[12];
 uniform vec4 lamp_col[12];
+// the rowboat by the dock: centre x/z, cos / sin of its yaw; its waterline (starboard half, boat x/z,
+// stern to bow; the hull is the same fore and aft) for the foam collar and the small rings it rocks off
+uniform vec4 boat_c = vec4(0.0, 0.0, 1.0, 0.0);
+uniform vec2 boat_wl[17];
+uniform vec2 boat_box = vec2(1.4, 2.4);
+uniform float boat_on = 0.0;
 
 varying vec3 wpos;
 
@@ -41,6 +47,25 @@ vec2 wave_grad(vec2 p, float t) {
 	g += WK2 * 3.7 * 0.013 * cos(dot(WK2, p) * 3.7 + t * 2.3);
 	g += WK3 * 5.9 * 0.008 * cos(dot(WK3, p) * 5.9 + t * 2.9);
 	return g;
+}
+
+// signed distance (m, outside > 0) from the boat's waterline, in boat x/z
+float boat_sd(vec2 q) {
+	vec2 a = abs(q);
+	float d = 1e3;
+	bool inside = false;
+	for (int i = 8; i < 16; i++) {
+		vec2 p0 = boat_wl[i];
+		vec2 p1 = boat_wl[i + 1];
+		vec2 e = p1 - p0;
+		vec2 w = a - p0;
+		float h = clamp(dot(w, e) / max(dot(e, e), 1e-6), 0.0, 1.0);
+		d = min(d, length(w - e * h));
+		if (a.y >= p0.y && a.y < p1.y) {
+			inside = a.x < mix(p0.x, p1.x, (a.y - p0.y) / max(p1.y - p0.y, 1e-6));
+		}
+	}
+	return inside ? -d : d;
 }
 
 // thin anti-aliased line of half-width w (metres) at distance x
@@ -136,6 +161,27 @@ void fragment() {
 	float objf = (1.0 - smoothstep(0.02, 0.2 + nO * 0.25, od)) * (0.45 + 0.55 * lace(p * 4.0 + vec2(t * 0.06, 0.0), 0.1));
 	objf += (1.0 - smoothstep(0.0, 1.4, od)) * smoothstep(0.62, 0.95, 0.5 + 0.5 * sin(od * 7.0 - t * 2.0)) * 0.45 * smoothstep(0.3, 0.6, nO);
 	foam = max(foam, objf);
+	// --- the rowboat: a lacy collar hugging the hull at the waterline, and faint rings it rocks off
+	if (boat_on > 0.5) {
+		vec2 dv = p - boat_c.xy;
+		vec2 q = vec2(dv.x * boat_c.z - dv.y * boat_c.w, dv.x * boat_c.w + dv.y * boat_c.z);
+		if (abs(q.x) < boat_box.x && abs(q.y) < boat_box.y) {
+			float sd = boat_sd(q);
+			float lc = lace(p * 6.0 + vec2(t * 0.25, -t * 0.18), 0.05);
+			// (the flared topsides hide the contact line from above, so broken lace also drifts a hand's
+			// width out past the gunwale)
+			float collar = exp(-pow((sd - 0.03) / 0.05, 2.0)) * (0.6 + 0.4 * lc);
+			collar += exp(-pow((sd - 0.17) / 0.09, 2.0)) * 0.6 * lc;
+			float rings = 0.0;
+			for (int k = 0; k < 2; k++) {
+				float age = fract(t * 0.3 + float(k) * 0.5);
+				float x = sd - (0.06 + age * 0.75);
+				rings += exp(-x * x / (0.0006 + age * 0.0025)) * (1.0 - age) * (1.0 - age);
+			}
+			rings *= 0.42 * (0.5 + 0.5 * vnoise(p * 5.0 + vec2(t * 0.2, 0.0)));
+			foam = max(foam, clamp(collar * 0.95 + rings, 0.0, 1.0) * step(-0.06, sd));
+		}
+	}
 	foam = max(foam, clamp(rip, 0.0, 1.0) * 0.7);
 	float foam_v = clamp(foam, 0.0, 1.0);
 	col = mix(col, vec3(0.97, 0.99, 1.0), foam_v);

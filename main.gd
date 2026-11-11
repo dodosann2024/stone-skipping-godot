@@ -2878,6 +2878,44 @@ func _v12_sequence(pre: String, part: String) -> void:
 		demo_nocut = false
 		_free_cam()
 
+## v14 stills: the rowboat moored by the dock, from the sea, low over the water, from the dock and above,
+## far enough out to see its reflection, and in the game camera; day and night
+func _v14_sequence(pre: String) -> void:
+	var bp := Vector3(2.3, 0.0, (island.dock_start_z + island.dock_end_z) * 0.5 - 1.0)
+	var c := bp + Vector3(0, 0.1, 0)
+	demo_nocut = true
+	for night in [false, true]:
+		var tag := "night" if night else "day"
+		_place(Vector3(0, 0, island.dock_start_z - 1.0), PI)
+		if night:
+			_toggle_night()
+			await _wait(2.9)
+		for sh: Array in [[c, PI * 0.5 + 0.25, 0.12, 4.6, "95_%s_boat_side"], [c, 0.55, 0.07, 3.8, "96_%s_boat_bow_low"],
+				[c, PI - 0.7, 0.22, 4.2, "97_%s_boat_stern"], [c, -PI * 0.5 + 0.35, 0.72, 3.3, "98_%s_boat_from_dock"],
+				[c, PI * 0.5, 1.35, 4.2, "99_%s_boat_top"], [c, PI * 0.5 + 0.6, 0.05, 9.0, "99_%s_boat_far_reflection"]]:
+			var cy: float = sh[1]
+			_fixed_cam(sh[0], cy, sh[2], sh[3])
+			await _wait(0.5)
+			_shot(pre + (sh[4] as String) % tag)
+		# the beached boat on the sand shares the hull
+		var bb := island.shore_pt(-0.75, 1.6) + Vector3(0, 0.3, 0)
+		var bo := Island.dir_at(-0.75)
+		for sh: Array in [[bb, atan2(bo.x, bo.z) + 0.9, 0.3, 4.2, "99_%s_beached_boat"], [bb, atan2(bo.x, bo.z) - 0.4, 0.95, 3.6, "99_%s_beached_boat_above"]]:
+			var cy: float = sh[1]
+			_fixed_cam(sh[0], cy, sh[2], sh[3])
+			await _wait(0.5)
+			_shot(pre + (sh[4] as String) % tag)
+		_place(Vector3(0.75, 0, bp.z - 0.3), -PI * 0.5)
+		_free_cam()
+		_snap_explore_cam()
+		await _wait(1.2)
+		_shot(pre + "99_%s_boat_game_view" % tag)
+		if night:
+			_toggle_night()
+			await _wait(2.9)
+	demo_nocut = false
+	_free_cam()
+
 ## gameplay follow camera along the beach (style checks): walk, run, then stand
 func _explore_sequence(pre: String) -> void:
 	var a := island.shore_pt(-1.3, 2.2)
@@ -2918,6 +2956,8 @@ func _run_demo4() -> void:
 				await _v8_sequence(pre)
 			elif what.begins_with("v9"):
 				await _v9_sequence(pre, what.substr(2).trim_prefix("_"))
+			elif what == "v14":
+				await _v14_sequence(pre)
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
@@ -3102,6 +3142,22 @@ func _video_seg(seg: String) -> void:
 				_stop_walk()
 				await _wait(1.2)
 			_free_cam()
+
+		"boat14":
+			# the rowboat by the dock riding the swell: from the sea, from the dock, then at night
+			var bp := Vector3(2.3, 0.1, (island.dock_start_z + island.dock_end_z) * 0.5 - 1.0)
+			_place(Vector3(0, 0, island.dock_start_z - 1.0), PI)
+			demo_nocut = true
+			_fixed_cam(bp, PI * 0.5 + 0.3, 0.1, 4.4)
+			await _wait(6.0)
+			_fixed_cam(bp, -PI * 0.5 + 0.35, 0.6, 3.4)
+			await _wait(4.0)
+			_toggle_night()
+			await _wait(3.0)
+			_fixed_cam(bp, PI * 0.5 + 0.3, 0.1, 4.4)
+			await _wait(5.0)
+			_toggle_night()
+			demo_nocut = false
 
 		"turn12":
 			# turning on the spot: stick flicks of 180 / 90 / 135 degrees from a stand, a reversal out of a
