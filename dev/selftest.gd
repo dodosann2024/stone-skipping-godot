@@ -519,6 +519,14 @@ func _swipe_check() -> void:
 			notes.append("never finished")
 			break
 		await _wait(2.2)
+	# a slow frame that hands over the whole flick (and the lift) at once still counts as a flick
+	m.press_pos = c
+	var rest := c + Vector2(-0.2, -0.38) * u
+	var late: Array = m._flick([[0.0, c], [0.4, rest], [1.1, rest + Vector2(-0.07, -0.13) * u], [1.1, rest + Vector2(-0.07, -0.13) * u]])
+	var still: Array = m._flick([[0.0, c], [0.4, rest], [1.1, rest]])
+	var late_ok: bool = float(late[0]) > 0.75 and float(still[0]) < 0.3
+	ok = ok and late_ok
+	notes.append("flick in one slow frame: spin %d%% (lift at rest %d%%)%s" % [roundi(float(late[0]) * 100), roundi(float(still[0]) * 100), "" if late_ok else " FAIL"])
 	# swiping back towards the kid cancels and keeps the aim
 	var keep: float = m.aim_yaw
 	m._swipe_press(c, m.gt)

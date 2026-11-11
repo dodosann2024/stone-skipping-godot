@@ -1637,9 +1637,15 @@ func _flick(hist: Array) -> Array:
 	var j := n - 1
 	while j > 0 and t1 - float(hist[j - 1][0]) <= 0.09:
 		j -= 1
+	# a slow frame can hand over a whole flick at once (moves merged, all stamped with the same time): measure
+	# from the sample before it, as if that was at most 50 ms ago
+	var dt := t1 - float(hist[j][0])
+	if dt < 1.0 / 240.0 and j > 0:
+		j -= 1
+		dt = minf(t1 - float(hist[j][0]), 0.05)
 	var speed := 0.0
 	if j < n - 1:
-		speed = (p1 - (hist[j][1] as Vector2)).length() / maxf(t1 - float(hist[j][0]), 1.0 / 120.0) / unit
+		speed = (p1 - (hist[j][1] as Vector2)).length() / maxf(dt, 1.0 / 120.0) / unit
 	var s := clampf(0.2 + 0.8 * smoothstep(0.6, 3.2, speed), 0.2, 1.0)
 	var held: Variant = null
 	if speed > 1.5:
