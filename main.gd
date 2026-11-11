@@ -41,6 +41,7 @@ var throw_spin := 0.8
 var key_angles := Vector2.ZERO
 var cam_aim_yaw := 0.0      # the aiming camera's heading
 var view_at_press := 0.0    # its heading when the finger went down: swipe angles are read against it
+var swipe_move_frame := 0
 var stone_tilt := 20.0
 var launch_spin_v := 0.8
 var first_entry := -1.0
@@ -1593,11 +1594,16 @@ func _swipe_press(p: Vector2, t: float) -> void:
 
 func _swipe_move(p: Vector2, t: float) -> void:
 	swipe_hist.append([t, p])
+	swipe_move_frame = Engine.get_process_frames()
 	while swipe_hist.size() > 3 and t - float(swipe_hist[1][0]) > 0.5:
 		swipe_hist.pop_front()
 	_apply_swipe(p - press_pos)
 
 func _swipe_release(p: Vector2, t: float) -> void:
+	# a slow device can hand over the lift a frame after the finger's last move: it left the glass moving
+	var last: Array = swipe_hist[swipe_hist.size() - 1]
+	if swipe_hist.size() > 1 and Engine.get_process_frames() - swipe_move_frame <= 1 and p.distance_to(last[1]) < _swipe_unit() * 0.02:
+		t = minf(t, float(last[0]))
 	swipe_hist.append([t, p])
 	var fl := _flick(swipe_hist)
 	_apply_swipe(fl[1] if fl[1] != null else p - press_pos)

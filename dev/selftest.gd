@@ -520,13 +520,26 @@ func _swipe_check() -> void:
 			break
 		await _wait(2.2)
 	# a slow frame that hands over the whole flick (and the lift) at once still counts as a flick
-	m.press_pos = c
+	# (4 fps here: a rest, then the flick's moves merged into one frame and the lift in the next)
 	var rest := c + Vector2(-0.2, -0.38) * u
-	var late: Array = m._flick([[0.0, c], [0.4, rest], [1.1, rest + Vector2(-0.07, -0.13) * u], [1.1, rest + Vector2(-0.07, -0.13) * u]])
+	var flung := rest + Vector2(-0.07, -0.13) * u
+	m._swipe_press(c, 100.0)
+	await _frames(1)
+	m._swipe_move(rest, 100.4)
+	await _frames(1)
+	m._swipe_move(flung, 101.1)
+	await _frames(1)
+	m._swipe_release(flung, 101.35)
+	var late: float = m.throw_spin
+	await _until(func() -> bool: return m.state == m.State.READY, 25.0)
+	await _wait(2.2)
+	m.press_pos = c
+	var merged: Array = m._flick([[0.0, c], [0.4, rest], [1.1, flung], [1.1, flung]])
 	var still: Array = m._flick([[0.0, c], [0.4, rest], [1.1, rest]])
-	var late_ok: bool = float(late[0]) > 0.75 and float(still[0]) < 0.3
+	var late_ok: bool = late > 0.75 and float(merged[0]) > 0.75 and float(still[0]) < 0.3
 	ok = ok and late_ok
-	notes.append("flick in one slow frame: spin %d%% (lift at rest %d%%)%s" % [roundi(float(late[0]) * 100), roundi(float(still[0]) * 100), "" if late_ok else " FAIL"])
+	notes.append("flick on a slow device: spin %d%% (lift a frame late) / %d%% (lift in the same frame); lift at rest %d%%%s" % [roundi(late * 100),
+		roundi(float(merged[0]) * 100), roundi(float(still[0]) * 100), "" if late_ok else " FAIL"])
 	# swiping back towards the kid cancels and keeps the aim
 	var keep: float = m.aim_yaw
 	m._swipe_press(c, m.gt)
