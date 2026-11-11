@@ -1408,7 +1408,7 @@ func _update_props() -> void:
 func _setup_hat_seats() -> void:
 	var mi := hat as MeshInstance3D
 	var verts: PackedVector3Array = mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-	# the brim (tilted 13 deg on his head): its plane through the front, back and side of the rim
+	# the brim (tipped back a little on his head): its plane through the front, back and side of the rim
 	var pf := Vector3(0, 0, -INF)
 	var pb := Vector3(0, 0, INF)
 	var ps := Vector3(-INF, 0, 0)
