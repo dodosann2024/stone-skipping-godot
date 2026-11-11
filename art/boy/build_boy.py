@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import shoulder
 import hair as hairkit
 import fabric
+import face
 from bl_ext.user_default.mpfb.services.humanservice import HumanService
 from bl_ext.user_default.mpfb.services.targetservice import TargetService
 
@@ -30,6 +31,8 @@ COLORS = {
     "lens": (0.06, 0.07, 0.09),
     "stone": (0.52, 0.52, 0.50),
     "cord": (0.93, 0.91, 0.85),
+    "eye": (0.92, 0.90, 0.86),
+    "mouth": (0.30, 0.10, 0.09),
 }
 
 
@@ -62,9 +65,13 @@ def make_body():
     macro.update({"gender": 1.0, "age": 0.24, "muscle": 0.45, "weight": 0.36, "proportions": 0.7, "height": 0.5})
     macro["race"] = {"asian": 0.5, "caucasian": 0.4, "african": 0.1}
     base = HumanService.create_human(macro_detail_dict=macro, scale=0.1)
+    face.shape(base)
     rig = HumanService.add_builtin_rig(base, "game_engine")
     px = HumanService.add_mhclo_asset(DATA + "proxymeshes/male1591/male1591.proxy", base, asset_type="Proxymeshes", subdiv_levels=0)
+    eyes = HumanService.add_mhclo_asset(DATA + "eyes/low-poly/low-poly.mhclo", base, asset_type="Eyes", subdiv_levels=0)
+    rest, expr = face.bake(base, px, DATA + "proxymeshes/male1591/male1591.proxy")
     bpy.data.objects.remove(base)
+    face.eyes(eyes, material("eye"))
     rig.name = rig.data.name = "BoyRig"
     px.name = "Body"
     # bake one subdivision level into the mesh (weights are interpolated)
@@ -74,10 +81,14 @@ def make_body():
             px.modifiers.remove(m)
     sub = px.modifiers.new("sub", "SUBSURF")
     sub.levels = 1
+    expr = face.subdivided(px, rest, expr)
     bpy.ops.object.modifier_move_to_index(modifier="sub", index=0)
     bpy.ops.object.modifier_apply(modifier="sub")
+    expr["blink"] = face.blink(px, eyes)
+    face.store(px, expr)
     px.data.materials.clear()
     px.data.materials.append(material("skin"))
+    px.data.materials.append(material("mouth"))
     return rig, px
 
 
@@ -92,37 +103,38 @@ def weight(obj, v, group):
 
 
 def close_eyes(rig, body):
-    """the proxy has open eye sockets and mouth (MakeHuman eyeballs / teeth go there); cap them,
-    the shader draws eyes and mouth"""
+    """the proxy has open eye sockets (the eyeballs sit there) and an open mouth slit: cap the mouth with its
+    own material (the shader draws the inside; it shows when the "open" morph parts the lips)"""
     hz = rig.data.bones["head"].head_local.z
     bm = bmesh.new()
     bm.from_mesh(body.data)
     edges = [e for e in bm.edges if e.is_boundary and all(v.co.z > hz - 0.06 for v in e.verts)]
     res = bmesh.ops.holes_fill(bm, edges=edges, sides=0)
-    centres = []
-    for f in res["faces"]:
-        if f.calc_center_median().z > hz:
-            centres += bmesh.ops.poke(bm, faces=[f])["verts"]
-        else:       # the mouth slit: closed, the shader draws the mouth
-            bmesh.ops.triangulate(bm, faces=[f])
+    eyes = [f for f in res["faces"] if f.calc_center_median().z > hz]
+    mouth = bmesh.ops.triangulate(bm, faces=[f for f in res["faces"] if f not in eyes])["faces"]
+    bmesh.ops.delete(bm, geom=eyes, context="FACES_ONLY")
     bm.verts.index_update()
-    body["eye_idx"] = [v.index for v in centres]
-    # settle the caps a little into the sockets so the lids keep their shape
+    body["mouth_idx"] = face.mouth_cap(bm, mouth, 1)
     bm.normal_update()
     bm.to_mesh(body.data)
     bm.free()
-    print("EYE CAPS", len(res["faces"]))
+    print("MOUTH CAP", len(mouth), "tris")
 
 
 def scale_head(rig, body):
     """slightly bigger head (younger look) — scaled about the neck by the head weight"""
     head = rig.data.bones["head"]
     piv = Vector(head.head_local)
+    ex = [a for a in body.data.attributes if a.name.startswith("ex_")]
     for v in body.data.vertices:
         w = weight(body, v, "head") + 0.5 * weight(body, v, "neck_01") * (1.0 if v.co.z > piv.z - 0.03 else 0.0)
         w = min(w, 1.0)
         if w > 0:
             v.co = piv + (v.co - piv) * (1.0 + (HEAD_SCALE - 1.0) * w)
+            for a in ex:
+                a.data[v.index].vector = a.data[v.index].vector * (1.0 + (HEAD_SCALE - 1.0) * w)
+    for v in bpy.data.objects["Eyes"].data.vertices:
+        v.co = piv + (v.co - piv) * HEAD_SCALE
     bpy.context.view_layer.objects.active = rig
     bpy.ops.object.mode_set(mode="EDIT")
     eb = rig.data.edit_bones["head"]
@@ -714,14 +726,15 @@ def _bone_child(ob, rig, bone):
 def glasses(rig, body):
     """round sunglasses (shown while sunbathing)"""
     bm = bmesh.new()
-    eye_z = rig.data.bones["head"].head_local.z + 0.040 * HEAD_SCALE / 1.08
+    ec = face.eye_centres(bpy.data.objects["Eyes"])
+    eye_z = (ec[1].z + ec[-1].z) * 0.5
     fy = {}
     for sx in (1, -1):
-        near = [v.co for v in body.data.vertices if abs(v.co.x - 0.031 * sx) < 0.012 and abs(v.co.z - eye_z) < 0.012]
+        near = [v.co for v in body.data.vertices if abs(v.co.x - ec[sx].x) < 0.012 and abs(v.co.z - eye_z) < 0.012]
         fy[sx] = min(p.y for p in near) - 0.006
     lens_r = 0.0135
     for sx in (1, -1):
-        c = Vector((0.032 * sx, fy[sx], eye_z))
+        c = Vector((ec[sx].x + 0.0005 * sx, fy[sx], eye_z))
         bmesh.ops.create_circle(bm, cap_ends=True, segments=14, radius=lens_r,
                                 matrix=Matrix.Translation(c) @ Matrix.Rotation(math.pi / 2, 4, "X"))
         _tube(bm, [c + Vector((0.0135 * sx, 0.0, 0.003)), c + Vector((0.035 * sx, 0.03, 0.006)), c + Vector((0.04 * sx, 0.075, 0.0))], 0.0018, 4)
@@ -772,17 +785,17 @@ def face_uv2(rig, body):
     me = body.data
     while len(me.uv_layers) < 2:
         me.uv_layers.new(name="Face")
-    face = me.uv_layers[1]
-    face.name = "Face"
+    fl = me.uv_layers[1]
+    fl.name = "Face"
     hw = {v.index: weight(body, v, "head") for v in me.vertices}
     hc = Vector(hb.head_local)
     for loop in me.loops:
         v = me.vertices[loop.vertex_index]
         if hw[v.index] > 0.5 and v.normal.y < 0.2:
-            face.data[loop.index].uv = (v.co.x, v.co.z - hc.z)
+            fl.data[loop.index].uv = (v.co.x, v.co.z - hc.z)
         else:
-            face.data[loop.index].uv = (5.0, 5.0)
-    eyes = [me.vertices[i].co for i in body["eye_idx"]]
+            fl.data[loop.index].uv = (5.0, 5.0)
+    eyes = face.eye_centres(bpy.data.objects["Eyes"]).values()
     body["eyes_uv"] = [(e.x, e.z - hc.z) for e in eyes]
     print("EYES UV", body["eyes_uv"][:])
 
@@ -793,6 +806,8 @@ def main():
     close_eyes(rig, body)
     scale_head(rig, body)
     face_uv2(rig, body)
+    face.paint(body, rig, os.path.join(os.path.dirname(__file__), "../../textures/face_detail.png"))
+    _bone_child(bpy.data.objects["Eyes"], rig, "head")
     arm = arm_weights(body)
     shoulder.sculpt(rig, body)
     shoulder.add_helpers(rig)

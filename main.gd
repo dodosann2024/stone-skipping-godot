@@ -180,6 +180,7 @@ var portrait_demo := false
 var shot_dir := "v12"
 var night_k := 0.0
 var night_on := false
+var face_cam_tgt := Vector3.INF   # v21 face video: smoothed head target
 var saved_night := false
 var settle_t := 1.0
 var night_btn: Button
@@ -3540,6 +3541,18 @@ func _v16_sequence(pre: String) -> void:
 	ui_root.visible = true
 	_free_cam()
 
+## v21 video: the camera on his face (head bone, smoothed), yaw relative to his facing
+func _face_cam(yaw: float, pitch: float, dist: float) -> void:
+	var h := _bone_pos("head", 0.03)
+	face_cam_tgt = h if face_cam_tgt == Vector3.INF else face_cam_tgt.lerp(h, 0.2)
+	_fixed_cam(face_cam_tgt, player.rotation.y + yaw, pitch, dist)
+
+func _follow_head(dur: float, yaw: float, pitch: float, dist: float, yaw_end := INF) -> void:
+	var t0 := gt
+	while gt - t0 < dur:
+		_face_cam(yaw if yaw_end == INF else lerpf(yaw, yaw_end, (gt - t0) / dur), pitch, dist)
+		await get_tree().process_frame
+
 ## a bone's position in the world, raised by `up` (m) along the world up axis
 func _bone_pos(bone: String, up := 0.0) -> Vector3:
 	var sk := boy.skel
@@ -3853,6 +3866,72 @@ func _v20_sequence(pre: String, part: String) -> void:
 		ui_root.visible = true
 		_free_cam()
 
+## v21 face: close-ups (front / three-quarter / side), the expressions, the sleeping face (hat hidden: it lies
+## over his face then), the game camera with him turned toward it; then at night by a torch
+func _v21_sequence(pre: String) -> void:
+	demo_nocut = true
+	for night: bool in [false, true]:
+		var tag := "night" if night else "day"
+		var p := Vector3(0.0, 0, island.dock_end_z + 1.6)
+		var y0 := PI * 0.5
+		if night:
+			_toggle_night()
+			var c := island.campfire_pos
+			var tp := island.torches[0].global_position
+			var out := Vector3(tp.x - c.x, 0, tp.z - c.z).normalized()
+			p = Vector3(tp.x, 0, tp.z) - out * 0.8 + out.cross(Vector3.UP) * 0.35
+			y0 = atan2(out.x, out.z) + 0.4
+			await _wait(2.9)
+		_place(p, y0)
+		await _wait(0.6)
+		ui_root.visible = false
+		# [name, pose, p, tt, cam yaw, pitch, dist]
+		var shots := [["front", "idle", 1.0, 0.3, PI, 0.03, 0.4], ["34", "idle", 1.0, 0.3, PI - 0.75, 0.04, 0.4],
+			["side", "idle", 1.0, 0.3, PI * 0.5, 0.03, 0.42], ["up", "idle", 1.0, 0.3, PI - 0.35, 0.75, 0.55]]
+		if not night:
+			shots += [["focus", "charge", 1.0, 0.3, PI - 0.6, -0.25, 0.45], ["cheer", "cheer", 1.0, 1.0, PI - 0.3, 0.04, 0.5],
+				["oops", "oops", 1.0, 0.8, PI - 0.25, -0.3, 0.45], ["sleep", "sleep", 1.0, 0.3, PI - 0.4, 0.04, 0.42],
+				["closed", "idle", 1.0, 0.3, PI - 0.4, 0.04, 0.42]]
+		for s: Array in shots:
+			if not String(s[0]).begins_with(_opt("only")):
+				continue
+			player.rotation.y = y0
+			boy.debug_pose(s[1], s[2], s[3])
+			if s[0] == "closed":
+				boy.blink_t = 0.08
+				boy._update_face(0.0)
+			boy.hat.visible = s[0] != "sleep"
+			if s[0] == "sleep":
+				boy.glasses.visible = false
+			await get_tree().process_frame
+			_fixed_cam(_bone_pos("head", 0.03), y0 + float(s[4]), s[5], s[6])
+			await _wait(0.3)
+			_shot(pre + "v21_%s_%s" % [tag, s[0]])
+			boy.hat.visible = true
+		boy.frozen = false
+		# the game camera, him turned toward it
+		_free_cam()
+		ui_root.visible = true
+		_place(p, y0)
+		ex_yaw = face_yaw + PI
+		var ec := _explore_cam()
+		cam_target = ec[0]; cam_yaw = ec[1]; cam_pitch = ec[2]; cam_dist = ec[3]
+		await _wait(1.2)
+		_shot(pre + "v21_%s_game" % tag)
+		# pinched in and dragged lower, as a player does to look at him
+		ex_dist = 3.0
+		ex_pitch = 0.55
+		ec = _explore_cam()
+		cam_target = ec[0]; cam_yaw = ec[1]; cam_pitch = ec[2]; cam_dist = ec[3]
+		await _wait(0.8)
+		_shot(pre + "v21_%s_game_zoom" % tag)
+		ex_dist = 6.2
+		ex_pitch = 0.98
+		if night:
+			_toggle_night()
+			await _wait(2.9)
+	demo_nocut = false
+
 ## v15: aiming by swipe - the pad and angle sliders, aiming left / right (arrow, preview, readout, the chest
 ## turning first), cancel, a flicked throw, a too-steep launch, a too-flat stone, a slow release (no spin)
 func _v15_sequence(pre: String) -> void:
@@ -3956,6 +4035,8 @@ func _run_demo4() -> void:
 				await _v19_sequence(pre)
 			elif what.begins_with("v20"):
 				await _v20_sequence(pre, what.substr(3).trim_prefix("_"))
+			elif what == "v21":
+				await _v21_sequence(pre)
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
@@ -4140,6 +4221,58 @@ func _video_seg(seg: String) -> void:
 				_stop_walk()
 				await _wait(1.2)
 			_free_cam()
+
+		"face21":
+			# the face up close: idle with its blinks (front round to the side), a throw (focus, then the cheer),
+			# an oops, by a torch at night; then the game camera with him turned toward it
+			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+			await _wait(0.5)
+			ui_root.visible = false
+			face_cam_tgt = Vector3.INF
+			await _follow_head(3.2, PI, 0.03, 0.45)
+			await _follow_head(3.0, PI, 0.03, 0.45, PI * 0.5)
+			await _follow_head(0.8, PI * 0.5, 0.03, 0.45)
+			_enter_throw()
+			await _follow_head(1.2, PI - 0.55, -0.15, 0.6)
+			_begin_aim(Vector2.ZERO)
+			aim_pitch = 3.0
+			var ft0 := gt
+			while gt - ft0 < 1.4:
+				charge_t = minf((gt - ft0) / 1.2, 1.0) * 0.9 * POWER_CYCLE * 0.5
+				_face_cam(PI - 0.55, -0.15, 0.6)
+				await get_tree().process_frame
+			charge_t = 0.9 * POWER_CYCLE * 0.5
+			_throw()
+			fly_t = 0.0
+			while state != State.READY:
+				_face_cam(PI - 0.55, -0.15, 0.6)
+				await get_tree().process_frame
+			if boy.anim != "react":
+				boy.react("cheer")
+			await _follow_head(2.4, PI - 0.4, -0.1, 0.6)
+			boy.react("oops")
+			await _follow_head(2.4, PI - 0.3, -0.25, 0.55)
+			_leave_throw()
+			var c := island.campfire_pos
+			var tp := island.torches[0].global_position
+			var out := Vector3(tp.x - c.x, 0, tp.z - c.z).normalized()
+			night_on = true
+			night_k = 1.0
+			_update_night(0.0, true)
+			_place(Vector3(tp.x, 0, tp.z) - out * 0.8 + out.cross(Vector3.UP) * 0.35, atan2(out.x, out.z) + 0.4)
+			await get_tree().process_frame
+			face_cam_tgt = Vector3.INF
+			await _follow_head(4.0, PI - 0.4, 0.03, 0.45)
+			night_on = false
+			night_k = 0.0
+			_update_night(0.0, true)
+			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+			_free_cam()
+			ui_root.visible = true
+			ex_yaw = face_yaw + PI
+			var ec := _explore_cam()
+			cam_target = ec[0]; cam_yaw = ec[1]; cam_pitch = ec[2]; cam_dist = ec[3]
+			await _wait(3.0)
 
 		"hat20":
 			# the hat, followed at head height: walk, sharp turns, run onto the dock, a throw and a cheer, then the

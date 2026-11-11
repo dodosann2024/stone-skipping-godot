@@ -171,6 +171,10 @@ void light() {
 	float d = clamp((ndl + 0.45) / 1.45, 0.0, 1.0);
 	d = d * d * (3.0 - 2.0 * d);
 	float sh = mix(0.25, 1.0, ATTENUATION);
+	if (!LIGHT_IS_DIRECTIONAL) {
+		// torches / fire: ATTENUATION carries the distance falloff (no shadow floor), soft knee up close
+		sh = ATTENUATION / (1.0 + ATTENUATION * max(LIGHT_COLOR.r, max(LIGHT_COLOR.g, LIGHT_COLOR.b)) * 0.45);
+	}
 	float term = 0.12 * d * (1.0 - clamp(ndl * 1.6, 0.0, 1.0));
 	DIFFUSE_LIGHT += LIGHT_COLOR * sh * (d + vec3(1.0, 0.5, 0.35) * term) / PI;
 	// fuzz: fibres standing off the surface catch light at grazing view angles
