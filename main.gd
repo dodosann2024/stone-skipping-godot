@@ -39,7 +39,8 @@ var swipe_hist: Array = []  # [time, position] of the finger while swiping
 var swipe_d := Vector2.ZERO
 var throw_spin := 0.8
 var key_angles := Vector2.ZERO
-var cam_aim_yaw := 0.0      # the aiming camera's heading (holds still while the finger is down)
+var cam_aim_yaw := 0.0      # the aiming camera's heading
+var view_at_press := 0.0    # its heading when the finger went down: swipe angles are read against it
 var stone_tilt := 20.0
 var launch_spin_v := 0.8
 var first_entry := -1.0
@@ -1587,6 +1588,7 @@ func _swipe_press(p: Vector2, t: float) -> void:
 	charge_t = 0.0
 	power = 0.0
 	yaw_at_press = aim_yaw
+	view_at_press = cam_aim_yaw
 	_update_ui()
 
 func _swipe_move(p: Vector2, t: float) -> void:
@@ -1618,11 +1620,11 @@ func _apply_swipe(d: Vector2) -> void:
 		d = Vector2(sin(c), -cos(c)) * d.length()
 	aim_yaw = _swipe_yaw(d)
 
-## The swipe's angle off straight up is the aim's angle off the camera's view line (the camera sits right
-## behind the release point and holds still while the finger is down). A true screen-to-water projection
-## would squeeze a 30 deg swipe into ~7 deg near the horizon, which feels dead under the thumb.
+## The swipe's angle off straight up is the aim's angle off the view line the camera had when the finger
+## went down (it sits right behind the release point). A true screen-to-water projection would squeeze a
+## 30 deg swipe into ~7 deg near the horizon, which feels dead under the thumb.
 func _swipe_yaw(d: Vector2) -> float:
-	return clampf(wrapf(cam_aim_yaw - atan2(d.x, -d.y), -PI, PI), -AIM_LIM, AIM_LIM)
+	return clampf(wrapf(view_at_press - atan2(d.x, -d.y), -PI, PI), -AIM_LIM, AIM_LIM)
 
 ## Spin from how fast the finger was going when it let go (over the last ~90 ms). A finger that rested on
 ## an aim and then flicked (within ~0.2 s) throws the aim it rested on, so aiming carefully and then
@@ -1679,7 +1681,7 @@ static func min_speed(tilt: float, s: float) -> float:
 	return 3.5 / (0.35 + 0.65 * tilt_quality(tilt, s))
 
 ## One touch of the water: [bounced, velocity after, spin after, tilt after, entry angle, why it sank]
-## (why: "" | "slow" | "steep" entry | "tilt" stone dug in). jitter -1..1 (0 in the sim).
+## (why: "" | "slow" | "steep" entry | "flat" stone slapped | "tilt" stone dug in). jitter -1..1 (0 in the sim).
 static func water_contact(v: Vector3, s: float, tilt: float, jitter: float) -> Array:
 	var h := Vector2(v.x, v.z)
 	var vh := h.length()
@@ -1689,6 +1691,9 @@ static func water_contact(v: Vector3, s: float, tilt: float, jitter: float) -> A
 	if vh < min_speed(tilt, s):
 		return [false, v, s, tilt, ang, "slow"]
 	if ang > max_entry(tilt, s, vh) + jitter * 2.0:
+		# would a well-tilted stone have made it? then the tilt is what sank it
+		if ang <= max_entry(TILT_BEST, s, vh) + jitter * 2.0:
+			return [false, v, s, tilt, ang, "flat" if tilt < TILT_BEST else "tilt"]
 		return [false, v, s, tilt, ang, "steep"]
 	var q := tilt_quality(tilt, s)
 	var loss := 9.0 * (1.0 + 3.0 * (1.0 - q)) * (1.0 + 1.2 * (1.0 - s))
@@ -1875,6 +1880,9 @@ func _judge(why: String, ang: float) -> void:
 			"tilt":
 				result_text = "扑通！石头倾角太陡，一头扎进水里"
 				tip = "倾角 20° 左右最好"
+			"flat":
+				result_text = "啪！石头太平，拍在水面上停住了"
+				tip = "倾角调到 20° 左右：前端微微翘起"
 			"slow":
 				result_text = "扑通！速度不够，沉了"
 				tip = "往海面划得更长 = 更用力"
@@ -2402,8 +2410,8 @@ func _physics_process(delta: float) -> void:
 			_finish()
 
 ## Throw-mode camera: right behind the stone in his hand, looking along the aim over his shoulder, so the
-## aim line runs straight up the screen and a swipe points where it throws. It holds still while a finger
-## is down (the swipe is read against it) and swings round to the new aim afterwards.
+## aim line runs up the screen. While a finger is down it turns part way towards the aim, and all the way
+## once the stone is thrown.
 func _throw_cam() -> Array:
 	var tall := _tall()
 	var dir := Vector3(0, 0, -1).rotated(Vector3.UP, cam_aim_yaw)
@@ -2461,8 +2469,12 @@ func _update_throw_pad() -> void:
 		throw_pad.cancel = cancel
 		throw_pad.tip_text = tip
 		throw_pad.queue_redraw()
-	if mode == Mode.THROW and (state != State.AIMING or aim_src != "swipe"):
-		cam_aim_yaw = lerp_angle(cam_aim_yaw, aim_yaw, 1.0 - exp(-get_process_delta_time() * 5.0))
+	if mode == Mode.THROW:
+		# while swiping it swings only part way, so the flight line stays on a narrow portrait screen
+		var to := aim_yaw
+		if state == State.AIMING and aim_src == "swipe":
+			to = view_at_press + wrapf(aim_yaw - view_at_press, -PI, PI) * 0.6
+		cam_aim_yaw = lerp_angle(cam_aim_yaw, to, 1.0 - exp(-get_process_delta_time() * 5.0))
 
 func _explore_cam() -> Array:
 	var tall := _tall()
@@ -3665,6 +3677,31 @@ func _video_seg(seg: String) -> void:
 			await _wait(5.0)
 			_toggle_night()
 			demo_nocut = false
+
+		"throw15":
+			# aiming by swipe on the dock: left with a flick, right with a slow release (no spin), the
+			# elevation slider pushed up to a too-steep launch, then a good one straight out
+			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), 0.0)
+			await _wait(0.3)
+			_enter_throw()
+			await _wait(2.2)
+			var c := throw_pad.pad_c
+			await _demo_swipe(c, Vector2(-0.2, -0.38), 0.8, 1.0, true)
+			await _demo_wait_ready([])
+			await _demo_swipe(c, Vector2(0.24, -0.36), 0.8, 1.0, false)
+			await _demo_wait_ready([])
+			for k in 24:
+				_set_angles(lerpf(4.0, 28.0, (k + 1) / 24.0), 20.0)
+				await get_tree().process_frame
+			await _wait(0.5)
+			await _demo_swipe(c, Vector2(0.06, -0.45), 0.6, 0.8, true)
+			await _demo_wait_ready([])
+			for k in 24:
+				_set_angles(lerpf(28.0, 4.0, (k + 1) / 24.0), 20.0)
+				await get_tree().process_frame
+			await _wait(0.5)
+			await _demo_swipe(c, Vector2(-0.04, -0.46), 0.6, 0.8, true)
+			await _demo_wait_ready([])
 
 		"turn12":
 			# turning on the spot: stick flicks of 180 / 90 / 135 degrees from a stand, a reversal out of a

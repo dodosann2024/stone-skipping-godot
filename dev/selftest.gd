@@ -457,9 +457,10 @@ func _angle_check() -> void:
 	var sp := [sk.call(1.0, 4.0, 20.0, 0.2), sk.call(1.0, 4.0, 20.0, 0.6), sk.call(1.0, 4.0, 20.0, 1.0)]
 	var pw := [sk.call(0.2, 4.0, 20.0, 1.0), sk.call(0.5, 4.0, 20.0, 1.0), sk.call(1.0, 4.0, 20.0, 1.0)]
 	var steep: Dictionary = m.sim_throw(1.0, 30.0, 20.0, 1.0)
+	var flat: Dictionary = m.sim_throw(1.0, 4.0, 0.0, 1.0)
 	var crouch_low: Dictionary = m.sim_throw(0.3, 4.0, 20.0, 1.0, "crouch")
 	var stand_low: Dictionary = m.sim_throw(0.3, 4.0, 20.0, 1.0, "stand")
-	var ok: bool = el[0] > el[1] and el[1] > el[2] and el[3] == 0 and steep["why"] == "steep" \
+	var ok: bool = el[0] > el[1] and el[1] > el[2] and el[3] == 0 and steep["why"] == "steep" and flat["why"] == "flat" \
 		and tl[3] > tl[2] and tl[2] > tl[1] and tl[0] == 0 and tl[3] > tl[4] and tl[4] > tl[5] and tl[6] == 0 \
 		and sp[2] > sp[1] and sp[1] > sp[0] and pw[2] > pw[1] and pw[1] > pw[0] and tl[3] >= 15 \
 		and float(crouch_low["entry"]) < float(stand_low["entry"])
