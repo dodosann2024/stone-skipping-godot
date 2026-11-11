@@ -23,6 +23,10 @@ uniform float translucency = 0.0;      // thin cotton shows skin and lets backli
 uniform vec3 skin : source_color = vec3(0.90, 0.66, 0.52);
 uniform float ao_strength = 0.55;
 uniform vec3 sway = vec3(0.0);
+uniform vec3 sway2 = vec3(0.0);        // a slower spring: the hem lags unevenly along its length
+uniform vec3 sway_l = vec3(0.0);       // per shorts leg (legs = 1), trailing each thigh's swing
+uniform vec3 sway_r = vec3(0.0);
+uniform float legs = 0.0;
 uniform float flutter = 0.0;
 uniform float game_time = 0.0;
 // shading-only relief (no geometry, so the swinging arms keep their clearance): drag lines fanning from
@@ -53,7 +57,10 @@ void vertex() {
 	float w = UV2.x;
 	if (w > 0.0) {
 		float ph = game_time * 6.0 + dot(VERTEX, vec3(23.0, 9.0, 17.0));
-		VERTEX += (sway + vec3(sin(ph), 0.3 * sin(ph * 1.3), cos(ph * 0.8)) * flutter) * w;
+		// which spring a vertex follows varies along the hem (body UV, fixed on the cloth), ~20 cm apart
+		float lag = 0.5 + 0.5 * sin(UV.x * 41.0 + UV.y * 27.0);
+		vec3 s = mix(sway, sway2, lag) + legs * (VERTEX.x > 0.0 ? sway_l : sway_r);
+		VERTEX += (s + vec3(sin(ph), 0.3 * sin(ph * 1.3), cos(ph * 0.8)) * flutter) * w;
 	}
 	wp0 = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	if (wp0.y < 0.12) {
