@@ -2,11 +2,15 @@
 pushed out of the offset shell (never in, so no new skin poke-through), and per-vertex data for
 shaders/cloth.gdshader:
   attribute "cb" -> COLOR.b  distance to the garment edge (0 at the edge .. 1 at 3 cm): hems, bindings, wear
-  attribute "ca" -> COLOR.a  signed distance to a sewn seam (0.5 on the seam, 0 / 1 at -/+ 1.5 cm; signed
-                             so it interpolates linearly across a triangle): seams and stitching
+  attribute "ca" -> COLOR.a  signed distance to a sewn seam (0.5 on the seam, 0 / 1 at -/+ 4 cm; signed
+                             so it interpolates linearly across a triangle, and clamped only well away
+                             from the seam so it still does on the coarse side panels): seams, stitching
   attribute "cg" -> COLOR.g  fold crest (> 0.5) / valley (< 0.5)
-  UV2.y                      like COLOR.a, a second seam (the shorts' centre front / back)
-  UV2.x                      how free the hem is to sway (vest hem / opening, shorts leg openings)
+  UV2.y                      like COLOR.a, a second seam (the shorts' centre front / back), or on the vest
+                             the phase of the underarm drag lines (cycles)
+  UV2.x                      how free the hem is to sway (vest hem / opening, shorts leg openings), or
+                             minus the strength of the vest's underarm wrinkles: those are shading only
+                             (shaders/cloth.gdshader), as the arms pass too close there for real folds
 Plus the shorts' drawstring.
 """
 import bpy, bmesh, math
@@ -15,6 +19,7 @@ from mathutils.interpolate import poly_3d_calc
 
 HEM_D = 0.03
 SEAM_D = 0.015
+SEAM_A = 0.04
 
 
 def ss(a, b, x):
@@ -37,8 +42,9 @@ class Cloth:
     """fine: face centre -> subdivide; fold(co, n, ed) -> extra outward offset (m); seam(co) -> signed
     metres to the nearest seam; sway(co, ed) -> 0..1"""
 
-    def __init__(self, fine=None, fold=None, seam=None, sway=None, line=None, seam2=None):
+    def __init__(self, fine=None, fold=None, seam=None, sway=None, line=None, seam2=None, wrinkle=None):
         self.fine, self._fold, self._seam, self._sway = fine, fold, seam, sway
+        self._wrinkle = wrinkle   # wrinkle(co) -> (strength 0..1, phase in cycles), instead of seam2
         self._seam2 = seam2       # a second seam whose sign can't agree with the first one's (UV2.y)
         self._line = line         # line(co) -> metres to a sewn line that is not an edge (waistband)
 
@@ -108,14 +114,18 @@ class Cloth:
         ca = bm.verts.layers.float.new("ca")
         for v in bm.verts:
             v[cb] = min(ed[v.index] / HEM_D, 1.0)
-            v[ca] = min(max(0.5 + 0.5 * self._seam(v.co) / SEAM_D, 0.0), 1.0) if self._seam else 1.0
+            v[ca] = min(max(0.5 + 0.5 * self._seam(v.co) / SEAM_A, 0.0), 1.0) if self._seam else 1.0
         while len(bm.loops.layers.uv) < 2:
             bm.loops.layers.uv.new()
         fl = bm.loops.layers.uv[1]
         for f in bm.faces:
             for lp in f.loops:
                 s2 = min(max(0.5 + 0.5 * self._seam2(lp.vert.co) / SEAM_D, 0.0), 1.0) if self._seam2 else 1.0
-                lp[fl].uv = (self._sway(lp.vert.co, ed[lp.vert.index]) if self._sway else 0.0, s2)
+                sw = self._sway(lp.vert.co, ed[lp.vert.index]) if self._sway else 0.0
+                if self._wrinkle:
+                    m, s2 = self._wrinkle(lp.vert.co)
+                    sw -= m
+                lp[fl].uv = (sw, s2)
 
 
 class Body:
@@ -251,14 +261,25 @@ def vest(J, B):
     def sway(co, ed):
         # the hem and the lower front opening only: the armholes stay put next to the arms, and the
         # hem moves at half strength because it hangs just 4 mm over the shorts waistband
-        return 0.5 * (1.0 - ss(0.0, 0.05, ed)) * (1.0 - ss(neck - 0.26, neck - 0.18, co.z))
+        return 0.5 * (1.0 - ss(0.0, 0.05, ed)) * (1.0 - ss(neck - 0.26, neck - 0.18, co.z)) * (1.0 - ss(0.0, 0.05, wrinkle(co)[0]))
+
+    apex = neck - 0.115
+
+    def wrinkle(co):
+        # drag lines fanning down from the armpit over the side panel (lines of constant angle round
+        # it), fading out 7 - 12 cm away; the strength also brings back the armhole binding there
+        dy, dz = co.y - B.cy(apex), apex - co.z
+        r = math.hypot(dy, dz)
+        m = armpit_side(J, B, co) * (1.0 - ss(0.07, 0.12, r))
+        th = math.atan2(dy, max(dz, 1e-4))
+        return m, (th * 16.0 + _nz(co, 6, 1.4)) / (2.0 * math.pi)
 
     def fine(c):
         # (not the back of the armholes: finer faces there follow the hollow behind the armpit in raised-arm
         # poses closer than the tank top under them does)
         return (c.y < 0 and c.z < neck - 0.12) or (c.y >= 0 and c.z < hip + 0.24) or (neck - 0.22 < c.z < neck - 0.09 and abs(c.x) > sh_x - 0.12 and c.y < 0.015 and c.z > neck - 0.17)
 
-    return Cloth(fine=fine, fold=fold, seam=seam, sway=sway)
+    return Cloth(fine=fine, fold=fold, seam=seam, sway=sway, wrinkle=wrinkle)
 
 
 def shorts(J, B, hem_z, top_z):
