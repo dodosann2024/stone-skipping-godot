@@ -1,11 +1,11 @@
 """Join the boy, bake AO + all clips, export boy/boy.glb and boy/boy_meta.json for Godot."""
 import bpy, json, os, math
-import posekit, clips, clearance
+import posekit, clips, clearance, face
 from mathutils import Vector
 
 FPS = 30
 LOOPS = {"idle", "stroll", "walk", "run", "hammock_sleep", "sun_rest", "seat_rest", "seat_nap"}
-RIGID = ("Hat", "Glasses", "Stone")      # bone-parented props (BoneAttachment3D in Godot)
+RIGID = ("Hat", "Glasses", "Stone", "Eyes")      # bone-parented props (BoneAttachment3D in Godot)
 OWN_UV2 = ("hair", "tank", "vest", "shorts")
 
 
@@ -54,7 +54,8 @@ def bake_ao(objs):
 
 def face_mask(body, rig):
     """AO lives in the colour's red channel; green = 1 on the face; blue / alpha = the "cb" / "ca"
-    attributes (hair under the hat crown; clothes: distance to the garment edge / to a seam).
+    attributes (hair under the hat crown; clothes: distance to the garment edge / to a seam); on the skin
+    blue = warmth (the ears' thin, sun-reddened rims).
     UV2 becomes one continuous front projection so the shader's fwidth() has no seams (except on the
     hair and clothes, whose UV2 is their own data)"""
     me = body.data
@@ -70,9 +71,20 @@ def face_mask(body, rig):
     cb = me.attributes.get("cb")
     ca = me.attributes.get("ca")
     col = me.color_attributes["AO"]
+    skin_mi = [i for i, m in enumerate(me.materials) if m and m.name == "skin"]
+    skin_v = {v for p in me.polygons if p.material_index in skin_mi for v in p.vertices}
+    hg = body.vertex_groups["head"].index
+    warm = {}
+    for i in skin_v:
+        v = me.vertices[i]
+        hw = sum(g.weight for g in v.groups if g.group == hg)
+        k = max(0.0, min(1.0, (abs(v.co.x) - 0.060) / 0.010)) * hw * (1.0 if hz - 0.01 < v.co.z < hz + 0.10 else 0.0)
+        if k > 0.0:
+            warm[i] = k * k * (3.0 - 2.0 * k)
     for i, d in enumerate(col.data):
         c = d.color
-        d.color = (c[0], 1.0 if i in face else (cg.data[i].value if cg else 0.0), cb.data[i].value if cb else 0.0, ca.data[i].value if ca else 1.0)
+        b = cb.data[i].value if cb else 0.0
+        d.color = (c[0], 1.0 if i in face else (cg.data[i].value if cg else 0.0), max(b, warm.get(i, 0.0)), ca.data[i].value if ca else 1.0)
     for l in me.loops:
         if l.index in hair_l:
             continue
@@ -145,6 +157,7 @@ def export(rig_obj, out_dir):
     palm = (Vector(hb.head_local) * 0.4 + Vector(mid.head_local) * 0.6)
     meta["stone_local"] = list(hb.matrix_local.inverted() @ palm)
     meta["eyes"] = [list(e) for e in body["eyes_uv"]]
+    meta["face_rect"] = list(face.RECT)
     meta["height"] = max(v.co.z for v in body.data.vertices) - posekit.GROUND
     for b in ("pelvis", "head", "hand_r"):
         meta.setdefault("rest", {})[b] = list(rig_obj.data.bones[b].head_local)
@@ -154,15 +167,20 @@ def export(rig_obj, out_dir):
     for pb in rig_obj.pose.bones:
         pb.rotation_quaternion = (1, 0, 0, 0)
         pb.location = (0, 0, 0)
+    head = face.split_head(body)
+    meta["morphs"] = [k.name for k in head.data.shape_keys.key_blocks[1:]]
+    for o in [body, head] + props:
+        mods = [m.type for m in o.modifiers if m.type != "ARMATURE"]
+        assert not mods, (o.name, mods)     # shape keys only survive export_apply=False
     bpy.ops.object.select_all(action="DESELECT")
-    for o in [rig_obj, body] + props:
+    for o in [rig_obj, body, head] + props:
         o.select_set(True)
     bpy.context.view_layer.objects.active = rig_obj
     bpy.ops.export_scene.gltf(
         filepath=os.path.join(out_dir, "boy.glb"), export_format="GLB", use_selection=True,
-        export_apply=True, export_animations=True, export_animation_mode="ACTIONS",
+        export_apply=False, export_animations=True, export_animation_mode="ACTIONS",
         export_force_sampling=True, export_frame_step=1, export_skins=True, export_all_influences=False,
-        export_morph=False, export_yup=True, export_texcoords=True, export_normals=True, export_tangents=False,
+        export_morph=True, export_morph_normal=True, export_morph_tangent=False, export_yup=True, export_texcoords=True, export_normals=True, export_tangents=False,
         export_vertex_color="ACTIVE", export_materials="EXPORT", export_image_format="NONE",
         export_optimize_animation_size=False, export_anim_slide_to_zero=False, export_def_bones=False,
         export_rest_position_armature=True, export_extras=False,
