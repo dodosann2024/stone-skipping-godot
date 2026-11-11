@@ -37,6 +37,7 @@ varying vec3 strand;
 varying float shift;
 varying float tipv;
 varying float crown;
+varying float facing;
 
 float hash1(float n) {
 	return fract(sin(n * 12.9898) * 43758.5453);
@@ -112,6 +113,9 @@ void fragment() {
 	strand = normalize(BINORMAL);
 	shift = tx.b - 0.5;
 	tipv = v * (1.0 - cap);
+	// how squarely the card itself (not its bent normal) faces the camera: cards seen edge-on are a
+	// sub-pixel tangle of strands, and no rim on those, or it lights that up as speckle
+	facing = abs(dot(normalize(cross(dFdx(VERTEX), dFdy(VERTEX))), normalize(-VERTEX)));
 	ROUGHNESS = 0.8;
 }
 
@@ -147,7 +151,7 @@ void light() {
 		// the sky also leaves a dim, broad sheen along the strands, so the layers separate in the shade
 		vec3 hs = normalize(upv + VIEW);
 		SPECULAR_LIGHT += LIGHT_COLOR * shade * fill_sky * kk(t2, hs, 16.0) * 0.22 * m2 * tint;
-		float free = tipv * (1.0 - crown);
+		float free = tipv * (1.0 - crown) * smoothstep(0.15, 0.45, facing);
 		float rim = pow(1.0 - clamp(abs(dot(NORMAL, VIEW)), 0.0, 1.0), 3.0);
 		DIFFUSE_LIGHT += LIGHT_COLOR * free * (rim * fill_rim + pow(clamp(dot(-LIGHT, VIEW), 0.0, 1.0), 2.0) * fill_rim * 0.6) * shade / PI;
 	}

@@ -3586,6 +3586,8 @@ func _v18_sequence(pre: String) -> void:
 		["armhole_idle", "idle", 1.0, 0.3, -PI * 0.2, 0.1, 0.32, "upperarm_l", -0.03, true, false],
 		["armhole_charge", "charge", 0.6, 0.3, -PI * 0.2, 0.1, 0.34, "upperarm_l", -0.03, true, false],
 		["armhole_cheer", "cheer", 1.0, 1.0, -PI * 0.15, 0.05, 0.34, "upperarm_l", -0.05, true, false],
+		["armhole_in_charge", "charge", 0.6, 0.3, -PI * 0.62, 0.12, 0.26, "upperarm_l", -0.07, true, false],
+		["armhole_in_crouch", "charge_c", 0.6, 0.3, -PI * 0.62, 0.12, 0.26, "upperarm_l", -0.07, true, false],
 		["underarm_l_idle", "idle", 1.0, 0.3, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
 		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
 		["underarm_r_cheer", "cheer", 1.0, 1.0, PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
@@ -3954,6 +3956,49 @@ func _video_seg(seg: String) -> void:
 					tgt = sp if gt - t0 < 0.01 else tgt.lerp(sp, 0.25)
 					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], float(s[7]) * k)
 					await get_tree().process_frame
+			boy.frozen = false
+			demo_nocut = false
+			ui_root.visible = true
+			_free_cam()
+
+		"polish18":
+			# v18 close-ups: the hair under the brim in daylight, the card edges up close (hat off), the vest's
+			# underarm with the arms going up, the hems swaying through a walk and a run, a crouching throw
+			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+			await _wait(0.3)
+			demo_nocut = true
+			ui_root.visible = false
+			var y0 := player.rotation.y
+			var tcc := float(boy.clips["throw_crouch"]["t_charge"])
+			var cl := float(boy.clips["cheer"]["length"])
+			# [pose, from, to, seconds, cam yaw from, cam yaw to, pitch, dist, bone, up, hat]
+			for s: Array in [["idle", 0.0, 3.0, 6.0, PI * 0.95, PI * 0.3, 0.04, 0.42, "head", 0.03, true],
+					["idle", 0.0, 2.0, 4.0, PI * 0.6, PI * 0.15, 0.08, 0.24, "head", 0.06, false],
+					["cheer", 0.0, cl * 0.75, 4.0, PI * 0.5, PI * 0.38, 0.05, 0.5, "spine_03", 0.08, true],
+					["walk", 0.0, 3.0, 4.0, PI * 0.6, PI * 0.4, 0.06, 1.1, "spine_01", 0.0, true],
+					["run", 0.0, 3.0, 3.0, PI * 0.4, PI * 0.6, 0.06, 1.2, "spine_01", 0.0, true],
+					["charge_c", 0.0, 1.0 / tcc * 1.15, 3.5, -PI * 0.3, -PI * 0.55, 0.12, 0.6, "upperarm_l", -0.05, true]]:
+				boy.hat.visible = bool(s[10])
+				var t0 := gt
+				var tgt := Vector3.ZERO
+				while gt - t0 < float(s[3]):
+					var u := (gt - t0) / float(s[3])
+					var v := lerpf(float(s[1]), float(s[2]), u)
+					player.rotation.y = y0
+					match String(s[0]):
+						"cheer":
+							boy.debug_pose("cheer", 1.0, v)
+						"charge_c":
+							boy.debug_pose(s[0], v)
+						"walk", "run":
+							boy.debug_pose(s[0], 1.0, fmod(v, 1.0))
+						_:
+							boy.debug_pose("idle", 1.0, v)
+					var bp := _bone_pos(s[8], s[9])
+					tgt = bp if gt - t0 < 0.01 else tgt.lerp(bp, 0.25)
+					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], s[7])
+					await get_tree().process_frame
+			boy.hat.visible = true
 			boy.frozen = false
 			demo_nocut = false
 			ui_root.visible = true
