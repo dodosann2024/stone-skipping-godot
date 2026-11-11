@@ -227,6 +227,10 @@ func _ready() -> void:
 		_run_sim_report()
 		get_tree().quit()
 		return
+	if "--walkmetrics" in args:
+		_walk_metrics_report()
+		get_tree().quit()
+		return
 	portrait_demo = "--portrait" in args
 	if _opt("night") == "1":
 		night_on = true
@@ -2782,6 +2786,16 @@ func _run_sim_report() -> void:
 		for line: String in hs[0]:
 			print("SIM ", line)
 		print("SIM hat stays on the head: %s (worst offset from its seat %.3f mm)" % ["yes" if hs[2] else "NO", float(hs[1]) * 1000.0])
+	_walk_metrics_report()
+
+## gait kinematics at the walking and running speeds (dev/walk_metrics.gd)
+func _walk_metrics_report() -> void:
+	if not ResourceLoader.exists("res://dev/walk_metrics.gd"):
+		return
+	for sp: Array in [["stroll", 0.55], ["walk 0.85", 0.85], ["walk", 1.15], ["run", 2.7]]:
+		var r: Array = load("res://dev/walk_metrics.gd").measure(self, float(sp[1]))
+		for line: String in r[0]:
+			print("SIM gait %s  %s" % [sp[0], line])
 
 func _sim_block() -> void:
 	aim_yaw = 0.0

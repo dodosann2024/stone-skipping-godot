@@ -279,6 +279,7 @@ static func stress(parent: Node) -> Array[String]:
 		var b := Boy.new()
 		parent.add_child(b)
 		var p := GaitProbe.new(b, Vector3(0, 60, 0))
+		p.log_slides = OS.has_environment("SLIDE_LOG")
 		p.run_all(1.0 / fps)
 		out.append("gait @%d fps: %d quick steps, %d steps on the spot, planted slide max %.1f mm/frame, footprint drift max %.1f mm" % [
 			fps, b.steps_taken, b.spot_steps, p.slide_max * 1000.0, p.print_err * 1000.0])

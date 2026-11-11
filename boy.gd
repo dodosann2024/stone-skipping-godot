@@ -76,6 +76,7 @@ var t_idle := 0.0
 var phase := 0.0
 var move_w := 0.0
 var run_k := 0.0
+var walk_k := 1.0    # stroll 0 -> walk 1 (under run_k): shorter, slower steps at low speed
 var speed_s := 0.0
 var prev_pos := Vector3.ZERO
 var has_prev := false
@@ -338,13 +339,16 @@ func _setup_tree() -> void:
 	var ap := model.find_child("AnimationPlayer") as AnimationPlayer
 	bt = AnimationNodeBlendTree.new()
 	var x := 0.0
-	for pair in [["idle", "idle"], ["walk", "walk"], ["run", "run"], ["a", "idle"], ["b", "idle"]]:
+	for pair in [["idle", "idle"], ["stroll", "stroll"], ["walk", "walk"], ["run", "run"], ["a", "idle"], ["b", "idle"]]:
 		bt.add_node(pair[0], _anim_node(pair[1]), Vector2(0, x))
 		bt.add_node(pair[0] + "_s", AnimationNodeTimeSeek.new(), Vector2(200, x))
 		bt.connect_node(pair[0] + "_s", 0, pair[0])
 		x += 120.0
+	bt.add_node("sw", AnimationNodeBlend2.new(), Vector2(400, 0))
+	bt.connect_node("sw", 0, "stroll_s")
+	bt.connect_node("sw", 1, "walk_s")
 	bt.add_node("wr", AnimationNodeBlend2.new(), Vector2(400, 100))
-	bt.connect_node("wr", 0, "walk_s")
+	bt.connect_node("wr", 0, "sw")
 	bt.connect_node("wr", 1, "run_s")
 	bt.add_node("move", AnimationNodeBlend2.new(), Vector2(600, 0))
 	bt.connect_node("move", 0, "idle_s")
@@ -674,13 +678,17 @@ func _tick(delta: float) -> void:
 	var run: Dictionary = clips["run"]
 	match anim:
 		"move":
-			var k0 := run_k
+			var k0 := _mix()
 			run_k = move_toward(run_k, smoothstep(RUN_FROM, RUN_TO, speed_s), delta * 5.0)
-			var stride := lerpf(float(walk["stride"]), float(run["stride"]), run_k) * SCALE
 			var still := move_speed < 0.05 and speed_s < 0.12
 			if still:
 				# finish the step towards feet-together (passing) and settle into idle
 				stopping = true
+			if not stopping:
+				# (held while stopping: the stance foot is not re-solved then, a changing mix would drag it)
+				var vs := float(clips["stroll"]["speed"]) * SCALE
+				walk_k = move_toward(walk_k, smoothstep(vs, float(walk["speed"]) * SCALE, speed_s), delta * 2.0)
+			var stride := _stride()
 			var adv := moved.length() / stride
 			if not stopping and move_w > 0.5:
 				adv = _stance_advance(adv, k0, moved.dot(-global_basis.z) / SCALE)
@@ -732,6 +740,8 @@ func _tick(delta: float) -> void:
 				show_stone(true)
 	if anim != "move" and anim != "idle":
 		run_k = move_toward(run_k, 0.0, delta * 3.0)
+	if anim != "move":
+		walk_k = move_toward(walk_k, 0.0, delta * 3.0)
 	if anim != "activity":
 		t_idle = fposmod(t_idle + delta, 4.0)
 	act_w = move_toward(act_w, act_target, delta * act_rate)
@@ -753,10 +763,12 @@ func _apply_mixer() -> void:
 	var walk: Dictionary = clips["walk"]
 	var run: Dictionary = clips["run"]
 	tree.set("parameters/idle_s/seek_request", t_idle)
+	tree.set("parameters/stroll_s/seek_request", phase * float(clips["stroll"]["length"]))
 	tree.set("parameters/walk_s/seek_request", phase * float(walk["length"]))
 	tree.set("parameters/run_s/seek_request", phase * float(run["length"]))
 	tree.set("parameters/a_s/seek_request", slot_t[0])
 	tree.set("parameters/b_s/seek_request", slot_t[1])
+	tree.set("parameters/sw/blend_amount", walk_k)
 	tree.set("parameters/wr/blend_amount", run_k)
 	tree.set("parameters/move/blend_amount", smoothstep(0.0, 1.0, move_w))
 	tree.set("parameters/ab/blend_amount", ab_w)
@@ -943,19 +955,20 @@ func _stand_point(i: int) -> Vector3:
 	var lp: Array = lock_prev[i]
 	return lp[1]
 
-## walk and run share one phase, but their stances do not line up (a walk foot is still down when the run
-## one has long pushed off), so while run_k moves the blended stance foot would be dragged along. Per clip,
-## sampled at load: per foot [heel z, heel y, toe z, toe y] by phase (skeleton space).
+## stroll, walk and run share one phase, but their stances do not line up (a walk foot is still down when the
+## run one has long pushed off), so while the mix moves the blended stance foot would be dragged along. Per
+## clip, sampled at load: per foot [heel z, heel y, toe z, toe y] by phase (skeleton space).
 const GAIT_N := 64
 var gait_tab := {}
 
 func _build_gait_tables() -> void:
-	var keep := [phase, run_k, move_w, act_w]
-	for c in ["walk", "run"]:
+	var keep := [phase, run_k, move_w, act_w, walk_k]
+	for c in ["stroll", "walk", "run"]:
 		var rows: Array = []
 		for k in GAIT_N:
 			phase = float(k) / GAIT_N
 			run_k = 1.0 if c == "run" else 0.0
+			walk_k = 0.0 if c == "stroll" else 1.0
 			move_w = 1.0
 			act_w = 0.0
 			_apply_mixer()
@@ -967,26 +980,37 @@ func _build_gait_tables() -> void:
 				row.append_array([h.z, h.y, to.z, to.y])
 			rows.append(row)
 		gait_tab[c] = rows
-	phase = keep[0]; run_k = keep[1]; move_w = keep[2]; act_w = keep[3]
+	phase = keep[0]; run_k = keep[1]; move_w = keep[2]; act_w = keep[3]; walk_k = keep[4]
 
-## blended [heel z, heel y, toe z, toe y] of foot i at phase p and walk / run mix k
-func _gait_at(i: int, p: float, k: float) -> Array:
+## the gait mix: (stroll 0 -> walk 1, walk 0 -> run 1)
+func _mix() -> Vector2:
+	return Vector2(walk_k, run_k)
+
+## stride of the current mix (m)
+func _stride() -> float:
+	var ws := lerpf(float(clips["stroll"]["stride"]), float(clips["walk"]["stride"]), walk_k)
+	return lerpf(ws, float(clips["run"]["stride"]), run_k) * SCALE
+
+## blended [heel z, heel y, toe z, toe y] of foot i at phase p and gait mix k
+func _gait_at(i: int, p: float, k: Vector2) -> Array:
 	var f := fposmod(p, 1.0) * GAIT_N
 	var a := int(f) % GAIT_N
 	var b := (a + 1) % GAIT_N
 	var u := f - floorf(f)
+	var sl: Array = gait_tab["stroll"]
 	var w: Array = gait_tab["walk"]
 	var r: Array = gait_tab["run"]
 	var out: Array = []
 	for j in 4:
+		var vs := lerpf(float(sl[a][i * 4 + j]), float(sl[b][i * 4 + j]), u)
 		var vw := lerpf(float(w[a][i * 4 + j]), float(w[b][i * 4 + j]), u)
 		var vr := lerpf(float(r[a][i * 4 + j]), float(r[b][i * 4 + j]), u)
-		out.append(lerpf(vw, vr, k))
+		out.append(lerpf(lerpf(vs, vw, k.x), vr, k.y))
 	return out
 
 ## z of foot i's planted point at (p, k): heel, toe pad or between them as in _foot_lock; null when lifted.
 ## `kind` (0 heel, 1 toe, 2 both) pins the point when given.
-func _plant_z(i: int, p: float, k: float, kind := -1) -> Variant:
+func _plant_z(i: int, p: float, k: Vector2, kind := -1) -> Variant:
 	var s := _gait_at(i, p, k)
 	var th := float(meta["ground"]) + 0.008
 	if kind < 0:
@@ -998,9 +1022,9 @@ func _plant_z(i: int, p: float, k: float, kind := -1) -> Variant:
 	return [float(s[0]) if kind == 0 else (float(s[2]) if kind == 1 else (float(s[0]) + float(s[2])) * 0.5), kind]
 
 ## phase advance that moves the blended stance foot back by exactly the distance the body went forward
-## (skeleton units), so a changing walk / run mix does not drag it; the plain stride rate otherwise
-func _stance_advance(adv: float, k0: float, fwd: float) -> float:
-	if gait_tab.is_empty() or absf(run_k - k0) < 1e-5:
+## (skeleton units), so a changing stroll / walk / run mix does not drag it; the plain stride rate otherwise
+func _stance_advance(adv: float, k0: Vector2, fwd: float) -> float:
+	if gait_tab.is_empty() or (_mix() - k0).length() < 1e-5:
 		return adv
 	var best := -1
 	var lo := 1e9
@@ -1016,13 +1040,13 @@ func _stance_advance(adv: float, k0: float, fwd: float) -> float:
 	var target := float(p0[0]) - fwd
 	var kind: int = p0[1]
 	var span := maxf(adv * 4.0, 0.03)
-	var prev_f := float(_plant_z(best, phase, run_k, kind)[0]) - target
+	var prev_f := float(_plant_z(best, phase, _mix(), kind)[0]) - target
 	if prev_f <= 0.0:
 		return 0.0
 	var n := 16
 	for j in range(1, n + 1):
 		var q := phase + span * j / n
-		var f := float(_plant_z(best, q, run_k, kind)[0]) - target
+		var f := float(_plant_z(best, q, _mix(), kind)[0]) - target
 		if f <= 0.0:
 			return span * (float(j - 1) + prev_f / (prev_f - f)) / n
 		prev_f = f
@@ -1206,8 +1230,9 @@ func _needs_step(i: int, A: Vector3, dA: Vector3) -> bool:
 		return true
 	return c.length() > 0.1 and r > STEP_REACH and r > (A - H).length() / ln + 0.05
 
-## a trailing leg stretched past HEEL_FROM rolls up onto the ball, as at push-off, before it would need a step:
-## [heel angle that brings it back within HEEL_FROM (at most HEEL_UP), how far that moves the ankle]
+## a trailing leg the lock stretches past HEEL_FROM (or past its animated stretch, if that is more) rolls up onto
+## the ball, as at push-off, before it would need a step: [heel angle that brings it back within that (at most
+## HEEL_UP), how far that moves the ankle]
 func _heel_need(i: int, A: Vector3, heel_c: Vector3, toe_c: Vector3) -> Array:
 	if anim != "move" or move_w < 0.5:
 		return [0.0, Vector3.ZERO]
@@ -1218,23 +1243,32 @@ func _heel_need(i: int, A: Vector3, heel_c: Vector3, toe_c: Vector3) -> Array:
 	var ank := A + lock_c[i]
 	var fwd := toe_c - heel_c
 	fwd.y = 0.0
-	if (ank - H).length() <= HEEL_FROM * ln or (H - ank).dot(fwd) <= 0.0:
+	# only what the lock adds: a stance leg straightening as animated (to ~15 deg of knee) is left alone
+	var lim := maxf(HEEL_FROM, minf((A - H).length() / ln, 0.985)) * ln
+	if (ank - H).length() <= lim or (H - ank).dot(fwd) <= 0.0:
 		return [0.0, Vector3.ZERO]
 	var ax := Vector3.UP.cross(fwd).normalized()
-	var p := ank
-	for k in range(1, 9):
-		var a := HEEL_UP * k / 8.0
-		p = toe_c + Basis(ax, a) * (ank - toe_c)
-		if (p - H).length() <= HEEL_FROM * ln:
-			return [a, p - ank]
-	return [HEEL_UP, p - ank]
+	var p := toe_c + Basis(ax, HEEL_UP) * (ank - toe_c)
+	if (p - H).length() > lim:
+		return [HEEL_UP, p - ank]
+	# the least heel angle that does it (bisected: a stepped search pops the knee from frame to frame)
+	var lo := 0.0
+	var hi := HEEL_UP
+	for k in 12:
+		var a := (lo + hi) * 0.5
+		if (toe_c + Basis(ax, a) * (ank - toe_c) - H).length() <= lim:
+			hi = a
+		else:
+			lo = a
+	p = toe_c + Basis(ax, hi) * (ank - toe_c)
+	return [hi, p - ank]
 
 ## the twist a foot comes down with while walking / running round a bend: turned into the turn by a little
 ## over half of what the body will turn while it is down, so over its stance it goes from toed-in to toed-out
 func _turn_aim() -> float:
 	if anim != "move" or move_w < 0.5 or pivoting or phase_rate < 0.05:
 		return 0.0
-	var stance := lerpf(0.62, 0.4, run_k) / phase_rate
+	var stance := lerpf(lerpf(float(clips["stroll"]["duty"]), float(clips["walk"]["duty"]), walk_k), float(clips["run"]["duty"]), run_k) / phase_rate
 	return clampf(turn_w * stance * 0.6, -TURN_AIM, TURN_AIM)
 
 func _start_step(i: int, to_c: Vector3, to_yaw: float, dur: float, lift: float) -> void:
@@ -1297,7 +1331,7 @@ func _time_to_contact(i: int) -> float:
 		return -1.0
 	for j in range(1, GAIT_N):
 		var q := phase + float(j) / GAIT_N
-		if _plant_z(i, q, run_k) != null:
+		if _plant_z(i, q, _mix()) != null:
 			return float(j) / GAIT_N / phase_rate
 	return -1.0
 
@@ -1561,7 +1595,7 @@ func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
 		"cheer", "oops":
 			_set_slot(0, kind, tt); e = "laugh" if kind == "cheer" else "oops"
 		"walk", "run":
-			act_w = 0.0; move_w = 1.0; run_k = 1.0 if kind == "run" else 0.0; phase = tt
+			act_w = 0.0; move_w = 1.0; run_k = 1.0 if kind == "run" else 0.0; walk_k = 1.0; phase = tt
 		"sleep", "sun":
 			var c := "hammock_sleep" if kind == "sleep" else "sun_rest"
 			_set_slot(0, c, tt)

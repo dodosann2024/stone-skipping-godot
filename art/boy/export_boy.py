@@ -4,7 +4,7 @@ import posekit, clips, clearance
 from mathutils import Vector
 
 FPS = 30
-LOOPS = {"idle", "walk", "run", "hammock_sleep", "sun_rest", "seat_rest", "seat_nap"}
+LOOPS = {"idle", "stroll", "walk", "run", "hammock_sleep", "sun_rest", "seat_rest", "seat_nap"}
 RIGID = ("Hat", "Glasses", "Stone")      # bone-parented props (BoneAttachment3D in Godot)
 OWN_UV2 = ("hair", "tank", "vest", "shorts")
 
@@ -86,16 +86,16 @@ def bake_clips(rig_obj, meta):
     sc.render.fps = FPS
     sc.frame_start = 0
     acts = {}
-    walk = clips.Gait(rig, 1.0, 1.0, 0.62)
-    run = clips.Gait(rig, 0.68, 2.04, 0.36, run=True)
+    gaits = clips.gaits(rig)
     def cycle(g):
         # the baked frames must span exactly one stride cycle, or the loop pops and planted feet creep
         n = int(round(g.T * FPS))
         return lambda t: g.pose(t * g.T * FPS / n)
     todo = [
         ("idle", clips.idle(rig), 4.0),
-        ("walk", cycle(walk), walk.T),
-        ("run", cycle(run), run.T),
+        ("stroll", cycle(gaits["stroll"]), gaits["stroll"].T),
+        ("walk", cycle(gaits["walk"]), gaits["walk"].T),
+        ("run", cycle(gaits["run"]), gaits["run"].T),
     ]
     f, L = clips.throw_stand(rig); todo.append(("throw_stand", f, L))
     f, L = clips.throw_crouch(rig); todo.append(("throw_crouch", f, L))
@@ -113,8 +113,8 @@ def bake_clips(rig_obj, meta):
         act, info = posekit.bake(rig, name, fn, frames, FPS, loop=name in LOOPS)
         acts[name] = act
         m = {"length": frames / FPS, "loop": name in LOOPS}
-        if name in ("walk", "run"):
-            g = walk if name == "walk" else run
+        if name in gaits:
+            g = gaits[name]
             m.update({"period": g.T, "stride": g.S, "speed": g.S / g.T, "duty": g.duty})
         if name.startswith(("hammock", "sun", "seat")):
             m["pelvis"] = [list(p) for p in info["pelvis"]]

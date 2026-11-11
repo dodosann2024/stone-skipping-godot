@@ -19,8 +19,8 @@ ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 
 
 def poses(rig):
-    walk = clips.Gait(rig, 1.0, 1.0, 0.62)
-    run = clips.Gait(rig, 0.68, 2.04, 0.36, run=True)
+    walk = clips.Gait(rig, *clips.WALK)
+    run = clips.Gait(rig, *clips.RUN, run=True)
     ts, _ = clips.throw_stand(rig)
     tc, _ = clips.throw_crouch(rig)
     ch, lch = clips.cheer(rig)
