@@ -3586,14 +3586,14 @@ func _v18_sequence(pre: String) -> void:
 		["armhole_idle", "idle", 1.0, 0.3, -PI * 0.2, 0.1, 0.32, "upperarm_l", -0.03, true, false],
 		["armhole_charge", "charge", 0.6, 0.3, -PI * 0.2, 0.1, 0.34, "upperarm_l", -0.03, true, false],
 		["armhole_cheer", "cheer", 1.0, 1.0, -PI * 0.15, 0.05, 0.34, "upperarm_l", -0.05, true, false],
-		["underarm_l_idle", "idle", 1.0, 0.3, -PI * 0.5, 0.05, 0.42, "spine_03", -0.04, true, false],
-		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", -0.04, true, false],
-		["underarm_r_cheer", "cheer", 1.0, 1.0, PI * 0.5, 0.05, 0.42, "spine_03", -0.04, true, false],
-		["underarm_l_charge", "charge", 0.6, 0.3, -PI * 0.45, 0.05, 0.45, "spine_03", -0.04, true, false],
-		["underarm_r_walk", "walk", 1.0, 0.3, PI * 0.5, 0.05, 0.45, "spine_03", -0.04, true, false],
+		["underarm_l_idle", "idle", 1.0, 0.3, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
+		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
+		["underarm_r_cheer", "cheer", 1.0, 1.0, PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
+		["underarm_l_charge", "charge", 0.6, 0.3, -PI * 0.45, 0.05, 0.45, "spine_03", 0.08, true, false],
+		["underarm_r_walk", "walk", 1.0, 0.3, PI * 0.5, 0.05, 0.45, "spine_03", 0.08, true, false],
 		["brim_34", "idle", 1.0, 0.3, PI * 0.75, 0.05, 0.4, "head", 0.03, true, true],
 		["brim_front", "idle", 1.0, 0.3, PI - 0.12, 0.02, 0.4, "head", 0.03, true, true],
-		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", -0.04, true, true],
+		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, true],
 	]
 	for s: Array in shots:
 		if bool(s[10]) != night_on:
