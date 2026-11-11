@@ -2897,6 +2897,14 @@ func _v14_sequence(pre: String) -> void:
 			_fixed_cam(sh[0], cy, sh[2], sh[3])
 			await _wait(0.5)
 			_shot(pre + (sh[4] as String) % tag)
+		# the beached boat on the sand shares the hull
+		var bb := island.shore_pt(-0.75, 1.6) + Vector3(0, 0.3, 0)
+		var bo := Island.dir_at(-0.75)
+		for sh: Array in [[bb, atan2(bo.x, bo.z) + 0.9, 0.3, 4.2, "99_%s_beached_boat"], [bb, atan2(bo.x, bo.z) - 0.4, 0.95, 3.6, "99_%s_beached_boat_above"]]:
+			var cy: float = sh[1]
+			_fixed_cam(sh[0], cy, sh[2], sh[3])
+			await _wait(0.5)
+			_shot(pre + (sh[4] as String) % tag)
 		_place(Vector3(0.75, 0, bp.z - 0.3), -PI * 0.5)
 		_free_cam()
 		_snap_explore_cam()
