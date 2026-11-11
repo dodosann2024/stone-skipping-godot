@@ -44,6 +44,9 @@ var skel: Skeleton3D
 var tree: AnimationTree
 var bt: AnimationNodeBlendTree
 var face_mat: ShaderMaterial
+var head_mi: MeshInstance3D      # the face region, split off with the expression morphs
+var morph_idx := {}              # morph name -> blend shape index
+var morph := {}                  # morph name -> current weight (eased toward the expression's)
 var hair_mat: ShaderMaterial
 var hair_mi: MeshInstance3D
 var hat: Node3D
@@ -94,6 +97,8 @@ var pre_act: Array = []
 var prev_sit := 0.0
 var prev_lie := 0.0
 var blink_timer := 2.5
+var blink_t := -1.0              # time into the current blink (< 0: none)
+var blink_twice := false
 var expr := "smile"
 var rng := RandomNumberGenerator.new()
 var frozen := false
@@ -271,7 +276,7 @@ func _cloth_mat(col: Color, p: Dictionary) -> ShaderMaterial:
 func _setup_materials() -> void:
 	# albedo per Blender material name; kinds: 0 skin, 1 cloth, 2 hair, 3 straw, 4 props
 	var look := {
-		"skin": [Color(0.90, 0.66, 0.52), 0], "tank": [Color(0.95, 0.94, 0.90), 1],
+		"skin": [Color(0.92, 0.60, 0.43), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
 		"vest": [Color(0.80, 0.27, 0.22), 1], "shorts": [Color(0.96, 0.80, 0.36), 1],
 		"hair": [Color(0.30, 0.20, 0.14), 2], "sandal": [Color(0.36, 0.60, 0.64), 1],
 		"strap": [Color(0.95, 0.93, 0.88), 1], "hat": [Color(0.92, 0.80, 0.55), 3],
@@ -288,14 +293,25 @@ func _setup_materials() -> void:
 		"shorts": {"fabric": 2, "thread": Color(0.99, 0.89, 0.58), "hem_stitch": 0.011, "fade": 0.25,
 			"wear": 0.3, "sheen": 0.2, "legs": 1.0},
 	}
+	var made := {}     # one material per name: BoyMesh and BoyHead share the skin
 	for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh := mi.mesh
 		for i in mesh.get_surface_count():
 			var src := mesh.surface_get_material(i)
 			var n := src.resource_name if src else ""
+			if made.has(n):
+				mi.set_surface_override_material(i, made[n])
+				continue
+			if n == "eye":
+				var em := ShaderMaterial.new()
+				em.shader = preload("res://shaders/eye.gdshader")
+				made[n] = em
+				mi.set_surface_override_material(i, em)
+				continue
 			if not look.has(n):
 				continue
 			var m := _mat(look[n][0], look[n][1])
+			made[n] = m
 			if fabric.has(n):
 				m = _cloth_mat(look[n][0], fabric[n])
 				cloth_mats.append(m)
@@ -308,8 +324,16 @@ func _setup_materials() -> void:
 			mi.set_surface_override_material(i, m)
 			if n == "skin":
 				face_mat = m
-		if mi.name in ["Glasses", "Stone"]:
+				m.set_shader_parameter("face_tex", preload("res://textures/face_detail.png"))
+				var r: Array = meta.get("face_rect", [-0.075, -0.085, 0.15, 0.18])
+				m.set_shader_parameter("face_rect", Vector4(r[0], r[1], r[2], r[3]))
+		if mi.name in ["Glasses", "Stone", "Eyes"]:
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if mi.name == "BoyHead":
+			head_mi = mi
+			for k in mi.mesh.get_blend_shape_count():
+				morph_idx[String(mi.mesh.get_blend_shape_name(k))] = k
+				morph[String(mi.mesh.get_blend_shape_name(k))] = 0.0
 
 func _setup_parts() -> void:
 	for att: BoneAttachment3D in skel.find_children("*", "BoneAttachment3D", false, false):
@@ -747,7 +771,7 @@ func _tick(delta: float) -> void:
 	act_w = move_toward(act_w, act_target, delta * act_rate)
 	ab_w = move_toward(ab_w, float(cur_slot), delta * ab_rate)
 	if anim == "move" and run_k > 0.6:
-		expr = "laugh"
+		expr = "run"
 	elif anim == "move" or anim == "idle":
 		expr = "smile"
 	lead_dt = delta
@@ -1553,22 +1577,51 @@ func hat_grip_gap() -> float:
 	var want := hx * ((g[0] as Vector3) + (g[1] as Vector3) * 0.085)
 	return knuckle.distance_to(want) * skel.global_transform.basis.get_scale().x
 
-func _update_face(delta: float) -> void:
+# expression -> morph weights (MakeHuman expression units baked in Blender, see art/boy/face.py)
+const EXPR := {
+	"smile": {"smile": 0.3, "squint": 0.22},
+	"laugh": {"smile": 1.0, "open": 0.42, "squint": 0.55, "brow_up": 0.35},
+	"run": {"smile": 0.75, "open": 0.14, "squint": 0.2},
+	"oops": {"brow_in": 0.9, "frown": 0.55, "open": 0.12, "brow_up": 0.15},
+	"grit": {"brow_down": 0.75, "squint": 0.45, "press": 0.7},
+	"sleep": {"blink": 1.0, "smile": 0.12, "open": 0.03},
+	"relax": {"blink": 1.0, "smile": 0.4},
+}
+
+## blink: lids down fast (70 ms), a short hold, up slower; every 2-5 s, now and then twice
+func _blink_k(delta: float) -> float:
 	blink_timer -= delta
-	var open := 1.0
-	if blink_timer < 0.12:
-		open = 0.0
-		if blink_timer < 0.0:
-			blink_timer = rng.randf_range(2.0, 4.5)
-	var mouth := 0
-	match expr:
-		"laugh": mouth = 1; open = 0.0
-		"oops": mouth = 2
-		"grit": mouth = 3
-		"sleep": mouth = 4; open = 0.0
-		"relax": open = 0.0
-	face_mat.set_shader_parameter("eye_open", open)
-	face_mat.set_shader_parameter("mouth", mouth)
+	if blink_timer < 0.0 and blink_t < 0.0:
+		blink_t = 0.0
+	if blink_t < 0.0:
+		return 0.0
+	blink_t += delta
+	var k := 0.0
+	if blink_t < 0.07:
+		k = blink_t / 0.07
+	elif blink_t < 0.1:
+		k = 1.0
+	elif blink_t < 0.24:
+		k = 1.0 - (blink_t - 0.1) / 0.14
+		k = k * k * (3.0 - 2.0 * k)
+	else:
+		blink_t = -1.0
+		blink_twice = not blink_twice and rng.randf() < 0.18
+		blink_timer = 0.12 if blink_twice else rng.randf_range(2.0, 5.0)
+	return k
+
+func _update_face(delta: float) -> void:
+	if head_mi == null:
+		return
+	var want: Dictionary = EXPR.get(expr, EXPR["smile"])
+	var bk := _blink_k(delta)
+	var rate := 1.0 if delta <= 0.0 else clampf(delta * 9.0, 0.0, 1.0)
+	for n: String in morph:
+		morph[n] = lerpf(morph[n], float(want.get(n, 0.0)), rate)
+		var v: float = morph[n]
+		if n == "blink":
+			v = maxf(v, bk * (1.0 - float(morph.get("squint", 0.0)) * 0.3))
+		head_mi.set_blend_shape_value(morph_idx[n], v)
 
 # ------------------------------------------------------------------ dev helpers
 
