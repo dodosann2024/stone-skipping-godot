@@ -11,11 +11,11 @@ uniform vec3 albedo : source_color = vec3(0.9);
 uniform int kind = 1;
 uniform float ao_strength = 0.55;
 uniform float rim = 0.12;
-uniform float blush = 0.5;
+uniform float blush = 1.0;
 uniform sampler2D face_tex : hint_default_black, filter_linear_mipmap, repeat_disable;
 uniform vec4 face_rect = vec4(-0.075, -0.085, 0.15, 0.18);
-uniform vec3 brow_col : source_color = vec3(0.16, 0.105, 0.075);
-uniform vec3 lip_col : source_color = vec3(0.74, 0.44, 0.38);
+uniform vec3 brow_col : source_color = vec3(0.30, 0.19, 0.12);
+uniform vec3 lip_col : source_color = vec3(0.86, 0.52, 0.48);
 #include "res://shaders/underwater.gdshaderinc"
 #include "res://shaders/refl_clip.gdshaderinc"
 
@@ -53,9 +53,9 @@ float vnoise(vec2 p) {
 vec3 face(vec3 c, vec2 p, out float lip) {
 	vec2 t = vec2((p.x - face_rect.x) / face_rect.z, 1.0 - (p.y - face_rect.y) / face_rect.w);
 	vec4 m = texture(face_tex, t);
-	c = mix(c, c * vec3(1.03, 0.80, 0.74), m.a * blush);
-	c = mix(c, lip_col, m.g * 0.62);
-	c = mix(c, brow_col, m.r * 0.9);
+	c = mix(c, c * vec3(1.02, 0.78, 0.80), m.a * blush);
+	c = mix(c, lip_col, m.g * 0.5);
+	c = mix(c, brow_col, m.r * 0.85);
 	c = mix(c, vec3(0.085, 0.06, 0.05), m.b * 0.95);
 	lip = m.g;
 	return c;
@@ -83,7 +83,7 @@ void fragment() {
 	float lip = 0.0;
 	float aos = ao_strength;
 	if (kind == 0) {
-		c = mix(c, c * vec3(1.04, 0.80, 0.74), warm * 0.55);
+		c = mix(c, c * vec3(1.02, 0.80, 0.80), warm * 0.55);
 		if (fmask > 0.01) {
 			float fl;
 			c = mix(c, face(c, fuv, fl), fmask);
@@ -93,7 +93,7 @@ void fragment() {
 		// skin grain, faded out before it can shimmer
 		vec2 g = UV * 1500.0;
 		float n = vnoise(g) * 0.65 + vnoise(g * 2.3) * 0.35;
-		c *= 1.0 + (n - 0.5) * 0.07 * (1.0 - smoothstep(0.25, 0.9, fwidth(g.x) + fwidth(g.y)));
+		c *= 1.0 + (n - 0.5) * 0.025 * (1.0 - smoothstep(0.25, 0.9, fwidth(g.x) + fwidth(g.y)));
 	} else if (kind == 5) {
 		c = mouth_inside(UV);
 		aos = 0.0;
@@ -115,6 +115,12 @@ void fragment() {
 	SPECULAR = kind == 4 ? 0.5 : (kind == 0 ? 0.3 : 0.15);
 	float f = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
 	EMISSION = c * f * rim * (1.0 - sub) * (1.0 - 0.75 * night_k);
+	if (kind == 0) {
+		// light scattered under the skin keeps the shaded side warm instead of taking the sky's grey-blue
+		EMISSION += c * vec3(0.11, 0.045, 0.03) * (1.0 - sub) * (1.0 - 0.6 * night_k);
+		// soft fill from the camera, so the face never sinks into grey shade (eye sockets, under the brim)
+		EMISSION += c * vec3(0.10, 0.085, 0.075) * clamp(dot(NORMAL, VIEW), 0.0, 1.0) * (1.0 - 0.7 * night_k);
+	}
 }
 
 void light() {
@@ -124,14 +130,19 @@ void light() {
 	d = d * d * (3.0 - 2.0 * d);
 	// sun / moon: lifted shadows. Torches / fire: ATTENUATION carries the distance falloff, so no floor,
 	// and a soft knee keeps a face right next to the flame from burning out
-	float sh = mix(0.25, 1.0, ATTENUATION);
+	float sh = mix(kind == 0 ? 0.42 : 0.25, 1.0, ATTENUATION);
 	if (!LIGHT_IS_DIRECTIONAL) {
 		float e = ATTENUATION * max(LIGHT_COLOR.r, max(LIGHT_COLOR.g, LIGHT_COLOR.b));
 		sh = ATTENUATION / (1.0 + e * 0.45);
 	}
 	// warm subsurface-ish band at the terminator on skin
-	float term = (kind == 0 ? 0.3 : 0.12) * d * (1.0 - clamp(ndl * 1.6, 0.0, 1.0));
-	DIFFUSE_LIGHT += LIGHT_COLOR * sh * (d + vec3(1.0, 0.5, 0.35) * term) / PI;
+	float term = (kind == 0 ? 0.22 : 0.12) * d * (1.0 - clamp(ndl * 1.6, 0.0, 1.0));
+	vec3 lc = LIGHT_COLOR;
+	if (kind == 0 && !LIGHT_IS_DIRECTIONAL) {
+		// firelight on skin: keep the warmth but not its full saturation (skin x orange reads as salmon)
+		lc = mix(vec3(dot(lc, vec3(0.3, 0.55, 0.15))), lc, 0.55) * 0.8;
+	}
+	DIFFUSE_LIGHT += lc * sh * (d + vec3(1.0, 0.55, 0.45) * term) / PI;
 	if (kind == 2 || kind == 4) {
 		vec3 h = normalize(LIGHT + VIEW);
 		float s = pow(clamp(dot(NORMAL, h), 0.0, 1.0), kind == 2 ? 24.0 : 60.0) * (kind == 2 ? 0.08 : 0.3);
@@ -139,7 +150,7 @@ void light() {
 	} else if (kind == 0) {
 		// a soft sheen on the skin, a little wetter on the lips
 		vec3 h = normalize(LIGHT + VIEW);
-		float s = pow(clamp(dot(NORMAL, h), 0.0, 1.0), mix(70.0, 14.0, ROUGHNESS)) * (1.0 - ROUGHNESS) * 0.22;
+		float s = pow(clamp(dot(NORMAL, h), 0.0, 1.0), mix(70.0, 14.0, ROUGHNESS)) * (1.0 - ROUGHNESS) * 0.12;
 		SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * s * clamp(ndl * 3.0, 0.0, 1.0);
 	}
 }

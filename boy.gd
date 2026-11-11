@@ -72,7 +72,10 @@ var arm_bones := {}   # side -> [clavicle, upperarm, lowerarm, hand, deltoid]
 const HAT_LIE := {"": [0.0, 0.16, 0.5, 0.72, 0.92], "seatlie": [0.3, 0.55, 0.9, 0.92, 0.99]}
 const HAT_LIFT := 0.07   # the hat's arc away from his face (skeleton m)
 const HAT_TIP := {"sleep": -0.6, "seatlie": -0.55}   # rad, left side of the brim up over his face
+# hat-local shift over his face: getting up from the towel his left thumb sweeps past the crown
+const HAT_SHIFT := {"sun": Vector3(-0.028, 0.0, 0.0)}
 var hat_tip := 0.0
+var hat_shift := Vector3.ZERO
 
 var t := 0.0
 var t_idle := 0.0
@@ -276,7 +279,7 @@ func _cloth_mat(col: Color, p: Dictionary) -> ShaderMaterial:
 func _setup_materials() -> void:
 	# albedo per Blender material name; kinds: 0 skin, 1 cloth, 2 hair, 3 straw, 4 props
 	var look := {
-		"skin": [Color(0.92, 0.60, 0.43), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
+		"skin": [Color(0.96, 0.67, 0.50), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
 		"vest": [Color(0.80, 0.27, 0.22), 1], "shorts": [Color(0.96, 0.80, 0.36), 1],
 		"hair": [Color(0.30, 0.20, 0.14), 2], "sandal": [Color(0.36, 0.60, 0.64), 1],
 		"strap": [Color(0.95, 0.93, 0.88), 1], "hat": [Color(0.92, 0.80, 0.55), 3],
@@ -318,9 +321,10 @@ func _setup_materials() -> void:
 			elif n == "hair":
 				m = ShaderMaterial.new()
 				m.shader = preload("res://shaders/hair.gdshader")
-				m.set_shader_parameter("strands", preload("res://textures/hair_strands.png"))
 				hair_mat = m
 				hair_mi = mi
+				# the locks shadowing each other read as roof tiles; the hat's shadow does the shading
+				mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			mi.set_surface_override_material(i, m)
 			if n == "skin":
 				face_mat = m
@@ -1477,7 +1481,7 @@ func hat_seat(s := -1.0) -> Transform3D:
 		return hat_head_xf
 	# a rigid brim cannot lie flat in the dip of a hammock or against a backrest: it rests tipped on that side
 	var c := hat_face_xf * hat_band_c
-	var face := Transform3D(Basis(Vector3.UP, -hat_tip), c) * Transform3D(Basis(), -c) * hat_face_xf
+	var face := Transform3D(Basis(Vector3.UP, -hat_tip), c) * Transform3D(Basis(), -c) * hat_face_xf * Transform3D(Basis(), hat_shift)
 	if u >= 1.0:
 		return face
 	var b := Basis(hat_head_xf.basis.get_rotation_quaternion().slerp(face.basis.get_rotation_quaternion(), u))
@@ -1494,6 +1498,7 @@ func _hat_for(kind: String, lie_k: float) -> void:
 	# on the bench / log the right hand props him on the seat while he lies back
 	hat_side = "l" if kind == "seatlie" else "r"
 	hat_tip = HAT_TIP.get(kind, 0.0)
+	hat_shift = HAT_SHIFT.get(kind, Vector3.ZERO)
 	var hl: Array = HAT_LIE.get(kind, HAT_LIE[""])
 	hat_s = smoothstep(hl[1], hl[2], lie_k)
 	hat_hold = smoothstep(hl[0], hl[1], lie_k) * (1.0 - smoothstep(hl[3], hl[4], lie_k))
@@ -1579,12 +1584,12 @@ func hat_grip_gap() -> float:
 
 # expression -> morph weights (MakeHuman expression units baked in Blender, see art/boy/face.py)
 const EXPR := {
-	"smile": {"smile": 0.3, "squint": 0.22},
+	"smile": {"smile": 0.5, "squint": 0.22, "blink": 0.1},
 	"laugh": {"smile": 1.0, "open": 0.42, "squint": 0.55, "brow_up": 0.35},
 	"run": {"smile": 0.75, "open": 0.14, "squint": 0.2},
-	"oops": {"brow_in": 0.9, "frown": 0.55, "open": 0.12, "brow_up": 0.15},
-	"grit": {"brow_down": 0.75, "squint": 0.45, "press": 0.7},
-	"sleep": {"blink": 1.0, "smile": 0.12, "open": 0.03},
+	"oops": {"brow_in": 0.9, "frown": 0.3, "open": 0.2, "brow_up": 0.25},
+	"grit": {"brow_down": 0.5, "squint": 0.3, "press": 0.45, "smile": 0.15},
+	"sleep": {"blink": 1.0, "smile": 0.3, "open": 0.03},
 	"relax": {"blink": 1.0, "smile": 0.4},
 }
 
@@ -1634,6 +1639,7 @@ func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
 	cur_slot = 0
 	hat_s = 1.0 if kind == "sleep" or kind == "sun" else 0.0
 	hat_tip = HAT_TIP.get(kind, 0.0)
+	hat_shift = HAT_SHIFT.get(kind, Vector3.ZERO)
 	hat_hold = 0.0
 	glasses.visible = false
 	var e := "smile"

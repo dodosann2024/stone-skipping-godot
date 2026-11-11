@@ -89,9 +89,9 @@ var dragging := false
 var demo_cam := false
 var demo_nocut := false   # showcase stills of a prop: no see-through cut-out towards the boy
 var ex_yaw := 0.0
-# high, slightly telephoto follow camera (the reference looks down at ~55-60 degrees)
-var ex_pitch := 0.98
-var ex_dist := 6.2
+# slightly telephoto follow camera, ~35 degrees down: low enough to see his face under the hat brim
+var ex_pitch := 0.62
+var ex_dist := 5.0
 var last_drag := -10.0
 
 # explore
@@ -3868,8 +3868,9 @@ func _v20_sequence(pre: String, part: String) -> void:
 
 ## v21 face: close-ups (front / three-quarter / side), the expressions, the sleeping face (hat hidden: it lies
 ## over his face then), the game camera with him turned toward it; then at night by a torch
-func _v21_sequence(pre: String) -> void:
+func _v21_sequence(pre: String, ver := "v21", dk := 1.0) -> void:
 	demo_nocut = true
+	var ex0 := [ex_dist, ex_pitch]
 	for night: bool in [false, true]:
 		var tag := "night" if night else "day"
 		var p := Vector3(0.0, 0, island.dock_end_z + 1.6)
@@ -3892,6 +3893,8 @@ func _v21_sequence(pre: String) -> void:
 			shots += [["focus", "charge", 1.0, 0.3, PI - 0.6, -0.25, 0.45], ["cheer", "cheer", 1.0, 1.0, PI - 0.3, 0.04, 0.5],
 				["oops", "oops", 1.0, 0.8, PI - 0.25, -0.3, 0.45], ["sleep", "sleep", 1.0, 0.3, PI - 0.4, 0.04, 0.42],
 				["closed", "idle", 1.0, 0.3, PI - 0.4, 0.04, 0.42]]
+		if ver != "v21":
+			shots += [["body", "idle", 1.0, 0.3, PI - 0.3, 0.08, 1.6 / dk], ["bodyside", "idle", 1.0, 0.3, PI * 0.5, 0.08, 1.6 / dk]]
 		for s: Array in shots:
 			if not String(s[0]).begins_with(_opt("only")):
 				continue
@@ -3904,9 +3907,12 @@ func _v21_sequence(pre: String) -> void:
 			if s[0] == "sleep":
 				boy.glasses.visible = false
 			await get_tree().process_frame
-			_fixed_cam(_bone_pos("head", 0.03), y0 + float(s[4]), s[5], s[6])
+			var tgt := _bone_pos("head", 0.03)
+			if String(s[0]).begins_with("body"):
+				tgt = _bone_pos("pelvis", 0.0) + Vector3(0, 0.12, 0)
+			_fixed_cam(tgt, y0 + float(s[4]), s[5], float(s[6]) * dk)
 			await _wait(0.3)
-			_shot(pre + "v21_%s_%s" % [tag, s[0]])
+			_shot(pre + "%s_%s_%s" % [ver, tag, s[0]])
 			boy.hat.visible = true
 		boy.frozen = false
 		# the game camera, him turned toward it
@@ -3917,16 +3923,16 @@ func _v21_sequence(pre: String) -> void:
 		var ec := _explore_cam()
 		cam_target = ec[0]; cam_yaw = ec[1]; cam_pitch = ec[2]; cam_dist = ec[3]
 		await _wait(1.2)
-		_shot(pre + "v21_%s_game" % tag)
+		_shot(pre + "%s_%s_game" % [ver, tag])
 		# pinched in and dragged lower, as a player does to look at him
 		ex_dist = 3.0
 		ex_pitch = 0.55
 		ec = _explore_cam()
 		cam_target = ec[0]; cam_yaw = ec[1]; cam_pitch = ec[2]; cam_dist = ec[3]
 		await _wait(0.8)
-		_shot(pre + "v21_%s_game_zoom" % tag)
-		ex_dist = 6.2
-		ex_pitch = 0.98
+		_shot(pre + "%s_%s_game_zoom" % [ver, tag])
+		ex_dist = ex0[0]
+		ex_pitch = ex0[1]
 		if night:
 			_toggle_night()
 			await _wait(2.9)
@@ -4037,6 +4043,8 @@ func _run_demo4() -> void:
 				await _v20_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what == "v21":
 				await _v21_sequence(pre)
+			elif what == "v22":
+				await _v21_sequence(pre, "v22", 1.2)
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
