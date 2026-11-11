@@ -148,6 +148,10 @@ void light() {
 	float d = clamp((ndl + 0.5) / 1.5, 0.0, 1.0);
 	d = d * d * (3.0 - 2.0 * d);
 	float sh = mix(0.3, 1.0, ATTENUATION);
+	if (!LIGHT_IS_DIRECTIONAL) {
+		// torches / fire: ATTENUATION carries the distance falloff (no shadow floor), soft knee up close
+		sh = ATTENUATION / (1.0 + ATTENUATION * max(LIGHT_COLOR.r, max(LIGHT_COLOR.g, LIGHT_COLOR.b)) * 0.45);
+	}
 	DIFFUSE_LIGHT += LIGHT_COLOR * sh * d / PI;
 	// thin tips glow when the light is behind them
 	float back = pow(clamp(dot(-LIGHT, VIEW), 0.0, 1.0), 4.0) * (0.25 + 0.75 * tipv);

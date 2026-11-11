@@ -2,23 +2,27 @@ shader_type spatial;
 render_mode cull_back;
 // v6 boy: soft, low-contrast shading in the "Wired to Fish" spirit — flat albedo per material,
 // wide wrapped diffuse with a warm terminator, cool shadow side (from the ambient), baked AO in
-// COLOR.r, a faint rim. The face is drawn here (UV2 = front projection of the head, metres from
-// the head joint) so expressions are just uniforms.
-// kind: 0 skin, 1 cloth, 2 hair, 3 straw, 4 plastic/props
+// COLOR.r, a faint rim. The face's painted detail (brows, lash line, lips, blush) is a map in UV2 (front
+// projection of the head, metres from the head joint, in the rest pose) so it rides the expression
+// morphs; COLOR.b on the skin = warmth (ears). Fine skin grain on UV (MakeHuman layout).
+// kind: 0 skin, 1 cloth, 2 hair, 3 straw, 4 plastic/props, 5 inside of the mouth
 
 uniform vec3 albedo : source_color = vec3(0.9);
 uniform int kind = 1;
 uniform float ao_strength = 0.55;
 uniform float rim = 0.12;
-uniform float eye_open = 1.0;     // 0 closed (blink / asleep) .. 1 open
-uniform int mouth = 0;            // 0 smile, 1 laugh, 2 oops, 3 grit, 4 sleepy
-uniform float blush = 0.35;
+uniform float blush = 0.5;
+uniform sampler2D face_tex : hint_default_black, filter_linear_mipmap, repeat_disable;
+uniform vec4 face_rect = vec4(-0.075, -0.085, 0.15, 0.18);
+uniform vec3 brow_col : source_color = vec3(0.16, 0.105, 0.075);
+uniform vec3 lip_col : source_color = vec3(0.74, 0.44, 0.38);
 #include "res://shaders/underwater.gdshaderinc"
 #include "res://shaders/refl_clip.gdshaderinc"
 
 varying vec2 fuv;
 varying float ao;
 varying float fmask;
+varying float warm;
 varying vec3 lpos;
 varying vec3 wp0;
 
@@ -26,6 +30,7 @@ void vertex() {
 	fuv = vec2(UV2.x, 1.0 - UV2.y);  // glTF stores V flipped
 	ao = COLOR.r;
 	fmask = COLOR.g;
+	warm = COLOR.b;
 	lpos = VERTEX;
 	wp0 = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	if (wp0.y < 0.12) {
@@ -33,64 +38,41 @@ void vertex() {
 	}
 }
 
-float ellipse(vec2 p, vec2 c, vec2 r, float aa) {
-	float d = length((p - c) / r) - 1.0;
-	return 1.0 - smoothstep(-aa, aa, d * min(r.x, r.y));
+float hash2(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 
-float arc(vec2 p, vec2 c, float half_w, float bend, float thick, float aa) {
-	vec2 d = p - c;
-	float y = bend * (d.x * d.x / (half_w * half_w) - 1.0) * -1.0;
-	float m = 1.0 - smoothstep(thick - aa, thick + aa, abs(d.y - y));
-	return m * (1.0 - smoothstep(half_w - aa, half_w + aa, abs(d.x)));
+float vnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0)), f.x), f.y);
 }
 
-vec3 face(vec3 c, vec2 p) {
-	float aa = clamp(fwidth(p.x) + fwidth(p.y), 0.0004, 0.004);
-	vec3 ink = vec3(0.16, 0.10, 0.08);
-	// cheeks
-	for (int i = 0; i < 2; i++) {
-		float s = i == 0 ? 1.0 : -1.0;
-		float b = 1.0 - smoothstep(0.0, 1.0, length((p - vec2(0.042 * s, 0.018)) / vec2(0.013, 0.008)));
-		c = mix(c, vec3(0.95, 0.55, 0.50), b * blush);
-	}
-	for (int i = 0; i < 2; i++) {
-		float s = i == 0 ? 1.0 : -1.0;
-		vec2 e = vec2(0.0315 * s, 0.040);
-		float open = clamp(eye_open, 0.0, 1.0);
-		if (open > 0.2) {
-			float m = ellipse(p, e, vec2(0.0068, 0.0088 * open), aa);
-			c = mix(c, ink, m);
-			float hl = ellipse(p, e + vec2(-0.0022 * s + 0.001, 0.0032 * open), vec2(0.0022, 0.0024), aa);
-			c = mix(c, vec3(1.0), hl * m * 0.9);
-		} else {
-			// closed: a soft downward arc (happy / asleep)
-			c = mix(c, ink, arc(p, e + vec2(0.0, 0.001), 0.0072, -0.0028, 0.0011, aa));
-		}
-		// brows
-		float br = arc(p, e + vec2(0.0005 * s, 0.0145), 0.0085, 0.0018, 0.0012, aa);
-		c = mix(c, vec3(0.22, 0.14, 0.10), br * 0.85);
-	}
-	vec2 mo = vec2(0.0, -0.025);
-	if (mouth == 0) {
-		c = mix(c, vec3(0.55, 0.22, 0.2), arc(p, mo, 0.0085, -0.0035, 0.0011, aa));
-	} else if (mouth == 1) {
-		// open laugh: D shape, darker inside, tongue
-		vec2 d = p - mo;
-		float top = smoothstep(-aa, aa, 0.0015 - d.y);
-		float shape = ellipse(p, mo + vec2(0.0, 0.0015), vec2(0.010, 0.0085), aa) * top;
-		c = mix(c, vec3(0.42, 0.12, 0.12), shape);
-		c = mix(c, vec3(0.86, 0.42, 0.42), shape * ellipse(p, mo + vec2(0.0, -0.005), vec2(0.0055, 0.003), aa));
-	} else if (mouth == 2) {
-		c = mix(c, vec3(0.42, 0.12, 0.12), ellipse(p, mo, vec2(0.0045, 0.0055), aa));
-	} else if (mouth == 3) {
-		float m = ellipse(p, mo, vec2(0.009, 0.0035), aa);
-		c = mix(c, vec3(0.42, 0.12, 0.12), m);
-		c = mix(c, vec3(0.97), m * (1.0 - smoothstep(-aa, aa, abs(p.y - mo.y) - 0.0016)));
-	} else {
-		c = mix(c, vec3(0.55, 0.22, 0.2), ellipse(p, mo + vec2(0.0, 0.001), vec2(0.004, 0.0028), aa) * 0.9);
-	}
+// brows, lash line, lid crease, lip line and nostrils darken; lips and the warm cheeks / nose tint
+vec3 face(vec3 c, vec2 p, out float lip) {
+	vec2 t = vec2((p.x - face_rect.x) / face_rect.z, 1.0 - (p.y - face_rect.y) / face_rect.w);
+	vec4 m = texture(face_tex, t);
+	c = mix(c, c * vec3(1.03, 0.80, 0.74), m.a * blush);
+	c = mix(c, lip_col, m.g * 0.62);
+	c = mix(c, brow_col, m.r * 0.9);
+	c = mix(c, vec3(0.085, 0.06, 0.05), m.b * 0.95);
+	lip = m.g;
 	return c;
+}
+
+// inside the mouth (the cap between the lips, seen when the "open" morph parts them): UV.x across the
+// mouth, UV.y 0 at the upper lip .. 1 at the lower; upper teeth under the top lip, the tongue low
+vec3 mouth_inside(vec2 uv) {
+	float up = 1.0 - uv.y;
+	float side = min(uv.x, 1.0 - uv.x);
+	vec3 c = vec3(0.20, 0.06, 0.06);
+	c = mix(c, vec3(0.55, 0.25, 0.25), smoothstep(0.42, 0.1, up) * smoothstep(0.08, 0.3, side));
+	float gaps = smoothstep(0.0, 0.08, abs(fract(uv.x * 7.0 + 0.5) - 0.5));
+	float teeth = smoothstep(0.66, 0.78, up) * smoothstep(0.06, 0.2, side);
+	c = mix(c, vec3(0.86, 0.83, 0.76) * mix(0.75, 1.0, gaps), teeth);
+	c = mix(c, vec3(0.70, 0.66, 0.60), smoothstep(0.16, 0.04, up) * smoothstep(0.12, 0.3, side) * 0.6);
+	return c * mix(0.35, 1.0, smoothstep(0.0, 0.25, side));
 }
 
 void fragment() {
@@ -98,8 +80,23 @@ void fragment() {
 		discard;
 	}
 	vec3 c = albedo;
-	if (kind == 0 && fmask > 0.5) {
-		c = face(c, fuv);
+	float lip = 0.0;
+	float aos = ao_strength;
+	if (kind == 0) {
+		c = mix(c, c * vec3(1.04, 0.80, 0.74), warm * 0.55);
+		if (fmask > 0.01) {
+			float fl;
+			c = mix(c, face(c, fuv, fl), fmask);
+			lip = fl * fmask;
+			aos *= 1.0 - 0.85 * fmask;
+		}
+		// skin grain, faded out before it can shimmer
+		vec2 g = UV * 1500.0;
+		float n = vnoise(g) * 0.65 + vnoise(g * 2.3) * 0.35;
+		c *= 1.0 + (n - 0.5) * 0.07 * (1.0 - smoothstep(0.25, 0.9, fwidth(g.x) + fwidth(g.y)));
+	} else if (kind == 5) {
+		c = mouth_inside(UV);
+		aos = 0.0;
 	} else if (kind == 3) {
 		// straw weave: UV.x angle around the crown, UV.y radial distance
 		float w = sin(UV.x * 6.2832 * 70.0) * sin(UV.y * 900.0);
@@ -107,15 +104,15 @@ void fragment() {
 		c *= 1.0 + w * 0.09 * fade;
 		c *= 1.0 - 0.06 * smoothstep(0.6, 1.0, sin(UV.y * 160.0));
 	}
-	vec3 a = c * mix(1.0, ao, ao_strength);
+	vec3 a = c * mix(1.0, ao, aos);
 	float sub = 0.0;
 	if (wp0.y < 0.12) {
 		a = uw_tint(a, wp0);
 		sub = smoothstep(-0.004, 0.02, uw_depth(wp0));
 	}
 	ALBEDO = a;
-	ROUGHNESS = kind == 4 ? 0.35 : 0.85;
-	SPECULAR = kind == 4 ? 0.5 : 0.15;
+	ROUGHNESS = kind == 4 ? 0.35 : (kind == 0 ? mix(0.66, 0.42, lip) : 0.85);
+	SPECULAR = kind == 4 ? 0.5 : (kind == 0 ? 0.3 : 0.15);
 	float f = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
 	EMISSION = c * f * rim * (1.0 - sub) * (1.0 - 0.75 * night_k);
 }
@@ -125,7 +122,13 @@ void light() {
 	float w = kind == 0 ? 0.6 : 0.45;
 	float d = clamp((ndl + w) / (1.0 + w), 0.0, 1.0);
 	d = d * d * (3.0 - 2.0 * d);
+	// sun / moon: lifted shadows. Torches / fire: ATTENUATION carries the distance falloff, so no floor,
+	// and a soft knee keeps a face right next to the flame from burning out
 	float sh = mix(0.25, 1.0, ATTENUATION);
+	if (!LIGHT_IS_DIRECTIONAL) {
+		float e = ATTENUATION * max(LIGHT_COLOR.r, max(LIGHT_COLOR.g, LIGHT_COLOR.b));
+		sh = ATTENUATION / (1.0 + e * 0.45);
+	}
 	// warm subsurface-ish band at the terminator on skin
 	float term = (kind == 0 ? 0.3 : 0.12) * d * (1.0 - clamp(ndl * 1.6, 0.0, 1.0));
 	DIFFUSE_LIGHT += LIGHT_COLOR * sh * (d + vec3(1.0, 0.5, 0.35) * term) / PI;
@@ -133,5 +136,10 @@ void light() {
 		vec3 h = normalize(LIGHT + VIEW);
 		float s = pow(clamp(dot(NORMAL, h), 0.0, 1.0), kind == 2 ? 24.0 : 60.0) * (kind == 2 ? 0.08 : 0.3);
 		SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * s;
+	} else if (kind == 0) {
+		// a soft sheen on the skin, a little wetter on the lips
+		vec3 h = normalize(LIGHT + VIEW);
+		float s = pow(clamp(dot(NORMAL, h), 0.0, 1.0), mix(70.0, 14.0, ROUGHNESS)) * (1.0 - ROUGHNESS) * 0.22;
+		SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * s * clamp(ndl * 3.0, 0.0, 1.0);
 	}
 }
