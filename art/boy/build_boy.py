@@ -15,7 +15,7 @@ from bl_ext.user_default.mpfb.services.targetservice import TargetService
 
 ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 DATA = os.path.expanduser("~/.config/blender/4.5/mpfb/data/")
-HEAD_SCALE = 1.08
+HEAD_SCALE = 1.3
 
 # albedo (linear-ish sRGB values; Godot overrides the materials but keeps these as the base colors)
 COLORS = {
@@ -65,7 +65,9 @@ def make_body():
     macro.update({"gender": 1.0, "age": 0.24, "muscle": 0.45, "weight": 0.36, "proportions": 0.7, "height": 0.5})
     macro["race"] = {"asian": 0.5, "caucasian": 0.4, "african": 0.1}
     base = HumanService.create_human(macro_detail_dict=macro, scale=0.1)
+    face.child_head(base, macro)
     face.shape(base)
+    face.cute(base)
     rig = HumanService.add_builtin_rig(base, "game_engine")
     px = HumanService.add_mhclo_asset(DATA + "proxymeshes/male1591/male1591.proxy", base, asset_type="Proxymeshes", subdiv_levels=0)
     eyes = HumanService.add_mhclo_asset(DATA + "eyes/low-poly/low-poly.mhclo", base, asset_type="Eyes", subdiv_levels=0)
@@ -122,7 +124,7 @@ def close_eyes(rig, body):
 
 
 def scale_head(rig, body):
-    """slightly bigger head (younger look) — scaled about the neck by the head weight"""
+    """a child's big head (cute proportions) - scaled about the neck by the head weight"""
     head = rig.data.bones["head"]
     piv = Vector(head.head_local)
     ex = [a for a in body.data.attributes if a.name.startswith("ex_")]
@@ -636,9 +638,9 @@ def hat(rig, body, hair, head_top):
     rx0 = max(abs(p.x) for p in ring0) + 0.004
     ry0 = (max(p.y for p in ring0) - min(p.y for p in ring0)) * 0.5 + 0.004
     # worn, not perched: the band goes round the skull (plus the hair it presses flat) through the forehead
-    # ~5 cm below the top of the head, above the ears and round the back of the head, tipped back only a
-    # little so the high game camera still sees his face
-    HAIR, TILT, FRONT = 0.009, 7.0, 0.05
+    # ~4.5 cm below the top of the head, above the ears and round the back of the head, tipped back 15 deg
+    # with a modest brim, so his eyes show under it from the game camera
+    HAIR, TILT, FRONT = 0.009, 15.0, 0.045
     hc = rig.data.bones["head"].head_local
     skull = [v.co.copy() for v in body.data.vertices if v.co.z > hc.z + 0.05]
     tilt = Matrix.Rotation(math.radians(-TILT), 4, "X")
@@ -670,7 +672,7 @@ def hat(rig, body, hair, head_top):
     bs = (rx0 + ry0) / (rx + ry)
     prof = [  # (radius scale, z) from the crown top down to the brim edge
         (0.0, ch), (0.5, ch * 0.97), (0.82, ch * 0.86), (0.97, ch * 0.62), (1.0, ch * 0.3), (1.01, 0.0),
-        (1.06, -0.003), (1.3 * bs, -0.005), (1.55 * bs, -0.011), (1.75 * bs, -0.02), (1.82 * bs, -0.025),
+        (1.06, -0.003), (1.22 * bs, -0.005), (1.38 * bs, -0.009), (1.52 * bs, -0.015), (1.57 * bs, -0.019),
     ]
     print("HAT seat: band %.1f cm below the top at the front, %.1f at the back, ring %.1f x %.1f cm, crown %.1f cm, tilt %.0f deg"
           % ((head_top - (base_z + (piv.y - cy + ry) * math.sin(math.radians(TILT)))) * 100,
