@@ -75,7 +75,7 @@ void fragment() {
 		v = UV.y;
 	}
 	vec3 c = mix(root_col, mid_col, smoothstep(0.0, 0.45, v));
-	c = mix(c, tip_col, smoothstep(0.5, 1.0, v) * 0.8);
+	c = mix(c, tip_col, smoothstep(0.5, 1.0, v) * 0.65);
 	c *= mix(0.75, 1.2, tx.r);
 	float root = mix(0.5, 1.0, smoothstep(0.0, 0.55, v)) * (1.0 - occ * 0.7) * mix(0.65, 1.0, tx.g);
 	ALBEDO = c * root * mix(1.0, ao, ao_strength);
@@ -108,5 +108,5 @@ void light() {
 	float vis = smoothstep(-0.15, 0.3, ndl) * ATTENUATION;
 	vec3 tint = ALBEDO / max(max(ALBEDO.r, max(ALBEDO.g, ALBEDO.b)), 0.02);
 	float m2 = 0.4 + 0.6 * fract(shift * 7.31 + 0.5);
-	SPECULAR_LIGHT += LIGHT_COLOR * vis * (kk(t1, h, 140.0) * 0.035 + kk(t2, h, 22.0) * 0.06 * m2 * tint);
+	SPECULAR_LIGHT += LIGHT_COLOR * vis * (kk(t1, h, 140.0) * 0.025 + kk(t2, h, 22.0) * 0.06 * m2 * tint);
 }
