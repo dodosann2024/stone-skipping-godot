@@ -3600,6 +3600,8 @@ func _v18_sequence(pre: String) -> void:
 		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, true],
 	]
 	for s: Array in shots:
+		if not String(s[0]).begins_with(_opt("only")):
+			continue
 		if bool(s[10]) != night_on:
 			_toggle_night()
 			await _wait(2.9)
@@ -3650,6 +3652,8 @@ func _v19_sequence(pre: String) -> void:
 		["night_nohat", "idle", 1.0, 0.3, PI * 0.7, 0.08, 0.42, "head", 0.05, false, true],
 	]
 	for s: Array in shots:
+		if not String(s[0]).begins_with(_opt("only")):
+			continue
 		if bool(s[10]) != night_on:
 			_toggle_night()
 			await _wait(2.9)
@@ -4023,6 +4027,51 @@ func _video_seg(seg: String) -> void:
 					tgt = sp if gt - t0 < 0.01 else tgt.lerp(sp, 0.25)
 					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], float(s[7]) * k)
 					await get_tree().process_frame
+			boy.frozen = false
+			demo_nocut = false
+			ui_root.visible = true
+			_free_cam()
+
+		"polish19":
+			# v19 close-ups: the nape (hat on, then off and close enough to see single strands), the vest's
+			# underarm folding as the arms go up, the hair at night away from the torches, the mooring line
+			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+			await _wait(0.3)
+			demo_nocut = true
+			ui_root.visible = false
+			var y0 := player.rotation.y
+			var cl := float(boy.clips["cheer"]["length"])
+			# [pose, from, to, seconds, cam yaw from, cam yaw to, pitch, dist, bone, up, hat, night]
+			for s: Array in [["idle", 0.0, 3.0, 5.0, PI * 0.4, -PI * 0.3, 0.05, 0.38, "head", 0.0, true, false],
+					["idle", 0.0, 2.0, 4.5, PI * 0.55, -PI * 0.1, 0.1, 0.22, "head", 0.04, false, false],
+					["cheer", 0.0, cl * 0.75, 4.0, PI - 0.25, PI * 0.62, 0.05, 0.6, "spine_03", 0.06, true, false],
+					["cheer", 0.0, cl * 0.75, 3.5, 0.1, PI * 0.35, 0.05, 0.55, "spine_03", 0.06, true, false],
+					["idle", 0.0, 3.0, 5.0, PI * 0.8, PI * 0.2, 0.06, 0.42, "head", 0.03, true, true],
+					["idle", 0.0, 2.0, 3.5, PI * 0.6, PI * 0.9, 0.08, 0.42, "head", 0.05, false, true]]:
+				if bool(s[11]) != night_on:
+					_toggle_night()
+					await _wait(2.9)
+				boy.hat.visible = bool(s[10])
+				var t0 := gt
+				var tgt := Vector3.ZERO
+				while gt - t0 < float(s[3]):
+					var u := (gt - t0) / float(s[3])
+					var v := lerpf(float(s[1]), float(s[2]), u)
+					player.rotation.y = y0
+					if s[0] == "cheer":
+						boy.debug_pose("cheer", 1.0, v)
+					else:
+						boy.debug_pose("idle", 1.0, v)
+					var bp := _bone_pos(s[8], s[9])
+					tgt = bp if gt - t0 < 0.01 else tgt.lerp(bp, 0.25)
+					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], s[7])
+					await get_tree().process_frame
+			boy.hat.visible = true
+			_fixed_cam(island.boat_tie, 0.6, 0.3, 1.0)
+			if night_on:
+				_toggle_night()
+				await _wait(2.9)
+			await _wait(4.0)
 			boy.frozen = false
 			demo_nocut = false
 			ui_root.visible = true

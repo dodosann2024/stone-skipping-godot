@@ -267,7 +267,7 @@ func _setup_materials() -> void:
 			"wear": 0.15, "sheen": 0.35, "translucency": 0.16},
 		"vest": {"fabric": 1, "thread": Color(0.88, 0.45, 0.37), "binding": Color(0.60, 0.17, 0.14),
 			"binding_w": 0.0055, "hem_stitch": 0.0075, "fade": 0.3, "wear": 0.3, "sheen": 0.25, "wrinkle": 0.003,
-			"pit_depth": 0.006},
+			"pit_depth": 0.009},
 		"shorts": {"fabric": 2, "thread": Color(0.99, 0.89, 0.58), "hem_stitch": 0.011, "fade": 0.25,
 			"wear": 0.3, "sheen": 0.2, "legs": 1.0},
 	}
