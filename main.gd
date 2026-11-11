@@ -245,6 +245,9 @@ func _ready() -> void:
 		night_k = 1.0
 		_update_night(0.0, true)
 	_snap_explore_cam()
+	if is_web and _opt("hatprobe") == "1":
+		RenderingServer.frame_pre_draw.connect(_hat_probe_tick)
+		_hat_probe_place.call_deferred(_opt("at"))
 	if demo_mode:
 		_start_audio()
 		if "--selftest" in args:
@@ -2330,6 +2333,43 @@ func _update_audio(_delta: float) -> void:
 	fire_amb.volume_db = lerpf(fire_amb.volume_db, fwant, 0.08)
 
 # ------------------------------------------------------------------ loop
+
+## web ?hatprobe=1: every drawn frame, the hat against the seat boy.gd keeps it in on his head bone, per game
+## state -> window.__hat (read by the mobile browser check)
+var hat_probe := {"frames": 0, "max_mm": 0.0, "max_deg": 0.0, "worst": "", "off_head_frames": 0, "states": {}}
+
+func _hat_probe_tick() -> void:
+	var e := boy.hat_offset_error()
+	var st: String = str(Mode.keys()[mode]).to_lower() + "/" + (rest_kind if mode == Mode.REST else boy.anim)
+	hat_probe["frames"] += 1
+	if boy.hat_s > 0.0 and mode != Mode.REST:
+		hat_probe["off_head_frames"] += 1
+	var s: Dictionary = hat_probe["states"]
+	var r: Array = s.get(st, [0, 0.0, 0.0])
+	s[st] = [int(r[0]) + 1, maxf(float(r[1]), e.x * 1000.0), maxf(float(r[2]), boy.hat_s)]
+	if e.x * 1000.0 > float(hat_probe["max_mm"]):
+		hat_probe["max_mm"] = e.x * 1000.0
+		hat_probe["worst"] = st
+	hat_probe["max_deg"] = maxf(float(hat_probe["max_deg"]), rad_to_deg(e.y))
+	hat_probe["state"] = st
+	hat_probe["hat_s"] = boy.hat_s
+	JavaScriptBridge.eval("window.__hat = " + JSON.stringify(hat_probe), true)
+
+## &at=hammock|towel|bench: start next to it, so the browser check can rest there with the real buttons
+func _hat_probe_place(at: String) -> void:
+	var sd := island.towel_dir.cross(Vector3.UP).normalized()
+	match at:
+		"hammock":
+			var hs := _hammock_spot()
+			_place(hs[0] + hs[2] * 1.6, 0.0)
+		"towel":
+			_place(island.towel_pos + sd * 1.4, 0.0)
+		"bench":
+			var st: Dictionary = island.seats[0]
+			_place(_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.7), 0.0)
+		_:
+			return
+	_snap_explore_cam()
 
 func _process(delta: float) -> void:
 	if OS.has_feature("web"):
