@@ -9,15 +9,18 @@ render_mode cull_back;
 uniform vec3 hull_col : source_color = vec3(0.3, 0.6, 0.8);
 
 varying vec3 wpos;
+// depth below the drawn water, per vertex: the surface is linear across a 7.45 m cell and the hull's faces
+// are small, so interpolating it is as good as working it out per pixel
+varying float dep;
 
 void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	float d = uw_shown_y(wpos.xz) - wpos.y;
-	VERTEX += transpose(mat3(MODEL_MATRIX)) * uw_refract_d(wpos, d);
+	dep = uw_shown_y(wpos.xz) - wpos.y;
+	VERTEX += transpose(mat3(MODEL_MATRIX)) * uw_refract_d(wpos, dep);
 }
 
 void fragment() {
-	float d = uw_shown_y(wpos.xz) - wpos.y;
+	float d = dep;
 	vec3 base = COLOR.rgb;
 	if (!IN_SHADOW_PASS && refl_pass(CAMERA_POSITION_WORLD)) {
 		if (d > 0.0) {

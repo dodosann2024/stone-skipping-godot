@@ -27,9 +27,10 @@ uniform float refl_guard = 0.1;
 uniform vec4 lamp_pos[12];
 uniform vec4 lamp_col[12];
 // the rowboat by the dock: centre x/z, cos / sin of its yaw; its waterline (starboard half, boat x/z,
-// stern to bow) for the foam collar and the small rings it rocks off
+// stern to bow; the hull is the same fore and aft) for the foam collar and the small rings it rocks off
 uniform vec4 boat_c = vec4(0.0, 0.0, 1.0, 0.0);
 uniform vec2 boat_wl[17];
+uniform vec2 boat_box = vec2(1.4, 2.4);
 uniform float boat_on = 0.0;
 
 varying vec3 wpos;
@@ -50,10 +51,10 @@ vec2 wave_grad(vec2 p, float t) {
 
 // signed distance (m, outside > 0) from the boat's waterline, in boat x/z
 float boat_sd(vec2 q) {
-	vec2 a = vec2(abs(q.x), q.y);
+	vec2 a = abs(q);
 	float d = 1e3;
 	bool inside = false;
-	for (int i = 0; i < 16; i++) {
+	for (int i = 8; i < 16; i++) {
 		vec2 p0 = boat_wl[i];
 		vec2 p1 = boat_wl[i + 1];
 		vec2 e = p1 - p0;
@@ -164,7 +165,7 @@ void fragment() {
 	if (boat_on > 0.5) {
 		vec2 dv = p - boat_c.xy;
 		vec2 q = vec2(dv.x * boat_c.z - dv.y * boat_c.w, dv.x * boat_c.w + dv.y * boat_c.z);
-		if (abs(q.x) < 2.0 && abs(q.y) < 3.2) {
+		if (abs(q.x) < boat_box.x && abs(q.y) < boat_box.y) {
 			float sd = boat_sd(q);
 			float lc = lace(p * 6.0 + vec2(t * 0.25, -t * 0.18), 0.05);
 			// (the flared topsides hide the contact line from above, so broken lace also drifts a hand's

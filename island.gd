@@ -508,7 +508,10 @@ func _build_water() -> void:
 		var o := boat_rest.origin
 		var yaw := boat_rest.basis.get_euler().y
 		water_mat.set_shader_parameter("boat_c", Vector4(o.x, o.z, cos(yaw), sin(yaw)))
-		water_mat.set_shader_parameter("boat_wl", boat_waterline())
+		var wl := boat_waterline()
+		water_mat.set_shader_parameter("boat_wl", wl)
+		# the rings fade out 0.8 m from the hull
+		water_mat.set_shader_parameter("boat_box", Vector2(wl[8].x, wl[16].y) + Vector2(0.85, 0.85))
 		water_mat.set_shader_parameter("boat_on", 1.0)
 	water_mi = _mi(pm, water_mat)
 	water_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
