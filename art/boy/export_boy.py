@@ -19,6 +19,8 @@ def join_parts(rig):
             me.uv_layers.new()
         me.uv_layers[0].name = "UVMap"
         me.uv_layers[1].name = "Face"
+        if o.name == "Hair":
+            continue        # its UV2 carries the sway / layer data for hair.gdshader
         for d in me.uv_layers[1].data:
             d.uv = (5.0, 5.0)
     bpy.ops.object.select_all(action="DESELECT")
@@ -50,17 +52,26 @@ def bake_ao(objs):
 
 
 def face_mask(body, rig):
-    """AO lives in the colour's red channel; green = 1 on the face. UV2 becomes one continuous
-    front projection so the shader's fwidth() has no seams"""
+    """AO lives in the colour's red channel; green = 1 on the face; blue = hair under the hat crown.
+    UV2 becomes one continuous front projection so the shader's fwidth() has no seams (except on the
+    hair, whose UV2 is its own data)"""
     me = body.data
     hz = rig.data.bones["head"].head_local.z
     uv2 = me.uv_layers["Face"]
-    face = set(l.vertex_index for l in me.loops if uv2.data[l.index].uv.x < 4.0)
+    hair_mi = [i for i, m in enumerate(me.materials) if m and m.name == "hair"]
+    hair_l = set()
+    for p in me.polygons:
+        if p.material_index in hair_mi:
+            hair_l.update(p.loop_indices)
+    face = set(l.vertex_index for l in me.loops if uv2.data[l.index].uv.x < 4.0 and l.index not in hair_l)
+    hatk = me.attributes.get("hatk")
     col = me.color_attributes["AO"]
     for i, d in enumerate(col.data):
         c = d.color
-        d.color = (c[0], 1.0 if i in face else 0.0, c[2], 1.0)
+        d.color = (c[0], 1.0 if i in face else 0.0, hatk.data[i].value if hatk else 0.0, 1.0)
     for l in me.loops:
+        if l.index in hair_l:
+            continue
         co = me.vertices[l.vertex_index].co
         uv2.data[l.index].uv = (co.x, co.z - hz)
 

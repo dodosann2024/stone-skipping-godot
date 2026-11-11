@@ -45,6 +45,8 @@ var skel: Skeleton3D
 var tree: AnimationTree
 var bt: AnimationNodeBlendTree
 var face_mat: ShaderMaterial
+var hair_mat: ShaderMaterial
+var hair_mi: MeshInstance3D
 var hat: Node3D
 var glasses: Node3D
 var stone: Node3D
@@ -78,6 +80,13 @@ var blink_timer := 2.5
 var expr := "smile"
 var rng := RandomNumberGenerator.new()
 var frozen := false
+# hair secondary motion: tip offset (world) on a damped spring driven by the head's acceleration + wind
+var hair_off := Vector3.ZERO
+var hair_vel := Vector3.ZERO
+var hair_prev := Vector3.ZERO
+var hair_pv := Vector3.ZERO
+var hair_t := 0.0
+var wind := 1.0
 # turning pivots about the planted foot: the root yaws about its own origin, which would drag a planted
 # foot sideways, so the model is shifted (world-space offset, bled back to zero) to keep that contact put
 var model_base := Vector3.ZERO
@@ -237,6 +246,12 @@ func _setup_materials() -> void:
 			if not look.has(n):
 				continue
 			var m := _mat(look[n][0], look[n][1])
+			if n == "hair":
+				m = ShaderMaterial.new()
+				m.shader = preload("res://shaders/hair.gdshader")
+				m.set_shader_parameter("strands", preload("res://textures/hair_strands.png"))
+				hair_mat = m
+				hair_mi = mi
 			mi.set_surface_override_material(i, m)
 			if n == "skin":
 				face_mat = m
@@ -498,9 +513,41 @@ func _play(clip: String, time: float, fade: float, jump := false) -> void:
 	ab_rate = 1.0 / fade
 
 func _process(delta: float) -> void:
+	_update_hair(delta)
 	if frozen:
 		return
 	_tick(delta)
+
+## hair tips lag behind the head (a damped spring on its acceleration), a little breeze and gravity
+## pulling the fringe / sides when the head tilts; at most a few mm, so the cards never reach the skin
+## or the hat brim. Under the hat crown the hair only moves while the hat is off.
+func _update_hair(delta: float) -> void:
+	if hair_mat == null or delta <= 0.0:
+		return
+	hair_t += delta
+	var hb := skel.find_bone("head")
+	var hx := skel.global_transform * skel.get_bone_global_pose(hb)
+	var p := hx.origin
+	var v := (p - hair_prev) / delta
+	var acc := (v - hair_pv) / delta
+	if hair_prev == Vector3.ZERO or acc.length() > 80.0:
+		acc = Vector3.ZERO
+	hair_prev = p
+	hair_pv = v
+	var rest := skel.global_transform.basis * skel.get_bone_global_rest(hb).basis
+	var down_rest := (hx.basis * rest.inverse() * Vector3.DOWN).normalized()
+	var gust := 0.6 + 0.4 * sin(hair_t * 0.7) * sin(hair_t * 1.9 + 1.0)
+	var breeze := Vector3(0.8, 0.0, 0.45) * (0.0012 * wind * gust)
+	var target := -acc * 0.0007 + breeze + (Vector3.DOWN - down_rest) * 0.0022
+	target = target.limit_length(0.005)
+	hair_vel += ((target - hair_off) * 160.0 - hair_vel * 14.0) * minf(delta, 0.05)
+	hair_off += hair_vel * minf(delta, 0.05)
+	hair_off = hair_off.limit_length(0.006)
+	var inv := hair_mi.global_transform.basis.inverse()
+	hair_mat.set_shader_parameter("sway", inv * hair_off)
+	hair_mat.set_shader_parameter("flutter", 0.0004 * wind * gust / SCALE)
+	hair_mat.set_shader_parameter("game_time", hair_t)
+	hair_mat.set_shader_parameter("hat_on", 1.0 if hat.visible and hat_mode == "head" else 0.0)
 
 func _tick(delta: float) -> void:
 	t += delta

@@ -7,6 +7,7 @@ import bpy, bmesh, sys, os, math, random
 from mathutils import Vector, Matrix
 sys.path.insert(0, os.path.dirname(__file__))
 import shoulder
+import hair as hairkit
 from bl_ext.user_default.mpfb.services.humanservice import HumanService
 from bl_ext.user_default.mpfb.services.targetservice import TargetService
 
@@ -329,7 +330,7 @@ def build(rig, body, arm):
 
     shorts = shell(body, "Shorts", shorts_sel, shorts_off, "shorts", solid=0.003)
 
-    # ---- hair volume
+    # ---- the v16 hair volume: only sizes the hat now (hair.py grows the hair cards under it)
     head_top = max(v.co.z for v in body.data.vertices)
     hc = J["head"]
 
@@ -354,7 +355,7 @@ def build(rig, body, arm):
         up = max(0.0, co.z - (hc.z + 0.05)) / 0.12
         return 0.009 + 0.004 * up + 0.005 * k
 
-    hair = shell(body, "Hair", hair_sel, hair_off, "hair", solid=0.006)
+    envelope = shell(body, "HairEnvelope", hair_sel, hair_off, "hair", solid=0.006)
 
     # remove body faces hidden under the tank top / shorts (keeps the tri count down, no poke-through)
     bm = bmesh.new()
@@ -373,7 +374,9 @@ def build(rig, body, arm):
     bm.free()
 
     sandals(rig, body)
-    hat(rig, body, hair, head_top)
+    hat_info = hat(rig, body, envelope, head_top)
+    bpy.data.objects.remove(envelope)
+    hair = hairkit.build(rig, body, hat_info, material("hair"))
     glasses(rig, body)
     stone(rig)
     return [tank, vest, shorts, hair]
@@ -534,6 +537,7 @@ def hat(rig, body, hair, head_top):
         uv.data[loop.index].uv = (math.atan2(d.y, d.x) / (2 * math.pi) + 0.5, d.length + max(0.0, co.z - base_z) * 1.0)
     # parent to the head bone, keeping the rest placement
     _bone_child(sol, rig, "head")
+    return {"piv": piv, "tilt": -13.0, "cy": cy, "rx": rx, "ry": ry, "base_z": base_z, "prof": prof}
 
 
 def _bone_child(ob, rig, bone):
