@@ -13,7 +13,14 @@ varying vec3 wpos;
 // are small, so interpolating it is as good as working it out per pixel
 varying float dep;
 
+// the boat's rest transform in its current model space: the mooring line follows it towards the dock end,
+// whose knot stays put while the boat bobs (rope vertices: alpha 0.69 - 0.99)
+uniform mat4 pin = mat4(1.0);
+
 void vertex() {
+	if (COLOR.a > 0.6 && COLOR.a < 0.995) {
+		VERTEX = mix(VERTEX, (pin * vec4(VERTEX, 1.0)).xyz, clamp((0.99 - COLOR.a) / 0.3, 0.0, 1.0));
+	}
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	dep = uw_shown_y(wpos.xz) - wpos.y;
 	VERTEX += transpose(mat3(MODEL_MATRIX)) * uw_refract_d(wpos, dep);

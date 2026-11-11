@@ -3,12 +3,16 @@ Proves that sound is really produced, not just that the AudioContext is 'running
   * counts AudioBufferSourceNode.start() calls with real (non 1-sample) buffers
   * taps everything connected to ctx.destination into an AnalyserNode and measures RMS.
 Then walks with the virtual joystick, runs to the dock end, enters throw mode, switches to half-kneeling,
-throws by swipe, pushes the elevation slider to a steep launch, cancels a swipe, and leaves the dock. Usage: browser_check_v4.py URL OUTPREFIX"""
+throws by swipe, pushes the elevation slider to a steep launch, cancels a swipe, and leaves the dock. Usage: browser_check_v5.py URL OUTPREFIX [W H]
+(v19: any CSS viewport, e.g. 375 667 / 320 568 for an iPhone SE: touch points are placed in UI units from the
+edge each control is anchored to, the way main.gd lays them out at 720 units across the short side)"""
 import sys, asyncio, json, math
 from playwright.async_api import async_playwright
 URL, OUT = sys.argv[1], sys.argv[2]
-PAD_Y, EL_X, KNOB_Y = 0.874, 0.77, 0.845  # fractions of the screen: stone pad centre, elevation slider column, its knob at 4 deg
-W, H = 390, 844
+PAD_B, EL_R, KNOB_B = 196.0, 165.0, 241.5  # UI units from the bottom / right: stone pad centre, elevation slider column, its knob at 4 deg
+W, H = (int(sys.argv[3]), int(sys.argv[4])) if len(sys.argv) > 4 else (390, 844)
+S = min(W, H) / 720.0          # CSS px per UI unit
+K = S / (390 / 720.0)          # gesture lengths relative to the 390 x 844 originals
 INIT = """
 (() => {
   window.__t = {ctxs: [], starts: 0, realStarts: 0, an: []};
@@ -86,21 +90,22 @@ async def main():
         res = {}
         res["before_tap"] = json.loads(await page.evaluate(STATE)); res["before_tap_rms"] = await rms(page, 3)
         await page.screenshot(path=OUT + "_1_tap_to_start.png")
-        await tap(cdp, page, 195, 420)
+        await tap(cdp, page, W * 0.5, H * 0.5)
         await page.wait_for_timeout(1200)
         res["after_tap"] = json.loads(await page.evaluate(STATE)); res["after_tap_rms"] = await rms(page)
         await page.wait_for_timeout(1500)
         await page.screenshot(path=OUT + "_2_started_tip.png")
         # walk (light push) then run (full push) with the joystick: up = forward, toward the dock
         s0 = (await page.evaluate("window.__t.realStarts"))
-        await touch(cdp, "touchStart", [(100, 720)])
+        jx, jy = 185 * S, H - 228 * S
+        await touch(cdp, "touchStart", [(jx, jy)])
         for i in range(1, 6):
-            await touch(cdp, "touchMove", [(100, 720 - i * 8)]); await page.wait_for_timeout(50)
+            await touch(cdp, "touchMove", [(jx, jy - i * 8 * K)]); await page.wait_for_timeout(50)
         await page.wait_for_timeout(2500)
         await page.screenshot(path=OUT + "_3_walk.png")
         res["walk_starts"] = (await page.evaluate("window.__t.realStarts")) - s0
         for i in range(1, 8):
-            await touch(cdp, "touchMove", [(100, 680 - i * 10)]); await page.wait_for_timeout(40)
+            await touch(cdp, "touchMove", [(jx, jy - 40 * K - i * 10 * K)]); await page.wait_for_timeout(40)
         await page.wait_for_timeout(1500)
         await page.screenshot(path=OUT + "_4_run.png")
         await page.wait_for_timeout(9000)
@@ -109,25 +114,25 @@ async def main():
         await page.screenshot(path=OUT + "_5_dock_end.png")
         res["after_run"] = json.loads(await page.evaluate(STATE)); res["after_run_rms"] = await rms(page, 5)
         # camera drag with one finger in the upper half
-        await touch(cdp, "touchStart", [(300, 300)])
+        await touch(cdp, "touchStart", [(W * 0.77, H * 0.355)])
         for i in range(1, 12):
-            await touch(cdp, "touchMove", [(300 - i * 10, 300)]); await page.wait_for_timeout(40)
+            await touch(cdp, "touchMove", [(W * 0.77 - i * 10 * K, H * 0.355)]); await page.wait_for_timeout(40)
         await touch(cdp, "touchEnd", [])
         await page.wait_for_timeout(1500)
         await page.screenshot(path=OUT + "_6_cam_drag.png")
-        await tap(cdp, page, 325, 788)   # 打水漂 (only shown at the dock end)
+        await tap(cdp, page, W - 119 * S, H - 103 * S)   # 打水漂 (only shown at the dock end)
         await page.wait_for_timeout(4500)   # he walks to the throwing spot first; the stone pad shows when he is set
         await page.screenshot(path=OUT + "_7_throw_mode.png")
         # throw by swipe from the stone pad (bottom centre): up-left, rest on the aim, flick and let go
-        px, py = W * 0.5, H * PAD_Y
+        px, py = W * 0.5, H - PAD_B * S
         await touch(cdp, "touchStart", [(px, py)])
         for i in range(1, 9):
-            await touch(cdp, "touchMove", [(px - i * 9, py - i * 17)]); await page.wait_for_timeout(50)
+            await touch(cdp, "touchMove", [(px - i * 9 * K, py - i * 17 * K)]); await page.wait_for_timeout(50)
         await page.wait_for_timeout(700)
         await page.screenshot(path=OUT + "_8_swipe_aim.png")
         s1 = (await page.evaluate("window.__t.realStarts"))
         for i in range(1, 4):
-            await touch(cdp, "touchMove", [(px - 72 - i * 9, py - 136 - i * 17)]); await page.wait_for_timeout(16)
+            await touch(cdp, "touchMove", [(px - (72 + i * 9) * K, py - (136 + i * 17) * K)]); await page.wait_for_timeout(16)
         await touch(cdp, "touchEnd", [])
         await page.wait_for_timeout(2500)
         await page.screenshot(path=OUT + "_9_thrown.png")
@@ -136,16 +141,16 @@ async def main():
         res["after_throw_rms"] = await rms(page, 5)
         await page.screenshot(path=OUT + "_10_result.png")
         # elevation slider (left of the two, bottom right): drag the knob up to a steep launch
-        sx, sy = W * EL_X, H * KNOB_Y
+        sx, sy = W - EL_R * S, H - KNOB_B * S
         await touch(cdp, "touchStart", [(sx, sy)])
         for i in range(1, 9):
-            await touch(cdp, "touchMove", [(sx, sy - i * 12)]); await page.wait_for_timeout(40)
+            await touch(cdp, "touchMove", [(sx, sy - i * 12 * K)]); await page.wait_for_timeout(40)
         await touch(cdp, "touchEnd", [])
         await page.wait_for_timeout(800)
         await page.screenshot(path=OUT + "_10b_slider_steep.png")
         await touch(cdp, "touchStart", [(px, py)])
         for i in range(1, 9):
-            await touch(cdp, "touchMove", [(px + i * 2, py - i * 20)]); await page.wait_for_timeout(50)
+            await touch(cdp, "touchMove", [(px + i * 2 * K, py - i * 20 * K)]); await page.wait_for_timeout(50)
         await page.wait_for_timeout(500)
         await touch(cdp, "touchEnd", [])
         await page.wait_for_timeout(9000)
@@ -153,17 +158,17 @@ async def main():
         # and a cancel: swipe up then pull back down past the pad
         await touch(cdp, "touchStart", [(px, py)])
         for i in range(1, 7):
-            await touch(cdp, "touchMove", [(px, py - i * 15)]); await page.wait_for_timeout(40)
+            await touch(cdp, "touchMove", [(px, py - i * 15 * K)]); await page.wait_for_timeout(40)
         for i in range(1, 9):
-            await touch(cdp, "touchMove", [(px, py - 90 + i * 14)]); await page.wait_for_timeout(40)
+            await touch(cdp, "touchMove", [(px, py - (90 - i * 14) * K)]); await page.wait_for_timeout(40)
         await page.screenshot(path=OUT + "_10d_cancel.png")
         await touch(cdp, "touchEnd", [])
         await page.wait_for_timeout(1500)
         res["after_cancel"] = await page.evaluate("1")
-        await tap(cdp, page, 338, 162)   # 离开码头
+        await tap(cdp, page, W - 96 * S, 299 * S)   # 离开码头
         await page.wait_for_timeout(2500)
         await page.screenshot(path=OUT + "_11_left_dock.png")
-        await tap(cdp, page, 338, 92)    # 夜晚
+        await tap(cdp, page, W - 96 * S, 170 * S)    # 夜晚
         await page.wait_for_timeout(9000)
         await page.screenshot(path=OUT + "_12_night.png")
         res["end"] = json.loads(await page.evaluate(STATE))

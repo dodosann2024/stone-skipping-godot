@@ -199,6 +199,12 @@ def build(rig, body, hat_info, mat):
     for v in bm.verts:
         v.co = v.co + v.normal * 0.0012
     cap_faces = [f for f in bm.faces]
+    # width of the broken hairline: 6 mm, and a longer, uneven fade at the nape (a tapered short cut)
+    hl_w = {}
+    for v in bm.verts:
+        q = v.co - hc
+        nk = _ss(0.0, 0.05, q.y) * (1.0 - _ss(0.0, 0.045, q.z))
+        hl_w[v] = 0.006 + 0.012 * nk * (0.75 + 0.5 * (noise.noise(q * 90.0) * 0.5 + 0.5))
     # cap UVs: angle round the crown (in the scalp's tangent frame at the whorl) and distance from it
     ax = wn.normalized()
     e1 = ax.orthogonal().normalized()
@@ -216,7 +222,7 @@ def build(rig, body, hat_info, mat):
             us = [u + 1.0 if u < 0.5 else u for u in us]
         for lp, u in zip(f.loops, us):
             lp[uvl].uv = (u, (lp.vert.co - W).length * 10.0)
-            lp[fl].uv = (min(dist[lp.vert] / 0.006, 1.0), 1.0)
+            lp[fl].uv = (min(dist[lp.vert] / hl_w[lp.vert], 1.0), 1.0)
     dl = bm.verts.layers.deform.active
 
     # ---------------------------------------------------------------- roots
@@ -297,11 +303,16 @@ def build(rig, body, hat_info, mat):
         low = 1.0 - _ss(0.02, 0.07, q.z)
         ear = _ss(0.055, 0.075, abs(q.x)) * (1.0 - _ss(0.05, 0.08, q.z))
         nz = noise.noise(q * 60.0) * 0.5 + 0.5
+        # the nape tapers like a short cut: the cap's fine strands carry the hairline, with the cards above
+        # thinning out into a few short wisps (a full set of short cards there reads as rows of scales)
+        napek = back * (1.0 - _ss(0.0, 0.045, q.z))
+        if (li == 0 and napek > 0.25) or (li == 1 and rnd.random() < 1.2 * napek):
+            continue
         # lengths: textured top, a light fringe, short sides / nape / sideburns
         L = 0.016 + (0.040 - 0.016) * top
         L = L + (0.034 - L) * frontk * _ss(0.07, 0.1, q.z)
         L *= 1.0 - 0.3 * low * back - 0.3 * ear - 0.35 * low * (1.0 - back)
-        L *= ls * (0.8 + 0.4 * nz) * rnd.uniform(0.9, 1.1)
+        L *= ls * (0.8 + 0.4 * nz) * rnd.uniform(0.9, 1.1) * (1.0 - 0.3 * napek)
         lift = (0.0015 + 0.0045 * top) * (1.0 - 0.4 * low)
         lift = lift * lfs * rnd.uniform(0.7, 1.3)
         h0 = 0.0018 + (0.0012 if li > 0 else 0.0) + 0.0008 * li
@@ -333,7 +344,9 @@ def build(rig, body, hat_info, mat):
             sl, sn, _ = near(pts[i])
             if (pts[i] - sl).dot(sn) < 0.0012:
                 pts[i] = sl + sn * 0.0012
-        col = rnd.choice(cols)
+        # short cards (nape, sideburns, over the ears) narrower: a square card reads as a scale, not a tuft
+        narrow = 0.6 + 0.4 * _ss(0.012, 0.03, L)
+        col = 2 if napek > 0.35 and li < 3 else rnd.choice(cols)
         flip = rnd.random() < 0.5
         u0, u1 = (col + 1) / COLS, col / COLS
         if flip:
@@ -346,7 +359,7 @@ def build(rig, body, hat_info, mat):
             dirv = (pts[min(i + 1, m)] - pts[max(i - 1, 0)]).normalized()
             side = sn.cross(dirv).normalized()
             side = Matrix.Rotation(th, 3, dirv) @ side
-            half = 0.5 * w * rnd.uniform(0.9, 1.1) * (1.0 - 0.3 * t) if i == 0 else half_prev * (1.0 - 0.3 / m)
+            half = 0.5 * w * narrow * rnd.uniform(0.9, 1.1) * (1.0 - 0.3 * t) if i == 0 else half_prev * (1.0 - 0.3 / m)
             half_prev = half
             a = bm.verts.new(pp - side * half)
             b = bm.verts.new(pp + side * half)

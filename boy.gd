@@ -266,7 +266,8 @@ func _setup_materials() -> void:
 		"tank": {"fabric": 0, "thread": Color(0.97, 0.96, 0.93), "hem_stitch": 0.006, "fade": 0.0,
 			"wear": 0.15, "sheen": 0.35, "translucency": 0.16},
 		"vest": {"fabric": 1, "thread": Color(0.88, 0.45, 0.37), "binding": Color(0.60, 0.17, 0.14),
-			"binding_w": 0.0055, "hem_stitch": 0.0075, "fade": 0.3, "wear": 0.3, "sheen": 0.25, "wrinkle": 0.003},
+			"binding_w": 0.0055, "hem_stitch": 0.0075, "fade": 0.3, "wear": 0.3, "sheen": 0.25, "wrinkle": 0.003,
+			"pit_depth": 0.009},
 		"shorts": {"fabric": 2, "thread": Color(0.99, 0.89, 0.58), "hem_stitch": 0.011, "fade": 0.25,
 			"wear": 0.3, "sheen": 0.2, "legs": 1.0},
 	}
@@ -622,8 +623,15 @@ func _update_cloth(delta: float) -> void:
 		leg_off[i] += leg_vel[i] * dt
 		leg_off[i] = leg_off[i].limit_length(0.004)
 		legs.append(leg_off[i])
+	# how far each upper arm is raised off the torso's side: the vest folds under it from ~50 to ~110 deg
+	var up := skel.get_bone_global_pose(skel.find_bone("spine_03")).basis.y.normalized()
+	var pit := Vector2.ZERO
+	for i in 2:
+		var arm := skel.get_bone_global_pose(skel.find_bone(["upperarm_l", "upperarm_r"][i])).basis.y.normalized()
+		pit[i] = smoothstep(deg_to_rad(50.0), deg_to_rad(110.0), arm.angle_to(-up))
 	var inv := hair_mi.global_transform.basis.inverse()
 	for m in cloth_mats:
+		m.set_shader_parameter("pit", pit)
 		m.set_shader_parameter("sway", inv * cloth_off)
 		m.set_shader_parameter("sway2", inv * cloth_off2)
 		m.set_shader_parameter("sway_l", inv * legs[0])

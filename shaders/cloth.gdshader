@@ -32,6 +32,10 @@ uniform float game_time = 0.0;
 // shading-only relief (no geometry, so the swinging arms keep their clearance): drag lines fanning from
 // the armpit and the armhole binding there, metres of virtual height
 uniform float wrinkle = 0.0;
+// raising an arm (boy.gd, 0..1 per side: x left, y right) also folds the cloth there for real, a few
+// broad ridges along the same fan so the side's silhouette crumples; arms down it stays flat
+uniform vec2 pit = vec2(0.0);
+uniform float pit_depth = 0.0;         // ridge height in model units
 #include "res://shaders/underwater.gdshaderinc"
 #include "res://shaders/refl_clip.gdshaderinc"
 
@@ -44,6 +48,7 @@ varying vec3 lpos;
 varying vec3 wp0;
 varying float wmask;
 varying float wph;
+varying float pk;
 
 void vertex() {
 	ao = COLOR.r;
@@ -54,6 +59,13 @@ void vertex() {
 	wmask = wrinkle > 0.0 ? max(-UV2.x, 0.0) : 0.0;
 	wph = 1.0 - UV2.y;
 	lpos = VERTEX;
+	pk = 0.0;
+	if (wmask > 0.001) {
+		pk = VERTEX.x > 0.0 ? pit.x : pit.y;
+		// the side gathers a little as a whole, in narrow crests over broad valleys
+		float g = 0.5 + 0.5 * cos(wph * PI);
+		VERTEX += NORMAL * (0.3 + 0.7 * g * g) * pk * pit_depth * wmask * smoothstep(0.006, 0.022, edge);
+	}
 	float w = UV2.x;
 	if (w > 0.0) {
 		float ph = game_time * 6.0 + dot(VERTEX, vec3(23.0, 9.0, 17.0));
@@ -114,7 +126,7 @@ void fragment() {
 		float amp = 0.5 + 0.5 * hash(vec3(floor(wph + 0.25), 3.1, 7.7));
 		float f = 0.5 + 0.5 * sin(wph * 6.2831853);
 		float blur = smoothstep(0.12, 0.35, fwidth(wph));
-		wr = mix(f * f, 0.375, blur) * amp * wmask * smoothstep(0.006, 0.022, edge);
+		wr = mix(f * f, 0.375, blur) * amp * wmask * smoothstep(0.006, 0.022, edge) * (1.0 + 0.6 * pk);
 		bind = wmask * (1.0 - smoothstep(0.0035, 0.0085, edge));
 	}
 	vec3 c = albedo;

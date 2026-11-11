@@ -28,6 +28,11 @@ uniform vec3 sway = vec3(0.0);        // tip offset, mesh space (boy.gd: head mo
 uniform float flutter = 0.0;          // per-strand jitter amplitude, mesh space
 uniform float game_time = 0.0;
 #include "res://shaders/refl_clip.gdshaderinc"
+global uniform float night_k;
+// at night the ambient and the moon are blue, which turns brown hair grey where the torches don't reach:
+// the albedo is warmed against them, and the torches' (omni) light divided by the same tint, so torch-lit
+// hair keeps its colour too
+uniform vec3 night_warm = vec3(1.28, 1.06, 0.84);
 
 varying float ao;
 varying float occ;
@@ -58,6 +63,10 @@ void vertex() {
 	}
 }
 
+float card_facing(vec3 p) {
+	return abs(dot(normalize(cross(dFdx(p), dFdy(p))), normalize(-p)));
+}
+
 void fragment() {
 	if (!IN_SHADOW_PASS && refl_pass(CAMERA_POSITION_WORLD) && (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y < 0.0) {
 		discard;
@@ -77,12 +86,14 @@ void fragment() {
 		if (cov < 0.02) {
 			discard;
 		}
-		alpha = cov;
+		// thinner towards the hairline: the skin shows through before the last strands stop
+		alpha = cov * mix(0.45, 1.0, smoothstep(0.0, 0.75, edge));
 		v = 0.15;
 	} else {
 		vec4 t4 = texture(strands, UV);
 		vec2 d = fwidth(UV * vec2(textureSize(strands, 0)));
-		float mip = max(0.0, log2(max(d.x, d.y)));
+		// (the atlas is 1024 px: its strands are 2 texels wide, so the thinning starts a mip later)
+		float mip = max(0.0, log2(max(d.x, d.y)) - 1.0);
 		float a = t4.a * (1.0 + mip * 0.35);
 		if (IN_SHADOW_PASS) {
 			if (a < 0.5) {
@@ -90,6 +101,12 @@ void fragment() {
 			}
 		} else {
 			float cov = clamp((a - 0.5) / max(fwidth(a), 1e-3) + 0.5, 0.0, 1.0);
+			// once a card is only a few pixels wide its strands are long gone into the mips and the cut
+			// leaves a hard leaf-shaped blob: blend the filtered coverage instead, so its outline stays soft
+			cov = mix(cov, clamp(a * 1.2, 0.0, 1.0), smoothstep(1.0, 3.0, mip));
+			// cards seen edge-on are a sub-pixel tangle of strands that only sparkles: fade them out (the
+			// cap and the cards behind fill in)
+			cov *= smoothstep(0.06, 0.22, card_facing(VERTEX));
 			if (cov < 0.02) {
 				discard;
 			}
@@ -99,13 +116,14 @@ void fragment() {
 		v = UV.y;
 	}
 	vec3 c = mix(root_col, mid_col, smoothstep(0.0, 0.45, v));
-	c = mix(c, tip_col, smoothstep(0.5, 1.0, v) * 0.65);
+	// (light tips over dark roots in moderation: overlapping short cards band into rows of scales otherwise)
+	c = mix(c, tip_col, smoothstep(0.5, 1.0, v) * 0.45);
 	c *= mix(0.75, 1.2, tx.r);
 	// the hat already shades the hair under it: keep the roots / inner layers / AO darkening softer there
 	// so the shadow stays one soft tone instead of dark clumps
 	float soft = 1.0 - 0.45 * hat_on * smoothstep(0.0, 0.6, 1.0 - ao);
-	float root = mix(mix(0.5, 0.68, hat_on), 1.0, smoothstep(0.0, 0.55, v)) * (1.0 - occ * mix(0.7, 0.5, hat_on)) * mix(0.65, 1.0, tx.g);
-	ALBEDO = c * root * mix(1.0, ao, ao_strength * soft);
+	float root = mix(mix(0.72, 0.78, hat_on), 1.0, smoothstep(0.0, 0.55, v)) * (1.0 - occ * mix(0.7, 0.5, hat_on)) * mix(0.65, 1.0, tx.g);
+	ALBEDO = c * root * mix(1.0, ao, ao_strength * soft) * mix(vec3(1.0), night_warm, night_k);
 	ALPHA = alpha;
 	if (!FRONT_FACING) {
 		NORMAL = -NORMAL;        // both sides of a card take the bent (scalp-ward) normal
@@ -115,7 +133,7 @@ void fragment() {
 	tipv = v * (1.0 - cap);
 	// how squarely the card itself (not its bent normal) faces the camera: cards seen edge-on are a
 	// sub-pixel tangle of strands, and no rim on those, or it lights that up as speckle
-	facing = abs(dot(normalize(cross(dFdx(VERTEX), dFdy(VERTEX))), normalize(-VERTEX)));
+	facing = card_facing(VERTEX);
 	ROUGHNESS = 0.8;
 }
 
@@ -125,6 +143,7 @@ float kk(vec3 t, vec3 h, float e) {
 }
 
 void light() {
+	vec3 d0 = DIFFUSE_LIGHT;
 	float ndl = dot(NORMAL, LIGHT);
 	float d = clamp((ndl + 0.5) / 1.5, 0.0, 1.0);
 	d = d * d * (3.0 - 2.0 * d);
@@ -154,5 +173,8 @@ void light() {
 		float free = tipv * (1.0 - crown) * smoothstep(0.15, 0.45, facing);
 		float rim = pow(1.0 - clamp(abs(dot(NORMAL, VIEW)), 0.0, 1.0), 3.0);
 		DIFFUSE_LIGHT += LIGHT_COLOR * free * (rim * fill_rim + pow(clamp(dot(-LIGHT, VIEW), 0.0, 1.0), 2.0) * fill_rim * 0.6) * shade / PI;
+	}
+	if (!LIGHT_IS_DIRECTIONAL) {
+		DIFFUSE_LIGHT = d0 + (DIFFUSE_LIGHT - d0) / mix(vec3(1.0), night_warm, night_k);
 	}
 }

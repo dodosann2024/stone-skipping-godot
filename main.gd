@@ -657,6 +657,7 @@ func _build_ui() -> void:
 		start_overlay.add_child(small)
 	get_viewport().size_changed.connect(_layout_ui)
 	bottom_box.resized.connect(_fit_action)
+	right_box.resized.connect(_layout_ui)
 	_layout_ui()
 
 func _angle_slider(t: String, k: String, lo: float, hi: float, v: float, band: Vector2) -> AngleSlider:
@@ -747,7 +748,8 @@ func _layout_ui() -> void:
 	bottom_box.offset_left = 18 + sl
 	bottom_box.offset_right = -18 - sr
 	bottom_box.offset_bottom = -14 - sb
-	tip_box.offset_top = (170 if tall else 120) + st
+	# (portrait: the tip spans most of the 720 units across, so it starts below the button column)
+	tip_box.offset_top = maxf((170.0 if tall else 120.0) + st, right_box.offset_top + right_box.size.y + 16.0) if tall else 120.0 + st
 	# throw mode: the two angle sliders bottom right, the stone pad bottom centre (both above the hint)
 	var sw := 92.0
 	var sh := 320.0 if tall else 250.0
@@ -3598,6 +3600,8 @@ func _v18_sequence(pre: String) -> void:
 		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, true],
 	]
 	for s: Array in shots:
+		if not String(s[0]).begins_with(_opt("only")):
+			continue
 		if bool(s[10]) != night_on:
 			_toggle_night()
 			await _wait(2.9)
@@ -3612,6 +3616,71 @@ func _v18_sequence(pre: String) -> void:
 	boy.frozen = false
 	if night_on:
 		_toggle_night()
+	demo_nocut = false
+	ui_root.visible = true
+	_free_cam()
+
+## v19 close-ups: the nape tips, the card edges up close and edge-on, the vest underarm folds with the arms
+## raised (cheer, release, wind-up, sunbathing), and the hair at night
+func _v19_sequence(pre: String) -> void:
+	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+	await _wait(0.6)
+	demo_nocut = true
+	ui_root.visible = false
+	var y0 := player.rotation.y
+	# [name, pose, p, tt, cam yaw, pitch, dist, bone, up, hat, night]
+	var shots := [] if _opt("ropeonly") == "1" else [
+		["nape_back34", "idle", 1.0, 0.3, PI * 0.25, 0.08, 0.42, "head", 0.03, true, false],
+		["nape_back", "idle", 1.0, 0.3, 0.05, 0.05, 0.36, "head", 0.0, true, false],
+		["nape_close", "idle", 1.0, 0.3, PI * 0.15, 0.02, 0.24, "head", -0.03, true, false],
+		["nape_nohat", "idle", 1.0, 0.3, PI * 0.2, 0.1, 0.4, "head", 0.03, false, false],
+		["edge_side", "idle", 1.0, 0.3, PI * 0.5, 0.05, 0.2, "head", 0.06, false, false],
+		["edge_back", "idle", 1.0, 0.3, 0.1, 0.15, 0.2, "head", 0.06, false, false],
+		["edge_top", "idle", 1.0, 0.3, PI * 0.6, 0.02, 0.16, "head", 0.1, false, false],
+		["edge_fringe", "idle", 1.0, 0.3, PI - 0.35, 0.0, 0.2, "head", 0.0, true, false],
+		["fold_cheer_front", "cheer", 1.0, 1.0, PI - 0.25, 0.05, 0.6, "spine_03", 0.06, true, false],
+		["fold_cheer_side", "cheer", 1.0, 1.0, PI * 0.5, 0.05, 0.45, "spine_03", 0.08, true, false],
+		["fold_cheer_back", "cheer", 1.0, 1.0, 0.2, 0.05, 0.6, "spine_03", 0.06, true, false],
+		["fold_release_front", "release", 1.0, 0.3, PI - 0.3, 0.05, 0.65, "spine_03", 0.06, true, false],
+		["fold_charge_back", "charge", 0.6, 0.3, 0.0, 0.08, 0.85, "spine_03", 0.0, true, false],
+		["fold_sun", "sun", 1.0, 0.3, PI * 0.5, 0.75, 1.0, "spine_03", 0.0, false, false],
+		["fold_sun_close", "sun", 1.0, 0.3, PI * 0.3, 0.5, 0.55, "upperarm_r", 0.0, false, false],
+		["night_brim_34", "idle", 1.0, 0.3, PI * 0.75, 0.05, 0.4, "head", 0.03, true, true],
+		["night_brim_front", "idle", 1.0, 0.3, PI - 0.12, 0.02, 0.4, "head", 0.03, true, true],
+		["night_back34", "idle", 1.0, 0.3, PI * 0.25, 0.08, 0.42, "head", 0.03, true, true],
+		["night_side", "idle", 1.0, 0.3, -PI * 0.5, 0.02, 0.4, "head", 0.03, true, true],
+		["night_nohat", "idle", 1.0, 0.3, PI * 0.7, 0.08, 0.42, "head", 0.05, false, true],
+	]
+	for s: Array in shots:
+		if not String(s[0]).begins_with(_opt("only")):
+			continue
+		if bool(s[10]) != night_on:
+			_toggle_night()
+			await _wait(2.9)
+		boy.hat.visible = bool(s[9])
+		player.rotation.y = y0
+		boy.debug_pose(s[1], s[2], s[3])
+		await get_tree().process_frame
+		_fixed_cam(_bone_pos(s[7], s[8]), y0 + float(s[4]), s[5], s[6])
+		await _wait(0.4)
+		_shot(pre + "v19_%s" % s[0])
+	boy.hat.visible = true
+	boy.frozen = false
+	if night_on:
+		_toggle_night()
+		await _wait(2.9)
+	# the mooring line's dock end while the boat bobs: two frames 1.3 s apart, same camera
+	# (and how far that end would wander if it rode on the boat, as it did up to v18)
+	_fixed_cam(island.boat_tie, 0.6, 0.3, 1.0)
+	var drift := 0.0
+	for k in 3:
+		var t0 := gt
+		while gt - t0 < 1.3:
+			var rigid: Vector3 = island.dock_boat.transform * (island.boat_rest.affine_inverse() * island.boat_tie)
+			drift = maxf(drift, (rigid - island.boat_tie).length())
+			await get_tree().process_frame
+		_shot(pre + "v19_rope_%d" % k)
+	print("V19 mooring line dock end: rides the boat up to %.1f cm off the knot (pinned since v19)" % (drift * 100.0))
 	demo_nocut = false
 	ui_root.visible = true
 	_free_cam()
@@ -3715,6 +3784,8 @@ func _run_demo4() -> void:
 				await _v17_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what == "v18":
 				await _v18_sequence(pre)
+			elif what == "v19":
+				await _v19_sequence(pre)
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
@@ -3956,6 +4027,51 @@ func _video_seg(seg: String) -> void:
 					tgt = sp if gt - t0 < 0.01 else tgt.lerp(sp, 0.25)
 					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], float(s[7]) * k)
 					await get_tree().process_frame
+			boy.frozen = false
+			demo_nocut = false
+			ui_root.visible = true
+			_free_cam()
+
+		"polish19":
+			# v19 close-ups: the nape (hat on, then off and close enough to see single strands), the vest's
+			# underarm folding as the arms go up, the hair at night away from the torches, the mooring line
+			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+			await _wait(0.3)
+			demo_nocut = true
+			ui_root.visible = false
+			var y0 := player.rotation.y
+			var cl := float(boy.clips["cheer"]["length"])
+			# [pose, from, to, seconds, cam yaw from, cam yaw to, pitch, dist, bone, up, hat, night]
+			for s: Array in [["idle", 0.0, 3.0, 5.0, PI * 0.4, -PI * 0.3, 0.05, 0.38, "head", 0.0, true, false],
+					["idle", 0.0, 2.0, 4.5, PI * 0.55, -PI * 0.1, 0.1, 0.22, "head", 0.04, false, false],
+					["cheer", 0.0, cl * 0.75, 4.0, PI - 0.25, PI * 0.62, 0.05, 0.6, "spine_03", 0.06, true, false],
+					["cheer", 0.0, cl * 0.75, 3.5, 0.1, PI * 0.35, 0.05, 0.55, "spine_03", 0.06, true, false],
+					["idle", 0.0, 3.0, 5.0, PI * 0.8, PI * 0.2, 0.06, 0.42, "head", 0.03, true, true],
+					["idle", 0.0, 2.0, 3.5, PI * 0.6, PI * 0.9, 0.08, 0.42, "head", 0.05, false, true]]:
+				if bool(s[11]) != night_on:
+					_toggle_night()
+					await _wait(2.9)
+				boy.hat.visible = bool(s[10])
+				var t0 := gt
+				var tgt := Vector3.ZERO
+				while gt - t0 < float(s[3]):
+					var u := (gt - t0) / float(s[3])
+					var v := lerpf(float(s[1]), float(s[2]), u)
+					player.rotation.y = y0
+					if s[0] == "cheer":
+						boy.debug_pose("cheer", 1.0, v)
+					else:
+						boy.debug_pose("idle", 1.0, v)
+					var bp := _bone_pos(s[8], s[9])
+					tgt = bp if gt - t0 < 0.01 else tgt.lerp(bp, 0.25)
+					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], s[7])
+					await get_tree().process_frame
+			boy.hat.visible = true
+			_fixed_cam(island.boat_tie, 0.6, 0.3, 1.0)
+			if night_on:
+				_toggle_night()
+				await _wait(2.9)
+			await _wait(4.0)
 			boy.frozen = false
 			demo_nocut = false
 			ui_root.visible = true
