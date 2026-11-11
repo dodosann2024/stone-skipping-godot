@@ -16,7 +16,7 @@ import posekit, clips
 ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 TOL = 0.0015
 DEBUG = [None] if os.environ.get("POKE_DEBUG") else None
-HAT_OFF = ("hammock", "sun")       # the hat sits on his chest / the ground in these (boy.gd hat_mode)
+HAT_OFF = ()       # v20: the hat stays on his head in every pose, lying down too
 
 
 def poses(rig):

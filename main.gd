@@ -1254,6 +1254,9 @@ func _begin_rest(kind: String) -> void:
 		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
 		# lying back: head towards his right, pelvis a little towards the foot end, back on the seat
 		rest_lie = top + Vector3(0, LIE_BACK, 0) - rest_side * 0.1
+		if st["name"] == "长椅":
+			# off the backrest a little: room for the brim of the hat beside his head
+			rest_lie += face * 0.05
 		rest_lie_b = _lie_basis(rest_side)
 	else:
 		var td := island.towel_dir
@@ -1378,6 +1381,9 @@ func _rest_tick(delta: float) -> void:
 			var pl2 := boy.activity(_act_kind(), 1.0, k2, gt)
 			var b := rest_sit_b.slerp(rest_lie_b, ks2)
 			var w := rest_seat.lerp(rest_lie, ks2) + Vector3(0, 0.07 * sin(PI * k2), 0)
+			if rest_kind == "seat" and island.seats[seat_i]["name"] == "长椅":
+				# shuffles forward on the seat as he turns to lie back: head (and hat) clear of the backrest
+				w += seat_face * 0.18 * sin(PI * k2)
 			if sleep:
 				swing_amp = lerpf(swing_amp, 0.06 * ks2 + 0.01, 1.0 - exp(-delta * 2.0))
 				swing = island.swing_hammock(swing_amp * sin(gt * 1.3))
@@ -2771,6 +2777,11 @@ func _run_sim_report() -> void:
 	if ResourceLoader.exists("res://dev/gait_probe.gd"):
 		for line in load("res://dev/gait_probe.gd").stress(self):
 			print("SIM ", line)
+	if ResourceLoader.exists("res://dev/hat_probe.gd"):
+		var hs: Array = load("res://dev/hat_probe.gd").sim(self)
+		for line: String in hs[0]:
+			print("SIM ", line)
+		print("SIM hat stays on the head: %s (worst offset from its seat %.3f mm)" % ["yes" if hs[2] else "NO", float(hs[1]) * 1000.0])
 
 func _sim_block() -> void:
 	aim_yaw = 0.0
@@ -3685,6 +3696,98 @@ func _v19_sequence(pre: String) -> void:
 	ui_root.visible = true
 	_free_cam()
 
+## v20: the straw hat stays on his head. part "lie": the real hammock / towel / bench / log rest from the
+## game (lying down, lying, close-ups at the head, getting up); part "pose": close-ups of the hat on the hair
+## through walk / run / the throws / cheer / oops. part "" = both.
+func _v20_sequence(pre: String, part: String) -> void:
+	if part == "" or part == "lie":
+		var hs := _hammock_spot()
+		var td := island.towel_dir
+		var sd := td.cross(Vector3.UP).normalized()
+		for spec: Array in [["hammock", "sleep", hs[0] + hs[2] * 1.6], ["towel", "sun", island.towel_pos + sd * 1.4], ["bench", 0, null], ["log", 1, null]]:
+			var nm: String = spec[0]
+			if _opt("only") != "" and not nm.begins_with(_opt("only")):
+				continue
+			_free_cam()
+			if spec[1] is String:
+				_place(spec[2], 0.0)
+				await _wait(0.3)
+				_begin_rest(spec[1])
+				while rest_phase != 3:
+					await get_tree().process_frame
+			else:
+				var st: Dictionary = island.seats[spec[1]]
+				var face: Vector3 = st["face"]
+				_place(_blocked_by((st["approach"] as Vector3) + face * 0.7), 0.0)
+				await _wait(0.3)
+				_on_action()
+				while rest_phase != 4:
+					await get_tree().process_frame
+				await _wait(0.5)
+				_lie_down()
+			var dur := SEAT_LIE_DUR if rest_kind == "seat" else 1.0
+			# across him: from the open side (in front of a seat)
+			var lat: Vector3 = seat_face if rest_kind == "seat" else rest_side
+			await _wait(dur * 0.55)
+			_shot(pre + "v20_%s_1_lying_down" % nm)
+			_fixed_cam((boy.parts["head"] as Node3D).global_position, atan2(lat.x, lat.z), 0.3, 1.1)
+			await get_tree().process_frame
+			_shot(pre + "v20_%s_1b_lying_down_close" % nm)
+			_free_cam()
+			while rest_phase != 4:
+				await get_tree().process_frame
+			await _wait(1.2)
+			_shot(pre + "v20_%s_2_lie" % nm)
+			var head: Vector3 = (boy.parts["head"] as Node3D).global_position
+			var hd := rest_lie_b.y
+			_fixed_cam(head, atan2(lat.x, lat.z), 0.3, 0.95)
+			await _wait(0.3)
+			_shot(pre + "v20_%s_3_close_side" % nm)
+			_fixed_cam(head, atan2(hd.x, hd.z) + 0.5, 0.12, 0.8)
+			await _wait(0.3)
+			_shot(pre + "v20_%s_4_close_head_end" % nm)
+			_free_cam()
+			_wake()
+			while rest_phase != 5 and rest_phase != 6:
+				await get_tree().process_frame
+			await _wait(dur * 0.45)
+			_shot(pre + "v20_%s_5_getting_up" % nm)
+			while mode != Mode.EXPLORE:
+				await get_tree().process_frame
+			await _wait(0.3)
+	if part == "" or part == "pose":
+		_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+		await _wait(0.6)
+		demo_nocut = true
+		ui_root.visible = false
+		var y0 := player.rotation.y
+		# [name, pose, p, tt, cam yaw, pitch, dist]
+		var shots := [
+			["idle_side", "idle", 1.0, 0.3, PI * 0.5, 0.05, 0.55],
+			["idle_front", "idle", 1.0, 0.3, PI - 0.3, 0.05, 0.55],
+			["walk", "walk", 1.0, 0.3, PI * 0.6, 0.05, 0.6],
+			["run", "run", 1.0, 0.15, PI * 0.6, 0.05, 0.6],
+			["charge", "charge", 1.0, 0.3, PI * 0.35, 0.1, 0.7],
+			["release", "release", 1.0, 0.3, PI * 0.7, 0.05, 0.7],
+			["follow", "follow", 1.0, 0.3, PI * 0.75, 0.05, 0.7],
+			["crouch_release", "release_c", 1.0, 0.3, PI * 0.7, 0.1, 0.7],
+			["cheer", "cheer", 1.0, float(_opt("cheer_t", "1.0")), PI - 0.4, 0.05, 0.7],
+			["oops", "oops", 1.0, float(_opt("oops_t", "0.8")), PI - 0.3, 0.05, 0.6],
+		]
+		for s: Array in shots:
+			if not String(s[0]).begins_with(_opt("only")):
+				continue
+			player.rotation.y = y0
+			boy.debug_pose(s[1], s[2], s[3])
+			await get_tree().process_frame
+			_fixed_cam(_bone_pos("head", 0.04), y0 + float(s[4]), s[5], s[6])
+			await _wait(0.4)
+			_shot(pre + "v20_pose_%s" % s[0])
+		boy.frozen = false
+		demo_nocut = false
+		ui_root.visible = true
+		_free_cam()
+
 ## v15: aiming by swipe - the pad and angle sliders, aiming left / right (arrow, preview, readout, the chest
 ## turning first), cancel, a flicked throw, a too-steep launch, a too-flat stone, a slow release (no spin)
 func _v15_sequence(pre: String) -> void:
@@ -3786,6 +3889,8 @@ func _run_demo4() -> void:
 				await _v18_sequence(pre)
 			elif what == "v19":
 				await _v19_sequence(pre)
+			elif what.begins_with("v20"):
+				await _v20_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):

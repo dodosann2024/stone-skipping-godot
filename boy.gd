@@ -24,7 +24,6 @@ var parts := {}
 var anim := "idle"   # idle | move | charge | throw | react | activity
 var anim_t := 0.0
 var stance := "stand"   # stand | crouch (throwing stance)
-var hat_mode := "head"   # head | chest | ground
 var wading := false
 var move_speed := 0.0
 var power := 0.0
@@ -51,9 +50,26 @@ var hat: Node3D
 var glasses: Node3D
 var stone: Node3D
 var blob: MeshInstance3D
+# the hat is a rigid prop on the head bone. It has two seats there (head bone -> hat): on his head, and
+# tipped down over his face for lying on his back (a brim that wide cannot stay on a head lying flat: its
+# back edge would be ~10 cm into the bed). Only his hand moves it from one to the other.
 var hat_head_xf: Transform3D
-var hat_head_parent: Node3D
-var chest_att: BoneAttachment3D
+var hat_face_xf: Transform3D
+var hat_head_parent: BoneAttachment3D
+var head_bone := -1
+var hat_s := 0.0      # 0 on his head .. 1 over his face
+var hat_hold := 0.0   # 0 .. 1: the hand on the front of the brim (arm IK weight)
+var hat_side := "r"
+var hat_band_c := Vector3.ZERO   # centre of the band rim (hat local)
+var hat_grip := {}    # side -> [wrist, finger direction, palm normal] in hat local space
+var hand_loc := {}    # side -> [finger direction, palm normal] in the hand bone's frame
+var arm_bones := {}   # side -> [clavicle, upperarm, lowerarm, hand, deltoid]
+# lie_k: hand reaches the brim [0] -> [1], moves the hat over his face [1] -> [2], lets go [3] -> [4];
+# getting up runs the same backwards
+const HAT_LIE := {"": [0.0, 0.16, 0.5, 0.72, 0.92], "seatlie": [0.3, 0.55, 0.9, 0.92, 0.99]}
+const HAT_LIFT := 0.07   # the hat's arc away from his face (skeleton m)
+const HAT_TIP := {"sleep": -0.6, "seatlie": -0.55}   # rad, left side of the brim up over his face
+var hat_tip := 0.0
 
 var t := 0.0
 var t_idle := 0.0
@@ -303,6 +319,8 @@ func _setup_parts() -> void:
 				"Stone": stone = c
 	hat_head_parent = hat.get_parent()
 	hat_head_xf = hat.transform
+	head_bone = skel.find_bone(hat_head_parent.bone_name)
+	_setup_hat_seats()
 	glasses.visible = false
 	for b in ["head", "pelvis", "spine_03"]:
 		var a := BoneAttachment3D.new()
@@ -310,7 +328,6 @@ func _setup_parts() -> void:
 		a.bone_name = b
 		skel.add_child(a)
 		parts[b] = a
-	chest_att = parts["spine_03"]
 
 func _anim_node(clip: String) -> AnimationNodeAnimation:
 	var n := AnimationNodeAnimation.new()
@@ -480,11 +497,7 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	act_target = 1.0
 	act_w = 1.0 if sit_k > 0.02 or lie_k > 0.0 else act_w
 	act_rate = 8.0
-	hat_mode = "head"
-	if kind == "seatlie" and lie_k > 0.55:
-		hat_mode = "face"
-	elif lie_k > 0.6 and not kind.begins_with("seat"):
-		hat_mode = "chest" if kind == "sleep" else "ground"
+	_hat_for(kind, lie_k)
 	glasses.visible = kind == "sun" and lie_k > 0.5
 	blob.visible = sit_k < 0.3 and lie_k <= 0.0
 	if kind == "sleep" or kind == "seatlie":
@@ -495,7 +508,8 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	return _track(clip, "pelvis", u)
 
 func end_activity() -> void:
-	hat_mode = "head"
+	hat_s = 0.0
+	hat_hold = 0.0
 	glasses.visible = false
 	blob.visible = true
 	if act_frames == 0 and pre_act.size() == 7:
@@ -584,7 +598,7 @@ func _update_hair(delta: float) -> void:
 	hair_mat.set_shader_parameter("sway", inv * hair_off)
 	hair_mat.set_shader_parameter("flutter", 0.0004 * wind * gust / SCALE)
 	hair_mat.set_shader_parameter("game_time", hair_t)
-	hair_mat.set_shader_parameter("hat_on", 1.0 if hat.visible and hat_mode == "head" else 0.0)
+	hair_mat.set_shader_parameter("hat_on", (1.0 - smoothstep(0.0, 0.4, hat_s)) if hat.visible else 0.0)
 
 ## a few mm of lag on the free hems; the shorts legs flare ~2 cm off the thighs and the vest hangs
 ## 4 mm over the waistband, so this never reaches skin or the layer below
@@ -731,6 +745,7 @@ func _tick(delta: float) -> void:
 	lead_dt = 0.0
 	_plant_turn(delta)
 	_foot_lock(delta)
+	_hat_hands()
 	_update_props()
 	_update_face(delta)
 
@@ -1346,42 +1361,163 @@ func settling() -> bool:
 	return not (q < 0.27 and p > 0.36 and p - q < 0.25)
 
 func _update_props() -> void:
-	var want: Node3D = hat_head_parent
-	var xf := hat_head_xf
-	match hat_mode:
-		"chest":
-			# lying on the chest, crown up towards the sky
-			want = chest_att
-			xf = _skel_to_bone(chest_att.bone_name, _hat_at(Basis(Vector3.RIGHT, PI * 0.5), Vector3(0, 1.0, 0.16)))
-		"face":
-			# tipped down over his face against the sun, brim resting on the chin and forehead
-			want = parts["head"]
-			var hb := skel.find_bone("head")
-			var hp := skel.get_bone_global_rest(hb).origin
-			xf = _skel_to_bone("head", _hat_at(Basis(Vector3.RIGHT, PI * 0.5 - 0.05), hp + Vector3(0, 0.0, 0.125)))
-		"ground":
-			# on the towel next to his right shoulder (the lying body frame is upright, back = -Z)
-			want = model
-			xf = _hat_at(Basis(Vector3.RIGHT, PI * 0.5) * Basis(Vector3.UP, 0.4), Vector3(-0.45, 1.22, -0.12))
-	if hat.get_parent() != want:
-		hat.reparent(want, false)
-	hat.transform = xf
+	# the head attachment would only catch up with this tick's pose in the skeleton's deferred update:
+	# put it on the head now, so nothing (the sim, a probe, a frame drawn in between) sees a stale hat
+	if hat.get_parent() != hat_head_parent:
+		hat.reparent(hat_head_parent, false)
+	hat_head_parent.transform = skel.get_bone_global_pose(head_bone)
+	hat.transform = hat_seat()
 	var pel := (parts["pelvis"] as Node3D).global_position
 	var lp := to_local(pel)
 	blob.position = Vector3(lp.x * 0.6, 0.012, lp.z * 0.6)
 
-## hat transform (skeleton rest space) putting the centre of its band rim at `base` with orientation `b`
-## (the hat mesh keeps its rest-pose vertex positions, so its origin is the model origin)
-func _hat_at(b: Basis, base: Vector3) -> Transform3D:
-	var bb := (hat as MeshInstance3D).get_aabb()
-	var c := bb.get_center()
-	c.y = bb.position.y + 0.03
-	return Transform3D(b, base - b * c)
+func _setup_hat_seats() -> void:
+	var mi := hat as MeshInstance3D
+	var verts: PackedVector3Array = mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	# the brim (tilted 13 deg on his head): its plane through the front, back and side of the rim
+	var pf := Vector3(0, 0, -INF)
+	var pb := Vector3(0, 0, INF)
+	var ps := Vector3(-INF, 0, 0)
+	for v in verts:
+		pf = v if v.z > pf.z else pf
+		pb = v if v.z < pb.z else pb
+		ps = v if v.x > ps.x else ps
+	var up := (pf - pb).cross(ps - pb).normalized()
+	up = -up if up.y < 0.0 else up
+	hat_band_c = (pf + pb) * 0.5
+	var fwd := ((pf - pb) - up * (pf - pb).dot(up)).normalized()
+	# the hat mesh keeps its rest-pose vertex positions, so in skeleton rest space the seat on his head is
+	# the identity. Over his face: tipped forward (crown out of the face, front of the brim at his chin),
+	# brim flat 10 cm in front of the head bone, centred on the nose: nose, fringe and glasses are inside the
+	# crown, the chin / forehead / cheeks outside it are all lower (head-frame z <= 0.093)
+	var hr := skel.get_bone_global_rest(head_bone)
+	var fb := _frame_rot(up, fwd, hr.basis.z, -hr.basis.y)
+	hat_face_xf = hr.affine_inverse() * Transform3D(fb, hr * Vector3(0, 0.03, 0.10) - fb * hat_band_c)
+	for sd: String in ["l", "r"]:
+		# the grip: the brim by his temple (the front of it is out of reach of a hand on the head), fingers
+		# in over the top of it, palm down on it, the wrist just outside the edge
+		var d := Vector3((1.0 if sd == "l" else -1.0) * sin(1.05), 0.0, cos(1.05))
+		var edge := hat_band_c
+		for v in verts:
+			if (v - hat_band_c).dot(d) > (edge - hat_band_c).dot(d):
+				edge = v
+		var f := (-d - up * 0.35).normalized()
+		hat_grip[sd] = [edge - f * 0.065 + up * 0.022, f, -up]
+		var names := ["clavicle_", "upperarm_", "lowerarm_", "hand_", "deltoid_"].map(func(n: String) -> int: return skel.find_bone(n + sd))
+		arm_bones[sd] = names
+		var hr2 := skel.get_bone_global_rest(names[3])
+		var fw := (skel.get_bone_global_rest(skel.find_bone("middle_01_" + sd)).origin - hr2.origin).normalized()
+		var ac := (skel.get_bone_global_rest(skel.find_bone("index_01_" + sd)).origin - skel.get_bone_global_rest(skel.find_bone("pinky_01_" + sd)).origin).normalized()
+		var palm := ac.cross(fw) if sd == "r" else fw.cross(ac)
+		hand_loc[sd] = [hr2.basis.inverse() * fw, hr2.basis.inverse() * palm]
 
-## a transform given in skeleton rest space, expressed in a bone's frame
-func _skel_to_bone(bone: String, xf: Transform3D) -> Transform3D:
-	var bi := skel.find_bone(bone)
-	return skel.get_bone_global_rest(bi).affine_inverse() * xf
+## where the hat sits on the head bone: on his head (s 0), over his face (s 1), in between along an arc out
+## and up, away from his face, turning as it goes
+func hat_seat(s := -1.0) -> Transform3D:
+	var u := smoothstep(0.0, 1.0, hat_s if s < 0.0 else s)
+	if u <= 0.0:
+		return hat_head_xf
+	# a rigid brim cannot lie flat in the dip of a hammock or against a backrest: it rests tipped on that side
+	var c := hat_face_xf * hat_band_c
+	var face := Transform3D(Basis(Vector3.UP, -hat_tip), c) * Transform3D(Basis(), -c) * hat_face_xf
+	if u >= 1.0:
+		return face
+	var b := Basis(hat_head_xf.basis.get_rotation_quaternion().slerp(face.basis.get_rotation_quaternion(), u))
+	var p := (hat_head_xf * hat_band_c).lerp(face * hat_band_c, u) + Vector3(0, 0.55, 0.85).normalized() * HAT_LIFT * sin(PI * u)
+	return Transform3D(b, p - b * hat_band_c)
+
+## lying down / getting up (lie_k 0..1 either way): which hand, how far the hat is over his face, how firmly
+## the hand is on the brim
+func _hat_for(kind: String, lie_k: float) -> void:
+	if kind == "seat" or lie_k <= 0.0:
+		hat_s = 0.0
+		hat_hold = 0.0
+		return
+	# on the bench / log the right hand props him on the seat while he lies back
+	hat_side = "l" if kind == "seatlie" else "r"
+	hat_tip = HAT_TIP.get(kind, 0.0)
+	var hl: Array = HAT_LIE.get(kind, HAT_LIE[""])
+	hat_s = smoothstep(hl[1], hl[2], lie_k)
+	hat_hold = smoothstep(hl[0], hl[1], lie_k) * (1.0 - smoothstep(hl[3], hl[4], lie_k))
+
+## the holding hand on the front of the brim (two-bone arm IK, blended in by hat_hold)
+func _hat_hands() -> void:
+	if hat_hold <= 0.0:
+		return
+	var b: Array = arm_bones[hat_side]
+	var hx := skel.get_bone_global_pose(head_bone) * hat_seat()
+	var g: Array = hat_grip[hat_side]
+	var hl: Array = hand_loc[hat_side]
+	var want := _frame_rot(hl[0], hl[1], hx.basis * (g[1] as Vector3), hx.basis * (g[2] as Vector3))
+	var Hg := skel.get_bone_global_pose(b[3])
+	var w := smoothstep(0.0, 1.0, hat_hold)
+	var wrist := Hg.origin.lerp(hx * (g[0] as Vector3), w)
+	var hand_b := Basis(Hg.basis.get_rotation_quaternion().slerp(want.get_rotation_quaternion(), w))
+	# elbow out to the side and down, as when reaching up to the face
+	var chest := skel.get_bone_global_pose(skel.get_bone_parent(b[0])).basis
+	var pole := chest * Vector3(-1.0 if hat_side == "r" else 1.0, -0.7, -0.2)
+	_arm_ik(b, wrist, hand_b, pole, w)
+
+## two-bone arm IK (skeleton space): wrist to `wrist`, hand to `hand_b`; the elbow turns from where the clip
+## has it towards `pole` by `w`. The deltoid helper stays half way between collar bone and upper arm.
+func _arm_ik(b: Array, wrist: Vector3, hand_b: Basis, pole: Vector3, w: float) -> void:
+	var U := skel.get_bone_global_pose(b[1])
+	var L := skel.get_bone_global_pose(b[2])
+	var W := skel.get_bone_global_pose(b[3]).origin
+	var S := U.origin
+	var E := L.origin
+	var l1 := S.distance_to(E)
+	var l2 := E.distance_to(W)
+	var to := wrist - S
+	var dist := clampf(to.length(), absf(l1 - l2) + 1e-4, (l1 + l2) * 0.9999)
+	var u := to.normalized()
+	var sw := (W - S).normalized()
+	var cur := (E - S) - sw * (E - S).dot(sw)
+	var pl := pole.normalized()
+	if cur.length_squared() > 1e-10:
+		pl = cur.normalized().slerp(pl, w) if absf(cur.normalized().dot(pl)) < 0.999 else pl
+	var v := (pl - u * pl.dot(u)).normalized()
+	var a := (l1 * l1 - l2 * l2 + dist * dist) / (2.0 * dist)
+	var E2 := S + u * a + v * sqrt(maxf(l1 * l1 - a * a, 0.0))
+	var W2 := S + u * dist
+	var n_old := (E - S).cross(W - E)
+	var n_new := (E2 - S).cross(W2 - E2)
+	if n_old.length_squared() < 1e-12 or n_new.length_squared() < 1e-12:
+		n_old = U.basis.x
+		n_new = U.basis.x
+	var Ub := _frame_rot(E - S, n_old, E2 - S, n_new) * U.basis
+	var Lb := _frame_rot(W - E, n_old, W2 - E2, n_new) * L.basis
+	var Pg := skel.get_bone_global_pose(b[0]).basis
+	var up_q := (Pg.inverse() * Ub).get_rotation_quaternion()
+	skel.set_bone_pose_rotation(b[1], up_q)
+	skel.set_bone_pose_rotation(b[2], (Ub.inverse() * Lb).get_rotation_quaternion())
+	skel.set_bone_pose_rotation(b[3], (Lb.inverse() * hand_b).get_rotation_quaternion())
+	if b[4] >= 0:
+		skel.set_bone_pose_rotation(b[4], skel.get_bone_rest(b[1]).basis.get_rotation_quaternion().slerp(up_q, 0.5))
+
+## the hat's pose relative to the head bone
+func hat_on_head() -> Transform3D:
+	var head := skel.global_transform * skel.get_bone_global_pose(head_bone)
+	return head.affine_inverse() * hat.global_transform
+
+## how far the hat is off the seat it should be in (hat_seat()): [metres (crown centre moved + turn at the
+## brim edge), radians]
+func hat_offset_error() -> Vector2:
+	var now := hat_on_head()
+	var want := hat_seat()
+	var c := (hat as MeshInstance3D).get_aabb().get_center()
+	var ang := (want.basis.inverse() * now.basis).get_rotation_quaternion().get_angle()
+	return Vector2((now * c).distance_to(want * c) + ang * 0.2, ang)
+
+## the holding hand's knuckles to the brim grip [m] (INF while no hand holds the hat)
+func hat_grip_gap() -> float:
+	if hat_hold < 0.999:
+		return INF
+	var hx := skel.get_bone_global_pose(head_bone) * hat_seat()
+	var g: Array = hat_grip[hat_side]
+	var knuckle := skel.get_bone_global_pose(skel.find_bone("middle_01_" + hat_side)).origin
+	var want := hx * ((g[0] as Vector3) + (g[1] as Vector3) * 0.085)
+	return knuckle.distance_to(want) * skel.global_transform.basis.get_scale().x
 
 func _update_face(delta: float) -> void:
 	blink_timer -= delta
@@ -1409,7 +1545,9 @@ func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
 	act_w = 1.0
 	ab_w = 0.0
 	cur_slot = 0
-	hat_mode = "head"
+	hat_s = 1.0 if kind == "sleep" or kind == "sun" else 0.0
+	hat_tip = HAT_TIP.get(kind, 0.0)
+	hat_hold = 0.0
 	glasses.visible = false
 	var e := "smile"
 	var pel := Vector3.ZERO
@@ -1427,7 +1565,6 @@ func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
 		"sleep", "sun":
 			var c := "hammock_sleep" if kind == "sleep" else "sun_rest"
 			_set_slot(0, c, tt)
-			hat_mode = "chest" if kind == "sleep" else "ground"
 			glasses.visible = kind == "sun"
 			e = "sleep" if kind == "sleep" else "relax"
 		"sit_edge", "sit_ground":
@@ -1436,6 +1573,7 @@ func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
 			act_w = 0.0; move_w = 0.0; t_idle = tt
 	expr = e
 	_apply_mixer()
+	_hat_hands()
 	_update_props()
 	blink_timer = 9.0
 	_update_face(0.0)
