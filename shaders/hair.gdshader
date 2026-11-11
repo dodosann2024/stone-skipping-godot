@@ -11,9 +11,9 @@ render_mode cull_disabled, depth_draw_opaque;
 // the hairline (cap); 1 - UV2.y card inner-layer occlusion, or 1 on the cap.
 
 uniform sampler2D strands : filter_linear_mipmap, repeat_disable;
-uniform vec3 root_col : source_color = vec3(0.21, 0.14, 0.10);
-uniform vec3 mid_col : source_color = vec3(0.33, 0.23, 0.155);
-uniform vec3 tip_col : source_color = vec3(0.56, 0.43, 0.30);
+uniform vec3 root_col : source_color = vec3(0.25, 0.17, 0.12);
+uniform vec3 mid_col : source_color = vec3(0.39, 0.28, 0.19);
+uniform vec3 tip_col : source_color = vec3(0.60, 0.47, 0.33);
 uniform float ao_strength = 0.5;
 uniform float hat_on = 1.0;
 uniform vec3 sway = vec3(0.0);        // tip offset, mesh space (boy.gd: head motion + wind)
