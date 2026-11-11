@@ -657,6 +657,7 @@ func _build_ui() -> void:
 		start_overlay.add_child(small)
 	get_viewport().size_changed.connect(_layout_ui)
 	bottom_box.resized.connect(_fit_action)
+	right_box.resized.connect(_layout_ui)
 	_layout_ui()
 
 func _angle_slider(t: String, k: String, lo: float, hi: float, v: float, band: Vector2) -> AngleSlider:
@@ -747,7 +748,8 @@ func _layout_ui() -> void:
 	bottom_box.offset_left = 18 + sl
 	bottom_box.offset_right = -18 - sr
 	bottom_box.offset_bottom = -14 - sb
-	tip_box.offset_top = (170 if tall else 120) + st
+	# (portrait: the tip spans most of the 720 units across, so it starts below the button column)
+	tip_box.offset_top = maxf((170.0 if tall else 120.0) + st, right_box.offset_top + right_box.size.y + 16.0) if tall else 120.0 + st
 	# throw mode: the two angle sliders bottom right, the stone pad bottom centre (both above the hint)
 	var sw := 92.0
 	var sh := 320.0 if tall else 250.0
