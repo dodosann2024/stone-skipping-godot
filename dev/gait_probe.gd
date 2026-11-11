@@ -14,7 +14,7 @@ const SEGS := [[1.0, 1.5, "idle -> walk"], [1.5, 4.0, "walk straight"], [5.5, 6.
 # after PROFILE: the stick is pushed to a heading (main.gd's explore steering, turning on the spot as it does)
 const TURNS := [[19.4, PI, 0.0], [21.2, -PI * 0.5, 0.0], [22.6, 0.0, 1.15], [24.2, PI, 1.15], [26.2, 0.0, 0.0], [27.4, 0.0, -1.0]]
 # [until t, target speed, yaw rate, zig-zag amplitude]: a zig-zag swings the heading +-amp every 0.8 s the way
-# main.gd turns the boy towards the stick (lerp_angle at rate 9: up to ~10 rad/s right after a flick)
+# main.gd turns the boy towards the stick (Boy.move_turn: as fast as his feet can corner, slowing into it)
 const PROFILE := [
 	[1.0, 0.0, 0.0, 0.0],
 	[4.0, 1.15, 0.0, 0.0],
@@ -57,6 +57,15 @@ var spot_rate := 0.0
 var pivot := false
 var turn_i := 0
 var wish_spd := 0.0
+var seg_quick := {}     # segment -> quick steps started in it
+var seg_spot := {}      # segment -> steps on the spot started in it
+var seg_print := {}     # segment -> worst footprint spot drift
+var seg_spot_t := {}    # segment -> [first, last] time a step on the spot started in it
+var seg_root := {}      # segment -> how far the boy's root moved beyond what the probe moved it (turning on the spot)
+var _q0 := 0
+var _s0 := 0
+var _own := Vector3.ZERO
+var _seg_from := {}
 
 func _init(b: Boy, at := Vector3.ZERO) -> void:
 	boy = b
@@ -95,21 +104,27 @@ func step(dt: float) -> bool:
 		_track_prints()
 		frame += 1
 		return true
-	var acc := 6.0 if tg[0] > speed else 9.0
+	if float(tg[2]) > 0.0:
+		_steer(dt, zig_base + float(tg[2]) * (1.0 if int(t / 0.8) % 2 == 0 else -1.0), float(tg[0]), true)
+		boy._tick(dt)
+		_measure()
+		_track_prints()
+		frame += 1
+		return true
 	var want_spd: float = tg[0]
 	if want_spd < 0.05 and boy.settling():
 		want_spd = 0.5     # as main.gd: finish the step before stopping
+	var acc := 6.0 if want_spd > speed else 9.0
 	speed = move_toward(speed, want_spd, acc * dt)
-	if float(tg[2]) > 0.0:
-		var want_yaw := zig_base + float(tg[2]) * (1.0 if int(t / 0.8) % 2 == 0 else -1.0)
-		yaw = lerp_angle(yaw, want_yaw, 1.0 - exp(-dt * 9.0))
-		boy.turn_ahead = wrapf(want_yaw - yaw, -PI, PI)
-	else:
-		yaw += float(tg[1]) * dt * minf(speed / 1.0, 1.0)
-		zig_base = yaw
-		boy.turn_ahead = 0.0
+	yaw += float(tg[1]) * dt * minf(speed / 1.0, 1.0)
+	zig_base = yaw
+	pivot = false
+	spot_rate = 0.0
+	boy.pivoting = false
+	boy.turn_ahead = 0.0
 	boy.rotation.y = yaw
 	boy.position += Basis(Vector3.UP, yaw) * Vector3(0, 0, -speed * dt)
+	_own += Basis(Vector3.UP, yaw) * Vector3(0, 0, -speed * dt)
 	if speed > 0.05:
 		boy.set_move(speed)
 	else:
@@ -126,7 +141,10 @@ func _track_prints() -> void:
 	_pend = _pend.filter(func(pd: Array) -> bool: return float(boy.step_t[pd[0]]) < 0.0)
 	for pd in _pend:
 		if t - float(pd[2]) >= 0.06:
-			print_err = maxf(print_err, (_print_spot(pd[0]) - (pd[1] as Vector2)).length())
+			var e := (_print_spot(pd[0]) - (pd[1] as Vector2)).length()
+			print_err = maxf(print_err, e)
+			var lb := _seg_at(float(pd[2]))
+			seg_print[lb] = maxf(float(seg_print.get(lb, 0.0)), e)
 	_pend = _pend.filter(func(pd: Array) -> bool: return t - float(pd[2]) < 0.06)
 
 ## main.gd's explore steering after the stick moves to `want`: a big change of heading at walking pace or
@@ -140,39 +158,43 @@ func _turn_step(dt: float) -> bool:
 		want += float(TURNS[turn_i][1])
 		wish_spd = float(TURNS[turn_i][2])
 		turn_i += 1
-	var need := wrapf(want - yaw, -PI, PI)
-	var active := turn_i > 0 and (wish_spd > 0.0 or absf(need) > 0.01)
-	if active and absf(need) > 1.1 and speed < 0.9:
+	_steer(dt, want, wish_spd, turn_i > 0)
+	return true
+
+## main.gd's explore steering with the stick pushed towards heading `to` (wish_spd 0: let go)
+func _steer(dt: float, to: float, wish_spd: float, on: bool) -> void:
+	var need := wrapf(to - yaw, -PI, PI)
+	var active := on and (wish_spd > 0.0 or absf(need) > 0.01)
+	if active and Boy.wants_spot_turn(need, speed):
 		pivot = true
-	if pivot and absf(need) < 0.25:
+	if pivot and absf(need) < 0.03 and not boy.spin_busy():
 		pivot = false
 	if pivot:
 		speed = move_toward(speed, 0.0, 10.0 * dt)
-		var r := Boy.spot_turn(yaw, want, spot_rate, dt)
+		var r := Boy.spot_turn(yaw, to, spot_rate, dt)
 		yaw = r[0]
 		spot_rate = r[1]
 	else:
 		spot_rate = 0.0
-		if absf(need) > 1.1:
-			speed = move_toward(speed, 0.0, 10.0 * dt)    # braking before the turn
-		else:
-			var acc := 6.0 if wish_spd > speed else 9.0
-			var ws := wish_spd
-			if ws < 0.05 and boy.settling():
-				ws = 0.5
-			speed = move_toward(speed, ws, acc * dt)
-			if speed > 0.05:
-				yaw = lerp_angle(yaw, want, 1.0 - exp(-dt * 9.0))
+		var ws := wish_spd
+		if ws < 0.05 and boy.settling():
+			ws = 0.5
+		if ws > 0.05:
+			var mt := Boy.move_turn(yaw, to, speed, dt)
+			yaw = mt[0]
+			ws *= float(mt[1])
+		var acc := 6.0 if ws > speed else 10.0
+		speed = move_toward(speed, ws, acc * dt)
 	boy.pivoting = pivot
-	boy.turn_ahead = wrapf(want - yaw, -PI, PI) if (pivot or speed > 0.05) else 0.0
+	boy.turn_ahead = wrapf(to - yaw, -PI, PI) if (pivot or speed > 0.05) else 0.0
 	boy.rotation.y = yaw
 	boy.position += Basis(Vector3.UP, yaw) * Vector3(0, 0, -speed * dt)
+	_own += Basis(Vector3.UP, yaw) * Vector3(0, 0, -speed * dt)
 	if speed > 0.05:
 		boy.set_move(speed)
 	else:
 		boy.set_move(0.0)
 		boy.set_idle()
-	return true
 
 ## the spot main.gd stamps a footprint on (60 % of the way from heel to ball)
 func _print_spot(side: int) -> Vector2:
@@ -181,8 +203,30 @@ func _print_spot(side: int) -> Vector2:
 	var b: Vector3 = fp[1]
 	return Vector2(h.x, h.z) + Vector2(b.x - h.x, b.z - h.z) * 0.6
 
+func _seg_at(tt: float) -> String:
+	for sg in SEGS:
+		if tt >= float(sg[0]) and tt < float(sg[1]):
+			return sg[2]
+	return "-"
+
 func _measure() -> void:
 	worst = 0.0
+	var lb0 := _seg_at(t)
+	if lb0 != "-":
+		if not _seg_from.has(lb0):
+			_seg_from[lb0] = [boy.position, _own]
+		var sf: Array = _seg_from[lb0]
+		var r := (boy.position - (sf[0] as Vector3)) - (_own - (sf[1] as Vector3))
+		r.y = 0.0
+		seg_root[lb0] = maxf(float(seg_root.get(lb0, 0.0)), r.length())
+	if boy.steps_taken != _q0:
+		seg_quick[lb0] = int(seg_quick.get(lb0, 0)) + boy.steps_taken - _q0
+		_q0 = boy.steps_taken
+	if boy.spot_steps != _s0:
+		seg_spot[lb0] = int(seg_spot.get(lb0, 0)) + boy.spot_steps - _s0
+		_s0 = boy.spot_steps
+		var st: Array = seg_spot_t.get(lb0, [t, t])
+		seg_spot_t[lb0] = [st[0], t]
 	for i in POINTS.size():
 		var c: Array = contact[POINTS[i]]
 		var pt: Vector3 = boy.skel.global_transform * (boy.skel.get_bone_global_pose(c[0]) * (c[1] as Vector3))
@@ -216,6 +260,32 @@ func report() -> Array[String]:
 	var out: Array[String] = []
 	for sg in SEGS:
 		var lb: String = sg[2]
-		out.append("%-26s max %.1f mm/frame  mean %.2f mm/frame  (%d planted frames)" % [lb, float(seg_max.get(lb, 0.0)) * 1000.0,
-			float(seg_sum.get(lb, 0.0)) / maxf(float(seg_n.get(lb, 0)), 1.0) * 1000.0, int(seg_n.get(lb, 0))])
+		out.append("%-26s max %.1f mm/frame  mean %.2f mm/frame  (%d planted frames)  quick %d  spot %d  print drift %.1f mm" % [lb, float(seg_max.get(lb, 0.0)) * 1000.0,
+			float(seg_sum.get(lb, 0.0)) / maxf(float(seg_n.get(lb, 0)), 1.0) * 1000.0, int(seg_n.get(lb, 0)),
+			int(seg_quick.get(lb, 0)), int(seg_spot.get(lb, 0)), float(seg_print.get(lb, 0.0)) * 1000.0])
+	return out
+
+## the stress run of `--sim`: the whole profile at 30 / 20 / 60 fps; per rate the totals, then per segment the
+## quick steps (shuffles), steps on the spot (with the time from the first to the last one) and the worst drift
+## of a footprint spot
+static func stress(parent: Node) -> Array[String]:
+	var out: Array[String] = []
+	for fps: int in [30, 20, 60]:
+		var b := Boy.new()
+		parent.add_child(b)
+		var p := GaitProbe.new(b, Vector3(0, 60, 0))
+		p.run_all(1.0 / fps)
+		out.append("gait @%d fps: %d quick steps, %d steps on the spot, planted slide max %.1f mm/frame, footprint drift max %.1f mm" % [
+			fps, b.steps_taken, b.spot_steps, p.slide_max * 1000.0, p.print_err * 1000.0])
+		for sg in SEGS:
+			var lb: String = sg[2]
+			var span := ""
+			if p.seg_spot_t.has(lb):
+				var st: Array = p.seg_spot_t[lb]
+				span = "  (steps %.2f-%.2f s into it, root moved %.1f cm)" % [float(st[0]) - float(sg[0]), float(st[1]) - float(sg[0]),
+					float(p.seg_root.get(lb, 0.0)) * 100.0]
+			out.append("gait @%d fps   %-26s quick %d  spot %d  print drift %4.1f mm%s" % [fps, lb, int(p.seg_quick.get(lb, 0)),
+				int(p.seg_spot.get(lb, 0)), float(p.seg_print.get(lb, 0.0)) * 1000.0, span])
+		parent.remove_child(b)
+		b.free()
 	return out

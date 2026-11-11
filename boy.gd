@@ -86,6 +86,7 @@ var plant_prev_yaw := 0.0
 var plant_lag := 0.0
 var prev_at: Array[Variant] = [null, null]
 var turn_lean := 0.0
+var turn_w := 0.0              # rad/s the body has been turning (smoothed)
 var settle_ph := 0.0
 var contacts: Array = []      # per side: [foot bone, heel offset, ball bone, toe offset]
 # foot locking: while a heel / toe pad is down, the leg is bent (two-bone IK) so that point and the foot's
@@ -104,6 +105,7 @@ var swing_from := [[Vector3.ZERO, 0.0], [Vector3.ZERO, 0.0]]
 var phase_rate := 0.0
 var was_down := [false, false]
 var pivot_w: Array[float] = [0.0, 0.0]
+var heel_up: Array[float] = [0.0, 0.0]   # rad: a trailing foot past its reach rolls up onto the ball
 var step_t: Array[float] = [-1.0, -1.0]
 var steps_taken := 0
 var spot_steps := 0
@@ -116,14 +118,24 @@ const STEP_REACH := 0.97     # of the leg's length, and clearly more than the an
 const STEP_DUR := 0.16
 const STEP_LIFT := 0.06
 const PIVOT_LIFT := 0.3
-# turning on the spot (the mover sets `pivoting` and `turn_ahead`): the feet take turns stepping round,
-# inner foot first, each landing turned ahead of the body; weight goes onto the standing foot
-const SPOT_YAW := 0.25        # foot twist that calls for the next step
+const HEEL_UP := 0.6
+const HEEL_FROM := 0.965      # leg stretch (of its length) at which the heel starts to come up
+const TURN_AIM := 0.6         # rad: a foot lands turned into the turn by at most this
+# turning on the spot (the mover sets `pivoting` and `turn_ahead`): the head leads, then the feet take turns
+# stepping round, inner foot first, and each step carries the body round with it (a half turn: open, turn,
+# close); weight goes onto the standing foot
+const SPOT_YAW := 0.2         # a foot left this twisted / this far off its spot closes up after the turn
 const SPOT_C := 0.05
-const SPOT_LEAD := 1.1        # how far round (rad) a turning step goes, at most
-const SPOT_DUR := 0.17
-const SPOT_LIFT := 0.045
-const SPOT_RATE := 3.8        # rad/s, the fastest turn on the spot
+const SPOT_LEAD := 1.6        # how far round (rad) one step turns the body, at most
+const SPOT_END := 0.2
+const SPOT_DUR := 0.3
+const SPOT_LIFT := 0.05
+const SPOT_GAP := 0.06        # s both feet are down between two steps round
+const SPOT_WAIT := 0.08       # s the head leads before the first step
+const SPIN_CENTER := 0.7      # the body turns about this far from the standing foot's ball to its own middle
+const SPOT_RATE := 3.4        # rad/s, the fastest turn on the spot
+const STEER_GRIP := 4.5       # m/s^2 a kid can lean into a corner
+const STEER_TOP := 6.0        # rad/s, the fastest turn while moving
 var pivoting := false
 var turn_ahead := 0.0         # rad (+ = left) the heading still has to turn, from the mover
 var lead_y := [0.0, 0.0, 0.0, 0.0]   # spine_02, spine_03, neck_01, head yaw: the head goes first
@@ -133,6 +145,14 @@ var step_lift: Array[float] = [STEP_LIFT, STEP_LIFT]
 var last_step_foot := -1
 var step_world: Array = [null, null]   # spot steps: [from pos, from heading, to pos, to heading] in the world
 var idle_still := 0.0
+var spot_gap := 0.0
+var spin := false             # turning on the spot (or finishing one): the steps turn the body
+var spin_h: Array = [null, null]   # per stepping foot: [body heading at its start, at its end] (world)
+var spin_wait := 0.0
+var spin_t := 0.0
+var was_pivoting := false
+var last_dt := 0.0
+const SPIN_LAG := 1.4
 var lead_dt := 0.0
 var hip_shift := Vector3.ZERO   # skeleton space; the feet do not move with it
 
@@ -143,6 +163,19 @@ static func spot_turn(face: float, want: float, rate: float, delta: float) -> Ar
 	rate = move_toward(rate, top, delta * 14.0)
 	var stp := minf(absf(need), rate * delta)
 	return [face + signf(need) * stp, rate]
+
+## when a change of heading `need` at `speed` (m/s) is a turn on the spot instead (main.gd and the probe)
+static func wants_spot_turn(need: float, speed: float) -> bool:
+	return (absf(need) > 1.1 and speed < 0.4) or (absf(need) > 2.0 and speed < 0.9)
+
+## the moving-turn rule shared by main.gd and the gait probe: the heading eases towards `want`, but no faster
+## than his feet can corner at `speed` (STEER_GRIP of sideways push), and a sharp change slows him down first.
+## [new heading, factor on the wanted speed]
+static func move_turn(face: float, want: float, speed: float, delta: float) -> Array:
+	var need := wrapf(want - face, -PI, PI)
+	var top := minf(STEER_TOP, STEER_GRIP / maxf(speed, 0.3))
+	var stp := minf(absf(need), minf(top, absf(need) * 9.0) * delta)
+	return [face + signf(need) * stp, 1.0 - 0.72 * smoothstep(0.5, 1.6, absf(need))]
 
 func _ready() -> void:
 	rng.seed = 7
@@ -586,7 +619,7 @@ func _apply_mixer() -> void:
 ## a turn starts at the eyes: head, then chest, then hips (the legs follow with the feet)
 func _lead_turn() -> void:
 	var dt := lead_dt
-	var ah := clampf(turn_ahead, -1.8, 1.8) if (anim == "move" or anim == "idle") else 0.0
+	var ah := clampf(turn_ahead - plant_lag, -1.8, 1.8) if (anim == "move" or anim == "idle") else 0.0
 	ah *= 1.0 - act_w
 	var share := [0.1, 0.17, 0.16, 0.2]
 	var top := [0.16, 0.28, 0.3, 0.38]
@@ -607,7 +640,7 @@ func _weight_shift() -> void:
 	var off := Vector3.ZERO
 	hip_shift = Vector3.ZERO
 	for i in 2:
-		if step_t[i] >= 0.0 and pivoting:
+		if step_t[i] >= 0.0 and spin:
 			var u := clampf(step_t[i] / step_dur[i], 0.0, 1.0)
 			var sw := sin(PI * minf(u * 1.25, 1.0))
 			off += Vector3(0.028 if i == 1 else -0.028, -0.012, 0.0) * sw
@@ -633,11 +666,14 @@ func _contact(i: int) -> Variant:
 	return null
 
 func _plant_turn(delta: float) -> void:
+	last_dt = delta
 	var yaw := global_rotation.y
 	var dyaw := wrapf(yaw - plant_prev_yaw, -PI, PI)
 	plant_prev_yaw = yaw
 	if absf(dyaw) > 1.5:
 		dyaw = 0.0
+	if delta > 0.0:
+		turn_w = lerpf(turn_w, dyaw / delta, 1.0 - exp(-delta * 10.0))
 	var moving := anim == "move" and move_w > 0.5
 	var lean_to := 0.0
 	if moving and delta > 0.0:
@@ -649,7 +685,24 @@ func _plant_turn(delta: float) -> void:
 	# single support / flight), and in single support it pivots about the stance foot (both feet down: about
 	# the middle of them). A flick of the stick turns the node at up to ~10 rad/s; the body follows at TURN_MAX
 	var lag0 := plant_lag
-	if moving and n == 2:
+	spin = not moving and lock_prev[0] != null and lock_prev[1] != null and (pivoting or absf(plant_lag) > 0.03 \
+		or (step_t[0] >= 0.0 and spin_h[0] != null) or (step_t[1] >= 0.0 and spin_h[1] != null))
+	if not spin:
+		spin_h = [null, null]
+	spin_t = spin_t + delta if spin else 0.0
+	if pivoting and not was_pivoting:
+		# a new turn on the spot: the head leads first, then the inner foot
+		spin_wait = 0.0
+		if step_t[0] < 0.0 and step_t[1] < 0.0:
+			last_step_foot = -1
+	was_pivoting = pivoting
+	if spin:
+		_spin_turn(dyaw, lag0)
+		return
+	if pivoting:
+		# still slowing out of the walk: the body keeps its heading until the steps on the spot take over
+		plant_lag = clampf(lag0 - dyaw, -SPIN_LAG, SPIN_LAG)
+	elif moving and n == 2:
 		plant_lag -= dyaw
 	else:
 		plant_lag *= exp(-delta * (12.0 if moving else 8.0))
@@ -676,6 +729,54 @@ func _plant_turn(delta: float) -> void:
 	for i in 2:
 		var c: Variant = _contact(i)
 		prev_at[i] = skel.global_transform * (c as Vector3) if c != null else null
+
+## turning on the spot the steps carry the body round: while a foot steps, the body turns with it about a
+## point between the standing foot's ball and its own middle (SPIN_CENTER; the root really moves a little, a
+## pivot turn is not about the body's middle), in between it holds; the node's heading (the mover's) runs
+## ahead by up to SPIN_LAG
+func _spin_turn(dyaw: float, lag0: float) -> void:
+	var yaw := global_rotation.y
+	var body := yaw - dyaw + lag0
+	var want := body
+	var pa := _stand_point(-1)
+	for i in 2:
+		if step_t[i] >= 0.0 and spin_h[i] != null:
+			var sh: Array = spin_h[i]
+			want = lerp_angle(float(sh[0]), float(sh[1]), smoothstep(0.0, 1.0, clampf((step_t[i] + last_dt) / step_dur[i], 0.0, 1.0)))
+			pa = sh[2]
+	plant_lag = clampf(wrapf(want - yaw, -PI, PI), -SPIN_LAG, SPIN_LAG)
+	var turn := dyaw + plant_lag - lag0
+	var o := model.global_position
+	o.y = pa.y
+	var d := (pa - o) - (pa - o).rotated(Vector3.UP, turn)
+	d.y = 0.0
+	global_position += d
+	prev_pos += d     # not walking: the gait does not see it
+	plant_off = plant_off.lerp(Vector3.ZERO, 1.0 - exp(-last_dt * 2.0))
+	model.rotation.y = PI + plant_lag
+	model.position = model_base + global_basis.inverse() * plant_off
+	for i in 2:
+		var c: Variant = _contact(i)
+		prev_at[i] = skel.global_transform * (c as Vector3) if c != null else null
+
+## a turn on the spot still has steps to take (the body is not round yet, or a foot has to close up): the
+## mover keeps turning on the spot until it is done
+func spin_busy() -> bool:
+	if not spin or spin_t > 3.0:
+		return false
+	if step_t[0] >= 0.0 or step_t[1] >= 0.0 or absf(wrapf(turn_ahead - plant_lag, -PI, PI)) > SPOT_END:
+		return true
+	for i in 2:
+		if maxf(lock_c[i].length() / SPOT_C, absf(lock_yaw[i]) / SPOT_YAW) > 1.0:
+			return true
+	return false
+
+## where foot i really stands (world): the ball, which a turn pivots on; between both feet for -1
+func _stand_point(i: int) -> Vector3:
+	if i < 0:
+		return (_stand_point(0) + _stand_point(1)) * 0.5
+	var lp: Array = lock_prev[i]
+	return lp[1]
 
 ## walk and run share one phase, but their stances do not line up (a walk foot is still down when the run
 ## one has long pushed off), so while run_k moves the blended stance foot would be dragged along. Per clip,
@@ -798,7 +899,7 @@ func _foot_lock(delta: float) -> void:
 				if absf(lock_yaw[i]) > PIVOT_YAW:
 					lock_yaw[i] = clampf(lock_yaw[i], -PIVOT_YAW, PIVOT_YAW)
 					pivot_w[i] = 1.0
-			var on_ball := td and (pivot_w[i] > 0.0 or not hd)
+			var on_ball := td and (pivot_w[i] > 0.0 or heel_up[i] > 0.0 or not hd)
 			# position: the planted point (heel, toe pad or both) back where it was
 			var pa: Vector3 = toe if on_ball else (heel if not td else (heel + toe) * 0.5)
 			var was: Vector3 = pv[1] if on_ball else (pv[0] if not td else ((pv[0] as Vector3) + (pv[1] as Vector3)) * 0.5)
@@ -810,26 +911,37 @@ func _foot_lock(delta: float) -> void:
 			if lock_on[i] or was_down[i]:
 				lock_c[i] += d
 			lock_on[i] = true
-			if not pivoting and _needs_step(i, A):
+			var dA := Vector3.ZERO
+			if not pivoting and not spin:
+				var R0 := Basis(Vector3.UP, lock_yaw[i])
+				var hu := _heel_need(i, A, R0 * (heel - A) + A + lock_c[i], R0 * (toe - A) + A + lock_c[i])
+				heel_up[i] = maxf(hu[0], move_toward(heel_up[i], 0.0, delta * 3.0))
+				dA = hu[1] if float(hu[0]) >= heel_up[i] - 1e-4 else Vector3.ZERO
+			if not pivoting and not spin and _needs_step(i, A, dA):
 				# the body has got too far from the planted foot (a flick of the stick): a quick step, turned
 				# a little into the turn
 				_start_step(i, Vector3.ZERO, clampf(turn_ahead * 0.4, -0.3, 0.3), STEP_DUR, STEP_LIFT)
 				steps_taken += 1
 				planted = false
-			elif not pivoting:
-				_ease_overreach(i, A)
+			elif not pivoting and not spin:
+				_ease_overreach(i, A, dA)
 		var fa := S.basis * (B.origin - A)
 		var ha := atan2(fa.x, fa.z)
 		if req == i and step_t[i] < 0.0:
-			# turning on the spot / squaring up: this foot steps round to a spot on the ground turned `lead`
-			# (towards the new heading) about the body's centre; the spot is fixed in the world, so the turning
-			# body does not drag the foot along on its way down
-			var lead := clampf(turn_ahead, -SPOT_LEAD, SPOT_LEAD) if pivoting else 0.0
-			var O := global_position
+			# turning on the spot / squaring up: this foot steps round to where it stands once the body has
+			# turned `lead` over the other foot (an even share of what is left, so a half turn is: open, turn,
+			# close); the spot is fixed in the world, so the turning body does not drag the foot on its way down
+			var rem := wrapf(turn_ahead - plant_lag, -PI, PI) if spin else 0.0
+			var lead := 0.0
+			if absf(rem) > SPOT_END:
+				lead = rem / ceilf(absf(rem) / SPOT_LEAD)
 			var Pw := S * A
+			var O := _stand_point(1 - i).lerp(global_position, SPIN_CENTER)
 			O.y = Pw.y
-			_start_step(i, Vector3.ZERO, 0.0, SPOT_DUR, SPOT_LIFT if pivoting else SPOT_LIFT * 0.7)
+			_start_step(i, Vector3.ZERO, 0.0, SPOT_DUR if lead != 0.0 else SPOT_DUR * 0.8, SPOT_LIFT if spin else SPOT_LIFT * 0.7)
 			step_world[i] = [S * (A + lock_c[i]), ha + lock_yaw[i], O + Basis(Vector3.UP, lead) * (Pw - O), ha + lead]
+			var body := global_rotation.y + plant_lag
+			spin_h[i] = [body, body + lead, O] if spin else null
 			spot_steps += 1
 			planted = false
 		was_down[i] = hd or td
@@ -867,7 +979,9 @@ func _foot_lock(delta: float) -> void:
 				u = maxf(u, swing_t[i] / maxf(swing_t[i] + left, 1e-4))
 			var w := 1.0 - smoothstep(0.0, 1.0, u)
 			lock_c[i] = (swing_from[i][0] as Vector3) * w
-			lock_yaw[i] = float(swing_from[i][1]) * w
+			lock_yaw[i] = float(swing_from[i][1]) * w + _turn_aim() * (1.0 - w)
+		if not planted:
+			heel_up[i] = move_toward(heel_up[i], 0.0, delta * 4.0)
 		var R := Basis(Vector3.UP, lock_yaw[i])
 		var heel_c := R * (heel - A) + A + lock_c[i]
 		var toe_c := R * (toe - A) + A + lock_c[i]
@@ -875,15 +989,15 @@ func _foot_lock(delta: float) -> void:
 		var fb := R * F.basis
 		if lift > 0.0:
 			heel_c.y += lift; toe_c.y += lift; ankle.y += lift
-		if pivot_w[i] > 0.0:
+		if pivot_w[i] > 0.0 or heel_up[i] > 0.0:
 			var fwd := toe_c - heel_c
 			fwd.y = 0.0
-			var Rp := Basis(Vector3.UP.cross(fwd).normalized(), PIVOT_LIFT * smoothstep(0.0, 1.0, pivot_w[i]))
+			var Rp := Basis(Vector3.UP.cross(fwd).normalized(), maxf(PIVOT_LIFT * smoothstep(0.0, 1.0, pivot_w[i]), heel_up[i]))
 			ankle = toe_c + Rp * (ankle - toe_c)
 			heel_c = toe_c + Rp * (heel_c - toe_c)
 			fb = Rp * fb
 			pivot_w[i] = move_toward(pivot_w[i], 0.0, delta * 4.0)
-		if lock_c[i].length_squared() > 1e-10 or absf(lock_yaw[i]) > 1e-5 or pivot_w[i] > 0.0 or lift > 0.0 or hip_shift != Vector3.ZERO:
+		if lock_c[i].length_squared() > 1e-10 or absf(lock_yaw[i]) > 1e-5 or pivot_w[i] > 0.0 or heel_up[i] > 0.0 or lift > 0.0 or hip_shift != Vector3.ZERO:
 			_leg_ik(lb, ankle, fb, R)
 		var hw := S * heel_c
 		var tw := S * toe_c
@@ -900,7 +1014,7 @@ func _foot_lock(delta: float) -> void:
 ## foot is far off its animated spot
 ## a leg just past full stretch with the foot only a little off: no step for that, it gives a hair
 ## (the heel is about to come up anyway), at most SLIP a frame
-func _ease_overreach(i: int, A: Vector3) -> void:
+func _ease_overreach(i: int, A: Vector3, dA: Vector3) -> void:
 	var c: Vector3 = lock_c[i]
 	if c.length() < 0.005:
 		return
@@ -908,11 +1022,11 @@ func _ease_overreach(i: int, A: Vector3) -> void:
 	var H := skel.get_bone_global_pose(lb[0]).origin
 	var K := skel.get_bone_global_pose(lb[1]).origin
 	var ln := H.distance_to(K) + K.distance_to(A)
-	var over := (A + c - H).length() - 0.985 * ln
+	var over := (A + c + dA - H).length() - 0.985 * ln
 	if over > 0.0:
 		lock_c[i] = c * (1.0 - minf(minf(over, SLIP) / c.length(), 1.0))
 
-func _needs_step(i: int, A: Vector3) -> bool:
+func _needs_step(i: int, A: Vector3, dA: Vector3) -> bool:
 	var c: Vector3 = lock_c[i]
 	if c.length() < 0.05:
 		return false
@@ -922,10 +1036,41 @@ func _needs_step(i: int, A: Vector3) -> bool:
 	var H := skel.get_bone_global_pose(lb[0]).origin
 	var K := skel.get_bone_global_pose(lb[1]).origin
 	var ln := H.distance_to(K) + K.distance_to(A)
-	var r := (A + c - H).length() / ln
+	var r := (A + c + dA - H).length() / ln
 	if r > 1.0 or (r > 0.99 and c.length() > 0.095):
 		return true
 	return c.length() > 0.1 and r > STEP_REACH and r > (A - H).length() / ln + 0.05
+
+## a trailing leg stretched past HEEL_FROM rolls up onto the ball, as at push-off, before it would need a step:
+## [heel angle that brings it back within HEEL_FROM (at most HEEL_UP), how far that moves the ankle]
+func _heel_need(i: int, A: Vector3, heel_c: Vector3, toe_c: Vector3) -> Array:
+	if anim != "move" or move_w < 0.5:
+		return [0.0, Vector3.ZERO]
+	var lb: Array = legs[i]
+	var H := skel.get_bone_global_pose(lb[0]).origin
+	var K := skel.get_bone_global_pose(lb[1]).origin
+	var ln := H.distance_to(K) + K.distance_to(A)
+	var ank := A + lock_c[i]
+	var fwd := toe_c - heel_c
+	fwd.y = 0.0
+	if (ank - H).length() <= HEEL_FROM * ln or (H - ank).dot(fwd) <= 0.0:
+		return [0.0, Vector3.ZERO]
+	var ax := Vector3.UP.cross(fwd).normalized()
+	var p := ank
+	for k in range(1, 9):
+		var a := HEEL_UP * k / 8.0
+		p = toe_c + Basis(ax, a) * (ank - toe_c)
+		if (p - H).length() <= HEEL_FROM * ln:
+			return [a, p - ank]
+	return [HEEL_UP, p - ank]
+
+## the twist a foot comes down with while walking / running round a bend: turned into the turn by a little
+## over half of what the body will turn while it is down, so over its stance it goes from toed-in to toed-out
+func _turn_aim() -> float:
+	if anim != "move" or move_w < 0.5 or pivoting or phase_rate < 0.05:
+		return 0.0
+	var stance := lerpf(0.62, 0.4, run_k) / phase_rate
+	return clampf(turn_w * stance * 0.6, -TURN_AIM, TURN_AIM)
 
 func _start_step(i: int, to_c: Vector3, to_yaw: float, dur: float, lift: float) -> void:
 	step_t[i] = 0.0
@@ -943,17 +1088,32 @@ func _start_step(i: int, to_c: Vector3, to_yaw: float, dur: float, lift: float) 
 func _step_request(on: bool, delta: float) -> int:
 	if step_t[0] >= 0.0 or step_t[1] >= 0.0 or not on:
 		return -1
-	idle_still = idle_still + delta if anim == "idle" and not pivoting else 0.0
-	if pivoting:
+	idle_still = idle_still + delta if anim == "idle" and not spin else 0.0
+	if spin:
 		if not (lock_on[0] and lock_on[1]):
+			spot_gap = 0.0
 			return -1
-		var need := 0.0
+		spot_gap += delta
+		if spot_gap < SPOT_GAP:
+			return -1
+		# the feet take turns, inner foot first (after a moment for the head to lead); once the body is round,
+		# the foot left behind closes up
+		var rem := wrapf(turn_ahead - plant_lag, -PI, PI)
+		if absf(rem) > SPOT_END:
+			if last_step_foot < 0:
+				spin_wait += delta
+				if spin_wait < SPOT_WAIT:
+					return -1
+			return (1 - last_step_foot) if last_step_foot >= 0 else (0 if rem > 0.0 else 1)
+		var worst := -1
+		var wv := 1.0
 		for i in 2:
-			need = maxf(need, maxf(absf(lock_yaw[i]) / SPOT_YAW, lock_c[i].length() / SPOT_C) + pivot_w[i] * 2.0)
-		if need < 1.0:
-			return -1
-		var inner := 0 if turn_ahead > 0.0 else 1
-		return (1 - last_step_foot) if last_step_foot >= 0 else inner
+			var v := maxf(lock_c[i].length() / SPOT_C, absf(lock_yaw[i]) / SPOT_YAW) + (0.5 if i != last_step_foot else 0.0)
+			if v > wv:
+				wv = v
+				worst = i
+		return worst
+	spin_wait = 0.0
 	last_step_foot = -1
 	if anim == "idle" and idle_still > 0.25:
 		var worst := -1
