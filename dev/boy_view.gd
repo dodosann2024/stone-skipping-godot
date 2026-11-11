@@ -71,6 +71,30 @@ func _initialize() -> void:
 		["cheer", "cheer", 1.0, 0.3, 0.1, 2.9, 0.85],
 		["oops", "oops", 1.0, 0.3, 0.1, 2.9, 0.85],
 	]
+	# shoulder close-ups (--set=shoulder): [.., target x (+ = his right)]
+	var sh := [
+		["sh_front", "idle", 0.0, 0.0, 0.05, 0.75, 0.93, 0.06],
+		["sh_34", "idle", 0.0, 0.75, 0.1, 0.62, 0.95, 0.1],
+		["sh_side", "idle", 0.0, PI / 2, 0.05, 0.6, 0.95, 0.0],
+		["sh_back34", "idle", 0.0, PI * 0.72, 0.15, 0.62, 0.95, 0.1],
+		["sh_back", "idle", 0.0, PI, 0.1, 0.75, 0.93, -0.06],
+		["sh_top", "idle", 0.0, 0.4, 0.9, 0.7, 0.95, 0.08],
+		["sh_raise", "cheer", 1.0, 0.5, 0.1, 0.8, 1.0, 0.08],
+		["sh_raise_back", "cheer", 1.0, PI * 0.8, 0.15, 0.8, 1.0, 0.08],
+		["sh_charge", "charge", 1.0, 1.9, 0.15, 0.8, 0.9, 0.0],
+		["sh_charge_front", "charge", 1.0, 0.5, 0.1, 0.8, 0.9, 0.0],
+		["sh_release", "release", 1.0, 0.9, 0.1, 0.8, 0.9, 0.0],
+		["sh_follow", "follow", 1.0, PI * 0.7, 0.2, 0.85, 0.9, 0.0],
+		["sh_charge_c", "charge_c", 1.0, 1.2, 0.2, 0.8, 0.75, 0.0],
+		["sh_release_c", "release_c", 1.0, 0.9, 0.15, 0.8, 0.75, 0.0],
+		["sh_walk", "walk", 0.25, 1.2, 0.1, 0.8, 0.92, 0.0],
+		["sh_run", "run", 0.2, 1.0, 0.1, 0.8, 0.92, 0.0],
+		["sh_sleep", "sleep", 0.0, PI / 2, 0.5, 1.0, 0.75, 0.0],
+		["sh_sun", "sun", 0.0, PI / 2, 0.6, 1.0, 0.3, 0.0],
+	]
+	for a in OS.get_cmdline_user_args():
+		if a == "--set=shoulder":
+			shots = sh
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--out="):
 			out_dir = a.substr(6)
@@ -89,7 +113,7 @@ func _process(_d: float) -> bool:
 		var yaw: float = s[3]
 		var pitch: float = s[4]
 		var dist: float = s[5]
-		var tgt := Vector3(0, s[6], 0)
+		var tgt := Vector3(float(s[7]) if s.size() > 7 else 0.0, s[6], 0)
 		# boy faces -Z, so "front" camera sits at -Z
 		cam.position = tgt + Vector3(-sin(yaw) * cos(pitch), sin(pitch), -cos(yaw) * cos(pitch)) * dist
 		cam.look_at(tgt, Vector3.UP)

@@ -3396,6 +3396,72 @@ func _demo_wait_ready(shots: Array) -> void:
 		_shot(shots[2])
 	await _wait(1.6)
 
+## the right shoulder (between the clavicle end and the arm joint), in the world
+func _shoulder_pos(side := "r") -> Vector3:
+	var sk := boy.skel
+	var a := sk.get_bone_global_pose(sk.find_bone("upperarm_" + side)).origin
+	var c := sk.get_bone_global_pose(sk.find_bone("clavicle_" + side)).origin
+	return sk.global_transform * a.lerp(c, 0.25)
+
+## v16: shoulder close-ups in daylight - rest pose all round, arm raised, the throws, walk / run, then the
+## hammock and the towel (camera yaw relative to his facing: 0 behind, PI in front, +PI/2 his right)
+func _v16_sequence(pre: String) -> void:
+	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+	await _wait(0.6)
+	demo_nocut = true
+	ui_root.visible = false
+	var k := float(_opt("shdist", "1.0"))
+	var y0 := player.rotation.y
+	for s: Array in [["rest_front", "idle", 0.0, 0.3, PI - 0.15, 0.05, 0.75], ["rest_34", "idle", 0.0, 0.3, PI * 0.72, 0.15, 0.6],
+			["rest_side", "idle", 0.0, 0.3, PI * 0.5, 0.06, 0.6], ["rest_back34", "idle", 0.0, 0.3, PI * 0.28, 0.2, 0.6],
+			["rest_back", "idle", 0.0, 0.3, 0.1, 0.12, 0.75], ["rest_top", "idle", 0.0, 0.3, PI * 0.6, 0.85, 0.6],
+			["raise_front", "cheer", 1.0, 0.45, PI * 0.8, 0.1, 0.8], ["raise_back", "cheer", 1.0, 0.45, PI * 0.25, 0.2, 0.8],
+			["throw_windup", "charge", 1.0, 0.3, PI * 0.4, 0.15, 0.85], ["throw_windup_back", "charge", 1.0, 0.3, 0.2, 0.25, 0.85],
+			["throw_release", "release", 1.0, 0.3, PI * 0.75, 0.12, 0.85], ["throw_follow", "follow", 1.0, 0.3, 0.3, 0.2, 0.9],
+			["crouch_windup", "charge_c", 1.0, 0.3, PI * 0.4, 0.2, 0.85], ["crouch_release", "release_c", 1.0, 0.3, PI * 0.75, 0.15, 0.85],
+			["walk", "walk", 0.25, 0.25, PI * 0.55, 0.1, 0.75], ["run", "run", 0.2, 0.2, PI * 0.6, 0.1, 0.8]]:
+		player.rotation.y = y0
+		boy.debug_pose(s[1], s[2], s[3])
+		await get_tree().process_frame
+		_fixed_cam(_shoulder_pos(), y0 + float(s[4]), s[5], float(s[6]) * k)
+		await _wait(0.3)
+		_shot(pre + "v16_" + s[0])
+	boy.frozen = false
+	_free_cam()
+	demo_nocut = false
+	# lying down: the hammock, then the towel
+	var hs := _hammock_spot()
+	var bed: Vector3 = hs[0]
+	var side: Vector3 = hs[2]
+	_place(bed + side * 1.2, atan2(side.x, side.z))
+	_begin_rest("sleep")
+	while rest_phase < 4:
+		await get_tree().process_frame
+	await _wait(1.0)
+	demo_nocut = true
+	_fixed_cam(_shoulder_pos(), atan2(side.x, side.z) + 0.3, 0.7, 0.9)
+	await _wait(0.3)
+	_shot(pre + "v16_hammock")
+	demo_nocut = false
+	_free_cam()
+	_wake()
+	while mode != Mode.EXPLORE:
+		await get_tree().process_frame
+	var td := island.towel_dir
+	var sd := td.cross(Vector3.UP).normalized()
+	_place(island.towel_pos + sd * 1.3 + td * 0.4, atan2(sd.x, sd.z))
+	_begin_rest("sun")
+	while rest_phase < 4:
+		await get_tree().process_frame
+	await _wait(1.0)
+	demo_nocut = true
+	_fixed_cam(_shoulder_pos(), atan2(sd.x, sd.z) + 0.4, 0.75, 0.9)
+	await _wait(0.3)
+	_shot(pre + "v16_sun")
+	demo_nocut = false
+	ui_root.visible = true
+	_free_cam()
+
 ## v15: aiming by swipe - the pad and angle sliders, aiming left / right (arrow, preview, readout, the chest
 ## turning first), cancel, a flicked throw, a too-steep launch, a too-flat stone, a slow release (no spin)
 func _v15_sequence(pre: String) -> void:
@@ -3489,6 +3555,8 @@ func _run_demo4() -> void:
 				await _v14_sequence(pre)
 			elif what == "v15":
 				await _v15_sequence(pre)
+			elif what == "v16":
+				await _v16_sequence(pre)
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
@@ -3689,6 +3757,51 @@ func _video_seg(seg: String) -> void:
 			await _wait(5.0)
 			_toggle_night()
 			demo_nocut = false
+
+		"shoulder16":
+			# close on the right shoulder in daylight: once round him at rest, the arms going up (cheer),
+			# a standing and a crouching throw in slow motion, then a walk and a run cycle
+			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+			await _wait(0.3)
+			demo_nocut = true
+			ui_root.visible = false
+			var y0 := player.rotation.y
+			var tc := float(boy.clips["throw_stand"]["t_charge"])
+			var tcc := float(boy.clips["throw_crouch"]["t_charge"])
+			var cl := float(boy.clips["cheer"]["length"])
+			var k := float(_opt("shdist", "0.6"))
+			# [pose, from, to, seconds, cam yaw from, cam yaw to, pitch, dist]
+			for s: Array in [["idle", 0.0, 2.0, 5.0, PI - 0.1, 0.15, 0.12, 0.8],
+					["cheer", 0.0, cl * 0.75, 3.0, PI * 0.8, PI * 0.65, 0.12, 0.9],
+					["cheer", 0.0, cl * 0.75, 3.0, PI * 0.25, PI * 0.35, 0.2, 0.9],
+					["charge", 0.0, 1.0 / tc * 1.15, 4.0, PI * 0.45, PI * 0.3, 0.15, 0.95],
+					["charge", 0.0, 1.0 / tc * 1.15, 4.0, PI * 0.8, PI * 0.7, 0.12, 0.95],
+					["charge_c", 0.0, 1.0 / tcc * 1.15, 4.0, PI * 0.45, PI * 0.6, 0.2, 0.95],
+					["walk", 0.0, 2.0, 2.5, PI * 0.55, PI * 0.45, 0.1, 0.85],
+					["run", 0.0, 2.0, 2.0, PI * 0.6, PI * 0.5, 0.1, 0.9]]:
+				var t0 := gt
+				var tgt := Vector3.ZERO
+				while gt - t0 < float(s[3]):
+					var u := (gt - t0) / float(s[3])
+					var v := lerpf(float(s[1]), float(s[2]), u)
+					player.rotation.y = y0
+					match String(s[0]):
+						"cheer":
+							boy.debug_pose("cheer", 1.0, v)
+						"charge", "charge_c":
+							boy.debug_pose(s[0], v)
+						"walk", "run":
+							boy.debug_pose(s[0], 1.0, fmod(v, 1.0))
+						_:
+							boy.debug_pose("idle", 1.0, v)
+					var sp := _shoulder_pos()
+					tgt = sp if gt - t0 < 0.01 else tgt.lerp(sp, 0.25)
+					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], float(s[7]) * k)
+					await get_tree().process_frame
+			boy.frozen = false
+			demo_nocut = false
+			ui_root.visible = true
+			_free_cam()
 
 		"throw15":
 			# aiming by swipe on the dock: left with a flick, right with a slow release (no spin), the
