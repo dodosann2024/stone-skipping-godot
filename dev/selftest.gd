@@ -426,12 +426,141 @@ func _arm_check() -> void:
 		print("SELFTEST %-28s %s  (%d frames; min %s)" % [tag, "ok" if bad.is_empty() else "FAIL", w["frames"], ", ".join(parts)])
 		if not bad.is_empty():
 			fails.append(tag + ": " + "; ".join(bad))
+	# aiming twists the chest over the hips (up to TWIST_MAX either way): the whole wind-up with the full
+	# twist on, then the swing while the hips catch up
+	var holds := {}
+	for clip: String in ["throw_stand", "throw_crouch"]:
+		holds[clip] = float(m.boy.clips[clip]["t_charge"])
+	for tw: float in [m.TWIST_MAX, -m.TWIST_MAX]:
+		var rt: Dictionary = ArmClearance.new().run(m, ["throw_stand", "throw_crouch"], tw, holds)
+		for clip: String in rt:
+			var w: Dictionary = rt[clip]
+			var bad: Array[String] = []
+			var parts: Array[String] = []
+			for k: String in MARGIN:
+				var c: float = w[k][0]
+				parts.append("%s %+.1f cm" % [NAMES[k], c * 85.0])
+				if c < MARGIN[k]:
+					bad.append("%s %+.1f cm (%s at %.2f s)" % [NAMES[k], c * 85.0, w[k][1], w[k][2]])
+			var tag := "arm clearance %s twist %s" % [clip.trim_prefix("throw_"), "L" if tw > 0.0 else "R"]
+			print("SELFTEST %-28s %s  (%d frames; min %s)" % [tag, "ok" if bad.is_empty() else "FAIL", w["frames"], ", ".join(parts)])
+			if not bad.is_empty():
+				fails.append(tag + ": " + "; ".join(bad))
+
+## the throw physics: launch elevation, the stone's tilt, spin and power each change the skips the way real
+## stones do (sweet spot near 20 deg tilt, steep launches / steep or flat stones dive, spin and speed help)
+func _angle_check() -> void:
+	var sk := func(pw: float, el: float, tilt: float, s: float) -> int: return int(m.sim_throw(pw, el, tilt, s)["skips"])
+	var el := [sk.call(1.0, 0.0, 20.0, 1.0), sk.call(1.0, 15.0, 20.0, 1.0), sk.call(1.0, 22.0, 20.0, 1.0), sk.call(1.0, 30.0, 20.0, 1.0)]
+	var tl := [sk.call(1.0, 4.0, 0.0, 1.0), sk.call(1.0, 4.0, 5.0, 1.0), sk.call(1.0, 4.0, 12.0, 1.0), sk.call(1.0, 4.0, 20.0, 1.0),
+		sk.call(1.0, 4.0, 28.0, 1.0), sk.call(1.0, 4.0, 35.0, 1.0), sk.call(1.0, 4.0, 45.0, 1.0)]
+	var sp := [sk.call(1.0, 4.0, 20.0, 0.2), sk.call(1.0, 4.0, 20.0, 0.6), sk.call(1.0, 4.0, 20.0, 1.0)]
+	var pw := [sk.call(0.2, 4.0, 20.0, 1.0), sk.call(0.5, 4.0, 20.0, 1.0), sk.call(1.0, 4.0, 20.0, 1.0)]
+	var steep: Dictionary = m.sim_throw(1.0, 30.0, 20.0, 1.0)
+	var crouch_low: Dictionary = m.sim_throw(0.3, 4.0, 20.0, 1.0, "crouch")
+	var stand_low: Dictionary = m.sim_throw(0.3, 4.0, 20.0, 1.0, "stand")
+	var ok: bool = el[0] > el[1] and el[1] > el[2] and el[3] == 0 and steep["why"] == "steep" \
+		and tl[3] > tl[2] and tl[2] > tl[1] and tl[0] == 0 and tl[3] > tl[4] and tl[4] > tl[5] and tl[6] == 0 \
+		and sp[2] > sp[1] and sp[1] > sp[0] and pw[2] > pw[1] and pw[1] > pw[0] and tl[3] >= 15 \
+		and float(crouch_low["entry"]) < float(stand_low["entry"])
+	print("SELFTEST %-28s %s  (elevation 0/15/22/30: %s · tilt 0/5/12/20/28/35/45: %s · spin .2/.6/1: %s · power .2/.5/1: %s · entry at 30%% power stand %.1f / crouch %.1f deg)" % [
+		"throw angles -> skips", "ok" if ok else "FAIL", el, tl, sp, pw, stand_low["entry"], crouch_low["entry"]])
+	if not ok:
+		fails.append("angles do not change the skips as expected")
+
+## the swipe in the game: direction = aim, length = power, a flick spins, swiping back cancels; the kid
+## faces the aim when the stone leaves his hand and the stone flies along the aim; a steep launch dives
+func _swipe_check() -> void:
+	m._place(Vector3(0.0, 0, m.island.dock_end_z + 1.6), 0.0)
+	await _frames(5)
+	m._enter_throw()
+	m.boy.stance = "stand"
+	await _wait(2.0)
+	m._set_angles(4.0, 20.0)
+	var c: Vector2 = m.throw_pad.pad_c
+	var u: float = m._swipe_unit()
+	var notes: Array[String] = []
+	var ok := true
+	for case: Array in [["left flick", Vector2(-0.2, -0.38), true], ["right slow", Vector2(0.2, -0.3), false], ["straight flick", Vector2(0.0, -0.46), true]]:
+		var d: Vector2 = case[1] * u
+		var view: float = m.cam_aim_yaw
+		m._swipe_press(c, m.gt)
+		for k in 8:
+			await _frames(1)
+			m._swipe_move(c + d * (k + 1) / 8.0, m.gt)
+		await _wait(0.6)
+		var yaw0: float = m.aim_yaw
+		var p0: float = m.power
+		if case[2]:
+			for k in 3:
+				await _frames(1)
+				m._swipe_move(c + d + d.normalized() * u * 0.1 * (k + 1), m.gt)
+			m._swipe_release(c + d + d.normalized() * u * 0.3, m.gt)
+		else:
+			await _frames(1)
+			m._swipe_release(c + d, m.gt)
+		var spin0: float = m.throw_spin
+		if not await _until(func() -> bool: return m.state == m.State.FLYING, 3.0):
+			ok = false
+			notes.append("%s: no throw" % case[0])
+			continue
+		var vy := atan2(-m.stone_vel.x, -m.stone_vel.z)
+		var face := absf(wrapf(m.player.rotation.y - m.aim_yaw, -PI, PI))
+		var want := -atan2(d.x, -d.y)
+		var dir_ok := absf(wrapf(yaw0 - view - want, -PI, PI)) < 0.02
+		var spin_ok := spin0 > 0.85 if case[2] else spin0 < 0.35
+		var c_ok: bool = dir_ok and spin_ok and absf(wrapf(vy - yaw0, -PI, PI)) < 0.01 and face < 0.06 and p0 > 0.6
+		ok = ok and c_ok
+		notes.append("%s: aim %+.0f deg (view %+.0f), power %d%%, spin %d%%, flies %+.0f deg, body off aim %.1f deg%s" % [case[0], rad_to_deg(yaw0), rad_to_deg(view), roundi(p0 * 100),
+			roundi(spin0 * 100), rad_to_deg(vy), rad_to_deg(face), "" if c_ok else " FAIL"])
+		if not await _until(func() -> bool: return m.state == m.State.READY, 25.0):
+			ok = false
+			notes.append("never finished")
+			break
+		await _wait(2.2)
+	# swiping back towards the kid cancels and keeps the aim
+	var keep: float = m.aim_yaw
+	m._swipe_press(c, m.gt)
+	for k in 6:
+		await _frames(1)
+		m._swipe_move(c + Vector2(-0.25, -0.25) * u * (k + 1) / 6.0, m.gt)
+	for k in 6:
+		await _frames(1)
+		m._swipe_move(c + Vector2(-0.25, -0.25).lerp(Vector2(0.0, 0.12), (k + 1) / 6.0) * u, m.gt)
+	m._swipe_release(c + Vector2(0.0, 0.12) * u, m.gt)
+	await _frames(3)
+	var cancel_ok: bool = m.state == m.State.READY and absf(m.aim_yaw - keep) < 1e-4
+	ok = ok and cancel_ok
+	notes.append("pull back: %s" % ("cancelled" if cancel_ok else "FAIL (state %d)" % m.state))
+	# a 30 deg launch from the standing release dives on the first touch, and the hint says why
+	m._set_angles(30.0, 20.0)
+	await _frames(2)
+	m._swipe_press(c, m.gt)
+	for k in 8:
+		await _frames(1)
+		m._swipe_move(c + Vector2(0.0, -0.47) * u * (k + 1) / 8.0, m.gt)
+	for k in 3:
+		await _frames(1)
+		m._swipe_move(c + Vector2(0.0, -0.47 - 0.1 * (k + 1)) * u, m.gt)
+	m._swipe_release(c + Vector2(0.0, -0.77) * u, m.gt)
+	await _until(func() -> bool: return m.state == m.State.READY, 25.0)
+	var steep_ok: bool = m.skips == 0 and "太陡" in m.result_text and m.last_tip != ""
+	ok = ok and steep_ok
+	notes.append("30 deg launch: %d skips, '%s' / '%s'%s" % [m.skips, m.result_text, m.last_tip.replace("\n", " | "), "" if steep_ok else " FAIL"])
+	m._set_angles(4.0, 20.0)
+	await _wait(2.0)
+	m._leave_throw()
+	await _frames(3)
+	print("SELFTEST %-28s %s  (%s)" % ["swipe throw", "ok" if ok else "FAIL", "; ".join(notes)])
+	if not ok:
+		fails.append("swipe throw")
 
 
 func run(main: Node) -> void:
 	m = main
 	await _wait(0.5)
 	_arm_check()
+	_angle_check()
 	_gait_check()
 	_slide_check()
 	await _turn_check()
@@ -476,6 +605,8 @@ func run(main: Node) -> void:
 		m._leave_throw()
 		await _frames(3)
 		await _can_walk("after dock throw" + (" (crouch)" if crouch else ""))
+	await _swipe_check()
+	await _can_walk("after swipe throws")
 	# entering and leaving the dock without throwing
 	m._place(Vector3(-0.3, 0, m.island.dock_end_z + 1.6), 0.1)
 	m._enter_throw()

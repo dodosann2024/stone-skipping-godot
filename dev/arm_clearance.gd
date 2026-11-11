@@ -203,7 +203,9 @@ func _frame() -> Dictionary:
 
 ## seeks every frame (1/30 s) of each clip on a private copy of the model;
 ## -> {clip: {key: [worst clearance, label, time]}}
-func run(host: Node, clips: Array) -> Dictionary:
+## twist: the aiming chest twist (Boy.twist_spine) applied on top of every frame, in full up to
+## twist_hold[clip] s (the wind-up he aims in) and then fading as the hips square up (rate 26 /s, as in main)
+func run(host: Node, clips: Array, twist := 0.0, twist_hold := {}) -> Dictionary:
 	var model: Node3D = (load("res://boy/boy.glb") as PackedScene).instantiate()
 	host.add_child(model)
 	sk = model.find_child("Skeleton3D") as Skeleton3D
@@ -221,6 +223,9 @@ func run(host: Node, clips: Array) -> Dictionary:
 		var n := int(round(length * 30.0))
 		for f in n + 1:
 			ap.seek(f / 30.0, true)
+			if twist != 0.0:
+				var hold := float(twist_hold.get(clip, length))
+				Boy.twist_spine(sk, twist * exp(-26.0 * maxf(f / 30.0 - hold, 0.0)))
 			var c := _frame()
 			for k: String in c:
 				if not worst.has(k) or c[k][0] < worst[k][0]:
