@@ -92,9 +92,45 @@ func _initialize() -> void:
 		["sh_sleep", "sleep", 0.0, PI / 2, 0.5, 1.0, 0.75, 0.0],
 		["sh_sun", "sun", 0.0, PI / 2, 0.6, 1.0, 0.3, 0.0],
 	]
+	# hair close-ups (--set=hair): [.., target x, hat on]
+	var hr := []
+	for hat_on in [true, false]:
+		var sfx := "" if hat_on else "_nohat"
+		for s: Array in [["front", 0.0, 0.05], ["34", 0.75, 0.1], ["side", PI / 2, 0.05], ["back34", PI * 0.75, 0.15],
+				["back", PI, 0.1], ["top", 0.5, 0.9], ["low34", -0.7, -0.15]]:
+			hr.append(["hair_" + s[0] + sfx, "idle", 0.0, s[1], s[2], 0.42, 1.1, 0.0, hat_on])
+	# clothes close-ups (--set=clothes)
+	var cl := [
+		["cl_front", "idle", 0.0, 0.0, 0.05, 0.95, 0.8, 0.0],
+		["cl_34", "idle", 0.0, 0.7, 0.1, 0.95, 0.8, 0.0],
+		["cl_side", "idle", 0.0, PI / 2, 0.05, 0.95, 0.8, 0.0],
+		["cl_back", "idle", 0.0, PI, 0.1, 0.95, 0.8, 0.0],
+		["cl_back34", "idle", 0.0, PI * 0.75, 0.12, 0.95, 0.8, 0.0],
+		["cl_vest", "idle", 0.0, 0.35, 0.1, 0.5, 0.92, 0.0],
+		["cl_shorts", "idle", 0.0, 0.3, 0.0, 0.5, 0.6, 0.0],
+		["cl_hem", "idle", 0.0, 1.2, -0.1, 0.45, 0.5, 0.0],
+		["cl_armpit", "cheer", 1.0, 1.0, 0.1, 0.6, 0.95, 0.06],
+		["cl_walk", "walk", 0.25, 0.9, 0.05, 1.1, 0.75, 0.0],
+		["cl_run", "run", 0.2, -0.9, 0.05, 1.1, 0.75, 0.0],
+		["cl_charge", "charge", 1.0, 1.9, 0.15, 1.1, 0.8, 0.0],
+		["cl_release", "release", 1.0, 0.9, 0.1, 1.1, 0.8, 0.0],
+		["cl_charge_c", "charge_c", 1.0, 1.2, 0.2, 1.1, 0.65, 0.0],
+		["cl_walk_pit_l", "walk", 0.0, -1.2, 0.0, 0.42, 0.88, -0.12],
+		["cl_walk_pit_r", "walk", 0.5, 1.2, 0.0, 0.42, 0.88, 0.12],
+		["cl_walk83_a", "walk", 0.83, 0.0, 0.0, 0.7, 0.82, 0.0],
+		["cl_walk83_b", "walk", 0.83, PI, 0.0, 0.7, 0.82, 0.0],
+		["cl_walk33_a", "walk", 0.33, 0.0, 0.0, 0.7, 0.82, 0.0],
+		["cl_walk33_b", "walk", 0.33, PI, 0.0, 0.7, 0.82, 0.0],
+		["cl_sleep", "sleep", 0.0, PI / 2, 0.5, 1.2, 0.75, 0.0],
+		["cl_sun", "sun", 0.0, PI / 2, 0.6, 1.2, 0.3, 0.0],
+	]
 	for a in OS.get_cmdline_user_args():
+		if a == "--set=clothes":
+			shots = cl
 		if a == "--set=shoulder":
 			shots = sh
+		if a == "--set=hair":
+			shots = hr
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--out="):
 			out_dir = a.substr(6)
@@ -110,6 +146,7 @@ func _process(_d: float) -> bool:
 	var s: Array = shots[i]
 	if wait == 0:
 		boy.debug_pose(s[1], s[2], s[2] if String(s[1]) in ["walk", "run"] else 0.3)
+		boy.hat.visible = s.size() <= 8 or bool(s[8])
 		var yaw: float = s[3]
 		var pitch: float = s[4]
 		var dist: float = s[5]

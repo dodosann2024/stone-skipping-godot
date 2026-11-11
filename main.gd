@@ -3462,6 +3462,108 @@ func _v16_sequence(pre: String) -> void:
 	ui_root.visible = true
 	_free_cam()
 
+## a bone's position in the world, raised by `up` (m) along the world up axis
+func _bone_pos(bone: String, up := 0.0) -> Vector3:
+	var sk := boy.skel
+	return sk.global_transform * sk.get_bone_global_pose(sk.find_bone(bone)).origin + Vector3(0, up, 0)
+
+## v17 close-ups in the game's light: the hair (front / side / back / three-quarter / top, with and without
+## the hat, day and night, the hammock and the towel, the water reflection) and the clothes (front / side /
+## back, standing, walking, running, the throws, day and night). part "" = all, "hair" or "clothes".
+## Camera yaw is relative to his facing: 0 behind him, PI in front, +PI/2 his right.
+func _v17_sequence(pre: String, part: String) -> void:
+	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+	await _wait(0.6)
+	demo_nocut = true
+	ui_root.visible = false
+	var y0 := player.rotation.y
+	var k := float(_opt("hdist", "1.0"))
+	for night in [false, true]:
+		var tag := "night" if night else "day"
+		if night:
+			_toggle_night()
+			await _wait(2.9)
+		if part == "" or part == "hair":
+			var views := [["front", PI - 0.12, 0.06], ["34", PI * 0.75, 0.12], ["side", PI * 0.5, 0.06],
+					["back34", PI * 0.25, 0.18], ["back", 0.05, 0.12], ["top", PI * 0.7, 0.8]]
+			for hat_on in [true, false]:
+				boy.hat.visible = hat_on
+				for s: Array in views:
+					if night and String(s[0]) in ["side", "back", "top"]:
+						continue
+					player.rotation.y = y0
+					boy.debug_pose("idle", 1.0, 0.3)
+					await get_tree().process_frame
+					_fixed_cam(_bone_pos("head", 0.05), y0 + float(s[1]), s[2], 0.55 * k)
+					await _wait(0.4)
+					_shot(pre + "v17_hair_%s_%s%s" % [tag, s[0], "" if hat_on else "_nohat"])
+			boy.hat.visible = true
+		if part == "" or part == "clothes":
+			for s: Array in [["front", "idle", 0.0, 0.3, PI - 0.1, 0.08, 1.35], ["34", "idle", 0.0, 0.3, PI * 0.72, 0.15, 1.35],
+					["side", "idle", 0.0, 0.3, PI * 0.5, 0.08, 1.35], ["back", "idle", 0.0, 0.3, 0.08, 0.12, 1.35],
+					["back34", "idle", 0.0, 0.3, PI * 0.28, 0.2, 1.35], ["walk", "walk", 1.0, 0.25, PI * 0.55, 0.1, 1.45],
+					["run", "run", 1.0, 0.2, PI * 0.6, 0.1, 1.5], ["windup", "charge", 1.0, 0.3, PI * 0.4, 0.15, 1.5],
+					["release", "release", 1.0, 0.3, PI * 0.75, 0.12, 1.5], ["crouch", "charge_c", 1.0, 0.3, PI * 0.45, 0.2, 1.4],
+					["shorts_front", "idle", 0.0, 0.3, PI - 0.25, 0.1, 0.8], ["vest_close", "idle", 0.0, 0.3, PI * 0.8, 0.1, 0.75]]:
+				if night and String(s[0]) in ["walk", "run", "windup", "release", "crouch", "back34"]:
+					continue
+				player.rotation.y = y0
+				boy.debug_pose(s[1], s[2], s[3])
+				await get_tree().process_frame
+				var tgt := _bone_pos("spine_01", 0.0)
+				if String(s[0]) == "shorts_front":
+					tgt = _bone_pos("pelvis", -0.1)
+				elif String(s[0]) == "vest_close":
+					tgt = _bone_pos("spine_03", 0.0)
+				_fixed_cam(tgt, y0 + float(s[4]), s[5], float(s[6]) * k)
+				await _wait(0.4)
+				_shot(pre + "v17_clothes_%s_%s" % [tag, s[0]])
+		boy.frozen = false
+	_toggle_night()
+	await _wait(2.8)
+	if part == "" or part == "hair" or part == "refl":
+		# the reflection: standing at the end of the dock, seen from above the water in front of it (his
+		# mirror image lands on the water a metre or so out from the dock, clear of the deck)
+		_place(Vector3(0.0, 0, island.dock_end_z + 0.35), 0.0)
+		await _wait(1.0)
+		var hp := _bone_pos("head")
+		_fixed_cam(Vector3(hp.x, 0.4, hp.z - 2.4), player.rotation.y + PI - 0.15, 0.3, 3.8 * k)
+		await _wait(0.6)
+		_shot(pre + "v17_hair_day_reflection")
+		_free_cam()
+		# lying down: hat off in the hammock and on the towel
+		var hs := _hammock_spot()
+		var side: Vector3 = hs[2]
+		_place(hs[0] + side * 1.2, atan2(side.x, side.z))
+		_begin_rest("sleep")
+		while rest_phase < 4:
+			await get_tree().process_frame
+		await _wait(1.0)
+		_fixed_cam(_bone_pos("head"), atan2(side.x, side.z) + 0.5, 0.6, 0.8 * k)
+		await _wait(0.4)
+		_shot(pre + "v17_hair_day_hammock")
+		_free_cam()
+		_wake()
+		while mode != Mode.EXPLORE:
+			await get_tree().process_frame
+		var td := island.towel_dir
+		var sd := td.cross(Vector3.UP).normalized()
+		_place(island.towel_pos + sd * 1.3 + td * 0.4, atan2(sd.x, sd.z))
+		_begin_rest("sun")
+		while rest_phase < 4:
+			await get_tree().process_frame
+		await _wait(1.0)
+		_fixed_cam(_bone_pos("head"), atan2(sd.x, sd.z) + 0.6, 0.6, 0.8 * k)
+		await _wait(0.4)
+		_shot(pre + "v17_hair_day_sun")
+		_free_cam()
+		_wake()
+		while mode != Mode.EXPLORE:
+			await get_tree().process_frame
+	demo_nocut = false
+	ui_root.visible = true
+	_free_cam()
+
 ## v15: aiming by swipe - the pad and angle sliders, aiming left / right (arrow, preview, readout, the chest
 ## turning first), cancel, a flicked throw, a too-steep launch, a too-flat stone, a slow release (no spin)
 func _v15_sequence(pre: String) -> void:
@@ -3557,6 +3659,8 @@ func _run_demo4() -> void:
 				await _v15_sequence(pre)
 			elif what == "v16":
 				await _v16_sequence(pre)
+			elif what.begins_with("v17"):
+				await _v17_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
@@ -3798,6 +3902,50 @@ func _video_seg(seg: String) -> void:
 					tgt = sp if gt - t0 < 0.01 else tgt.lerp(sp, 0.25)
 					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], float(s[7]) * k)
 					await get_tree().process_frame
+			boy.frozen = false
+			demo_nocut = false
+			ui_root.visible = true
+			_free_cam()
+
+		"outfit17":
+			# close on the hair and the clothes: round his head and his body at rest, a walk, a run and a
+			# crouching throw (hair / hem sway), then the same orbits at night
+			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+			await _wait(0.3)
+			demo_nocut = true
+			ui_root.visible = false
+			var y0 := player.rotation.y
+			var tcc := float(boy.clips["throw_crouch"]["t_charge"])
+			# [pose, from, to, seconds, cam yaw from, cam yaw to, pitch, dist, bone, up, night]
+			for s: Array in [["idle", 0.0, 3.0, 6.0, PI - 0.1, -0.3, 0.1, 0.55, "head", 0.05, false],
+					["idle", 0.0, 3.0, 6.0, PI * 0.9, PI * 0.05, 0.08, 1.05, "spine_01", 0.0, false],
+					["walk", 0.0, 3.0, 3.0, PI * 0.65, PI * 0.4, 0.08, 1.2, "spine_01", 0.0, false],
+					["run", 0.0, 3.0, 2.5, PI * 0.4, PI * 0.6, 0.08, 1.3, "spine_01", 0.0, false],
+					["charge_c", 0.0, 1.0 / tcc * 1.15, 3.5, PI * 0.45, PI * 0.6, 0.15, 1.2, "spine_01", 0.0, false],
+					["idle", 0.0, 3.0, 5.0, PI - 0.1, PI * 0.2, 0.1, 0.55, "head", 0.05, true],
+					["idle", 0.0, 3.0, 5.0, PI * 0.9, PI * 0.3, 0.08, 1.05, "spine_01", 0.0, true]]:
+				if bool(s[10]) != night_on:
+					_toggle_night()
+					await _wait(2.9)
+				var t0 := gt
+				var tgt := Vector3.ZERO
+				while gt - t0 < float(s[3]):
+					var u := (gt - t0) / float(s[3])
+					var v := lerpf(float(s[1]), float(s[2]), u)
+					player.rotation.y = y0
+					match String(s[0]):
+						"charge_c":
+							boy.debug_pose(s[0], v)
+						"walk", "run":
+							boy.debug_pose(s[0], 1.0, fmod(v, 1.0))
+						_:
+							boy.debug_pose("idle", 1.0, v)
+					var bp := _bone_pos(s[8], s[9])
+					tgt = bp if gt - t0 < 0.01 else tgt.lerp(bp, 0.25)
+					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], s[7])
+					await get_tree().process_frame
+			if night_on:
+				_toggle_night()
 			boy.frozen = false
 			demo_nocut = false
 			ui_root.visible = true
