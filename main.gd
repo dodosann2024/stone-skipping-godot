@@ -2353,22 +2353,33 @@ func _hat_probe_tick() -> void:
 	hat_probe["max_deg"] = maxf(float(hat_probe["max_deg"]), rad_to_deg(e.y))
 	hat_probe["state"] = st
 	hat_probe["hat_s"] = boy.hat_s
+	hat_probe["act"] = action_btn.text if action_btn.visible else ""
+	hat_probe["rest_phase"] = rest_phase
 	JavaScriptBridge.eval("window.__hat = " + JSON.stringify(hat_probe), true)
 
-## &at=hammock|towel|bench: start next to it, so the browser check can rest there with the real buttons
+## &at=dock|hammock|towel|bench: start next to it, so the browser check can rest there with the real buttons
 func _hat_probe_place(at: String) -> void:
-	var sd := island.towel_dir.cross(Vector3.UP).normalized()
+	var td := island.towel_dir
+	var sd := td.cross(Vector3.UP).normalized()
+	var spots := []
+	var want: String = {"hammock": "sleep", "towel": "sun", "bench": "seat", "dock": "throw"}.get(at, "")
 	match at:
+		"dock":
+			spots = [Vector3(0.2, 0, island.dock_end_z + 1.5)]
 		"hammock":
 			var hs := _hammock_spot()
-			_place(hs[0] + hs[2] * 1.6, 0.0)
+			spots = [hs[0] + hs[2] * 1.6, hs[0] - hs[2] * 1.6]
 		"towel":
-			_place(island.towel_pos + sd * 1.4, 0.0)
+			for o: Vector3 in [sd * 1.3 + td * 0.4, -sd * 1.3 + td * 0.4, td * 1.3, -td * 1.3, sd * 1.4, -sd * 1.4]:
+				spots.append(island.towel_pos + o)
 		"bench":
 			var st: Dictionary = island.seats[0]
-			_place(_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.7), 0.0)
-		_:
-			return
+			spots = [_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.4), st["approach"]]
+	for p: Vector3 in spots:
+		_place(p, 0.0)
+		_update_action_kind()
+		if action_kind == want:
+			break
 	_snap_explore_cam()
 
 func _process(delta: float) -> void:
@@ -4129,6 +4140,65 @@ func _video_seg(seg: String) -> void:
 				_stop_walk()
 				await _wait(1.2)
 			_free_cam()
+
+		"hat20":
+			# the hat, followed at head height: walk, sharp turns, run onto the dock, a throw and a cheer, then the
+			# hammock, where his hand takes it over his face and back
+			var a := island.shore_pt(-1.32, 1.4)
+			var dock_foot := Vector3(0.0, 0, island.dock_start_z + 1.5)
+			var d0 := (dock_foot - a).normalized()
+			_place(a, atan2(-d0.x, -d0.z))
+			ex_yaw = face_yaw
+			_snap_cam_now()
+			demo_cam = true
+			demo_track = [face_yaw + PI * 0.5 + 0.5, 0.14, 2.6, 0.75, true]
+			var r := Vector3(d0.z, 0, -d0.x)
+			await _walk_to(a + d0 * 2.2, false, 3.0)
+			await _walk_to(a + d0 * 2.2 + r * 1.6, false, 2.0)
+			await _walk_to(a + d0 * 0.8 + r * 1.6, false, 2.0)
+			await _walk_to(a + d0 * 2.6 + r * 0.4, false, 2.2)
+			await _walk_to(dock_foot, true, 4.0)
+			await _walk_to(Vector3(0.2, 0, island.dock_end_z + 1.5), true, 4.0)
+			await _wait(0.4)
+			_enter_throw()
+			await _wait(1.0)
+			demo_track = [player.rotation.y + PI * 0.5 + 0.55, 0.16, 2.6, 0.6, true]
+			_begin_aim(Vector2.ZERO)
+			aim_pitch = 3.0
+			var t0 := gt
+			while gt - t0 < 1.4:
+				charge_t = minf((gt - t0) / 1.2, 1.0) * 0.9 * POWER_CYCLE * 0.5
+				await get_tree().process_frame
+			charge_t = 0.9 * POWER_CYCLE * 0.5
+			_throw()
+			fly_t = 0.0
+			while state != State.READY:
+				await get_tree().process_frame
+			if boy.anim != "react":
+				boy.react("cheer")
+			await _wait(2.6)
+			_leave_throw()
+			var hs := _hammock_spot()
+			var bed: Vector3 = hs[0]
+			var side: Vector3 = hs[2]
+			_place(bed + side * 2.2 + (island.hammock_b - island.hammock_a).normalized() * 0.8, atan2(side.x, side.z))
+			ex_yaw = face_yaw + PI + 0.5
+			_snap_cam_now()
+			_free_cam()
+			await _walk_to(bed + side * 1.2, false, 1.8)
+			_begin_rest("sleep")
+			var head: Vector3 = (boy.parts["head"] as Node3D).global_position
+			_fixed_cam(bed + Vector3(0, 0.25, 0), atan2(side.x, side.z) + 0.35, 0.32, 2.4)
+			while rest_phase < 4:
+				await get_tree().process_frame
+			await _wait(1.6)
+			_wake()
+			while mode != Mode.EXPLORE:
+				await get_tree().process_frame
+			await _wait(0.4)
+			_free_cam()
+			await _walk_to(head + side * 2.5, false, 2.0)
+			await _wait(0.5)
 
 		"boat14":
 			# the rowboat by the dock riding the swell: from the sea, from the dock, then at night
