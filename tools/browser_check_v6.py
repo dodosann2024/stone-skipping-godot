@@ -3,7 +3,7 @@ The page runs with ?hatprobe=1: every drawn frame main.gd compares the hat with 
 the head bone and publishes the worst offset per game state in window.__hat. Drives the game with real touches:
 walk, sharp joystick turns, run; then, each from a fresh load with &at=..., swipe throws at the dock end
 (cheer / oops), the hammock (睡觉), the beach towel (晒太阳) and the bench (坐下 -> 躺下 -> 起来).
-Usage: browser_check_v6.py BASE_URL OUTPREFIX [W H]"""
+Usage: browser_check_v6.py BASE_URL OUTPREFIX [W H [play,dock,hammock,towel,bench]]"""
 import sys, asyncio, json
 from playwright.async_api import async_playwright
 URL, OUT = sys.argv[1], sys.argv[2]
@@ -131,7 +131,9 @@ def swipe(dx, dy):
 
 
 ACT = (W - 119 * S, H - 103 * S)
-LIE = (W - 119 * S, H - 206 * S)
+# resting, the button column sits higher: 躺下 over 起来 (measured on the 390 x 844 screenshots)
+LIE = (W - 119 * S, H - 250 * S)
+UP = (W - 119 * S, H - 150 * S)
 
 
 async def main():
@@ -139,24 +141,30 @@ async def main():
         b = await p.chromium.launch(executable_path="/usr/bin/google-chrome", headless=True,
             args=["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"])
         res = {}
+        only = sys.argv[5].split(",") if len(sys.argv) > 5 else ["play", "dock", "hammock", "towel", "bench"]
         play = [("01_walk", stick(0, -36, 3000)), ("02_turns", zigzag()), ("03_turn_back", stick(0, 60, 2500)),
                 ("04_run", stick(0, -110, 6000))]
-        res["play"] = await session(b, "", play)
-        res["dock"] = await session(b, "dock", [
+        if "play" in only:
+            res["play"] = await session(b, "", play)
+        if "dock" in only:
+          res["dock"] = await session(b, "dock", [
             ("06_throw_mode", press(*ACT, lambda h: h["state"] == "throw/idle", 60000, 2000)),
             ("07_throw_a", swipe(-72, -136)), ("08_throw_b", swipe(10, -150)), ("09_throw_c", swipe(0, -45))])
-        res["hammock"] = await session(b, "hammock", [
+        if "hammock" in only:
+          res["hammock"] = await session(b, "hammock", [
             ("h1_sleep", press(*ACT, lambda h: h["state"] == "rest/sleep" and h["hat_s"] >= 1.0, 90000, 2500)),
             ("h2_get_up", press(W * 0.5, H * 0.4, lambda h: h["state"].startswith("explore/"), 90000, 1000)),
             ("h3_walk_off", stick(0, -60, 3000))])
-        res["towel"] = await session(b, "towel", [
+        if "towel" in only:
+          res["towel"] = await session(b, "towel", [
             ("t1_sun", press(*ACT, lambda h: h["state"] == "rest/sun" and h["hat_s"] >= 1.0, 90000, 2500)),
             ("t2_get_up", press(W * 0.5, H * 0.4, lambda h: h["state"].startswith("explore/"), 90000, 1000)),
             ("t3_walk_off", stick(0, -60, 3000))])
-        res["bench"] = await session(b, "bench", [
+        if "bench" in only:
+          res["bench"] = await session(b, "bench", [
             ("b1_sit", press(*ACT, lambda h: h["state"] == "rest/seat" and h["rest_phase"] == 4, 90000, 1500)),
             ("b2_lie", press(*LIE, lambda h: h["hat_s"] >= 1.0, 90000, 2500)),
-            ("b3_get_up", press(*ACT, lambda h: h["state"].startswith("explore/"), 90000, 1000)),
+            ("b3_get_up", press(*UP, lambda h: h["state"].startswith("explore/"), 90000, 1000)),
             ("b4_walk_off", stick(0, -60, 3000))])
         print("\n==== hat vs head bone, real web build %dx%d ====" % (W, H))
         for k, (h, out, logs) in res.items():

@@ -2370,8 +2370,8 @@ func _hat_probe_place(at: String) -> void:
 			var hs := _hammock_spot()
 			spots = [hs[0] + hs[2] * 1.6, hs[0] - hs[2] * 1.6]
 		"towel":
-			for o: Vector3 in [sd * 1.3 + td * 0.4, -sd * 1.3 + td * 0.4, td * 1.3, -td * 1.3, sd * 1.4, -sd * 1.4]:
-				spots.append(island.towel_pos + o)
+			# the beach chair on the +side wins the button within 1.25 m of its approach: start on the far side
+			spots = [island.towel_pos - sd * 1.0, island.towel_pos - sd * 1.3]
 		"bench":
 			var st: Dictionary = island.seats[0]
 			spots = [_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.4), st["approach"]]
