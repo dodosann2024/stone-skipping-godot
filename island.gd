@@ -43,6 +43,7 @@ const SEAT_TOP := 0.35   # seat height the boy's sitting clips are authored for
 var obstacles: Array = []   # [Vector2 centre, radius, top_y, name]
 var dock_boat: MeshInstance3D
 var boat_mat: ShaderMaterial
+var boat_tie := Vector3.ZERO
 var boat_rest := Transform3D.IDENTITY
 var boat_t := 0.0
 var boat_t0 := -1.0
@@ -716,7 +717,10 @@ func _build_dock() -> void:
 	tor.inner_radius = 0.22; tor.outer_radius = 0.36; tor.rings = 12; tor.ring_segments = 6
 	SB.prim(tor, Transform3D(Basis(Vector3.RIGHT, PI / 2.0), Vector3(-3.0, DECK_Y + 0.4, dock_end_z + 0.02)), Color(0.95, 0.3, 0.25))
 	# rowboat tied alongside
-	_float_boat(Vector3(2.3, 0.05, (dock_start_z + dock_end_z) * 0.5 - 1.0), 0.06, Color(0.3, 0.6, 0.8), Vector3(1.2, DECK_Y + 0.5, (dock_start_z + dock_end_z) * 0.5 + 0.2))
+	# (its line is knotted round the rope rail, where that sags between its posts)
+	var tz := (dock_start_z + dock_end_z) * 0.5 + 0.2
+	var tu := fposmod(dock_start_z - 0.6 - tz, 4.8) / 4.8
+	_float_boat(Vector3(2.3, 0.05, (dock_start_z + dock_end_z) * 0.5 - 1.0), 0.06, Color(0.3, 0.6, 0.8), Vector3(1.2, DECK_Y + 0.5 - 0.22 * sin(PI * tu), tz))
 	# sign at the dock entrance: an old broken board with a kid's doodle of stone skipping, no words
 	var sp = Vector3(-1.6, ground_h(-1.6, dock_start_z + 1.6), dock_start_z + 1.6)
 	var rs := rng.state
@@ -997,7 +1001,17 @@ func _float_boat(p: Vector3, yaw: float, stripe: Color, tie: Vector3) -> void:
 	_boat_mesh(mb, Transform3D.IDENTITY, stripe, seat_c, _wood(-0.1))
 	boat_rest = Transform3D(Basis(Vector3.UP, yaw), Vector3(p.x, -BOAT_WL, p.z))
 	var bow := Vector3(0, 0.3, BOAT_HALF - 0.12)
-	tube(mb, bow, boat_rest.affine_inverse() * tie, 0.02, 0.02, 4, Color(0.85, 0.75, 0.55))
+	# the line sags a little, and its dock end is pinned in boat.gdshader (vertex alpha 0.99 at the bow
+	# down to 0.69 at the tie = how far it follows the dock instead of the boat)
+	boat_tie = tie
+	var tie_l := boat_rest.affine_inverse() * tie
+	var n := 6
+	for i in n:
+		var s0 := float(i) / n
+		var s1 := float(i + 1) / n
+		var q0 := bow.lerp(tie_l, s0) + Vector3(0, -0.05 * sin(PI * s0), 0)
+		var q1 := bow.lerp(tie_l, s1) + Vector3(0, -0.05 * sin(PI * s1), 0)
+		tube(mb, q0, q1, 0.02, 0.02, 4, Color(0.85, 0.75, 0.55), 0.99 - 0.3 * s0, 0.99 - 0.3 * s1)
 	boat_mat = ShaderMaterial.new()
 	boat_mat.shader = load("res://shaders/boat.gdshader")
 	boat_mat.set_shader_parameter("hull_col", stripe)
@@ -1055,6 +1069,7 @@ func _bob_boat(t: float) -> void:
 		boat_v += acc * dt
 		boat_q += boat_v * dt
 	dock_boat.transform = Transform3D(b * Basis(Vector3.RIGHT, -boat_q.y) * Basis(Vector3.BACK, boat_q.z), c + Vector3(0, boat_q.x, 0))
+	boat_mat.set_shader_parameter("pin", dock_boat.transform.affine_inverse() * boat_rest)
 
 # ------------------------------------------------------------------ hut
 
