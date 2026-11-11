@@ -8,6 +8,7 @@ from mathutils import Vector, Matrix
 sys.path.insert(0, os.path.dirname(__file__))
 import shoulder
 import hair as hairkit
+import fabric
 from bl_ext.user_default.mpfb.services.humanservice import HumanService
 from bl_ext.user_default.mpfb.services.targetservice import TargetService
 
@@ -28,6 +29,7 @@ COLORS = {
     "band": (0.75, 0.20, 0.17),
     "lens": (0.06, 0.07, 0.09),
     "stone": (0.52, 0.52, 0.50),
+    "cord": (0.93, 0.91, 0.85),
 }
 
 
@@ -133,9 +135,11 @@ def scale_head(rig, body):
 HUG_RINGS = (0.62, 0.76, 0.88, 0.96)
 
 
-def shell(body, name, select, offset, mat, solid=0.0, relax=8, hug=None, resample=False):
+def shell(body, name, select, offset, mat, solid=0.0, relax=8, hug=None, resample=False, cloth=None):
     """copy the body faces where select(face) is true, smooth the cut edge along the body surface,
-    push the copy out by offset(co, n); boundary vertices where hug(co) sit closer to the body"""
+    push the copy out by offset(co, n); boundary vertices where hug(co) sit closer to the body.
+    cloth (fabric.Cloth) adds finer faces where folds go, the folds / hems themselves and the
+    per-vertex hem, seam and sway data for shaders/cloth.gdshader"""
     from mathutils.bvhtree import BVHTree
     src = bmesh.new()
     src.from_mesh(body.data)
@@ -150,6 +154,8 @@ def shell(body, name, select, offset, mat, solid=0.0, relax=8, hug=None, resampl
     for _ in range(2):
         lone = [f for f in bm.faces if sum(1 for e in f.edges if e.is_boundary) >= 3]
         bmesh.ops.delete(bm, geom=lone, context="FACES")
+    if cloth:
+        cloth.subdivide(bm, bvh, src)
     # relax the boundary: average along the cut, then snap back onto the body
     bnd = [v for v in bm.verts if any(e.is_boundary for e in v.link_edges)]
     for _ in range(relax):
@@ -161,18 +167,25 @@ def shell(body, name, select, offset, mat, solid=0.0, relax=8, hug=None, resampl
         for v, co in new.items():
             hit = bvh.find_nearest(co)
             v.co = hit[0] if hit[0] is not None else co
-    # pull the first inner ring a little so the cut faces don't get squashed
+    # pull the inner rings a little so the cut faces don't get squashed (more rings on the finer
+    # cloth faces, where the relaxed edge travels further in edge lengths)
     inner = set()
-    for v in bnd:
-        for e in v.link_edges:
-            o = e.other_vert(v)
-            if o not in bnd:
-                inner.add(o)
-    for v in inner:
-        nb = [e.other_vert(v) for e in v.link_edges]
-        co = v.co * 0.5 + sum((n.co for n in nb), Vector()) / len(nb) * 0.5
-        hit = bvh.find_nearest(co)
-        v.co = hit[0] if hit[0] is not None else co
+    ring = set(bnd)
+    for _ in range(3 if cloth else 1):
+        nxt = set()
+        for v in ring:
+            for e in v.link_edges:
+                o = e.other_vert(v)
+                if o not in bnd and o not in inner:
+                    nxt.add(o)
+        inner |= nxt
+        ring = nxt
+    for _ in range(3 if cloth else 1):
+        for v in inner:
+            nb = [e.other_vert(v) for e in v.link_edges]
+            co = v.co * 0.5 + sum((n.co for n in nb), Vector()) / len(nb) * 0.5
+            hit = bvh.find_nearest(co)
+            v.co = hit[0] if hit[0] is not None else co
     # resample: the relaxed vertices take the skin weights of where they slid to, so the skin under
     # a long-relaxed edge can't poke through it in strong poses
     from mathutils.interpolate import poly_3d_calc
@@ -207,11 +220,35 @@ def shell(body, name, select, offset, mat, solid=0.0, relax=8, hug=None, resampl
                     ease[v] = k
                     nxt += [e.other_vert(v) for e in v.link_edges]
             ring = [v for v in nxt if v not in ease]
+    ed = {}
+    bm.verts.index_update()
+    ease = {v.index: k for v, k in ease.items()}
+    if cloth:
+        ed = {v.index: d for v, d in cloth.edge_distance(bm).items()}
+        cloth.store(bm, ed)
+    bm.verts.ensure_lookup_table()
+    moves = []
+    folds = {}
     for v in bm.verts:
         hit = bvh.find_nearest(v.co)
         n = hit[1] if hit[1] is not None else v.normal
         n = (n + v.normal).normalized()
-        v.co = v.co + n * offset(v.co, n) * ease.get(v, 1.0)
+        d = offset(v.co, n) * ease.get(v.index, 1.0)
+        if cloth:
+            folds[v.index] = cloth.fold(v.co, n, ed[v.index])
+            d += folds[v.index]
+        moves.append(n * d)
+    if cloth:
+        cloth.cavity(bm, folds)
+        bm.verts.ensure_lookup_table()
+    for v, m in zip(bm.verts, moves):
+        v.co = v.co + m
+    bm.normal_update()
+    if cloth:
+        for v in bm.verts:
+            ns = [f.normal for f in v.link_faces]
+            if ns and min(a.dot(b) for a in ns for b in ns) < -0.3:
+                print("WARN folded-over cloth face", name, tuple(round(c, 3) for c in v.co))
     src.free()
     me = bpy.data.meshes.new(name)
     bm.to_mesh(me)
@@ -233,7 +270,8 @@ def shell(body, name, select, offset, mat, solid=0.0, relax=8, hug=None, resampl
         s.thickness = solid
         s.offset = 1.0
         s.use_rim = True
-        s.use_even_offset = True
+        # even offset multiplies the thickness where panels meet at a sharp angle (the shorts' crotch)
+        s.use_even_offset = cloth is None
         bpy.context.view_layer.objects.active = ob
         bpy.ops.object.modifier_move_to_index(modifier="solid", index=0)
         bpy.ops.object.modifier_apply(modifier="solid")
@@ -289,7 +327,25 @@ def build(rig, body, arm):
             return False
         return True
 
-    tank = shell(body, "Tank", tank_sel, lambda co, n: 0.004, "tank", relax=20, resample=True)
+    B = fabric.Body(body, J)
+
+    def under_vest(co):
+        """1 where the vest covers this point of the tank (its opening and armholes are open)"""
+        if co.z < hip_z + 0.085 or co.z > neck_z:
+            return 0.0
+        ax = abs(co.x)
+        if co.z > neck_z - 0.13 and ax > sh_x - 0.05:
+            return 0.0
+        if co.y < 0 and ax < 0.028 + max(0.0, co.z - (neck_z - 0.16)) * 0.45 + 0.006:
+            return 0.0
+        return 1.0
+
+    def tank_off(co, n):
+        # thinner under the vest's armholes, which hug the skin
+        return 0.0042 - 0.0016 * fabric.ss(neck_z - 0.17, neck_z - 0.12, co.z) * fabric.ss(sh_x - 0.11, sh_x - 0.07, abs(co.x))
+
+    tank = shell(body, "Tank", tank_sel, tank_off, "tank", solid=0.0008, relax=20, resample=True,
+                 cloth=fabric.tank(J, B, under_vest))
 
     # ---- open red vest
     def vest_sel(f):
@@ -310,8 +366,8 @@ def build(rig, body, arm):
             return False
         return True
 
-    vest = shell(body, "Vest", vest_sel, lambda co, n: 0.0075 + max(0.0, (hip_z + 0.2) - co.z) * 0.03, "vest", solid=0.003, relax=24,
-                 hug=lambda co: co.z > neck_z - 0.09 and abs(co.x) > sh_x - 0.055)
+    vest = shell(body, "Vest", vest_sel, lambda co, n: 0.0085 + max(0.0, (hip_z + 0.2) - co.z) * 0.03, "vest", solid=0.0035, relax=24,
+                 hug=lambda co: co.z > neck_z - 0.09 and abs(co.x) > sh_x - 0.055, cloth=fabric.vest(J, B))
 
     # ---- yellow shorts, flared hem
     hem_z = knee_z + 0.11
@@ -326,9 +382,11 @@ def build(rig, body, arm):
 
     def shorts_off(co, n):
         flare = max(0.0, (hem_z + 0.12) - co.z) / 0.12
-        return 0.007 + 0.022 * flare * flare
+        return 0.0085 + 0.022 * flare * flare
 
-    shorts = shell(body, "Shorts", shorts_sel, shorts_off, "shorts", solid=0.003)
+    shorts = shell(body, "Shorts", shorts_sel, shorts_off, "shorts", solid=0.0025,
+                   cloth=fabric.shorts(J, B, hem_z, hip_z + 0.095))
+    fabric.drawstring(rig, body, shorts, hip_z + 0.095, material("cord"), _tube)
 
     # ---- the v16 hair volume: only sizes the hat now (hair.py grows the hair cards under it)
     head_top = max(v.co.z for v in body.data.vertices)

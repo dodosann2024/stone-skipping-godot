@@ -6,6 +6,7 @@ from mathutils import Vector
 FPS = 30
 LOOPS = {"idle", "walk", "run", "hammock_sleep", "sun_rest", "seat_rest", "seat_nap"}
 RIGID = ("Hat", "Glasses", "Stone")      # bone-parented props (BoneAttachment3D in Godot)
+OWN_UV2 = ("hair", "tank", "vest", "shorts")
 
 
 def join_parts(rig):
@@ -19,8 +20,8 @@ def join_parts(rig):
             me.uv_layers.new()
         me.uv_layers[0].name = "UVMap"
         me.uv_layers[1].name = "Face"
-        if o.name == "Hair":
-            continue        # its UV2 carries the sway / layer data for hair.gdshader
+        if "cb" in me.attributes:
+            continue        # hair / clothes: UV2 carries their own data (hair.gdshader, cloth.gdshader)
         for d in me.uv_layers[1].data:
             d.uv = (5.0, 5.0)
     bpy.ops.object.select_all(action="DESELECT")
@@ -52,23 +53,26 @@ def bake_ao(objs):
 
 
 def face_mask(body, rig):
-    """AO lives in the colour's red channel; green = 1 on the face; blue = hair under the hat crown.
+    """AO lives in the colour's red channel; green = 1 on the face; blue / alpha = the "cb" / "ca"
+    attributes (hair under the hat crown; clothes: distance to the garment edge / to a seam).
     UV2 becomes one continuous front projection so the shader's fwidth() has no seams (except on the
-    hair, whose UV2 is its own data)"""
+    hair and clothes, whose UV2 is their own data)"""
     me = body.data
     hz = rig.data.bones["head"].head_local.z
     uv2 = me.uv_layers["Face"]
-    hair_mi = [i for i, m in enumerate(me.materials) if m and m.name == "hair"]
+    hair_mi = [i for i, m in enumerate(me.materials) if m and m.name in OWN_UV2]
     hair_l = set()
     for p in me.polygons:
         if p.material_index in hair_mi:
             hair_l.update(p.loop_indices)
     face = set(l.vertex_index for l in me.loops if uv2.data[l.index].uv.x < 4.0 and l.index not in hair_l)
-    hatk = me.attributes.get("hatk")
+    cg = me.attributes.get("cg")
+    cb = me.attributes.get("cb")
+    ca = me.attributes.get("ca")
     col = me.color_attributes["AO"]
     for i, d in enumerate(col.data):
         c = d.color
-        d.color = (c[0], 1.0 if i in face else 0.0, hatk.data[i].value if hatk else 0.0, 1.0)
+        d.color = (c[0], 1.0 if i in face else (cg.data[i].value if cg else 0.0), cb.data[i].value if cb else 0.0, ca.data[i].value if ca else 1.0)
     for l in me.loops:
         if l.index in hair_l:
             continue

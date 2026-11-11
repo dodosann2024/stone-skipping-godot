@@ -12,7 +12,7 @@ Per-vertex data for shaders/hair.gdshader (material "hair"):
   UV        card: atlas u / root-to-tip v;  cap: angle round the crown / distance from it
   UV2 (Face) x: card sway weight (0 root .. 1 tip), cap: distance to the hairline (0..1)
              y: card inner-layer occlusion (0 outer .. 0.6 inner), cap: 1
-  "hatk"    1 where the hair is under the hat crown (no sway there while he wears it) -> COLOR.b
+  "cb"      1 where the hair is under the hat crown (no sway there while he wears it) -> COLOR.b
 """
 import bpy, bmesh, math, random
 from mathutils import Vector, Matrix, noise
@@ -384,7 +384,7 @@ def build(rig, body, hat_info, mat):
     for p in me.polygons:
         p.use_smooth = True
     # under-hat flag and bent normals: cap keeps its own; cards lean on the scalp normal
-    att = me.attributes.new("hatk", "FLOAT", "POINT")
+    att = me.attributes.new("cb", "FLOAT", "POINT")
     kv = [0.0] * len(me.vertices)
     for i, k in hatk.items():
         kv[i] = k
