@@ -4,6 +4,15 @@ extends Node3D
 
 const GRAVITY := 9.8
 const POWER_CYCLE := 1.7
+const TILT_BEST := 20.0     # the stone's tilt to the water that skips best (deg)
+const EL_MIN := -5.0        # launch elevation range (deg)
+const EL_MAX := 30.0
+const TILT_MAX := 45.0
+const AIM_LIM := 1.4        # aim at most this far (rad) either side of straight out from the dock
+const SWIPE_DEAD := 0.04    # swipe length (x the short screen side) that does nothing yet
+const SWIPE_FULL := 0.42    # ... and the extra length for full power
+const KEY_SPIN := 0.8       # keyboard throws: a decent flick
+const TWIST_MAX := 0.5      # chest ahead of the hips while aiming (rad)
 const SAVE_PATH := "user://best.cfg"
 const WALK_MAX := 1.15
 const RUN_SPEED := 2.7
@@ -22,9 +31,26 @@ var press_pos := Vector2.ZERO
 var charge_t := 0.0
 var power := 0.0
 var aim_yaw := 0.0
-var aim_pitch := 6.0
+var aim_pitch := 4.0        # launch elevation (deg)
+var aim_tilt := 20.0        # the stone's tilt to the water (deg)
+var aim_src := "script"     # swipe | key | script (demos, tests)
 var yaw_at_press := 0.0
-var pitch_at_press := 6.0
+var swipe_hist: Array = []  # [time, position] of the finger while swiping
+var swipe_d := Vector2.ZERO
+var throw_spin := 0.8
+var key_angles := Vector2.ZERO
+var cam_aim_yaw := 0.0      # the aiming camera's heading
+var view_at_press := 0.0    # its heading when the finger went down: swipe angles are read against it
+var swipe_move_frame := 0
+var stone_tilt := 20.0
+var launch_spin_v := 0.8
+var first_entry := -1.0
+var spin_ang := 0.0
+var last_tip := ""
+var el_slider: AngleSlider
+var tilt_slider: AngleSlider
+var throw_pad: ThrowPad
+var preview_ring: MeshInstance3D
 
 # stone
 var stone_pos := Vector3.ZERO
@@ -362,7 +388,7 @@ func _build_stone() -> void:
 	stone.visible = false
 	var dot := SphereMesh.new()
 	dot.radius = 0.08; dot.height = 0.16; dot.radial_segments = 6; dot.rings = 3
-	for i in 18:
+	for i in 30:
 		var dm := StandardMaterial3D.new()
 		dm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		dm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -375,6 +401,19 @@ func _build_stone() -> void:
 		d.visible = false
 		add_child(d)
 		preview_dots.append(d)
+	var tm := TorusMesh.new()
+	tm.inner_radius = 0.42; tm.outer_radius = 0.56; tm.rings = 24; tm.ring_segments = 4
+	var rm := StandardMaterial3D.new()
+	rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	preview_ring = MeshInstance3D.new()
+	preview_ring.mesh = tm
+	preview_ring.scale = Vector3(1.0, 0.25, 1.0)
+	preview_ring.material_override = rm
+	preview_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	preview_ring.layers = 1 | WaterReflection.SKIP_LAYER
+	preview_ring.visible = false
+	add_child(preview_ring)
 
 func _build_birds() -> void:
 	var white := StandardMaterial3D.new()
@@ -475,6 +514,16 @@ func _build_ui() -> void:
 	top_box.add_child(lbl_stats)
 	lbl_best = _label(22, Color(0.9, 0.97, 1))
 	top_box.add_child(lbl_best)
+
+	throw_pad = ThrowPad.new()
+	throw_pad.font = ui_font
+	throw_pad.set_anchors_preset(Control.PRESET_FULL_RECT)
+	throw_pad.visible = false
+	root.add_child(throw_pad)
+	el_slider = _angle_slider("仰角", "el", EL_MIN, EL_MAX, aim_pitch, Vector2(0, 10))
+	tilt_slider = _angle_slider("倾角", "tilt", 0.0, TILT_MAX, aim_tilt, Vector2(15, 25))
+	el_slider.changed.connect(func(v: float) -> void: aim_pitch = v)
+	tilt_slider.changed.connect(func(v: float) -> void: aim_tilt = v)
 
 	right_box = VBoxContainer.new()
 	right_box.anchor_left = 1.0; right_box.anchor_right = 1.0
@@ -610,6 +659,20 @@ func _build_ui() -> void:
 	bottom_box.resized.connect(_fit_action)
 	_layout_ui()
 
+func _angle_slider(t: String, k: String, lo: float, hi: float, v: float, band: Vector2) -> AngleSlider:
+	var s := AngleSlider.new()
+	s.title = t
+	s.kind = k
+	s.vmin = lo
+	s.vmax = hi
+	s.value = v
+	s.band = band
+	s.font = ui_font
+	s.anchor_left = 1.0; s.anchor_right = 1.0; s.anchor_top = 1.0; s.anchor_bottom = 1.0
+	s.visible = false
+	ui_root.add_child(s)
+	return s
+
 func _tall() -> bool:
 	var vs := get_viewport().get_visible_rect().size
 	return vs.x < vs.y
@@ -685,6 +748,20 @@ func _layout_ui() -> void:
 	bottom_box.offset_right = -18 - sr
 	bottom_box.offset_bottom = -14 - sb
 	tip_box.offset_top = (170 if tall else 120) + st
+	# throw mode: the two angle sliders bottom right, the stone pad bottom centre (both above the hint)
+	var sw := 92.0
+	var sh := 320.0 if tall else 250.0
+	var lift := (150.0 if tall else 112.0) + sb
+	for i in 2:
+		var s: AngleSlider = tilt_slider if i == 0 else el_slider
+		s.offset_right = -14.0 - sr - i * (sw + 12.0)
+		s.offset_left = s.offset_right - sw
+		s.offset_bottom = -lift
+		s.offset_top = -lift - sh
+	var vs := get_viewport().get_visible_rect().size
+	throw_pad.pad_r = 54.0 if tall else 50.0
+	throw_pad.pad_c = Vector2((vs.x + sl - sr) * 0.5, vs.y - lift - throw_pad.pad_r + (24.0 if tall else 4.0))
+	throw_pad.queue_redraw()
 
 func _toast(t: String, dur := 1.4) -> void:
 	lbl_toast.text = t
@@ -749,12 +826,18 @@ func _update_ui() -> void:
 		_:
 			match state:
 				State.READY:
-					lbl_hint.text = "按住蓄力 → 左右拖转向、上下拖调角度 → 松手扔出\n角度低、力度大才跳得多 · 右上角切换站立/半蹲"
+					if last_tip != "":
+						lbl_hint.text = last_tip
+					elif _tall():
+						lbl_hint.text = "按住石头往海面划：方向 = 瞄准，越长越用力\n松手时顺势一甩 = 旋转 · 右边调仰角和倾角"
+					else:
+						lbl_hint.text = "按住石头往海面划：方向 = 瞄准，越长越用力，松手时顺势一甩 = 旋转\n右边调出手仰角和石头倾角（20° 最好）· 键盘：←→ 瞄准  ↑↓ 仰角  Q/E 倾角  按住空格蓄力"
 				State.AIMING:
-					lbl_hint.text = "看准力度条，松手投出！"
+					lbl_hint.text = {"swipe": "松手扔出 · 往回拉取消", "key": "看准力度条，松开空格投出！"}.get(aim_src, "看准力度条，松手投出！")
 				_:
 					lbl_hint.text = ""
 	power_box.visible = state == State.AIMING and throw_mode
+	power_bar.visible = aim_src != "swipe"
 
 func _toggle_view() -> void:
 	if mode == Mode.VIEW:
@@ -894,7 +977,8 @@ func _enter_throw() -> void:
 				break
 	player.position = p
 	player.rotation.y = keep_yaw
-	_toast("打水漂！按住蓄力，松手扔出", 1.8)
+	cam_aim_yaw = aim_yaw
+	_toast("打水漂！按住石头往海面划", 1.8)
 	_update_ui()
 
 func _throw_walk_tick(delta: float) -> void:
@@ -924,8 +1008,7 @@ func _leave_throw() -> void:
 	face_yaw = player.rotation.y
 	ex_yaw = face_yaw + PI
 	boy.set_idle()
-	for d in preview_dots:
-		d.visible = false
+	_hide_preview()
 	_update_ui()
 # ------------------------------------------------------------------ explore: walking / running
 
@@ -1438,59 +1521,233 @@ func _orbit_by(rel: Vector2) -> void:
 	var dt: float = max(get_process_delta_time(), 1.0 / 120.0)
 	orbit_vel = orbit_vel.lerp(Vector2(dy, dp) / dt, 0.5)
 
+## Throwing on a phone: put a finger down (on the stone pad, or anywhere that is not a button) and swipe out
+## towards the sea - the swipe's direction on screen is the aim, its length the power; letting go throws, and
+## the speed of the finger as it lets go is the spin (a flick spins the stone, a slow release barely does).
+## Swiping back towards the kid cancels. Desktop: the same with the mouse, or keys (see _throw_keys).
 func _throw_input(event: InputEvent) -> void:
+	var now := Time.get_ticks_usec() / 1e6
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			if state == State.READY and not throw_walk:
-				_begin_aim(event.position)
-		else:
-			if state == State.AIMING:
-				_throw()
-	elif event is InputEventMouseMotion and state == State.AIMING:
-		var vs := get_viewport().get_visible_rect().size
-		var unit: float = min(vs.x, vs.y)
-		var d: Vector2 = event.position - press_pos
-		aim_yaw = yaw_at_press - d.x / unit * 2.2
-		aim_pitch = clamp(pitch_at_press - d.y / unit * 30.0, -3.0, 30.0)
+				_swipe_press(event.position, now)
+		elif state == State.AIMING and aim_src == "swipe":
+			_swipe_release(event.position, now)
+	elif event is InputEventMouseMotion and state == State.AIMING and aim_src == "swipe":
+		_swipe_move(event.position, now)
+	elif event is InputEventKey and event.physical_keycode == KEY_SPACE and not event.echo:
+		if event.pressed and state == State.READY and not throw_walk:
+			_begin_aim(Vector2.ZERO, "key")
+		elif not event.pressed and state == State.AIMING and aim_src == "key":
+			throw_spin = KEY_SPIN
+			_throw()
 
-func _begin_aim(p: Vector2) -> void:
+## arrow keys / A D aim, W S (or up / down) the launch elevation, Q E the stone's tilt; hold space to charge
+func _throw_keys(delta: float) -> void:
+	if mode != Mode.THROW or throw_walk or not (state == State.READY or (state == State.AIMING and aim_src == "key")):
+		return
+	var k := func(a: Key, b: Key) -> float: return 1.0 if Input.is_physical_key_pressed(a) or Input.is_physical_key_pressed(b) else 0.0
+	var turn: float = k.call(KEY_LEFT, KEY_A) - k.call(KEY_RIGHT, KEY_D)
+	var el: float = k.call(KEY_UP, KEY_W) - k.call(KEY_DOWN, KEY_S)
+	var tl: float = k.call(KEY_E, KEY_PAGEUP) - k.call(KEY_Q, KEY_PAGEDOWN)
+	if turn != 0.0:
+		aim_yaw = clampf(aim_yaw + turn * 0.8 * delta, -AIM_LIM, AIM_LIM)
+	if el != 0.0 or tl != 0.0:
+		key_angles += Vector2(el * 14.0, tl * 16.0) * delta
+		_set_angles(aim_pitch + key_angles.x, aim_tilt + key_angles.y)
+		# whole degrees, but holding the key keeps creeping
+		key_angles -= Vector2(roundf(key_angles.x), roundf(key_angles.y))
+	else:
+		key_angles = Vector2.ZERO
+
+func _set_angles(el: float, tilt: float) -> void:
+	aim_pitch = clampf(roundf(el), EL_MIN, EL_MAX)
+	aim_tilt = clampf(roundf(tilt), 0.0, TILT_MAX)
+	el_slider.set_value(aim_pitch)
+	tilt_slider.set_value(aim_tilt)
+
+## scripted / keyboard charge: the power bar ping-pongs while held (POWER_CYCLE)
+func _begin_aim(p: Vector2, src := "script") -> void:
 	state = State.AIMING
+	aim_src = src
 	press_pos = p
 	charge_t = 0.0
 	power = 0.0
 	yaw_at_press = aim_yaw
-	pitch_at_press = aim_pitch
 	_update_ui()
+
+func _swipe_unit() -> float:
+	var vs := get_viewport().get_visible_rect().size
+	return minf(vs.x, vs.y)
+
+func _swipe_press(p: Vector2, t: float) -> void:
+	state = State.AIMING
+	aim_src = "swipe"
+	press_pos = p
+	swipe_hist = [[t, p]]
+	swipe_d = Vector2.ZERO
+	charge_t = 0.0
+	power = 0.0
+	yaw_at_press = aim_yaw
+	view_at_press = cam_aim_yaw
+	_update_ui()
+
+func _swipe_move(p: Vector2, t: float) -> void:
+	swipe_hist.append([t, p])
+	swipe_move_frame = Engine.get_process_frames()
+	while swipe_hist.size() > 3 and t - float(swipe_hist[1][0]) > 0.5:
+		swipe_hist.pop_front()
+	_apply_swipe(p - press_pos)
+
+func _swipe_release(p: Vector2, t: float) -> void:
+	# a slow device can hand over the lift a frame after the finger's last move: it left the glass moving
+	var last: Array = swipe_hist[swipe_hist.size() - 1]
+	if swipe_hist.size() > 1 and Engine.get_process_frames() - swipe_move_frame <= 1 and p.distance_to(last[1]) < _swipe_unit() * 0.02:
+		t = minf(t, float(last[0]))
+	swipe_hist.append([t, p])
+	var fl := _flick(swipe_hist)
+	_apply_swipe(fl[1] if fl[1] != null else p - press_pos)
+	throw_spin = fl[0]
+	_throw()
+
+## power from the swipe's length, aim from its direction; pointing back towards the kid means "cancel"
+func _apply_swipe(d: Vector2) -> void:
+	swipe_d = d
+	var unit := _swipe_unit()
+	if d.y > unit * 0.03 or d.length() < unit * SWIPE_DEAD:
+		power = 0.0
+		aim_yaw = yaw_at_press
+		return
+	power = clampf((d.length() - unit * SWIPE_DEAD) / (unit * SWIPE_FULL), 0.0, 1.0)
+	# at most 70 deg off straight up: a sideways swipe is not a throw along the dock
+	var a := atan2(d.x, -d.y)
+	if absf(a) > deg_to_rad(70.0):
+		var c := signf(a) * deg_to_rad(70.0)
+		d = Vector2(sin(c), -cos(c)) * d.length()
+	aim_yaw = _swipe_yaw(d)
+
+## The swipe's angle off straight up is the aim's angle off the view line the camera had when the finger
+## went down (it sits right behind the release point). A true screen-to-water projection would squeeze a
+## 30 deg swipe into ~7 deg near the horizon, which feels dead under the thumb.
+func _swipe_yaw(d: Vector2) -> float:
+	return clampf(wrapf(view_at_press - atan2(d.x, -d.y), -PI, PI), -AIM_LIM, AIM_LIM)
+
+## Spin from how fast the finger was going when it let go (over the last ~90 ms). A finger that rested on
+## an aim and then flicked (within ~0.2 s) throws the aim it rested on, so aiming carefully and then
+## flicking works as well as one quick swipe. Returns [spin 0.2..1, the rested swipe vector or null].
+func _flick(hist: Array) -> Array:
+	var unit := _swipe_unit()
+	var n := hist.size()
+	var t1: float = hist[n - 1][0]
+	var p1: Vector2 = hist[n - 1][1]
+	var j := n - 1
+	while j > 0 and t1 - float(hist[j - 1][0]) <= 0.09:
+		j -= 1
+	# a slow frame can hand over a whole flick at once (moves merged, all stamped with the same time): measure
+	# from the sample before it, as if that was at most 50 ms ago
+	var dt := t1 - float(hist[j][0])
+	if dt < 1.0 / 240.0 and j > 0:
+		j -= 1
+		dt = minf(t1 - float(hist[j][0]), 0.05)
+	var speed := 0.0
+	if j < n - 1:
+		speed = (p1 - (hist[j][1] as Vector2)).length() / maxf(dt, 1.0 / 120.0) / unit
+	var s := clampf(0.2 + 0.8 * smoothstep(0.6, 3.2, speed), 0.2, 1.0)
+	var held: Variant = null
+	if speed > 1.5:
+		for k in range(n - 1, 0, -1):
+			var a: Array = hist[k - 1]
+			var b: Array = hist[k]
+			var v := ((b[1] as Vector2) - (a[1] as Vector2)).length() / maxf(float(b[0]) - float(a[0]), 1e-3) / unit
+			if v < 0.5:
+				var hd: Vector2 = (a[1] as Vector2) - press_pos
+				if t1 - float(a[0]) < 0.22 and hd.length() > unit * 0.12 and hd.y < 0.0:
+					held = hd
+				break
+	return [s, held]
+
 # ------------------------------------------------------------------ physics
+# After Clanet, Hersen & Bocquet, "Secrets of successful stone-skipping" (Nature 2004): the stone's own tilt
+# to the water (attack angle) works best near 20 deg; its flight path must come in low (the steepest entry
+# that still bounces shrinks for a badly tilted, slow or spin-less stone); every bounce costs a roughly fixed
+# amount of kinetic energy (so the number of skips grows with the speed squared), more for a badly tilted
+# stone; spin keeps the tilt steady - without it the stone wobbles and pitches up a little at each bounce.
 
 static func launch_speed(p: float) -> float:
 	return lerp(7.0, 25.0, p)
 
+## scripted throws (demos): spin from power
 static func launch_spin(p: float) -> float:
 	return clamp(0.35 + 0.65 * p, 0.0, 1.0)
 
-static func crit_angle(s: float) -> float:
-	return 13.0 + 15.0 * s
+## 0..1: how well the stone meets the water at this tilt (a spin-less stone wobbles off it)
+static func tilt_quality(tilt: float, s: float) -> float:
+	return exp(-pow((absf(tilt - TILT_BEST) + 9.0 * (1.0 - s)) / 14.0, 2.0))
 
-static func water_contact(v: Vector3, s: float, jitter: float) -> Array:
+## steepest entry angle (deg) that still bounces
+static func max_entry(tilt: float, s: float, vh: float) -> float:
+	return 30.0 * (0.25 + 0.75 * tilt_quality(tilt, s)) * clampf(vh / 12.0, 0.65, 1.0) * (0.85 + 0.15 * s)
+
+## slowest horizontal speed (m/s) that still bounces
+static func min_speed(tilt: float, s: float) -> float:
+	return 3.5 / (0.35 + 0.65 * tilt_quality(tilt, s))
+
+## One touch of the water: [bounced, velocity after, spin after, tilt after, entry angle, why it sank]
+## (why: "" | "slow" | "steep" entry | "flat" stone slapped | "tilt" stone dug in). jitter -1..1 (0 in the sim).
+static func water_contact(v: Vector3, s: float, tilt: float, jitter: float) -> Array:
 	var h := Vector2(v.x, v.z)
-	var hs := h.length()
-	var ang := rad_to_deg(atan2(-v.y, max(hs, 0.001)))
-	if hs < 2.2 or ang > crit_angle(s) + jitter * 3.0:
-		return [false, v, s, ang]
-	var sa := sin(deg_to_rad(ang))
-	var keep: float = clamp(0.95 - 0.75 * sa - (1.0 - s) * 0.05, 0.55, 0.95)
-	var e := 0.5 + 0.2 * s
-	var nh := h * keep
-	var nv := Vector3(nh.x, max(-v.y * e, 0.55), nh.y)
-	return [true, nv, s * (0.9 + 0.04 * jitter), ang]
+	var vh := h.length()
+	var ang := rad_to_deg(atan2(-v.y, maxf(vh, 0.001)))
+	if tilt > 50.0:
+		return [false, v, s, tilt, ang, "tilt"]
+	if vh < min_speed(tilt, s):
+		return [false, v, s, tilt, ang, "slow"]
+	if ang > max_entry(tilt, s, vh) + jitter * 2.0:
+		# would a well-tilted stone have made it? then the tilt is what sank it
+		if ang <= max_entry(TILT_BEST, s, vh) + jitter * 2.0:
+			return [false, v, s, tilt, ang, "flat" if tilt < TILT_BEST else "tilt"]
+		return [false, v, s, tilt, ang, "steep"]
+	var q := tilt_quality(tilt, s)
+	var loss := 9.0 * (1.0 + 3.0 * (1.0 - q)) * (1.0 + 1.2 * (1.0 - s))
+	var nvh := sqrt(maxf(vh * vh - loss, 0.0)) * (1.0 - 0.5 * sin(deg_to_rad(ang)))
+	var e := (0.45 + 0.2 * s) * (0.8 + 0.4 * clampf((tilt - 5.0) / 30.0, 0.0, 1.0))
+	var nh := h / vh * nvh
+	return [true, Vector3(nh.x, maxf(-v.y * e, 0.55), nh.y), s * 0.975, tilt + (1.0 - s) * (1.2 + 4.0 * jitter), ang, ""]
+
+## a whole throw over open water without jitter: {skips, dist, entry (first, deg), why}
+static func simulate(p: Vector3, v: Vector3, s: float, tilt: float) -> Dictionary:
+	var o := p
+	var n := 0
+	var entry := -1.0
+	var why := ""
+	for i in 40000:
+		v.y -= GRAVITY * 0.002
+		p += v * 0.002
+		if p.y <= 0.02 and v.y < 0.0:
+			p.y = 0.02
+			var r := water_contact(v, s, tilt, 0.0)
+			if entry < 0.0:
+				entry = r[4]
+			if not r[0]:
+				why = r[5]
+				break
+			n += 1
+			v = r[1]
+			s = r[2]
+			tilt = r[3]
+	return {"skips": n, "dist": Vector2(p.x - o.x, p.z - o.z).length(), "entry": entry, "why": why}
 
 func _aim_dir() -> Vector3:
 	return Vector3(0, 0, -1).rotated(Vector3.UP, aim_yaw)
 
 ## where the stone leaves the kid's hand (the release key pose, power independent)
 func _hand_pos() -> Vector3:
-	return player.global_transform * boy.release_local
+	return _ideal_hand(aim_yaw)
+
+## the release point if he faced `yaw` (the throw turns him square to the aim before the release)
+func _ideal_hand(yaw: float) -> Vector3:
+	var b := Basis(Vector3.UP, yaw).scaled(player.global_basis.get_scale())
+	return player.global_position + b * boy.release_local
 
 func _initial_velocity() -> Vector3:
 	var dir := _aim_dir()
@@ -1503,15 +1760,22 @@ func _throw() -> void:
 	if power < 0.04:
 		state = State.READY
 		boy.set_idle()
+		_hide_preview()
 		_update_ui()
 		return
+	if aim_src == "script":
+		throw_spin = launch_spin(power)
 	# the swing starts now; the stone leaves the hand on the release frame (Boy.released -> _launch)
 	state = State.THROWING
 	boy.start_throw(power)
 	_play("whoosh", lerpf(-13.0, -3.0, power), lerpf(0.85, 1.15, power) * rng.randf_range(0.96, 1.04))
+	_hide_preview()
+	_update_ui()
+
+func _hide_preview() -> void:
 	for d in preview_dots:
 		d.visible = false
-	_update_ui()
+	preview_ring.visible = false
 
 func _launch() -> void:
 	if state != State.THROWING:
@@ -1521,7 +1785,11 @@ func _launch() -> void:
 	stone_pos = _hand_pos()
 	throw_origin = stone_pos
 	stone_vel = _initial_velocity()
-	spin = launch_spin(power) * rng.randf_range(0.92, 1.05)
+	spin = clampf(throw_spin * rng.randf_range(0.95, 1.03), 0.1, 1.0)
+	stone_tilt = aim_tilt + rng.randf_range(-1.5, 1.5)
+	launch_spin_v = spin
+	first_entry = -1.0
+	spin_ang = 0.0
 	skips = 0
 	throw_dist = 0.0
 	stone.position = stone_pos
@@ -1549,14 +1817,14 @@ func _hit_test(p: Vector3) -> String:
 func _step_stone(dt: float) -> void:
 	stone_vel.y -= GRAVITY * dt
 	stone_pos += stone_vel * dt
-	stone.position = stone_pos
-	stone.rotate_y(spin * 40.0 * dt)
+	_orient_stone(dt)
 	if _hdist(stone_pos) > 1.0:
 		var hit := _hit_test(stone_pos)
 		if hit != "":
 			_hit_sound(hit)
 			throw_dist = _hdist(stone_pos)
 			result_text = hit + ("" if skips == 0 else "（之前漂了 %d 下）" % skips)
+			last_tip = "朝开阔的海面瞄准"
 			stone_vel = Vector3(0, -1.0, 0)
 			state = State.SINKING
 			sink_timer = 0.6
@@ -1566,12 +1834,15 @@ func _step_stone(dt: float) -> void:
 			return
 	if stone_pos.y <= 0.02 and stone_vel.y < 0.0:
 		stone_pos.y = 0.02
-		var res := water_contact(stone_vel, spin, rng.randf_range(-1, 1))
+		var res := water_contact(stone_vel, spin, stone_tilt, rng.randf_range(-1, 1))
 		throw_dist = _hdist(stone_pos)
+		if first_entry < 0.0:
+			first_entry = res[4]
 		if res[0]:
 			skips += 1
 			stone_vel = res[1]
 			spin = res[2]
+			stone_tilt = res[3]
 			_splash(stone_pos, 0.55, false, stone_vel)
 			_skip_sound(Vector2(stone_vel.x, stone_vel.z).length())
 			_float_text(stone_pos, "%d" % skips)
@@ -1584,22 +1855,78 @@ func _step_stone(dt: float) -> void:
 			elif skips == 15:
 				_toast("15 连跳！水漂大师！")
 				_play("combo", -4.0, 1.26)
+			elif skips == 20:
+				_toast("20 连跳！完美！")
+				_play("combo", -3.0, 1.4)
 			for bn in island.buoys:
 				if Vector2(stone_pos.x - bn.position.x, stone_pos.z - bn.position.z).length() < 2.0:
 					_toast("擦过浮标！")
 		else:
 			_splash(stone_pos, 1.2, true, Vector3.ZERO)
 			_play("sink", -2.0 + rng.randf_range(-1.0, 1.0), rng.randf_range(0.92, 1.06))
-			var ang: float = res[3]
-			if skips == 0:
-				result_text = ("扑通！入水角 %.0f°，太陡了，试试更低的角度和更大的力度" % ang) if ang > 20.0 else "扑通！速度不够，多蓄点力"
-			else:
-				result_text = "漂了 %d 下！" % skips
+			_judge(res[5], res[4])
 			state = State.SINKING
 			sink_timer = 0.0
 	elif state == State.FLYING and skips > 0:
 		throw_dist = max(throw_dist, _hdist(stone_pos))
 	_update_ui()
+
+## the stone flies nose-up by its tilt and spins flat about its own axis; with little spin it wobbles
+func _orient_stone(dt: float) -> void:
+	stone.position = stone_pos
+	spin_ang += spin * 40.0 * dt
+	var f := Vector3(stone_vel.x, 0, stone_vel.z)
+	if f.length() < 0.1:
+		f = _aim_dir()
+	var wob := (1.0 - spin) * 0.35 * sin(fly_t * 9.0)
+	var b := Basis(Vector3.UP, atan2(-f.x, -f.z)) * Basis(Vector3.RIGHT, deg_to_rad(stone_tilt)) \
+		* Basis(Vector3.FORWARD, wob) * Basis(Vector3.UP, spin_ang)
+	stone.basis = b * Basis.from_scale(Vector3(0.7, 0.24, 0.6))
+
+## when the stone goes under: the toast says what happened, the hint bar keeps a quiet tip for the next go
+func _judge(why: String, ang: float) -> void:
+	var tip := ""
+	var tilt := aim_tilt
+	if skips == 0:
+		match why:
+			"tilt":
+				result_text = "扑通！石头倾角太陡，一头扎进水里"
+				tip = "倾角 20° 左右最好"
+			"flat":
+				result_text = "啪！石头太平，拍在水面上停住了"
+				tip = "倾角调到 20° 左右：前端微微翘起"
+			"slow":
+				result_text = "扑通！速度不够，沉了"
+				tip = "往海面划得更长 = 更用力"
+			_:
+				result_text = "扑通！入水角 %d°，太陡了" % roundi(ang)
+				if tilt < 10.0 or tilt > 32.0:
+					tip = "倾角 %d° 不合适，调到 20° 左右" % roundi(tilt)
+				elif aim_pitch > 10.0:
+					tip = "出手仰角 %d° 太高，放低一点" % roundi(aim_pitch)
+				elif power < 0.6:
+					tip = "划得更长、更用力，石头飞得更平"
+				elif launch_spin_v < 0.45:
+					tip = "松手时顺势快甩，转起来的石头更稳"
+				else:
+					tip = "试试半蹲，出手更低"
+	else:
+		result_text = "漂了 %d 下！" % skips
+		if launch_spin_v < 0.45:
+			tip = "旋转不足：松手时顺势快速一甩"
+		elif tilt < 12.0:
+			tip = "倾角偏平：跳得矮、停得快，20° 左右最好"
+		elif tilt > 28.0:
+			tip = "倾角偏陡：每跳都损失很多速度"
+		elif first_entry > 22.0:
+			tip = "入水偏陡（%d°），放低仰角会跳得更多" % roundi(first_entry)
+		elif power < 0.7:
+			tip = "多用点力，跳得更多"
+		elif skips >= 15:
+			tip = "完美的一甩！"
+	last_tip = "上一投：入水 %d° · 倾角 %d° · 旋转 %d%%" % [roundi(maxf(first_entry, 0.0)), roundi(tilt), roundi(launch_spin_v * 100.0)]
+	if tip != "":
+		last_tip += "\n" + tip
 
 func _finish() -> void:
 	stone.visible = false
@@ -1747,36 +2074,64 @@ func _float_text(p: Vector3, t: String) -> void:
 	tw.tween_property(l, "modulate:a", 0.0, 1.2).set_delay(0.4)
 	tw.chain().tween_callback(l.queue_free)
 
+## Aim preview: the flight to the first touch of the water (bright dots), a ring where it lands coloured by
+## how that touch will go (green bounces, amber marginal, coral sinks) and, faint, the next two hops.
 func _update_preview() -> void:
 	var p := _hand_pos()
 	var v := _initial_velocity()
-	var s := launch_spin(power)
-	var dt := 0.06
+	var s := throw_spin if aim_src != "swipe" else 0.8
+	var tilt := aim_tilt
+	var dt := 0.05
 	var placed := 0
-	var ok := true
-	while placed < preview_dots.size():
+	var hop := 0
+	var verdict := 2
+	var ring_at := Vector3.ZERO
+	var ok := power >= 0.04
+	var steps := 0
+	while placed < preview_dots.size() and steps < 400 and ok:
+		steps += 1
 		v.y -= GRAVITY * dt
 		p += v * dt
-		var stop := false
 		if _hit_test(p) != "" and Vector2(p.x - player.position.x, p.z - player.position.z).length() > 1.0:
-			ok = false
-			stop = true
-		elif p.y <= 0.02:
-			var ang := rad_to_deg(atan2(-v.y, Vector2(v.x, v.z).length()))
-			ok = ang <= crit_angle(s) and Vector2(v.x, v.z).length() >= 2.2
-			p.y = 0.02
-			stop = true
-		var d := preview_dots[placed]
-		d.visible = true
-		d.global_position = p
-		placed += 1
-		if stop:
+			if hop == 0:
+				verdict = 0
+				ring_at = p
 			break
+		if p.y <= 0.02 and v.y < 0.0:
+			p.y = 0.02
+			var r := water_contact(v, s, tilt, 0.0)
+			if hop == 0:
+				ring_at = p
+				var vh := Vector2(v.x, v.z).length()
+				if not r[0]:
+					verdict = 0
+				elif float(r[4]) > max_entry(tilt, s, vh) - 4.0 or vh < min_speed(tilt, s) * 1.25:
+					verdict = 1
+			if not r[0] or hop >= 2:
+				break
+			hop += 1
+			v = r[1]
+			s = r[2]
+			tilt = r[3]
+			continue
+		# bright dots every step on the way out, sparser and faint on the hops
+		if hop == 0 or steps % 2 == 0:
+			var d := preview_dots[placed]
+			d.visible = true
+			d.global_position = p
+			d.scale = Vector3.ONE * (1.0 if hop == 0 else 0.6)
+			d.set_meta("hop", hop)
+			placed += 1
 	for i in range(placed, preview_dots.size()):
 		preview_dots[i].visible = false
-	var col := Color(0.5, 1.0, 0.6, 0.9) if ok else Color(1.0, 0.45, 0.35, 0.9)
-	for d in preview_dots:
-		(d.material_override as StandardMaterial3D).albedo_color = col
+	var col: Color = [Color(1.0, 0.5, 0.42), Color(1.0, 0.82, 0.35), Color(0.55, 0.95, 0.65)][verdict]
+	for i in placed:
+		var d := preview_dots[i]
+		(d.material_override as StandardMaterial3D).albedo_color = Color(col, 0.9 if int(d.get_meta("hop")) == 0 else 0.4)
+	preview_ring.visible = ok and ring_at != Vector3.ZERO
+	if preview_ring.visible:
+		preview_ring.global_position = Vector3(ring_at.x, 0.03, ring_at.z)
+		(preview_ring.material_override as StandardMaterial3D).albedo_color = Color(col, 0.85)
 
 # ------------------------------------------------------------------ audio
 # All sounds are synthesized by tools/synth_audio.py (no third-party recordings).
@@ -2020,22 +2375,26 @@ func _process(delta: float) -> void:
 		zzz.visible = false
 	match state:
 		State.AIMING:
-			charge_t += delta
-			power = pingpong(charge_t / (POWER_CYCLE * 0.5), 1.0)
+			if aim_src != "swipe":
+				charge_t += delta
+				power = pingpong(charge_t / (POWER_CYCLE * 0.5), 1.0)
 			power_bar.value = power
-			var deg := wrapf(rad_to_deg(aim_yaw), -180.0, 180.0)
-			lbl_aim.text = "力度 %d%%   角度 %d°   方向 %s%d°" % [roundi(power * 100), roundi(aim_pitch), "左" if deg > 0.5 else ("右" if deg < -0.5 else ""), absi(roundi(deg))]
 			boy.charge(power)
 			_update_preview()
+			lbl_aim.text = _aim_readout()
 		State.READY:
 			if mode == Mode.THROW and not throw_walk:
 				boy.set_idle()
 		State.FLYING, State.SINKING:
 			fly_t += delta
+	_throw_keys(delta)
 	if mode == Mode.THROW and throw_walk:
 		_throw_walk_tick(delta)
-	elif mode == Mode.THROW and (state == State.READY or state == State.AIMING):
-		player.rotation.y = lerp_angle(player.rotation.y, aim_yaw, 1.0 - exp(-delta * 10.0))
+	elif mode == Mode.THROW and (state == State.READY or state == State.AIMING or state == State.THROWING):
+		_turn_to_aim(delta)
+	else:
+		boy.aim_twist = lerpf(boy.aim_twist, 0.0, 1.0 - exp(-delta * 8.0))
+	_update_throw_pad()
 	_update_camera(delta)
 	var focus := player.global_position + Vector3(0, 0.7, 0)
 	if demo_nocut:
@@ -2062,13 +2421,72 @@ func _physics_process(delta: float) -> void:
 		if sink_timer > 1.6:
 			_finish()
 
-## throw-mode camera: rear three-quarter view, the kid in front and the sea beyond
+## Throw-mode camera: right behind the stone in his hand, looking along the aim over his shoulder, so the
+## aim line runs up the screen. While a finger is down it turns part way towards the aim, and all the way
+## once the stone is thrown.
 func _throw_cam() -> Array:
 	var tall := _tall()
-	var dir := _aim_dir()
-	var crouch := boy.stance == "crouch"
-	var t := player.global_position + Vector3(0, (0.8 if tall else 0.68) - (0.12 if crouch else 0.0), 0) + dir * (0.55 if tall else 1.3)
-	return [t, aim_yaw + (0.36 if tall else 0.8), 0.15 if tall else 0.2, 3.4 if tall else 3.9]
+	var dir := Vector3(0, 0, -1).rotated(Vector3.UP, cam_aim_yaw)
+	var h := _ideal_hand(cam_aim_yaw)
+	# look at a point on the aim line `ahead` m out, from `back` m behind the hand and `high` m up
+	var ahead := 7.0 if tall else 9.0
+	var back := 4.0 if tall else 4.6
+	var high := 2.6 if tall else 2.5
+	var t := Vector3(h.x, 0.6, h.z) + dir * ahead
+	return [t, cam_aim_yaw, atan2(high - 0.6, ahead + back), Vector2(ahead + back, high - 0.6).length()]
+
+## the chest turns to the aim first and the hips and feet follow; once the swing starts they square up fast
+func _turn_to_aim(delta: float) -> void:
+	var r := player.rotation.y
+	if state == State.READY:
+		player.rotation.y = lerp_angle(r, aim_yaw, 1.0 - exp(-delta * 10.0))
+		boy.aim_twist = lerpf(boy.aim_twist, 0.0, 1.0 - exp(-delta * 10.0))
+		return
+	r = lerp_angle(r, aim_yaw, 1.0 - exp(-delta * (26.0 if state == State.THROWING else 2.5)))
+	var tw := wrapf(aim_yaw - r, -PI, PI)
+	if absf(tw) > TWIST_MAX:
+		r = aim_yaw - signf(tw) * TWIST_MAX
+		tw = signf(tw) * TWIST_MAX
+	player.rotation.y = r
+	boy.aim_twist = tw
+
+func _aim_readout() -> String:
+	var deg := wrapf(rad_to_deg(aim_yaw), -180.0, 180.0)
+	var dir := "正前方" if absf(deg) < 0.5 else ("左 %d°" % roundi(deg) if deg > 0.0 else "右 %d°" % roundi(-deg))
+	var p := _hand_pos()
+	var v := _initial_velocity()
+	var vy := sqrt(maxf(v.y * v.y + 2.0 * GRAVITY * maxf(p.y - 0.02, 0.0), 0.0))
+	var entry := rad_to_deg(atan2(vy, Vector2(v.x, v.z).length()))
+	return "力度 %d%% · %s · 入水约 %d°（仰角 %d° · 倾角 %d°）" % [roundi(power * 100.0), dir, roundi(entry), roundi(aim_pitch), roundi(aim_tilt)]
+
+func _update_throw_pad() -> void:
+	var on := mode == Mode.THROW and not throw_walk
+	var ang_on := on and (state == State.READY or state == State.AIMING)
+	el_slider.visible = ang_on
+	tilt_slider.visible = ang_on
+	throw_pad.visible = on
+	var aiming := on and state == State.AIMING and aim_src == "swipe"
+	var show := on and state == State.READY
+	var cancel := aiming and power <= 0.0 and swipe_d.length() > _swipe_unit() * SWIPE_DEAD
+	var tip := ""
+	if aiming:
+		tip = "往回拉 = 取消" if cancel else ("%d%%" % roundi(power * 100.0) if power > 0.0 else "")
+	if show != throw_pad.show_pad or aiming != throw_pad.aiming or (aiming and (throw_pad.to != press_pos + swipe_d or throw_pad.power != power)) \
+			or tip != throw_pad.tip_text:
+		throw_pad.show_pad = show
+		throw_pad.aiming = aiming
+		throw_pad.from = press_pos
+		throw_pad.to = press_pos + swipe_d
+		throw_pad.power = power
+		throw_pad.cancel = cancel
+		throw_pad.tip_text = tip
+		throw_pad.queue_redraw()
+	if mode == Mode.THROW:
+		# while swiping it swings only part way, so the flight line stays on a narrow portrait screen
+		var to := aim_yaw
+		if state == State.AIMING and aim_src == "swipe":
+			to = view_at_press + wrapf(aim_yaw - view_at_press, -PI, PI) * 0.6
+		cam_aim_yaw = lerp_angle(cam_aim_yaw, to, 1.0 - exp(-get_process_delta_time() * 5.0))
 
 func _explore_cam() -> Array:
 	var tall := _tall()
@@ -2343,6 +2761,9 @@ func _run_sim_report() -> void:
 		boy.stance = stc
 		print("SIM stance ", stc, " release ", boy.release_local)
 		_sim_block()
+	boy.stance = "stand"
+	for line in sim_sweeps():
+		print("SIM sweep ", line)
 	print("SIM obstacles=%d palms=%d" % [island.obstacles.size(), island.palm_spots.size()])
 	# gait stress test (dev/ is not exported, so only where the sources are)
 	if ResourceLoader.exists("res://dev/gait_probe.gd"):
@@ -2350,27 +2771,41 @@ func _run_sim_report() -> void:
 			print("SIM ", line)
 
 func _sim_block() -> void:
+	aim_yaw = 0.0
+	aim_tilt = TILT_BEST
 	for pw in [0.5, 0.7, 0.85, 1.0]:
 		for pitch in [0.0, 5.0, 10.0]:
 			power = pw
 			aim_pitch = pitch
-			aim_yaw = 0.0
-			var p := _hand_pos()
-			var v := _initial_velocity()
-			var s := launch_spin(pw)
-			var n := 0
-			for i in 20000:
-				v.y -= GRAVITY * 0.004
-				p += v * 0.004
-				if p.y <= 0.02 and v.y < 0:
-					p.y = 0.02
-					var r := water_contact(v, s, 0.0)
-					if not r[0]:
-						break
-					n += 1
-					v = r[1]
-					s = r[2]
-			print("SIM power=%.2f pitch=%4.1f skips=%2d end=(%.1f, %.1f)" % [pw, pitch, n, p.x, p.z])
+			var r := simulate(_hand_pos(), _initial_velocity(), launch_spin(pw), aim_tilt)
+			print("SIM power=%.2f pitch=%4.1f skips=%2d dist=%5.1f entry=%4.1f" % [pw, pitch, r["skips"], r["dist"], r["entry"]])
+
+## one swept throw setting from the standing release: {skips, dist, entry, why}
+func sim_throw(pw: float, el: float, tilt: float, s: float, stance := "stand") -> Dictionary:
+	var keep := [boy.stance, power, aim_pitch, aim_yaw]
+	boy.stance = stance
+	power = pw
+	aim_pitch = el
+	aim_yaw = 0.0
+	var r := simulate(_hand_pos(), _initial_velocity(), s, tilt)
+	boy.stance = keep[0]; power = keep[1]; aim_pitch = keep[2]; aim_yaw = keep[3]
+	return r
+
+## the angle sweeps: launch elevation, stone tilt and spin each change the skips (full power, standing)
+func sim_sweeps() -> Array[String]:
+	var out: Array[String] = []
+	for row: Array in [["elevation", [-5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0]], ["tilt", [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0]],
+			["spin", [0.2, 0.4, 0.6, 0.8, 1.0]], ["power", [0.2, 0.4, 0.6, 0.8, 1.0]]]:
+		for x: float in row[1]:
+			var r: Dictionary
+			match row[0]:
+				"elevation": r = sim_throw(1.0, x, TILT_BEST, 1.0)
+				"tilt": r = sim_throw(1.0, 4.0, x, 1.0)
+				"spin": r = sim_throw(1.0, 4.0, TILT_BEST, x)
+				_: r = sim_throw(x, 4.0, TILT_BEST, 1.0)
+			out.append("%-9s %5.1f  skips=%2d  dist=%5.1f m  entry=%4.1f deg  %s" % [row[0], x, r["skips"], r["dist"], r["entry"],
+				("sank: " + str(r["why"])) if r["why"] != "slow" or r["skips"] == 0 else "ran out of speed"])
+	return out
 
 func _demo_shot(name: String) -> void:
 	if demo_shots.has(name):
@@ -2916,6 +3351,100 @@ func _v14_sequence(pre: String) -> void:
 	demo_nocut = false
 	_free_cam()
 
+## A scripted swipe through the real gesture code: the finger goes down at `from`, slides by `to` (short-side
+## units) over `sec`, rests `hold` s (shot `shot` then), and lets go - after a quick flick on along the swipe,
+## or slowly.
+func _demo_swipe(from: Vector2, to: Vector2, sec: float, hold: float, flick: bool, shot := "") -> void:
+	var u := _swipe_unit()
+	_swipe_press(from, gt)
+	var t0 := gt
+	while gt - t0 < sec:
+		_swipe_move(from + to * u * smoothstep(0.0, 1.0, (gt - t0) / sec), gt)
+		await get_tree().process_frame
+	var t1 := gt
+	while gt - t1 < hold:
+		_swipe_move(from + to * u, gt)
+		await get_tree().process_frame
+	if shot != "":
+		_shot(shot)
+	if not flick:
+		_swipe_release(from + to * u, gt)
+		return
+	# the finger leaves the glass still moving: the release comes with the last move
+	var d := to.normalized() * u * 0.32
+	for k in range(1, 4):
+		await get_tree().process_frame
+		_swipe_move(from + to * u + d * (k / 3.0), gt)
+	_swipe_release(from + to * u + d, gt)
+
+func _demo_wait_ready(shots: Array) -> void:
+	while state == State.THROWING:
+		await get_tree().process_frame
+	if shots.size() > 0 and shots[0] != "":
+		await _wait(0.12)
+		_shot(shots[0])
+	fly_t = 0.0
+	while state == State.FLYING and skips < 3:
+		await get_tree().process_frame
+	await _wait(0.25)
+	if shots.size() > 1 and shots[1] != "":
+		_shot(shots[1])
+	while state != State.READY:
+		await get_tree().process_frame
+	await _wait(0.9)
+	if shots.size() > 2 and shots[2] != "":
+		_shot(shots[2])
+	await _wait(1.6)
+
+## v15: aiming by swipe - the pad and angle sliders, aiming left / right (arrow, preview, readout, the chest
+## turning first), cancel, a flicked throw, a too-steep launch, a too-flat stone, a slow release (no spin)
+func _v15_sequence(pre: String) -> void:
+	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), 0.0)
+	await _wait(0.4)
+	_enter_throw()
+	await _wait(1.8)
+	_shot(pre + "v15_1_ready")
+	var c := throw_pad.pad_c
+	_swipe_press(c, gt)
+	for k in 12:
+		_swipe_move(c + Vector2(-0.2, -0.3) * _swipe_unit() * (k + 1) / 12.0, gt)
+		await get_tree().process_frame
+	await _wait(0.9)
+	_shot(pre + "v15_2_aim_left")
+	if not portrait_demo:
+		_fixed_cam(player.global_position + Vector3(0, 0.75, 0), aim_yaw + 2.2, 0.25, 2.6)
+		await _wait(0.2)
+		_shot(pre + "v15_2b_aim_left_body")
+		_free_cam()
+	for k in 10:
+		_swipe_move(c + Vector2(-0.2, -0.3).lerp(Vector2(0.02, 0.1), (k + 1) / 10.0) * _swipe_unit(), gt)
+		await get_tree().process_frame
+	await _wait(0.3)
+	_shot(pre + "v15_3_cancel")
+	_swipe_release(c + Vector2(0.02, 0.1) * _swipe_unit(), gt)
+	await _wait(1.2)
+	await _demo_swipe(c, Vector2(0.17, -0.4), 0.5, 0.8, true, pre + "v15_4_aim_right")
+	await _demo_wait_ready([pre + "v15_5_release", pre + "v15_6_skipping", pre + "v15_7_result"])
+	_set_angles(28.0, 20.0)
+	await _wait(0.6)
+	await _demo_swipe(c, Vector2(0.0, -0.45), 0.4, 0.6, true, pre + "v15_8_steep_aim")
+	await _demo_wait_ready(["", "", pre + "v15_9_steep_result"])
+	_set_angles(4.0, 3.0)
+	await _wait(0.6)
+	await _demo_swipe(c, Vector2(-0.05, -0.45), 0.4, 0.6, true, pre + "v15_10_flat_aim")
+	await _demo_wait_ready(["", "", pre + "v15_11_flat_result"])
+	_set_angles(4.0, 20.0)
+	await _wait(0.6)
+	await _demo_swipe(c, Vector2(0.0, -0.45), 0.4, 0.8, false)
+	await _demo_wait_ready(["", "", pre + "v15_12_slow_release_result"])
+	if not portrait_demo:
+		_toggle_night()
+		await _wait(2.9)
+		await _demo_swipe(c, Vector2(-0.08, -0.42), 0.5, 0.8, true, pre + "v15_13_night_aim")
+		await _demo_wait_ready(["", "", ""])
+		_toggle_night()
+		await _wait(2.9)
+
 ## gameplay follow camera along the beach (style checks): walk, run, then stand
 func _explore_sequence(pre: String) -> void:
 	var a := island.shore_pt(-1.3, 2.2)
@@ -2958,6 +3487,8 @@ func _run_demo4() -> void:
 				await _v9_sequence(pre, what.substr(2).trim_prefix("_"))
 			elif what == "v14":
 				await _v14_sequence(pre)
+			elif what == "v15":
+				await _v15_sequence(pre)
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
@@ -3158,6 +3689,31 @@ func _video_seg(seg: String) -> void:
 			await _wait(5.0)
 			_toggle_night()
 			demo_nocut = false
+
+		"throw15":
+			# aiming by swipe on the dock: left with a flick, right with a slow release (no spin), the
+			# elevation slider pushed up to a too-steep launch, then a good one straight out
+			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), 0.0)
+			await _wait(0.3)
+			_enter_throw()
+			await _wait(2.2)
+			var c := throw_pad.pad_c
+			await _demo_swipe(c, Vector2(-0.2, -0.38), 0.8, 1.0, true)
+			await _demo_wait_ready([])
+			await _demo_swipe(c, Vector2(0.24, -0.36), 0.8, 1.0, false)
+			await _demo_wait_ready([])
+			for k in 24:
+				_set_angles(lerpf(4.0, 28.0, (k + 1) / 24.0), 20.0)
+				await get_tree().process_frame
+			await _wait(0.5)
+			await _demo_swipe(c, Vector2(0.06, -0.45), 0.6, 0.8, true)
+			await _demo_wait_ready([])
+			for k in 24:
+				_set_angles(lerpf(28.0, 4.0, (k + 1) / 24.0), 20.0)
+				await get_tree().process_frame
+			await _wait(0.5)
+			await _demo_swipe(c, Vector2(-0.04, -0.46), 0.6, 0.8, true)
+			await _demo_wait_ready([])
 
 		"turn12":
 			# turning on the spot: stick flicks of 180 / 90 / 135 degrees from a stand, a reversal out of a

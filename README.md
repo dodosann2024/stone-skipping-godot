@@ -1,7 +1,61 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v14 码头小船：封闭船体 + 真实漂浮
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v15 自己瞄准：滑动投掷 + 出手角度 / 石头倾角
 
 低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩由 Blender 脚本（`art/boy/`）建模、绑定骨骼、制作动画后导出 glTF；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+## v15 改动
+投掷角度不再固定：玩家自己决定方向、出手仰角、石头倾角和力度，甩得好还有旋转；跳几下、跳多远由这些量按真实的打水漂物理算出来。只在码头尽头能扔，没有其他新功能。在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（导出文件改名为 `game_v15.*`，iOS 声音解锁和安全区的 head_include 保留）。截图与视频见 `screenshots/v15/`。
+
+### 1. 操作
+**手机（先为 iPhone 设计）**
+- 码头尽头点「打水漂」，男孩走到投掷点站好后，屏幕底部中间出现一个**石头按钮**。
+- **按住石头往海面方向划**：划的方向 = 瞄准方向（偏离竖直向上多少度，就往左 / 右偏多少度，最多约 70°，整体限制在码头正前方左右 80° 以内）；划得越长力度越大（短边的 4% 以内不算，再划 42% 就是满力）。手指旁边显示虚线箭头和力度环、百分比。
+- **松手 = 扔出**。松手前手指还在快速移动（顺势一甩）→ 石头转得快（旋转 20%~100%，看最后约 90 ms 的手指速度）；停住再慢慢松手 → 几乎不转。先停在想要的方向上，0.22 秒内再一甩，用的是停住时的方向和力度，所以“先瞄准再甩”也行。
+- **往回拉（划到起点下方）= 取消**，箭头变成珊瑚色并显示“往回拉 = 取消”，松手后方向恢复成按下前的方向。
+- 右下角两个竖直**角度滑条**：「仰角」（出手仰角，−5°~30°，绿色区间 0°~10°）和「倾角」（石头前端翘起的角度，0°~45°，绿色区间 15°~25°），可以拖动也可以点轨道直接跳过去；滑条上方的小图标画出当前角度，下方显示度数。两个滑条和石头按钮都避开了左下摇杆位置和刘海 / Home 条安全区。
+- 瞄准时：水面上画出预测的飞行轨迹（到第一次触水为亮点，后面两跳为淡点），第一次触水点有一个圆环，颜色表示预测结果（绿 = 会跳，琥珀 = 勉强，珊瑚 = 会沉）；底部一行读数：「力度 · 方向 · 入水约 X°（仰角 · 倾角）」。相机在出手点正后方，划动时跟着转一部分（竖屏也能看到轨迹），扔出后转到新的方向。
+
+**电脑**：鼠标按住石头按钮拖动，和手指一样；或者键盘 ←/→（A/D）瞄准、↑/↓（W/S）仰角、Q/E（PgDn/PgUp）倾角，按住空格蓄力（力度条来回走）、松开扔出（键盘投掷旋转固定 80%）。
+
+### 2. 物理（`main.gd`：`water_contact`、`simulate`、`tilt_quality`、`max_entry`、`min_speed`）
+参考 Clanet, Hersen & Bocquet《Secrets of successful stone-skipping》（Nature 2004）：
+- **倾角质量** q = exp(−((|倾角−20°| + 9·(1−旋转)) / 14)²)：20° 左右最好，旋转不足相当于倾角更差（石头会晃）。
+- **最大可弹起入水角** = 30° ×（0.25 + 0.75q）× 速度系数 ×（0.85 + 0.15·旋转）。入水比这个陡 → 扎进水里（“太陡”）；如果换成 20° 倾角就能弹起来，则判为石头太平 / 太翘。倾角大于 50° 一定沉。
+- **最低速度** = 3.5 / (0.35 + 0.65q) m/s，低于它就沉（“速度不够”）。
+- 每次弹跳损失一份大致固定的动能（倾角越差、旋转越少损失越多），水平速度还按入水角再打折；竖直回弹系数随旋转和倾角变化；旋转每跳衰减 2.5%，旋转不足时倾角每跳会被打乱一点。所以跳的次数大约随速度平方增长。
+- 出手速度 7~25 m/s（按力度），站立出手点离水面 1.35 m，半蹲 1.07 m（半蹲入水角更平）。
+- **`--sim` 扫描**（站立、满力、旋转 100%，除被扫描的量外仰角 4°、倾角 20°）：
+
+| 量 | 取值 | 弹跳次数 | 说明 |
+|---|---|---|---|
+| 仰角 | −5 / 0 / 5 / 10 / 15 / 20 / 25 / 30° | 17 / 18 / 17 / 16 / 13 / 11 / 8 / **0** | 越高入水越陡、跳得越少，但飞得更远（25° 108 m）；30° 入水 33°，扎进水里 |
+| 倾角 | 0 / 5 / 10 / 15 / **20** / 25 / 30 / 35 / 40 / 45° | **0** / 10 / 13 / 17 / **18** / 13 / 10 / 7 / **0** / **0** | 0° 拍在水面停住（太平）；40° 以上扎进水里（太翘） |
+| 旋转 | 0.2 / 0.4 / 0.6 / 0.8 / 1.0 | 8 / 10 / 12 / 15 / 18 | |
+| 力度 | 0.2 / 0.4 / 0.6 / 0.8 / 1.0 | 0 / 6 / 10 / 14 / 18 | 力度小入水陡（20% 时 30°） |
+
+- 扔完后结果下方显示一行小字：「上一投：入水 X° · 倾角 Y° · 旋转 Z%」，再加一句提示（如“出手仰角 30° 太高，放低一点”“倾角调到 20° 左右：前端微微翘起”“旋转不足：松手时顺势快速一甩”“完美的一甩！”）。左上角的弹跳计数照旧。
+- 石头在空中按倾角前端翘起、按旋转速度自转，旋转少时会晃。
+
+### 3. 男孩转身对准方向（`boy.gd`：`aim_twist`、`twist_spine`；`main.gd`：`_turn_to_aim`）
+- 瞄准时先转胸（spine_01/02/03 绕竖直轴分担，最多 0.5 rad），髋和脚慢慢跟上（速率 2.5 /s）；开始挥臂后身体快速转正（26 /s），出手时身体朝向和瞄准方向的偏差 < 0.06 rad（selftest 实测 0.0°），石头就沿瞄准方向飞出。
+- 手臂穿模检查（`dev/arm_clearance.gd`）加上了左右各 0.5 rad 的转胸：蓄力阶段全程满转，挥臂时按游戏里的速率回正；站立 / 半蹲都通过阈值。和不转时比，站立左转时手臂-腿的最小间隙 1.2 → 0.8 cm，半蹲右转时右前臂-身体 3.3 → 2.0 cm，其余不变。只在蓄力时满转、整个挥臂都满转的极端情况下，收手阶段手指会碰到大腿约 2.5 cm（游戏里不会出现）。
+
+### 4. 测试
+- `--selftest` 新增：
+  - 「throw angles -> skips」：仰角 0/15/22/30° → 18/13/10/0 跳（30° 判为太陡），倾角 0/5/12/20/28/35/45° → 0/10/14/18/11/7/0（0° 判为太平），旋转 .2/.6/1 → 8/12/18，力度 .2/.5/1 → 0/8/18，半蹲入水比站立平。
+  - 「swipe throw」：真实的滑动代码路径——左划快甩（瞄准 +28°、旋转 99%、石头沿 +28° 飞出、身体对准）、右划慢松（旋转 20%）、直划、慢设备上一帧内收到整个甩动、往回拉取消（方向不变）、30° 仰角扔出 0 跳并给出提示。
+  - 手臂穿模：站立 / 半蹲 × 左右转胸。全部通过。
+- `--sim` 多出上表的扫描。
+- Web（无头 Chrome 模拟 iPhone 390×844 触屏，`tools/browser_check_v5.py`）：加载、点击开始、声音解锁并真实出声、摇杆走 / 跑到码头尽头、滑动扔出（9 跳 44 m）、把仰角滑条拖到 30° 再扔（扎进水里，提示“出手仰角 30° 太高”）、往回拉取消、离开码头、夜晚，控制台无错误。新提示文字的字形已加入 `fonts/ui.otf` 子集（之前 Web 版会显示方框）。
+- 帧率（390×844，llvmpipe 软件渲染，v14 → v15，两次）：倒影开 10.33 / 10.56 → 10.29 / 10.57；夜晚 9.78 / 9.90 → 9.87 / 9.84；倒影关 12.72 / 12.79 → 12.78 / 12.98；投掷片段 11.21 / 11.66 → 12.10 / 12.29 fps。没有变化（轨迹点 30 个小球 + 1 个圆环，只在瞄准时显示；两个滑条和按钮只在数值变化时重绘）。
+- 图 / 视频：`throw_ui_before_after.png`、`throw_ui_portrait_before_after.png`（v14 / v15）、`swipe_flow_portrait.png`（竖屏：准备 → 左划 → 往回拉取消 → 右划 → 出手 → 弹跳）、`angles_landscape.png`、`angles_portrait.png`（好角度 18 跳 / 仰角太高扎水 / 倾角太平拍停 / 慢松手不转）、`web_swipe_throw.png`（Web 版）、`v15_*` / `p_v15_*` 单张、`throw15_portrait.mp4`、`throw15_landscape.mp4`（左划快甩 → 右划慢松 → 仰角拉到 28° 扎水 → 调回 4° 再扔）。
+
+### 已知问题
+- 没有在 iPhone 实机上测试；甩动的旋转按手指速度计算，实机上的手感（阈值）可能还要调。无头浏览器只有 1~2 fps、每帧只收到一个触摸事件，测不出甩动，所以 Web 测试里旋转只有 20%（甩动逻辑由 selftest 覆盖）。
+- 划动方向按“屏幕角度 = 水平角度”换算，不是严格的透视投影：往屏幕上某个浮标划，不一定正好扔向那个浮标（轨迹预览是准的）。
+- 预测轨迹不考虑每跳的随机扰动，实际跳数会比预览略有出入。
+- 滑条是竖直的，横屏时占右下角一块；竖屏小屏（如 iPhone SE）上滑条和底部提示文字比较挤。
+- 码头以外的地方仍然不能扔。
 
 ## v14 改动
 只修码头边小船“船底透明、能看穿”的问题，并让它真实地浮在水上，没有其他新功能。在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（导出文件改名为 `game_v14.*`，iOS 声音解锁和安全区的 head_include 保留）。截图与视频见 `screenshots/v14/`。
@@ -508,7 +562,7 @@
 ## 玩法速览
 1. 点「点击开始」（松手时开启声音；iPhone 请关闭侧边静音开关）。
 2. 用左下摇杆走到码头尽头，点「打水漂」。
-3. 按住屏幕蓄力，左右拖转向、上下拖调角度，松手扔出；角度低、力度大才跳得多。右上角可切换站立 / 半蹲。
+3. 按住底部的石头往海面划：方向 = 瞄准，越长越用力，松手时顺势一甩石头会转；往回拉取消。右下角滑条调出手仰角和石头倾角（20° 左右最好）。右上角可切换站立 / 半蹲。
 4. 「离开码头」后可以去吊床睡觉、去沙滩毛巾晒太阳。
 
 ## 目录
@@ -525,20 +579,21 @@
 ## 命令
 ```bash
 godot --headless --path . --import
-godot --headless --path . -- --sim                                    # 站立 / 半蹲物理参数表
+godot --headless --path . -- --sim                                    # 站立 / 半蹲物理参数表 + 仰角 / 倾角 / 旋转 / 力度扫描
 python3 tools/synth_audio.py && python3 tools/check_audio.py           # 重新合成并检查音效
 blender -b --python art/boy/build_boy.py -- --export boy                # 重新生成小男孩（需要 Blender 4.5 + MPFB2 扩展）
 godot --headless --path . --fixed-fps 30 -- --selftest                 # 回归测试：每个动作结束后都能用摇杆走
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4            # v6 截图（screenshots/v6）
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 --from=explore # 游戏相机下走 / 跑
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 --from=shore # 海岸 / 浅海截图
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 --from=v15     # 滑动瞄准 / 角度截图（加 --portrait 为竖屏）
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 --from=v11_refl # 白天 / 夜晚倒影（v11_logs：篝火木头地形）
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --resolution 585x1266 -- --demo4 --portrait # 竖屏截图
-xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --write-movie w.avi -- --video4=walk     # 视频片段 walk/throw/sleep/sun/getup/gait
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . --fixed-fps 30 --write-movie w.avi -- --video4=walk     # 视频片段 walk/throw/throw15/sleep/sun/getup/gait（录像分辨率取项目窗口大小，可用 override.cfg 改）
 xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 godot --path . -s res://dev/boy_view.gd -- --out=/tmp/pose            # 角色姿势图
 godot --headless --path . --fixed-fps 30 -s res://dev/gait_view.gd                                    # 步态滑步检查（加 --out=/tmp/g 输出帧）
-godot --headless --path . --export-release "Web" build/web/game_v11.html  # 然后复制到 docs/，index.html = game_v11.html
-python3 tools/browser_check_v4.py "https://dodosann2024.github.io/stone-skipping-godot/?v=6" /tmp/web   # 模拟 iPhone 测试（含真实出声检测）
+godot --headless --path . --export-release "Web" build/web/game_v15.html  # 然后复制到 docs/，index.html = game_v15.html
+python3 tools/browser_check_v5.py "https://dodosann2024.github.io/stone-skipping-godot/?v=15" /tmp/web  # 模拟 iPhone 测试（滑动投掷、角度滑条、真实出声检测）
 ```
 
 ## 素材与许可
