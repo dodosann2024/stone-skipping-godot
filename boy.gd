@@ -87,6 +87,12 @@ var hair_prev := Vector3.ZERO
 var hair_pv := Vector3.ZERO
 var hair_t := 0.0
 var wind := 1.0
+# clothes: loose hems (shorts legs, vest front edges) trail the pelvis the same way
+var cloth_mats: Array[ShaderMaterial] = []
+var cloth_off := Vector3.ZERO
+var cloth_vel := Vector3.ZERO
+var cloth_prev := Vector3.ZERO
+var cloth_pv := Vector3.ZERO
 # turning pivots about the planted foot: the root yaws about its own origin, which would drag a planted
 # foot sideways, so the model is shifted (world-space offset, bled back to zero) to keep that contact put
 var model_base := Vector3.ZERO
@@ -228,6 +234,15 @@ func _mat(col: Color, kind: int) -> ShaderMaterial:
 	m.set_shader_parameter("kind", kind)
 	return m
 
+func _cloth_mat(col: Color, p: Dictionary) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = preload("res://shaders/cloth.gdshader")
+	m.set_shader_parameter("albedo", col)
+	m.set_shader_parameter("fabric_tex", preload("res://textures/fabric.png"))
+	for k: String in p:
+		m.set_shader_parameter(k, p[k])
+	return m
+
 func _setup_materials() -> void:
 	# albedo per Blender material name; kinds: 0 skin, 1 cloth, 2 hair, 3 straw, 4 props
 	var look := {
@@ -236,7 +251,16 @@ func _setup_materials() -> void:
 		"hair": [Color(0.30, 0.20, 0.14), 2], "sandal": [Color(0.36, 0.60, 0.64), 1],
 		"strap": [Color(0.95, 0.93, 0.88), 1], "hat": [Color(0.92, 0.80, 0.55), 3],
 		"band": [Color(0.78, 0.25, 0.20), 1], "lens": [Color(0.08, 0.09, 0.11), 4],
-		"stone": [Color(0.55, 0.56, 0.58), 4],
+		"stone": [Color(0.55, 0.56, 0.58), 4], "cord": [Color(0.93, 0.91, 0.85), 1],
+	}
+	# fabric 0 jersey, 1 linen, 2 twill (textures/fabric.png channels)
+	var fabric := {
+		"tank": {"fabric": 0, "thread": Color(0.97, 0.96, 0.93), "hem_stitch": 0.006, "fade": 0.0,
+			"wear": 0.15, "sheen": 0.35, "translucency": 0.16},
+		"vest": {"fabric": 1, "thread": Color(0.88, 0.45, 0.37), "binding": Color(0.60, 0.17, 0.14),
+			"binding_w": 0.0055, "hem_stitch": 0.0075, "fade": 0.3, "wear": 0.3, "sheen": 0.25},
+		"shorts": {"fabric": 2, "thread": Color(0.99, 0.89, 0.58), "hem_stitch": 0.011, "fade": 0.25,
+			"wear": 0.3, "sheen": 0.2},
 	}
 	for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh := mi.mesh
@@ -246,7 +270,10 @@ func _setup_materials() -> void:
 			if not look.has(n):
 				continue
 			var m := _mat(look[n][0], look[n][1])
-			if n == "hair":
+			if fabric.has(n):
+				m = _cloth_mat(look[n][0], fabric[n])
+				cloth_mats.append(m)
+			elif n == "hair":
 				m = ShaderMaterial.new()
 				m.shader = preload("res://shaders/hair.gdshader")
 				m.set_shader_parameter("strands", preload("res://textures/hair_strands.png"))
@@ -514,6 +541,7 @@ func _play(clip: String, time: float, fade: float, jump := false) -> void:
 
 func _process(delta: float) -> void:
 	_update_hair(delta)
+	_update_cloth(delta)
 	if frozen:
 		return
 	_tick(delta)
@@ -548,6 +576,30 @@ func _update_hair(delta: float) -> void:
 	hair_mat.set_shader_parameter("flutter", 0.0004 * wind * gust / SCALE)
 	hair_mat.set_shader_parameter("game_time", hair_t)
 	hair_mat.set_shader_parameter("hat_on", 1.0 if hat.visible and hat_mode == "head" else 0.0)
+
+## a few mm of lag on the free hems; the shorts legs flare ~2 cm off the thighs and the vest hangs
+## 4 mm over the waistband, so this never reaches skin or the layer below
+func _update_cloth(delta: float) -> void:
+	if cloth_mats.is_empty() or delta <= 0.0:
+		return
+	var p := (skel.global_transform * skel.get_bone_global_pose(skel.find_bone("pelvis"))).origin
+	var v := (p - cloth_prev) / delta
+	var acc := (v - cloth_pv) / delta
+	if cloth_prev == Vector3.ZERO or acc.length() > 80.0:
+		acc = Vector3.ZERO
+	cloth_prev = p
+	cloth_pv = v
+	var gust := 0.6 + 0.4 * sin(hair_t * 0.7) * sin(hair_t * 1.9 + 1.0)
+	var target := -acc * 0.0005 + Vector3(0.8, 0.0, 0.45) * (0.0012 * wind * gust)
+	target = target.limit_length(0.004)
+	cloth_vel += ((target - cloth_off) * 110.0 - cloth_vel * 11.0) * minf(delta, 0.05)
+	cloth_off += cloth_vel * minf(delta, 0.05)
+	cloth_off = cloth_off.limit_length(0.005)
+	var inv := hair_mi.global_transform.basis.inverse()
+	for m in cloth_mats:
+		m.set_shader_parameter("sway", inv * cloth_off)
+		m.set_shader_parameter("flutter", 0.0003 * wind * gust / SCALE)
+		m.set_shader_parameter("game_time", hair_t)
 
 func _tick(delta: float) -> void:
 	t += delta
