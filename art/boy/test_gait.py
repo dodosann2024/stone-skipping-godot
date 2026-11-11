@@ -7,8 +7,8 @@ from mathutils import Vector
 out = sys.argv[sys.argv.index("--") + 1]
 rig = posekit.Rig(bpy.data.objects["BoyRig"])
 rtools.setup_workbench((400, 560))
-walk = clips.Gait(rig, 1.0, 1.0, 0.62)
-run = clips.Gait(rig, 0.68, 2.04, 0.36, run=True)
+walk = clips.Gait(rig, *clips.WALK)
+run = clips.Gait(rig, *clips.RUN, run=True)
 idle = clips.idle(rig)
 shots = []
 for name, g in (("walk", walk), ("run", run)):

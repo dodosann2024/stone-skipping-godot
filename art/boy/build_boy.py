@@ -617,21 +617,52 @@ def _rigid_foot(o, rig, side):
 
 def hat(rig, body, hair, head_top):
     """woven straw hat: lathed crown + wide, slightly drooping brim, red band. Rigid on the head bone."""
-    hb = rig.data.bones["head"]
-    base_z = head_top - 0.062
+    # the v16 hat (band round the loose hair volume) only sets the brim's outer size now
+    base0 = head_top - 0.062
     hv = [v.co for v in hair.data.vertices]
-    ring = [p for p in hv if base_z - 0.01 < p.z < base_z + 0.04] + [v.co for v in body.data.vertices if abs(v.co.z - base_z) < 0.01]
-    rx = max(abs(p.x) for p in ring) + 0.004
-    cy = (max(p.y for p in ring) + min(p.y for p in ring)) * 0.5
-    ry = (max(p.y for p in ring) - min(p.y for p in ring)) * 0.5 + 0.004
-    ch = max(p.z for p in hv) + 0.004 - base_z
+    ring0 = [p for p in hv if base0 - 0.01 < p.z < base0 + 0.04] + [v.co for v in body.data.vertices if abs(v.co.z - base0) < 0.01]
+    rx0 = max(abs(p.x) for p in ring0) + 0.004
+    ry0 = (max(p.y for p in ring0) - min(p.y for p in ring0)) * 0.5 + 0.004
+    # worn, not perched: the band goes round the skull (plus the hair it presses flat) through the forehead
+    # ~5 cm below the top of the head, above the ears and round the back of the head, tipped back only a
+    # little so the high game camera still sees his face
+    HAIR, TILT, FRONT = 0.009, 7.0, 0.05
+    hc = rig.data.bones["head"].head_local
+    skull = [v.co.copy() for v in body.data.vertices if v.co.z > hc.z + 0.05]
+    tilt = Matrix.Rotation(math.radians(-TILT), 4, "X")
+    inv = tilt.inverted()
+    piv = Vector((0.0, -0.01, head_top - 0.07))
+    for _ in range(4):
+        loc = [inv @ (p - piv) + piv for p in skull]
+        base_z = piv.z
+        ring = [p for p in loc if base_z - 0.004 < p.z < base_z + 0.012]
+        rx = max(abs(p.x) for p in ring) + HAIR
+        cy = (max(p.y for p in ring) + min(p.y for p in ring)) * 0.5
+        ry = (max(p.y for p in ring) - min(p.y for p in ring)) * 0.5 + HAIR
+        # front of the band at FRONT below the top of the head
+        piv = Vector((0.0, cy + ry * 0.8, head_top - FRONT - ry * 1.8 * math.sin(math.radians(TILT))))
+    loc = [inv @ (p - piv) + piv for p in skull]
+    wall = [(1.0, 0.3), (0.97, 0.62), (0.82, 0.86), (0.5, 0.97), (0.0, 1.0)]
+
+    def crown_s(t):
+        for (s0, t0), (s1, t1) in zip(wall, wall[1:]):
+            if t <= t1:
+                return s0 + (s1 - s0) * (t - t0) / (t1 - t0)
+        return 0.0
+
+    # crown just tall enough that the skull and its flattened hair stay inside the tapering wall
+    ch = max(p.z for p in loc) - base_z + HAIR + 0.004
+    while any(math.hypot(p.x / (rx - HAIR * 0.4), (p.y - cy) / (ry - HAIR * 0.4)) > crown_s((p.z - base_z + HAIR) / ch)
+              for p in loc if p.z - base_z + HAIR > 0.3 * ch):
+        ch += 0.002
+    bs = (rx0 + ry0) / (rx + ry)
     prof = [  # (radius scale, z) from the crown top down to the brim edge
         (0.0, ch), (0.5, ch * 0.97), (0.82, ch * 0.86), (0.97, ch * 0.62), (1.0, ch * 0.3), (1.01, 0.0),
-        (1.06, -0.003), (1.3, -0.005), (1.55, -0.011), (1.75, -0.02), (1.82, -0.025),
+        (1.06, -0.003), (1.3 * bs, -0.005), (1.55 * bs, -0.011), (1.75 * bs, -0.02), (1.82 * bs, -0.025),
     ]
-    # pushed back on the head (pivot near the back of the band) so the high game camera sees the face
-    tilt = Matrix.Rotation(math.radians(-13.0), 4, "X")
-    piv = Vector((0.0, cy + ry * 0.8, base_z))
+    print("HAT seat: band %.1f cm below the top at the front, %.1f at the back, ring %.1f x %.1f cm, crown %.1f cm, tilt %.0f deg"
+          % ((head_top - (base_z + (piv.y - cy + ry) * math.sin(math.radians(TILT)))) * 100,
+             (head_top - (base_z + (piv.y - cy - ry) * math.sin(math.radians(TILT)))) * 100, rx * 200, ry * 200, ch * 100, TILT))
     seg = 28
     bm = bmesh.new()
     rings = []
@@ -669,7 +700,7 @@ def hat(rig, body, hair, head_top):
         uv.data[loop.index].uv = (math.atan2(d.y, d.x) / (2 * math.pi) + 0.5, d.length + max(0.0, co.z - base_z) * 1.0)
     # parent to the head bone, keeping the rest placement
     _bone_child(sol, rig, "head")
-    return {"piv": piv, "tilt": -13.0, "cy": cy, "rx": rx, "ry": ry, "base_z": base_z, "prof": prof}
+    return {"piv": piv, "tilt": -TILT, "cy": cy, "rx": rx, "ry": ry, "base_z": base_z, "prof": prof}
 
 
 def _bone_child(ob, rig, bone):

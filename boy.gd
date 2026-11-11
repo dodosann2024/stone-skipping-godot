@@ -24,7 +24,6 @@ var parts := {}
 var anim := "idle"   # idle | move | charge | throw | react | activity
 var anim_t := 0.0
 var stance := "stand"   # stand | crouch (throwing stance)
-var hat_mode := "head"   # head | chest | ground
 var wading := false
 var move_speed := 0.0
 var power := 0.0
@@ -51,15 +50,33 @@ var hat: Node3D
 var glasses: Node3D
 var stone: Node3D
 var blob: MeshInstance3D
+# the hat is a rigid prop on the head bone. It has two seats there (head bone -> hat): on his head, and
+# tipped down over his face for lying on his back (a brim that wide cannot stay on a head lying flat: its
+# back edge would be ~10 cm into the bed). Only his hand moves it from one to the other.
 var hat_head_xf: Transform3D
-var hat_head_parent: Node3D
-var chest_att: BoneAttachment3D
+var hat_face_xf: Transform3D
+var hat_head_parent: BoneAttachment3D
+var head_bone := -1
+var hat_s := 0.0      # 0 on his head .. 1 over his face
+var hat_hold := 0.0   # 0 .. 1: the hand on the front of the brim (arm IK weight)
+var hat_side := "r"
+var hat_band_c := Vector3.ZERO   # centre of the band rim (hat local)
+var hat_grip := {}    # side -> [wrist, finger direction, palm normal] in hat local space
+var hand_loc := {}    # side -> [finger direction, palm normal] in the hand bone's frame
+var arm_bones := {}   # side -> [clavicle, upperarm, lowerarm, hand, deltoid]
+# lie_k: hand reaches the brim [0] -> [1], moves the hat over his face [1] -> [2], lets go [3] -> [4];
+# getting up runs the same backwards
+const HAT_LIE := {"": [0.0, 0.16, 0.5, 0.72, 0.92], "seatlie": [0.3, 0.55, 0.9, 0.92, 0.99]}
+const HAT_LIFT := 0.07   # the hat's arc away from his face (skeleton m)
+const HAT_TIP := {"sleep": -0.6, "seatlie": -0.55}   # rad, left side of the brim up over his face
+var hat_tip := 0.0
 
 var t := 0.0
 var t_idle := 0.0
 var phase := 0.0
 var move_w := 0.0
 var run_k := 0.0
+var walk_k := 1.0    # stroll 0 -> walk 1 (under run_k): shorter, slower steps at low speed
 var speed_s := 0.0
 var prev_pos := Vector3.ZERO
 var has_prev := false
@@ -303,6 +320,8 @@ func _setup_parts() -> void:
 				"Stone": stone = c
 	hat_head_parent = hat.get_parent()
 	hat_head_xf = hat.transform
+	head_bone = skel.find_bone(hat_head_parent.bone_name)
+	_setup_hat_seats()
 	glasses.visible = false
 	for b in ["head", "pelvis", "spine_03"]:
 		var a := BoneAttachment3D.new()
@@ -310,7 +329,6 @@ func _setup_parts() -> void:
 		a.bone_name = b
 		skel.add_child(a)
 		parts[b] = a
-	chest_att = parts["spine_03"]
 
 func _anim_node(clip: String) -> AnimationNodeAnimation:
 	var n := AnimationNodeAnimation.new()
@@ -321,13 +339,16 @@ func _setup_tree() -> void:
 	var ap := model.find_child("AnimationPlayer") as AnimationPlayer
 	bt = AnimationNodeBlendTree.new()
 	var x := 0.0
-	for pair in [["idle", "idle"], ["walk", "walk"], ["run", "run"], ["a", "idle"], ["b", "idle"]]:
+	for pair in [["idle", "idle"], ["stroll", "stroll"], ["walk", "walk"], ["run", "run"], ["a", "idle"], ["b", "idle"]]:
 		bt.add_node(pair[0], _anim_node(pair[1]), Vector2(0, x))
 		bt.add_node(pair[0] + "_s", AnimationNodeTimeSeek.new(), Vector2(200, x))
 		bt.connect_node(pair[0] + "_s", 0, pair[0])
 		x += 120.0
+	bt.add_node("sw", AnimationNodeBlend2.new(), Vector2(400, 0))
+	bt.connect_node("sw", 0, "stroll_s")
+	bt.connect_node("sw", 1, "walk_s")
 	bt.add_node("wr", AnimationNodeBlend2.new(), Vector2(400, 100))
-	bt.connect_node("wr", 0, "walk_s")
+	bt.connect_node("wr", 0, "sw")
 	bt.connect_node("wr", 1, "run_s")
 	bt.add_node("move", AnimationNodeBlend2.new(), Vector2(600, 0))
 	bt.connect_node("move", 0, "idle_s")
@@ -480,11 +501,7 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	act_target = 1.0
 	act_w = 1.0 if sit_k > 0.02 or lie_k > 0.0 else act_w
 	act_rate = 8.0
-	hat_mode = "head"
-	if kind == "seatlie" and lie_k > 0.55:
-		hat_mode = "face"
-	elif lie_k > 0.6 and not kind.begins_with("seat"):
-		hat_mode = "chest" if kind == "sleep" else "ground"
+	_hat_for(kind, lie_k)
 	glasses.visible = kind == "sun" and lie_k > 0.5
 	blob.visible = sit_k < 0.3 and lie_k <= 0.0
 	if kind == "sleep" or kind == "seatlie":
@@ -495,7 +512,8 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	return _track(clip, "pelvis", u)
 
 func end_activity() -> void:
-	hat_mode = "head"
+	hat_s = 0.0
+	hat_hold = 0.0
 	glasses.visible = false
 	blob.visible = true
 	if act_frames == 0 and pre_act.size() == 7:
@@ -584,7 +602,7 @@ func _update_hair(delta: float) -> void:
 	hair_mat.set_shader_parameter("sway", inv * hair_off)
 	hair_mat.set_shader_parameter("flutter", 0.0004 * wind * gust / SCALE)
 	hair_mat.set_shader_parameter("game_time", hair_t)
-	hair_mat.set_shader_parameter("hat_on", 1.0 if hat.visible and hat_mode == "head" else 0.0)
+	hair_mat.set_shader_parameter("hat_on", (1.0 - smoothstep(0.0, 0.4, hat_s)) if hat.visible else 0.0)
 
 ## a few mm of lag on the free hems; the shorts legs flare ~2 cm off the thighs and the vest hangs
 ## 4 mm over the waistband, so this never reaches skin or the layer below
@@ -660,13 +678,17 @@ func _tick(delta: float) -> void:
 	var run: Dictionary = clips["run"]
 	match anim:
 		"move":
-			var k0 := run_k
+			var k0 := _mix()
 			run_k = move_toward(run_k, smoothstep(RUN_FROM, RUN_TO, speed_s), delta * 5.0)
-			var stride := lerpf(float(walk["stride"]), float(run["stride"]), run_k) * SCALE
 			var still := move_speed < 0.05 and speed_s < 0.12
 			if still:
 				# finish the step towards feet-together (passing) and settle into idle
 				stopping = true
+			if not stopping:
+				# (held while stopping: the stance foot is not re-solved then, a changing mix would drag it)
+				var vs := float(clips["stroll"]["speed"]) * SCALE
+				walk_k = move_toward(walk_k, smoothstep(vs, float(walk["speed"]) * SCALE, speed_s), delta * 2.0)
+			var stride := _stride()
 			var adv := moved.length() / stride
 			if not stopping and move_w > 0.5:
 				adv = _stance_advance(adv, k0, moved.dot(-global_basis.z) / SCALE)
@@ -718,6 +740,8 @@ func _tick(delta: float) -> void:
 				show_stone(true)
 	if anim != "move" and anim != "idle":
 		run_k = move_toward(run_k, 0.0, delta * 3.0)
+	if anim != "move":
+		walk_k = move_toward(walk_k, 0.0, delta * 3.0)
 	if anim != "activity":
 		t_idle = fposmod(t_idle + delta, 4.0)
 	act_w = move_toward(act_w, act_target, delta * act_rate)
@@ -731,6 +755,7 @@ func _tick(delta: float) -> void:
 	lead_dt = 0.0
 	_plant_turn(delta)
 	_foot_lock(delta)
+	_hat_hands()
 	_update_props()
 	_update_face(delta)
 
@@ -738,10 +763,12 @@ func _apply_mixer() -> void:
 	var walk: Dictionary = clips["walk"]
 	var run: Dictionary = clips["run"]
 	tree.set("parameters/idle_s/seek_request", t_idle)
+	tree.set("parameters/stroll_s/seek_request", phase * float(clips["stroll"]["length"]))
 	tree.set("parameters/walk_s/seek_request", phase * float(walk["length"]))
 	tree.set("parameters/run_s/seek_request", phase * float(run["length"]))
 	tree.set("parameters/a_s/seek_request", slot_t[0])
 	tree.set("parameters/b_s/seek_request", slot_t[1])
+	tree.set("parameters/sw/blend_amount", walk_k)
 	tree.set("parameters/wr/blend_amount", run_k)
 	tree.set("parameters/move/blend_amount", smoothstep(0.0, 1.0, move_w))
 	tree.set("parameters/ab/blend_amount", ab_w)
@@ -928,19 +955,20 @@ func _stand_point(i: int) -> Vector3:
 	var lp: Array = lock_prev[i]
 	return lp[1]
 
-## walk and run share one phase, but their stances do not line up (a walk foot is still down when the run
-## one has long pushed off), so while run_k moves the blended stance foot would be dragged along. Per clip,
-## sampled at load: per foot [heel z, heel y, toe z, toe y] by phase (skeleton space).
+## stroll, walk and run share one phase, but their stances do not line up (a walk foot is still down when the
+## run one has long pushed off), so while the mix moves the blended stance foot would be dragged along. Per
+## clip, sampled at load: per foot [heel z, heel y, toe z, toe y] by phase (skeleton space).
 const GAIT_N := 64
 var gait_tab := {}
 
 func _build_gait_tables() -> void:
-	var keep := [phase, run_k, move_w, act_w]
-	for c in ["walk", "run"]:
+	var keep := [phase, run_k, move_w, act_w, walk_k]
+	for c in ["stroll", "walk", "run"]:
 		var rows: Array = []
 		for k in GAIT_N:
 			phase = float(k) / GAIT_N
 			run_k = 1.0 if c == "run" else 0.0
+			walk_k = 0.0 if c == "stroll" else 1.0
 			move_w = 1.0
 			act_w = 0.0
 			_apply_mixer()
@@ -952,26 +980,37 @@ func _build_gait_tables() -> void:
 				row.append_array([h.z, h.y, to.z, to.y])
 			rows.append(row)
 		gait_tab[c] = rows
-	phase = keep[0]; run_k = keep[1]; move_w = keep[2]; act_w = keep[3]
+	phase = keep[0]; run_k = keep[1]; move_w = keep[2]; act_w = keep[3]; walk_k = keep[4]
 
-## blended [heel z, heel y, toe z, toe y] of foot i at phase p and walk / run mix k
-func _gait_at(i: int, p: float, k: float) -> Array:
+## the gait mix: (stroll 0 -> walk 1, walk 0 -> run 1)
+func _mix() -> Vector2:
+	return Vector2(walk_k, run_k)
+
+## stride of the current mix (m)
+func _stride() -> float:
+	var ws := lerpf(float(clips["stroll"]["stride"]), float(clips["walk"]["stride"]), walk_k)
+	return lerpf(ws, float(clips["run"]["stride"]), run_k) * SCALE
+
+## blended [heel z, heel y, toe z, toe y] of foot i at phase p and gait mix k
+func _gait_at(i: int, p: float, k: Vector2) -> Array:
 	var f := fposmod(p, 1.0) * GAIT_N
 	var a := int(f) % GAIT_N
 	var b := (a + 1) % GAIT_N
 	var u := f - floorf(f)
+	var sl: Array = gait_tab["stroll"]
 	var w: Array = gait_tab["walk"]
 	var r: Array = gait_tab["run"]
 	var out: Array = []
 	for j in 4:
+		var vs := lerpf(float(sl[a][i * 4 + j]), float(sl[b][i * 4 + j]), u)
 		var vw := lerpf(float(w[a][i * 4 + j]), float(w[b][i * 4 + j]), u)
 		var vr := lerpf(float(r[a][i * 4 + j]), float(r[b][i * 4 + j]), u)
-		out.append(lerpf(vw, vr, k))
+		out.append(lerpf(lerpf(vs, vw, k.x), vr, k.y))
 	return out
 
 ## z of foot i's planted point at (p, k): heel, toe pad or between them as in _foot_lock; null when lifted.
 ## `kind` (0 heel, 1 toe, 2 both) pins the point when given.
-func _plant_z(i: int, p: float, k: float, kind := -1) -> Variant:
+func _plant_z(i: int, p: float, k: Vector2, kind := -1) -> Variant:
 	var s := _gait_at(i, p, k)
 	var th := float(meta["ground"]) + 0.008
 	if kind < 0:
@@ -983,9 +1022,9 @@ func _plant_z(i: int, p: float, k: float, kind := -1) -> Variant:
 	return [float(s[0]) if kind == 0 else (float(s[2]) if kind == 1 else (float(s[0]) + float(s[2])) * 0.5), kind]
 
 ## phase advance that moves the blended stance foot back by exactly the distance the body went forward
-## (skeleton units), so a changing walk / run mix does not drag it; the plain stride rate otherwise
-func _stance_advance(adv: float, k0: float, fwd: float) -> float:
-	if gait_tab.is_empty() or absf(run_k - k0) < 1e-5:
+## (skeleton units), so a changing stroll / walk / run mix does not drag it; the plain stride rate otherwise
+func _stance_advance(adv: float, k0: Vector2, fwd: float) -> float:
+	if gait_tab.is_empty() or (_mix() - k0).length() < 1e-5:
 		return adv
 	var best := -1
 	var lo := 1e9
@@ -1001,13 +1040,13 @@ func _stance_advance(adv: float, k0: float, fwd: float) -> float:
 	var target := float(p0[0]) - fwd
 	var kind: int = p0[1]
 	var span := maxf(adv * 4.0, 0.03)
-	var prev_f := float(_plant_z(best, phase, run_k, kind)[0]) - target
+	var prev_f := float(_plant_z(best, phase, _mix(), kind)[0]) - target
 	if prev_f <= 0.0:
 		return 0.0
 	var n := 16
 	for j in range(1, n + 1):
 		var q := phase + span * j / n
-		var f := float(_plant_z(best, q, run_k, kind)[0]) - target
+		var f := float(_plant_z(best, q, _mix(), kind)[0]) - target
 		if f <= 0.0:
 			return span * (float(j - 1) + prev_f / (prev_f - f)) / n
 		prev_f = f
@@ -1191,8 +1230,9 @@ func _needs_step(i: int, A: Vector3, dA: Vector3) -> bool:
 		return true
 	return c.length() > 0.1 and r > STEP_REACH and r > (A - H).length() / ln + 0.05
 
-## a trailing leg stretched past HEEL_FROM rolls up onto the ball, as at push-off, before it would need a step:
-## [heel angle that brings it back within HEEL_FROM (at most HEEL_UP), how far that moves the ankle]
+## a trailing leg the lock stretches past HEEL_FROM (or past its animated stretch, if that is more) rolls up onto
+## the ball, as at push-off, before it would need a step: [heel angle that brings it back within that (at most
+## HEEL_UP), how far that moves the ankle]
 func _heel_need(i: int, A: Vector3, heel_c: Vector3, toe_c: Vector3) -> Array:
 	if anim != "move" or move_w < 0.5:
 		return [0.0, Vector3.ZERO]
@@ -1203,23 +1243,32 @@ func _heel_need(i: int, A: Vector3, heel_c: Vector3, toe_c: Vector3) -> Array:
 	var ank := A + lock_c[i]
 	var fwd := toe_c - heel_c
 	fwd.y = 0.0
-	if (ank - H).length() <= HEEL_FROM * ln or (H - ank).dot(fwd) <= 0.0:
+	# only what the lock adds: a stance leg straightening as animated (to ~15 deg of knee) is left alone
+	var lim := maxf(HEEL_FROM, minf((A - H).length() / ln, 0.985)) * ln
+	if (ank - H).length() <= lim or (H - ank).dot(fwd) <= 0.0:
 		return [0.0, Vector3.ZERO]
 	var ax := Vector3.UP.cross(fwd).normalized()
-	var p := ank
-	for k in range(1, 9):
-		var a := HEEL_UP * k / 8.0
-		p = toe_c + Basis(ax, a) * (ank - toe_c)
-		if (p - H).length() <= HEEL_FROM * ln:
-			return [a, p - ank]
-	return [HEEL_UP, p - ank]
+	var p := toe_c + Basis(ax, HEEL_UP) * (ank - toe_c)
+	if (p - H).length() > lim:
+		return [HEEL_UP, p - ank]
+	# the least heel angle that does it (bisected: a stepped search pops the knee from frame to frame)
+	var lo := 0.0
+	var hi := HEEL_UP
+	for k in 12:
+		var a := (lo + hi) * 0.5
+		if (toe_c + Basis(ax, a) * (ank - toe_c) - H).length() <= lim:
+			hi = a
+		else:
+			lo = a
+	p = toe_c + Basis(ax, hi) * (ank - toe_c)
+	return [hi, p - ank]
 
 ## the twist a foot comes down with while walking / running round a bend: turned into the turn by a little
 ## over half of what the body will turn while it is down, so over its stance it goes from toed-in to toed-out
 func _turn_aim() -> float:
 	if anim != "move" or move_w < 0.5 or pivoting or phase_rate < 0.05:
 		return 0.0
-	var stance := lerpf(0.62, 0.4, run_k) / phase_rate
+	var stance := lerpf(lerpf(float(clips["stroll"]["duty"]), float(clips["walk"]["duty"]), walk_k), float(clips["run"]["duty"]), run_k) / phase_rate
 	return clampf(turn_w * stance * 0.6, -TURN_AIM, TURN_AIM)
 
 func _start_step(i: int, to_c: Vector3, to_yaw: float, dur: float, lift: float) -> void:
@@ -1282,7 +1331,7 @@ func _time_to_contact(i: int) -> float:
 		return -1.0
 	for j in range(1, GAIT_N):
 		var q := phase + float(j) / GAIT_N
-		if _plant_z(i, q, run_k) != null:
+		if _plant_z(i, q, _mix()) != null:
 			return float(j) / GAIT_N / phase_rate
 	return -1.0
 
@@ -1346,42 +1395,163 @@ func settling() -> bool:
 	return not (q < 0.27 and p > 0.36 and p - q < 0.25)
 
 func _update_props() -> void:
-	var want: Node3D = hat_head_parent
-	var xf := hat_head_xf
-	match hat_mode:
-		"chest":
-			# lying on the chest, crown up towards the sky
-			want = chest_att
-			xf = _skel_to_bone(chest_att.bone_name, _hat_at(Basis(Vector3.RIGHT, PI * 0.5), Vector3(0, 1.0, 0.16)))
-		"face":
-			# tipped down over his face against the sun, brim resting on the chin and forehead
-			want = parts["head"]
-			var hb := skel.find_bone("head")
-			var hp := skel.get_bone_global_rest(hb).origin
-			xf = _skel_to_bone("head", _hat_at(Basis(Vector3.RIGHT, PI * 0.5 - 0.05), hp + Vector3(0, 0.0, 0.125)))
-		"ground":
-			# on the towel next to his right shoulder (the lying body frame is upright, back = -Z)
-			want = model
-			xf = _hat_at(Basis(Vector3.RIGHT, PI * 0.5) * Basis(Vector3.UP, 0.4), Vector3(-0.45, 1.22, -0.12))
-	if hat.get_parent() != want:
-		hat.reparent(want, false)
-	hat.transform = xf
+	# the head attachment would only catch up with this tick's pose in the skeleton's deferred update:
+	# put it on the head now, so nothing (the sim, a probe, a frame drawn in between) sees a stale hat
+	if hat.get_parent() != hat_head_parent:
+		hat.reparent(hat_head_parent, false)
+	hat_head_parent.transform = skel.get_bone_global_pose(head_bone)
+	hat.transform = hat_seat()
 	var pel := (parts["pelvis"] as Node3D).global_position
 	var lp := to_local(pel)
 	blob.position = Vector3(lp.x * 0.6, 0.012, lp.z * 0.6)
 
-## hat transform (skeleton rest space) putting the centre of its band rim at `base` with orientation `b`
-## (the hat mesh keeps its rest-pose vertex positions, so its origin is the model origin)
-func _hat_at(b: Basis, base: Vector3) -> Transform3D:
-	var bb := (hat as MeshInstance3D).get_aabb()
-	var c := bb.get_center()
-	c.y = bb.position.y + 0.03
-	return Transform3D(b, base - b * c)
+func _setup_hat_seats() -> void:
+	var mi := hat as MeshInstance3D
+	var verts: PackedVector3Array = mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	# the brim (tipped back a little on his head): its plane through the front, back and side of the rim
+	var pf := Vector3(0, 0, -INF)
+	var pb := Vector3(0, 0, INF)
+	var ps := Vector3(-INF, 0, 0)
+	for v in verts:
+		pf = v if v.z > pf.z else pf
+		pb = v if v.z < pb.z else pb
+		ps = v if v.x > ps.x else ps
+	var up := (pf - pb).cross(ps - pb).normalized()
+	up = -up if up.y < 0.0 else up
+	hat_band_c = (pf + pb) * 0.5
+	var fwd := ((pf - pb) - up * (pf - pb).dot(up)).normalized()
+	# the hat mesh keeps its rest-pose vertex positions, so in skeleton rest space the seat on his head is
+	# the identity. Over his face: tipped forward (crown out of the face, front of the brim at his chin),
+	# brim flat 10 cm in front of the head bone, centred on the nose: nose, fringe and glasses are inside the
+	# crown, the chin / forehead / cheeks outside it are all lower (head-frame z <= 0.093)
+	var hr := skel.get_bone_global_rest(head_bone)
+	var fb := _frame_rot(up, fwd, hr.basis.z, -hr.basis.y)
+	hat_face_xf = hr.affine_inverse() * Transform3D(fb, hr * Vector3(0, 0.03, 0.10) - fb * hat_band_c)
+	for sd: String in ["l", "r"]:
+		# the grip: the brim by his temple (the front of it is out of reach of a hand on the head), fingers
+		# in over the top of it, palm down on it, the wrist just outside the edge
+		var d := Vector3((1.0 if sd == "l" else -1.0) * sin(1.05), 0.0, cos(1.05))
+		var edge := hat_band_c
+		for v in verts:
+			if (v - hat_band_c).dot(d) > (edge - hat_band_c).dot(d):
+				edge = v
+		var f := (-d - up * 0.35).normalized()
+		hat_grip[sd] = [edge - f * 0.065 + up * 0.022, f, -up]
+		var names := ["clavicle_", "upperarm_", "lowerarm_", "hand_", "deltoid_"].map(func(n: String) -> int: return skel.find_bone(n + sd))
+		arm_bones[sd] = names
+		var hr2 := skel.get_bone_global_rest(names[3])
+		var fw := (skel.get_bone_global_rest(skel.find_bone("middle_01_" + sd)).origin - hr2.origin).normalized()
+		var ac := (skel.get_bone_global_rest(skel.find_bone("index_01_" + sd)).origin - skel.get_bone_global_rest(skel.find_bone("pinky_01_" + sd)).origin).normalized()
+		var palm := ac.cross(fw) if sd == "r" else fw.cross(ac)
+		hand_loc[sd] = [hr2.basis.inverse() * fw, hr2.basis.inverse() * palm]
 
-## a transform given in skeleton rest space, expressed in a bone's frame
-func _skel_to_bone(bone: String, xf: Transform3D) -> Transform3D:
-	var bi := skel.find_bone(bone)
-	return skel.get_bone_global_rest(bi).affine_inverse() * xf
+## where the hat sits on the head bone: on his head (s 0), over his face (s 1), in between along an arc out
+## and up, away from his face, turning as it goes
+func hat_seat(s := -1.0) -> Transform3D:
+	var u := smoothstep(0.0, 1.0, hat_s if s < 0.0 else s)
+	if u <= 0.0:
+		return hat_head_xf
+	# a rigid brim cannot lie flat in the dip of a hammock or against a backrest: it rests tipped on that side
+	var c := hat_face_xf * hat_band_c
+	var face := Transform3D(Basis(Vector3.UP, -hat_tip), c) * Transform3D(Basis(), -c) * hat_face_xf
+	if u >= 1.0:
+		return face
+	var b := Basis(hat_head_xf.basis.get_rotation_quaternion().slerp(face.basis.get_rotation_quaternion(), u))
+	var p := (hat_head_xf * hat_band_c).lerp(face * hat_band_c, u) + Vector3(0, 0.55, 0.85).normalized() * HAT_LIFT * sin(PI * u)
+	return Transform3D(b, p - b * hat_band_c)
+
+## lying down / getting up (lie_k 0..1 either way): which hand, how far the hat is over his face, how firmly
+## the hand is on the brim
+func _hat_for(kind: String, lie_k: float) -> void:
+	if kind == "seat" or lie_k <= 0.0:
+		hat_s = 0.0
+		hat_hold = 0.0
+		return
+	# on the bench / log the right hand props him on the seat while he lies back
+	hat_side = "l" if kind == "seatlie" else "r"
+	hat_tip = HAT_TIP.get(kind, 0.0)
+	var hl: Array = HAT_LIE.get(kind, HAT_LIE[""])
+	hat_s = smoothstep(hl[1], hl[2], lie_k)
+	hat_hold = smoothstep(hl[0], hl[1], lie_k) * (1.0 - smoothstep(hl[3], hl[4], lie_k))
+
+## the holding hand on the front of the brim (two-bone arm IK, blended in by hat_hold)
+func _hat_hands() -> void:
+	if hat_hold <= 0.0:
+		return
+	var b: Array = arm_bones[hat_side]
+	var hx := skel.get_bone_global_pose(head_bone) * hat_seat()
+	var g: Array = hat_grip[hat_side]
+	var hl: Array = hand_loc[hat_side]
+	var want := _frame_rot(hl[0], hl[1], hx.basis * (g[1] as Vector3), hx.basis * (g[2] as Vector3))
+	var Hg := skel.get_bone_global_pose(b[3])
+	var w := smoothstep(0.0, 1.0, hat_hold)
+	var wrist := Hg.origin.lerp(hx * (g[0] as Vector3), w)
+	var hand_b := Basis(Hg.basis.get_rotation_quaternion().slerp(want.get_rotation_quaternion(), w))
+	# elbow out to the side and down, as when reaching up to the face
+	var chest := skel.get_bone_global_pose(skel.get_bone_parent(b[0])).basis
+	var pole := chest * Vector3(-1.0 if hat_side == "r" else 1.0, -0.7, -0.2)
+	_arm_ik(b, wrist, hand_b, pole, w)
+
+## two-bone arm IK (skeleton space): wrist to `wrist`, hand to `hand_b`; the elbow turns from where the clip
+## has it towards `pole` by `w`. The deltoid helper stays half way between collar bone and upper arm.
+func _arm_ik(b: Array, wrist: Vector3, hand_b: Basis, pole: Vector3, w: float) -> void:
+	var U := skel.get_bone_global_pose(b[1])
+	var L := skel.get_bone_global_pose(b[2])
+	var W := skel.get_bone_global_pose(b[3]).origin
+	var S := U.origin
+	var E := L.origin
+	var l1 := S.distance_to(E)
+	var l2 := E.distance_to(W)
+	var to := wrist - S
+	var dist := clampf(to.length(), absf(l1 - l2) + 1e-4, (l1 + l2) * 0.9999)
+	var u := to.normalized()
+	var sw := (W - S).normalized()
+	var cur := (E - S) - sw * (E - S).dot(sw)
+	var pl := pole.normalized()
+	if cur.length_squared() > 1e-10:
+		pl = cur.normalized().slerp(pl, w) if absf(cur.normalized().dot(pl)) < 0.999 else pl
+	var v := (pl - u * pl.dot(u)).normalized()
+	var a := (l1 * l1 - l2 * l2 + dist * dist) / (2.0 * dist)
+	var E2 := S + u * a + v * sqrt(maxf(l1 * l1 - a * a, 0.0))
+	var W2 := S + u * dist
+	var n_old := (E - S).cross(W - E)
+	var n_new := (E2 - S).cross(W2 - E2)
+	if n_old.length_squared() < 1e-12 or n_new.length_squared() < 1e-12:
+		n_old = U.basis.x
+		n_new = U.basis.x
+	var Ub := _frame_rot(E - S, n_old, E2 - S, n_new) * U.basis
+	var Lb := _frame_rot(W - E, n_old, W2 - E2, n_new) * L.basis
+	var Pg := skel.get_bone_global_pose(b[0]).basis
+	var up_q := (Pg.inverse() * Ub).get_rotation_quaternion()
+	skel.set_bone_pose_rotation(b[1], up_q)
+	skel.set_bone_pose_rotation(b[2], (Ub.inverse() * Lb).get_rotation_quaternion())
+	skel.set_bone_pose_rotation(b[3], (Lb.inverse() * hand_b).get_rotation_quaternion())
+	if b[4] >= 0:
+		skel.set_bone_pose_rotation(b[4], skel.get_bone_rest(b[1]).basis.get_rotation_quaternion().slerp(up_q, 0.5))
+
+## the hat's pose relative to the head bone
+func hat_on_head() -> Transform3D:
+	var head := skel.global_transform * skel.get_bone_global_pose(head_bone)
+	return head.affine_inverse() * hat.global_transform
+
+## how far the hat is off the seat it should be in (hat_seat()): [metres (crown centre moved + turn at the
+## brim edge), radians]
+func hat_offset_error() -> Vector2:
+	var now := hat_on_head()
+	var want := hat_seat()
+	var c := (hat as MeshInstance3D).get_aabb().get_center()
+	var ang := (want.basis.inverse() * now.basis).get_rotation_quaternion().get_angle()
+	return Vector2((now * c).distance_to(want * c) + ang * 0.2, ang)
+
+## the holding hand's knuckles to the brim grip [m] (INF while no hand holds the hat)
+func hat_grip_gap() -> float:
+	if hat_hold < 0.999:
+		return INF
+	var hx := skel.get_bone_global_pose(head_bone) * hat_seat()
+	var g: Array = hat_grip[hat_side]
+	var knuckle := skel.get_bone_global_pose(skel.find_bone("middle_01_" + hat_side)).origin
+	var want := hx * ((g[0] as Vector3) + (g[1] as Vector3) * 0.085)
+	return knuckle.distance_to(want) * skel.global_transform.basis.get_scale().x
 
 func _update_face(delta: float) -> void:
 	blink_timer -= delta
@@ -1409,7 +1579,9 @@ func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
 	act_w = 1.0
 	ab_w = 0.0
 	cur_slot = 0
-	hat_mode = "head"
+	hat_s = 1.0 if kind == "sleep" or kind == "sun" else 0.0
+	hat_tip = HAT_TIP.get(kind, 0.0)
+	hat_hold = 0.0
 	glasses.visible = false
 	var e := "smile"
 	var pel := Vector3.ZERO
@@ -1423,11 +1595,10 @@ func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
 		"cheer", "oops":
 			_set_slot(0, kind, tt); e = "laugh" if kind == "cheer" else "oops"
 		"walk", "run":
-			act_w = 0.0; move_w = 1.0; run_k = 1.0 if kind == "run" else 0.0; phase = tt
+			act_w = 0.0; move_w = 1.0; run_k = 1.0 if kind == "run" else 0.0; walk_k = 1.0; phase = tt
 		"sleep", "sun":
 			var c := "hammock_sleep" if kind == "sleep" else "sun_rest"
 			_set_slot(0, c, tt)
-			hat_mode = "chest" if kind == "sleep" else "ground"
 			glasses.visible = kind == "sun"
 			e = "sleep" if kind == "sleep" else "relax"
 		"sit_edge", "sit_ground":
@@ -1436,6 +1607,7 @@ func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
 			act_w = 0.0; move_w = 0.0; t_idle = tt
 	expr = e
 	_apply_mixer()
+	_hat_hands()
 	_update_props()
 	blink_timer = 9.0
 	_update_face(0.0)

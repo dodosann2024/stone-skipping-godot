@@ -66,6 +66,8 @@ var _q0 := 0
 var _s0 := 0
 var _own := Vector3.ZERO
 var _seg_from := {}
+var hat_err := 0.0      # the hat's worst offset from its seat on the head (m) / angle (rad)
+var hat_ang := 0.0
 
 func _init(b: Boy, at := Vector3.ZERO) -> void:
 	boy = b
@@ -211,6 +213,9 @@ func _seg_at(tt: float) -> String:
 
 func _measure() -> void:
 	worst = 0.0
+	var he: Vector2 = boy.hat_offset_error()
+	hat_err = maxf(hat_err, he.x)
+	hat_ang = maxf(hat_ang, he.y)
 	var lb0 := _seg_at(t)
 	if lb0 != "-":
 		if not _seg_from.has(lb0):
@@ -274,6 +279,7 @@ static func stress(parent: Node) -> Array[String]:
 		var b := Boy.new()
 		parent.add_child(b)
 		var p := GaitProbe.new(b, Vector3(0, 60, 0))
+		p.log_slides = OS.has_environment("SLIDE_LOG")
 		p.run_all(1.0 / fps)
 		out.append("gait @%d fps: %d quick steps, %d steps on the spot, planted slide max %.1f mm/frame, footprint drift max %.1f mm" % [
 			fps, b.steps_taken, b.spot_steps, p.slide_max * 1000.0, p.print_err * 1000.0])
@@ -286,6 +292,7 @@ static func stress(parent: Node) -> Array[String]:
 					float(p.seg_root.get(lb, 0.0)) * 100.0]
 			out.append("gait @%d fps   %-26s quick %d  spot %d  print drift %4.1f mm%s" % [fps, lb, int(p.seg_quick.get(lb, 0)),
 				int(p.seg_spot.get(lb, 0)), float(p.seg_print.get(lb, 0.0)) * 1000.0, span])
+		out.append("gait @%d fps   hat on the head: offset max %.3f mm / %.4f deg over the whole run" % [fps, p.hat_err * 1000.0, rad_to_deg(p.hat_ang)])
 		parent.remove_child(b)
 		b.free()
 	return out

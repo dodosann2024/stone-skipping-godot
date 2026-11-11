@@ -27,6 +27,18 @@ def bump(x, c, w):
 
 # ------------------------------------------------------------------ locomotion
 
+# locomotion cycles (period s, stride, duty): the game blends stroll -> walk -> run by ground speed, so the
+# stride (and cadence) follows the speed and the planted feet never slide. Game speeds (x 0.85): stroll
+# 0.55 m/s at 116 steps/min, walk 1.15 m/s at 148 steps/min, run 2.7 m/s
+STROLL = (1.04, 0.67, 0.66)
+WALK = (0.81, 1.1, 0.62)
+RUN = (0.68, 2.04, 0.36)
+
+
+def gaits(rig):
+    return {"stroll": Gait(rig, *STROLL), "walk": Gait(rig, *WALK), "run": Gait(rig, *RUN, run=True)}
+
+
 class Gait:
     """one stride cycle: left heel strike at phase 0, right at 0.5"""
 
@@ -37,9 +49,11 @@ class Gait:
         self.duty = duty
         self.run = run
         self.v = stride / period
+        # effort: a slow stroll swings the arms and turns the pelvis less than a brisk walk
+        self.a = 1.0 if run else min(max(0.45 + 0.55 * (self.v - 0.64) / 0.72, 0.4), 1.0)
         # stance travel relative to the hip; running lands closer under the body
         travel = stride * duty
-        self.y_strike = -travel * (0.42 if run else 0.5)
+        self.y_strike = -travel * (0.42 if run else 0.485)
         self.y_off = self.y_strike + travel
 
     def foot(self, s, ph):
@@ -71,7 +85,10 @@ class Gait:
                 z = a0.z + 0.07 * math.sin(math.pi * k) + 0.20 * bump(k, 0.38, 0.22)
                 pitch = -0.75 * (1 - sm(k / 0.35)) + 0.15 * sm((k - 0.6) / 0.4) - 0.5 * bump(k, 0.35, 0.18)
             else:
-                z = a0.z + 0.045 * math.sin(math.pi * k) ** 1.2 + 0.03 * bump(k, 0.25, 0.15)
+                # the heel comes up behind first (knee folds to ~60 deg early in swing), then the shank swings
+                # through and the foot reaches out heel first, toes up
+                a = self.a
+                z = a0.z + (0.035 + 0.025 * a) * math.sin(math.pi * k) ** 1.2 + (0.04 + 0.04 * a) * bump(k, 0.25, 0.17)
                 pitch = -0.62 * (1 - sm(k / 0.4)) + 0.38 * sm((k - 0.55) / 0.45)
         return V(x, y, z), pitch, u
 
@@ -87,19 +104,25 @@ class Gait:
             pz = -0.075 + 0.028 * math.cos(TAU * 2 * (ph - 0.18 - 0.25))
             bob = math.cos(TAU * 2 * (ph - 0.18))           # +1 at mid-stance
         else:
-            pz = -0.035 + 0.014 * math.cos(TAU * 2 * (ph - 0.27))
-            bob = -math.cos(TAU * 2 * (ph - 0.27))          # +1 at contact
+            # lowest just after each heel strike (the knee gives ~15-20 deg as the weight comes on), highest
+            # over the straight stance leg
+            # (a shorter stride lands the foot nearer under the hip: less of a dip for the same knee)
+            amp = 0.021 * (self.S * self.duty / 0.682) ** 3
+            pz = -0.006 - amp + amp * math.cos(TAU * 2 * (ph - 0.28))
+            bob = -math.cos(TAU * 2 * (ph - 0.28))          # +1 at loading
+        a = self.a
         # pelvis: turns with the swinging leg, drops on the swing side, sways over the stance foot
-        yaw = -(0.10 if run else 0.075) * c
-        roll = -(0.035 if run else 0.055) * math.sin(TAU * (ph - 0.04))
-        px = (0.007 if run else 0.016) * math.sin(TAU * (ph - 0.06))
-        lean = 0.15 if run else 0.045
-        # shoulders counter-rotate a little against the pelvis (world: about 4 deg walking, 8 deg running);
-        # the chest dips a touch at each loading and the spine takes out most of the pelvis roll
-        sp_yaw = (0.24 if run else 0.135) * c
+        yaw = -(0.10 if run else 0.09 * a) * c
+        roll = -(0.035 if run else 0.045 + 0.02 * a) * math.sin(TAU * (ph - 0.04))
+        px = (0.007 if run else 0.02) * math.sin(TAU * (ph - 0.06))
+        lean = 0.15 if run else 0.05 + 0.02 * a
+        # shoulders counter-rotate against the pelvis (world: about 6 deg walking, 8 deg running); the chest
+        # dips a touch at each loading and the spine takes out most of the pelvis roll (a walking trunk still
+        # rocks a little over the stance foot)
+        sp_yaw = (0.24 if run else 0.2 * a) * c
         chest_yaw = yaw + sp_yaw
-        sp_roll = -roll * 0.85
-        sp_pitch = (0.05 + 0.025 * bob) if run else (0.008 + 0.008 * bob)
+        sp_roll = -roll * (0.85 if run else 0.6)
+        sp_pitch = (0.05 + 0.025 * bob) if run else (0.015 + 0.02 * bob)
         # the head keeps the eyes level and pointed down the path
         chest_pitch = lean + sp_pitch
         head_yaw = -chest_yaw
@@ -108,21 +131,23 @@ class Gait:
         # arms: contralateral (left heel strike at phase 0 = right arm forward), lagging the legs a little;
         # the swing comes from the shoulder, more behind than in front, the elbow bends more as the arm comes
         # forward (a touch later than the shoulder, so the forearm follows through) and much more when running
-        lag = 0.035 if run else 0.05
+        lag = 0.035 if run else 0.06
         out = {}
         for s, sgn in (("l", 1.0), ("r", -1.0)):
             side = -1.0 if s == "l" else 1.0
             cs = math.cos(TAU * (ph - lag)) * side                  # +1 = arm fully forward
-            ce = math.cos(TAU * (ph - lag - 0.07)) * side
+            ce = math.cos(TAU * (ph - lag - (0.07 if run else 0.1))) * side
             fwd = 0.5 + 0.5 * ce
             if run:
                 ang = -0.17 + 0.50 * cs
                 elbow = 1.18 + 0.36 * sm(fwd)
                 abd, inward = 0.21, 0.16 * fwd - 0.20 * (1.0 - fwd)
             else:
-                ang = -0.05 + 0.29 * cs
-                elbow = 0.26 + 0.26 * sm(fwd)
-                abd, inward = 0.25, -0.06
+                # relaxed pendulum from the shoulder, about as far forward as back; the elbow stays soft and
+                # bends more as the arm comes forward, the hand drifting in towards the midline
+                ang = 0.07 + 0.3 * a * cs
+                elbow = 0.3 + (0.2 + 0.2 * a) * sm(fwd)
+                abd, inward = 0.29, -0.06 + 0.1 * fwd
             sh = V(0.153 * sgn, -0.014, 1.092)
             du = V(abd * sgn, -math.sin(ang), -math.cos(ang)).normalized()
             el = sh + du * 0.195
@@ -376,17 +401,19 @@ def cheer(rig):
     for n in range(4):
         sgn = 1 if n % 2 == 0 else -1
         wave.append((t + 0.15 + n * w, P(i, pel=V(0.0, 0, -0.01), sp=(-0.05, 0.04 * sgn, 0.05 * sgn), head=(-0.15, -0.05 * sgn, 0.1 * sgn),
-                                         hr=V(-0.22 - 0.12 * sgn, -0.05, 1.5), er=V(-1.0, 0.3, -0.2), gr=0.1,
+                                         hr=V(-0.26 - 0.10 * sgn, -0.05, 1.5), er=V(-1.0, 0.3, -0.2), gr=0.1,
                                          hl=V(0.235, -0.01, 0.84), gl=0.4)))
-    # the waving hand comes down out to the side, not across the chest
+    # the waving hand sweeps out past the brim of his hat, then comes down out to the side, not across the chest
+    out = P(i, pel=V(0.0, 0, -0.01), hr=V(-0.42, -0.06, 1.4), er=V(-1.0, 0.3, -0.2), gr=0.2, hl=V(0.235, -0.01, 0.83), gl=0.4)
     down = P(i, pel=V(0.0, 0, -0.01), hr=V(-0.36, -0.08, 1.02), er=V(-1.0, 0.3, -0.2), gr=0.3, hl=V(0.235, -0.01, 0.82), gl=0.4)
-    keys += wave + [(t + 0.15 + 4 * w + 0.12, down), (t + 0.15 + 4 * w + 0.4, i)]
+    keys += wave + [(t + 0.15 + 3 * w + 0.14, out), (t + 0.15 + 4 * w + 0.12, down), (t + 0.15 + 4 * w + 0.4, i)]
     return keyed(keys), keys[-1][0] + 0.2
 
 
 def oops(rig):
     i = I(rig)
-    hands = dict(hl=V(0.15, -0.06, 1.36), hr=V(-0.15, -0.06, 1.36), el=V(1.0, -0.2, 0.1), er=V(-1.0, -0.2, 0.1), gl=0.2, gr=0.2)
+    # hands clutch the sides of his head at the temples, under the brim of the hat
+    hands = dict(hl=V(0.165, -0.05, 1.25), hr=V(-0.165, -0.05, 1.25), el=V(1.0, -0.2, 0.1), er=V(-1.0, -0.2, 0.1), gl=0.2, gr=0.2)
     grab = P(i, pel=V(0, 0.02, -0.04), prot=(0.08, 0, 0), sp=(0.15, 0, 0), neck=(0.15, 0, 0), head=(0.2, 0, 0), **hands)
     rise = P(i, pel=V(0, 0.01, -0.02), hl=V(0.31, -0.10, 1.02), hr=V(-0.31, -0.10, 1.02), el=V(1.0, 0.3, -0.2), er=V(-1.0, 0.3, -0.2))
     keys = [(0.0, i), (0.13, rise), (0.3, grab)]
@@ -482,7 +509,7 @@ def towel_clips(rig):
         return p
     crunch = P(lying, pel=V(0, 0.05, -0.2), prot=(0.0, 0, 0), sp=(0.6, 0, 0), neck=(0.2, 0, 0), head=(0.1, 0, 0),
                fl=V(0.1, -0.3, 0.30), fr=V(-0.1, -0.28, 0.32), pl=0.0, pr=0.0, kl=V(0, -1, 0.3), kr=V(0, -1, 0.3),
-               hl=V(0.15, -0.36, 0.86), hr=V(-0.15, -0.36, 0.86), el=V(0.6, 0.6, -0.4), er=V(-0.6, 0.6, -0.4))
+               hl=V(0.2, -0.36, 0.86), hr=V(-0.15, -0.36, 0.86), el=V(0.6, 0.6, -0.4), er=V(-0.6, 0.6, -0.4))
     up = keyed([(0.0, lying), (0.5, crunch), (1.0, seated)])
     tuck = P(seated, pel=V(0, 0.16, -0.57), prot=(0.2, 0, 0), sp=(0.25, 0, 0), head=(-0.05, 0, 0),
              fl=V(0.1, -0.08, 0.055), fr=V(-0.1, -0.06, 0.055), pl=0.0, pr=0.0, kl=None, kr=None,

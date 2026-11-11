@@ -227,6 +227,10 @@ func _ready() -> void:
 		_run_sim_report()
 		get_tree().quit()
 		return
+	if "--walkmetrics" in args:
+		_walk_metrics_report()
+		get_tree().quit()
+		return
 	portrait_demo = "--portrait" in args
 	if _opt("night") == "1":
 		night_on = true
@@ -241,6 +245,9 @@ func _ready() -> void:
 		night_k = 1.0
 		_update_night(0.0, true)
 	_snap_explore_cam()
+	if is_web and _opt("hatprobe") == "1":
+		RenderingServer.frame_pre_draw.connect(_hat_probe_tick)
+		_hat_probe_place.call_deferred(_opt("at"))
 	if demo_mode:
 		_start_audio()
 		if "--selftest" in args:
@@ -1254,6 +1261,9 @@ func _begin_rest(kind: String) -> void:
 		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
 		# lying back: head towards his right, pelvis a little towards the foot end, back on the seat
 		rest_lie = top + Vector3(0, LIE_BACK, 0) - rest_side * 0.1
+		if st["name"] == "长椅":
+			# off the backrest a little: room for the brim of the hat beside his head
+			rest_lie += face * 0.05
 		rest_lie_b = _lie_basis(rest_side)
 	else:
 		var td := island.towel_dir
@@ -1378,6 +1388,9 @@ func _rest_tick(delta: float) -> void:
 			var pl2 := boy.activity(_act_kind(), 1.0, k2, gt)
 			var b := rest_sit_b.slerp(rest_lie_b, ks2)
 			var w := rest_seat.lerp(rest_lie, ks2) + Vector3(0, 0.07 * sin(PI * k2), 0)
+			if rest_kind == "seat" and island.seats[seat_i]["name"] == "长椅":
+				# shuffles forward on the seat as he turns to lie back: head (and hat) clear of the backrest
+				w += seat_face * 0.18 * sin(PI * k2)
 			if sleep:
 				swing_amp = lerpf(swing_amp, 0.06 * ks2 + 0.01, 1.0 - exp(-delta * 2.0))
 				swing = island.swing_hammock(swing_amp * sin(gt * 1.3))
@@ -2321,6 +2334,54 @@ func _update_audio(_delta: float) -> void:
 
 # ------------------------------------------------------------------ loop
 
+## web ?hatprobe=1: every drawn frame, the hat against the seat boy.gd keeps it in on his head bone, per game
+## state -> window.__hat (read by the mobile browser check)
+var hat_probe := {"frames": 0, "max_mm": 0.0, "max_deg": 0.0, "worst": "", "off_head_frames": 0, "states": {}}
+
+func _hat_probe_tick() -> void:
+	var e := boy.hat_offset_error()
+	var st: String = str(Mode.keys()[mode]).to_lower() + "/" + (rest_kind if mode == Mode.REST else boy.anim)
+	hat_probe["frames"] += 1
+	if boy.hat_s > 0.0 and mode != Mode.REST:
+		hat_probe["off_head_frames"] += 1
+	var s: Dictionary = hat_probe["states"]
+	var r: Array = s.get(st, [0, 0.0, 0.0])
+	s[st] = [int(r[0]) + 1, maxf(float(r[1]), e.x * 1000.0), maxf(float(r[2]), boy.hat_s)]
+	if e.x * 1000.0 > float(hat_probe["max_mm"]):
+		hat_probe["max_mm"] = e.x * 1000.0
+		hat_probe["worst"] = st
+	hat_probe["max_deg"] = maxf(float(hat_probe["max_deg"]), rad_to_deg(e.y))
+	hat_probe["state"] = st
+	hat_probe["hat_s"] = boy.hat_s
+	hat_probe["act"] = action_btn.text if action_btn.visible else ""
+	hat_probe["rest_phase"] = rest_phase
+	JavaScriptBridge.eval("window.__hat = " + JSON.stringify(hat_probe), true)
+
+## &at=dock|hammock|towel|bench: start next to it, so the browser check can rest there with the real buttons
+func _hat_probe_place(at: String) -> void:
+	var td := island.towel_dir
+	var sd := td.cross(Vector3.UP).normalized()
+	var spots := []
+	var want: String = {"hammock": "sleep", "towel": "sun", "bench": "seat", "dock": "throw"}.get(at, "")
+	match at:
+		"dock":
+			spots = [Vector3(0.2, 0, island.dock_end_z + 1.5)]
+		"hammock":
+			var hs := _hammock_spot()
+			spots = [hs[0] + hs[2] * 1.6, hs[0] - hs[2] * 1.6]
+		"towel":
+			# the beach chair on the +side wins the button within 1.25 m of its approach: start on the far side
+			spots = [island.towel_pos - sd * 1.0, island.towel_pos - sd * 1.3]
+		"bench":
+			var st: Dictionary = island.seats[0]
+			spots = [_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.4), st["approach"]]
+	for p: Vector3 in spots:
+		_place(p, 0.0)
+		_update_action_kind()
+		if action_kind == want:
+			break
+	_snap_explore_cam()
+
 func _process(delta: float) -> void:
 	if OS.has_feature("web"):
 		safe_t += delta
@@ -2771,6 +2832,21 @@ func _run_sim_report() -> void:
 	if ResourceLoader.exists("res://dev/gait_probe.gd"):
 		for line in load("res://dev/gait_probe.gd").stress(self):
 			print("SIM ", line)
+	if ResourceLoader.exists("res://dev/hat_probe.gd"):
+		var hs: Array = load("res://dev/hat_probe.gd").sim(self)
+		for line: String in hs[0]:
+			print("SIM ", line)
+		print("SIM hat stays on the head: %s (worst offset from its seat %.3f mm)" % ["yes" if hs[2] else "NO", float(hs[1]) * 1000.0])
+	_walk_metrics_report()
+
+## gait kinematics at the walking and running speeds (dev/walk_metrics.gd)
+func _walk_metrics_report() -> void:
+	if not ResourceLoader.exists("res://dev/walk_metrics.gd"):
+		return
+	for sp: Array in [["stroll", 0.55], ["walk 0.85", 0.85], ["walk", 1.15], ["run", 2.7]]:
+		var r: Array = load("res://dev/walk_metrics.gd").measure(self, float(sp[1]))
+		for line: String in r[0]:
+			print("SIM gait %s  %s" % [sp[0], line])
 
 func _sim_block() -> void:
 	aim_yaw = 0.0
@@ -3685,6 +3761,98 @@ func _v19_sequence(pre: String) -> void:
 	ui_root.visible = true
 	_free_cam()
 
+## v20: the straw hat stays on his head. part "lie": the real hammock / towel / bench / log rest from the
+## game (lying down, lying, close-ups at the head, getting up); part "pose": close-ups of the hat on the hair
+## through walk / run / the throws / cheer / oops. part "" = both.
+func _v20_sequence(pre: String, part: String) -> void:
+	if part == "" or part == "lie":
+		var hs := _hammock_spot()
+		var td := island.towel_dir
+		var sd := td.cross(Vector3.UP).normalized()
+		for spec: Array in [["hammock", "sleep", hs[0] + hs[2] * 1.6], ["towel", "sun", island.towel_pos + sd * 1.4], ["bench", 0, null], ["log", 1, null]]:
+			var nm: String = spec[0]
+			if _opt("only") != "" and not nm.begins_with(_opt("only")):
+				continue
+			_free_cam()
+			if spec[1] is String:
+				_place(spec[2], 0.0)
+				await _wait(0.3)
+				_begin_rest(spec[1])
+				while rest_phase != 3:
+					await get_tree().process_frame
+			else:
+				var st: Dictionary = island.seats[spec[1]]
+				var face: Vector3 = st["face"]
+				_place(_blocked_by((st["approach"] as Vector3) + face * 0.7), 0.0)
+				await _wait(0.3)
+				_on_action()
+				while rest_phase != 4:
+					await get_tree().process_frame
+				await _wait(0.5)
+				_lie_down()
+			var dur := SEAT_LIE_DUR if rest_kind == "seat" else 1.0
+			# across him: from the open side (in front of a seat)
+			var lat: Vector3 = seat_face if rest_kind == "seat" else rest_side
+			await _wait(dur * 0.55)
+			_shot(pre + "v20_%s_1_lying_down" % nm)
+			_fixed_cam((boy.parts["head"] as Node3D).global_position, atan2(lat.x, lat.z), 0.3, 1.1)
+			await get_tree().process_frame
+			_shot(pre + "v20_%s_1b_lying_down_close" % nm)
+			_free_cam()
+			while rest_phase != 4:
+				await get_tree().process_frame
+			await _wait(1.2)
+			_shot(pre + "v20_%s_2_lie" % nm)
+			var head: Vector3 = (boy.parts["head"] as Node3D).global_position
+			var hd := rest_lie_b.y
+			_fixed_cam(head, atan2(lat.x, lat.z), 0.3, 0.95)
+			await _wait(0.3)
+			_shot(pre + "v20_%s_3_close_side" % nm)
+			_fixed_cam(head, atan2(hd.x, hd.z) + 0.5, 0.12, 0.8)
+			await _wait(0.3)
+			_shot(pre + "v20_%s_4_close_head_end" % nm)
+			_free_cam()
+			_wake()
+			while rest_phase != 5 and rest_phase != 6:
+				await get_tree().process_frame
+			await _wait(dur * 0.45)
+			_shot(pre + "v20_%s_5_getting_up" % nm)
+			while mode != Mode.EXPLORE:
+				await get_tree().process_frame
+			await _wait(0.3)
+	if part == "" or part == "pose":
+		_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+		await _wait(0.6)
+		demo_nocut = true
+		ui_root.visible = false
+		var y0 := player.rotation.y
+		# [name, pose, p, tt, cam yaw, pitch, dist]
+		var shots := [
+			["idle_side", "idle", 1.0, 0.3, PI * 0.5, 0.05, 0.55],
+			["idle_front", "idle", 1.0, 0.3, PI - 0.3, 0.05, 0.55],
+			["walk", "walk", 1.0, 0.3, PI * 0.6, 0.05, 0.6],
+			["run", "run", 1.0, 0.15, PI * 0.6, 0.05, 0.6],
+			["charge", "charge", 1.0, 0.3, PI * 0.35, 0.1, 0.7],
+			["release", "release", 1.0, 0.3, PI * 0.7, 0.05, 0.7],
+			["follow", "follow", 1.0, 0.3, PI * 0.75, 0.05, 0.7],
+			["crouch_release", "release_c", 1.0, 0.3, PI * 0.7, 0.1, 0.7],
+			["cheer", "cheer", 1.0, float(_opt("cheer_t", "1.0")), PI - 0.4, 0.05, 0.7],
+			["oops", "oops", 1.0, float(_opt("oops_t", "0.8")), PI - 0.3, 0.05, 0.6],
+		]
+		for s: Array in shots:
+			if not String(s[0]).begins_with(_opt("only")):
+				continue
+			player.rotation.y = y0
+			boy.debug_pose(s[1], s[2], s[3])
+			await get_tree().process_frame
+			_fixed_cam(_bone_pos("head", 0.04), y0 + float(s[4]), s[5], s[6])
+			await _wait(0.4)
+			_shot(pre + "v20_pose_%s" % s[0])
+		boy.frozen = false
+		demo_nocut = false
+		ui_root.visible = true
+		_free_cam()
+
 ## v15: aiming by swipe - the pad and angle sliders, aiming left / right (arrow, preview, readout, the chest
 ## turning first), cancel, a flicked throw, a too-steep launch, a too-flat stone, a slow release (no spin)
 func _v15_sequence(pre: String) -> void:
@@ -3786,6 +3954,8 @@ func _run_demo4() -> void:
 				await _v18_sequence(pre)
 			elif what == "v19":
 				await _v19_sequence(pre)
+			elif what.begins_with("v20"):
+				await _v20_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
@@ -3970,6 +4140,65 @@ func _video_seg(seg: String) -> void:
 				_stop_walk()
 				await _wait(1.2)
 			_free_cam()
+
+		"hat20":
+			# the hat, followed at head height: walk, sharp turns, run onto the dock, a throw and a cheer, then the
+			# hammock, where his hand takes it over his face and back
+			var a := island.shore_pt(-1.32, 1.4)
+			var dock_foot := Vector3(0.0, 0, island.dock_start_z + 1.5)
+			var d0 := (dock_foot - a).normalized()
+			_place(a, atan2(-d0.x, -d0.z))
+			ex_yaw = face_yaw
+			_snap_cam_now()
+			demo_cam = true
+			demo_track = [face_yaw + PI * 0.5 + 0.5, 0.14, 2.6, 0.75, true]
+			var r := Vector3(d0.z, 0, -d0.x)
+			await _walk_to(a + d0 * 2.2, false, 3.0)
+			await _walk_to(a + d0 * 2.2 + r * 1.6, false, 2.0)
+			await _walk_to(a + d0 * 0.8 + r * 1.6, false, 2.0)
+			await _walk_to(a + d0 * 2.6 + r * 0.4, false, 2.2)
+			await _walk_to(dock_foot, true, 4.0)
+			await _walk_to(Vector3(0.2, 0, island.dock_end_z + 1.5), true, 4.0)
+			await _wait(0.4)
+			_enter_throw()
+			await _wait(1.0)
+			demo_track = [player.rotation.y + PI * 0.5 + 0.55, 0.16, 2.6, 0.6, true]
+			_begin_aim(Vector2.ZERO)
+			aim_pitch = 3.0
+			var t0 := gt
+			while gt - t0 < 1.4:
+				charge_t = minf((gt - t0) / 1.2, 1.0) * 0.9 * POWER_CYCLE * 0.5
+				await get_tree().process_frame
+			charge_t = 0.9 * POWER_CYCLE * 0.5
+			_throw()
+			fly_t = 0.0
+			while state != State.READY:
+				await get_tree().process_frame
+			if boy.anim != "react":
+				boy.react("cheer")
+			await _wait(2.6)
+			_leave_throw()
+			var hs := _hammock_spot()
+			var bed: Vector3 = hs[0]
+			var side: Vector3 = hs[2]
+			_place(bed + side * 2.2 + (island.hammock_b - island.hammock_a).normalized() * 0.8, atan2(side.x, side.z))
+			ex_yaw = face_yaw + PI + 0.5
+			_snap_cam_now()
+			_free_cam()
+			await _walk_to(bed + side * 1.2, false, 1.8)
+			_begin_rest("sleep")
+			var head: Vector3 = (boy.parts["head"] as Node3D).global_position
+			_fixed_cam(bed + Vector3(0, 0.25, 0), atan2(side.x, side.z) + 0.35, 0.32, 2.4)
+			while rest_phase < 4:
+				await get_tree().process_frame
+			await _wait(1.6)
+			_wake()
+			while mode != Mode.EXPLORE:
+				await get_tree().process_frame
+			await _wait(0.4)
+			_free_cam()
+			await _walk_to(head + side * 2.5, false, 2.0)
+			await _wait(0.5)
 
 		"boat14":
 			# the rowboat by the dock riding the swell: from the sea, from the dock, then at night

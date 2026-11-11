@@ -7,6 +7,7 @@ extends RefCounted
 ## godot --headless --path . --fixed-fps 30 -- --selftest      (exit code 0 = pass)
 
 const ArmClearance := preload("res://dev/arm_clearance.gd")
+const HatProbe := preload("res://dev/hat_probe.gd")
 
 var m: Node
 var fails: Array[String] = []
@@ -393,9 +394,7 @@ func _sit(i: int, from: String, lie: bool) -> void:
 		await _wait(1.2)
 		pel = (m.boy.parts["pelvis"] as Node3D).global_position
 		var head: Vector3 = (m.boy.parts["head"] as Node3D).global_position
-		note += ", lying pelvis %.2f / head %.2f m over it, hat %s" % [pel.y - top.y, head.y - top.y, m.boy.hat_mode]
-		if m.boy.hat_mode != "face":
-			fails.append("hat not over the face on " + tag)
+		note += ", lying pelvis %.2f / head %.2f m over it" % [pel.y - top.y, head.y - top.y]
 		if pel.y - top.y < 0.0 or pel.y - top.y > 0.25 or absf(head.y - pel.y) > 0.3:
 			fails.append("not lying flat on " + tag)
 	m._wake()
@@ -577,10 +576,95 @@ func _swipe_check() -> void:
 	if not ok:
 		fails.append("swipe throw")
 
+## the straw hat over every frame drawn during the whole selftest (dev/hat_probe.gd): it stays put on the
+## head bone (same offset as fitted in Blender, whatever the clip, turn or throw); only lying on his back
+## has it tipped over his face instead, moved there and back by his hand; it never pops, never goes into
+## what he lies on, no other hand goes through it, it is never hidden
+func _hat_check(hat: HatProbe) -> void:
+	const OFF_MAX := 0.0005
+	const CLEAR_MIN := 0.0
+	const HAND_MIN := 0.012
+	const JUMP_MAX := 0.06
+	const GRIP_MAX := 0.02
+	const LYING := ["rest hammock_lie", "rest hammock_sleep", "rest hammock_up", "rest sun_lie", "rest sun_rest", "rest sun_up",
+		"rest seat_lie", "rest seat_nap", "rest seat_up"]
+	var bad: Array[String] = []
+	for line in hat.report("SELFTEST hat"):
+		print(line)
+	for st: String in hat.off:
+		var o: Array = hat.off[st]
+		if float(o[0]) > OFF_MAX:
+			bad.append("%s: off its seat by %.1f mm / %.2f deg" % [st, float(o[0]) * 1000.0, rad_to_deg(float(o[1]))])
+		var sr: Array = hat.seat[st]
+		if float(sr[1]) > 0.0 and not st in LYING:
+			bad.append("%s: off his head (s %.2f)" % [st, sr[1]])
+		if float(hat.jump.get(st, 0.0)) > JUMP_MAX:
+			bad.append("%s: jumped %.1f cm in a frame" % [st, float(hat.jump[st]) * 100.0])
+		if hat.grip.has(st):
+			var g: Array = hat.grip[st]
+			if float(g[1]) < 0.999 or float(g[2]) > GRIP_MAX:
+				bad.append("%s: moved without the hand on it (hold %.2f, knuckles %.1f cm off)" % [st, g[1], float(g[2]) * 100.0])
+		var c: Array = hat.clear.get(st, [INF, ""])
+		if float(c[0]) < CLEAR_MIN:
+			bad.append("%s: %.1f cm into the %s" % [st, -float(c[0]) * 100.0, c[1]])
+		var h: Array = hat.hands.get(st, [INF, ""])
+		if float(h[0]) < HAND_MIN:
+			bad.append("%s: %s %.1f cm from the hat" % [st, h[1], float(h[0]) * 100.0])
+	var need := ["idle", "walk", "run", "turn on the spot", "charge stand", "throw stand", "charge crouch", "throw crouch", "cheer", "oops",
+		"rest hammock_lie", "rest hammock_sleep", "rest hammock_up", "rest sun_lie", "rest sun_rest", "rest sun_up",
+		"rest seat_rest", "rest seat_lie", "rest seat_nap", "rest seat_up"]
+	var missing := need.filter(func(s: String) -> bool: return not hat.off.has(s))
+	if not missing.is_empty():
+		bad.append("never seen: " + ", ".join(missing))
+	if hat.visible_frames != hat.frames:
+		bad.append("hidden in %d of %d frames" % [hat.frames - hat.visible_frames, hat.frames])
+	var ok := bad.is_empty()
+	print("SELFTEST %-28s %s  (%d frames, %d states; %s)" % ["hat stays on the head", "ok" if ok else "FAIL", hat.frames, hat.off.size(),
+		"on his head in every clip, over his face only lying on his back and moved there and back by hand, never pops, never into the bed / towel / seat, no hand through it" if ok else "; ".join(bad)])
+	if not ok:
+		fails.append("hat: " + "; ".join(bad))
+## `--selftest --only=hat`: just the hat over the towel, the hammock, lying on the bench and a log, a throw
+## from each stance (cheer and oops) and a walk / run
+func _hat_quick(hat: HatProbe) -> void:
+	var td: Vector3 = m.island.towel_dir
+	await _rest("sun", m.island.towel_pos + td.cross(Vector3.UP).normalized() * 1.4)
+	var hs: Array = m._hammock_spot()
+	await _rest("sleep", hs[0] + hs[2] * 1.6)
+	await _sit(0, "front", true)
+	await _sit(1, "front", true)
+	for crouch: bool in [false, true]:
+		m._place(Vector3(0.3, 0, m.island.dock_end_z + 1.6), 0.1)
+		await _frames(5)
+		m._enter_throw()
+		await _wait(1.2)
+		m.boy.stance = "crouch" if crouch else "stand"
+		for power: float in [0.9, 0.05]:
+			m._begin_aim(Vector2.ZERO)
+			m.aim_pitch = 3.0
+			m.charge_t = power * m.POWER_CYCLE * 0.5
+			await _frames(4)
+			m._throw()
+			await _until(func() -> bool: return m.state == m.State.READY, 20.0)
+			await _wait(3.2)
+		m._leave_throw()
+		await _frames(3)
+	await _turn_check()
+	m._place(m.island.shore_pt(-1.3, 2.2), 0.0)
+	await _frames(3)
+	await _drive(Vector3(1, 0, 0), 2.0, true)
+	await _drive(Vector3(-1, 0, 0.3), 1.5, true)
+	hat.stop()
+	_hat_check(hat)
+	print("SELFTEST %s" % ("PASS" if fails.is_empty() else "FAIL: " + ", ".join(fails)))
+	m.get_tree().quit(0 if fails.is_empty() else 1)
 
 func run(main: Node) -> void:
 	m = main
 	await _wait(0.5)
+	var hat := HatProbe.new(m)
+	if "--only=hat" in OS.get_cmdline_user_args():
+		await _hat_quick(hat)
+		return
 	_arm_check()
 	_angle_check()
 	_gait_check()
@@ -657,5 +741,7 @@ func run(main: Node) -> void:
 	if m.night_k > 0.001 or m.night_fx.visible:
 		fails.append("day did not come back")
 	await _can_walk("after night")
+	hat.stop()
+	_hat_check(hat)
 	print("SELFTEST %s" % ("PASS" if fails.is_empty() else "FAIL: " + ", ".join(fails)))
 	m.get_tree().quit(0 if fails.is_empty() else 1)
