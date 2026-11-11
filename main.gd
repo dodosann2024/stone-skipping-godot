@@ -3618,6 +3618,69 @@ func _v18_sequence(pre: String) -> void:
 	ui_root.visible = true
 	_free_cam()
 
+## v19 close-ups: the nape tips, the card edges up close and edge-on, the vest underarm folds with the arms
+## raised (cheer, release, wind-up, sunbathing), and the hair at night
+func _v19_sequence(pre: String) -> void:
+	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
+	await _wait(0.6)
+	demo_nocut = true
+	ui_root.visible = false
+	var y0 := player.rotation.y
+	# [name, pose, p, tt, cam yaw, pitch, dist, bone, up, hat, night]
+	var shots := [] if _opt("ropeonly") == "1" else [
+		["nape_back34", "idle", 1.0, 0.3, PI * 0.25, 0.08, 0.42, "head", 0.03, true, false],
+		["nape_back", "idle", 1.0, 0.3, 0.05, 0.05, 0.36, "head", 0.0, true, false],
+		["nape_close", "idle", 1.0, 0.3, PI * 0.15, 0.02, 0.24, "head", -0.03, true, false],
+		["nape_nohat", "idle", 1.0, 0.3, PI * 0.2, 0.1, 0.4, "head", 0.03, false, false],
+		["edge_side", "idle", 1.0, 0.3, PI * 0.5, 0.05, 0.2, "head", 0.06, false, false],
+		["edge_back", "idle", 1.0, 0.3, 0.1, 0.15, 0.2, "head", 0.06, false, false],
+		["edge_top", "idle", 1.0, 0.3, PI * 0.6, 0.02, 0.16, "head", 0.1, false, false],
+		["edge_fringe", "idle", 1.0, 0.3, PI - 0.35, 0.0, 0.2, "head", 0.0, true, false],
+		["fold_cheer_front", "cheer", 1.0, 1.0, PI - 0.25, 0.05, 0.6, "spine_03", 0.06, true, false],
+		["fold_cheer_side", "cheer", 1.0, 1.0, PI * 0.5, 0.05, 0.45, "spine_03", 0.08, true, false],
+		["fold_cheer_back", "cheer", 1.0, 1.0, 0.2, 0.05, 0.6, "spine_03", 0.06, true, false],
+		["fold_release_front", "release", 1.0, 0.3, PI - 0.3, 0.05, 0.65, "spine_03", 0.06, true, false],
+		["fold_charge_back", "charge", 0.6, 0.3, 0.0, 0.08, 0.85, "spine_03", 0.0, true, false],
+		["fold_sun", "sun", 1.0, 0.3, PI * 0.5, 0.75, 1.0, "spine_03", 0.0, false, false],
+		["fold_sun_close", "sun", 1.0, 0.3, PI * 0.3, 0.5, 0.55, "upperarm_r", 0.0, false, false],
+		["night_brim_34", "idle", 1.0, 0.3, PI * 0.75, 0.05, 0.4, "head", 0.03, true, true],
+		["night_brim_front", "idle", 1.0, 0.3, PI - 0.12, 0.02, 0.4, "head", 0.03, true, true],
+		["night_back34", "idle", 1.0, 0.3, PI * 0.25, 0.08, 0.42, "head", 0.03, true, true],
+		["night_side", "idle", 1.0, 0.3, -PI * 0.5, 0.02, 0.4, "head", 0.03, true, true],
+		["night_nohat", "idle", 1.0, 0.3, PI * 0.7, 0.08, 0.42, "head", 0.05, false, true],
+	]
+	for s: Array in shots:
+		if bool(s[10]) != night_on:
+			_toggle_night()
+			await _wait(2.9)
+		boy.hat.visible = bool(s[9])
+		player.rotation.y = y0
+		boy.debug_pose(s[1], s[2], s[3])
+		await get_tree().process_frame
+		_fixed_cam(_bone_pos(s[7], s[8]), y0 + float(s[4]), s[5], s[6])
+		await _wait(0.4)
+		_shot(pre + "v19_%s" % s[0])
+	boy.hat.visible = true
+	boy.frozen = false
+	if night_on:
+		_toggle_night()
+		await _wait(2.9)
+	# the mooring line's dock end while the boat bobs: two frames 1.3 s apart, same camera
+	# (and how far that end would wander if it rode on the boat, as it did up to v18)
+	_fixed_cam(island.boat_tie, 0.6, 0.3, 1.0)
+	var drift := 0.0
+	for k in 3:
+		var t0 := gt
+		while gt - t0 < 1.3:
+			var rigid: Vector3 = island.dock_boat.transform * (island.boat_rest.affine_inverse() * island.boat_tie)
+			drift = maxf(drift, (rigid - island.boat_tie).length())
+			await get_tree().process_frame
+		_shot(pre + "v19_rope_%d" % k)
+	print("V19 mooring line dock end: rides the boat up to %.1f cm off the knot (pinned since v19)" % (drift * 100.0))
+	demo_nocut = false
+	ui_root.visible = true
+	_free_cam()
+
 ## v15: aiming by swipe - the pad and angle sliders, aiming left / right (arrow, preview, readout, the chest
 ## turning first), cancel, a flicked throw, a too-steep launch, a too-flat stone, a slow release (no spin)
 func _v15_sequence(pre: String) -> void:
@@ -3717,6 +3780,8 @@ func _run_demo4() -> void:
 				await _v17_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what == "v18":
 				await _v18_sequence(pre)
+			elif what == "v19":
+				await _v19_sequence(pre)
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):
