@@ -138,6 +138,9 @@ const STEER_GRIP := 4.5       # m/s^2 a kid can lean into a corner
 const STEER_TOP := 6.0        # rad/s, the fastest turn while moving
 var pivoting := false
 var turn_ahead := 0.0         # rad (+ = left) the heading still has to turn, from the mover
+var aim_twist := 0.0          # rad (+ = left) the chest turns ahead of the hips while aiming a throw
+const TWIST_BONES := ["spine_01", "spine_02", "spine_03"]
+const TWIST_SHARE := [0.3, 0.35, 0.35]
 var lead_y := [0.0, 0.0, 0.0, 0.0]   # spine_02, spine_03, neck_01, head yaw: the head goes first
 var step_to: Array = [[Vector3.ZERO, 0.0], [Vector3.ZERO, 0.0]]
 var step_dur: Array[float] = [STEP_DUR, STEP_DUR]
@@ -614,6 +617,8 @@ func _apply_mixer() -> void:
 		var axis := (par.inverse() * Vector3(0, 0, 1)).normalized()
 		skel.set_bone_pose_rotation(bi, Quaternion(axis, turn_lean) * skel.get_bone_pose_rotation(bi))
 	_lead_turn()
+	if absf(aim_twist) > 1e-4:
+		twist_spine(skel, aim_twist)
 	_weight_shift()
 
 ## a turn starts at the eyes: head, then chest, then hips (the legs follow with the feet)
@@ -634,6 +639,14 @@ func _lead_turn() -> void:
 		var par := skel.get_bone_global_pose(skel.get_bone_parent(bi)).basis
 		var axis := (par.inverse() * Vector3.UP).normalized()
 		skel.set_bone_pose_rotation(bi, Quaternion(axis, lead_y[j]) * skel.get_bone_pose_rotation(bi))
+
+## turn the chest `tw` rad about the vertical over the hips (shared up the spine; legs and hips untouched)
+static func twist_spine(sk: Skeleton3D, tw: float) -> void:
+	for j in TWIST_BONES.size():
+		var bi := sk.find_bone(TWIST_BONES[j])
+		var par := sk.get_bone_global_pose(sk.get_bone_parent(bi)).basis
+		var axis := (par.inverse() * Vector3.UP).normalized()
+		sk.set_bone_pose_rotation(bi, Quaternion(axis, tw * float(TWIST_SHARE[j])) * sk.get_bone_pose_rotation(bi))
 
 ## while one foot is stepping round, the hips sway over the other one and dip a little
 func _weight_shift() -> void:
