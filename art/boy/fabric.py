@@ -195,6 +195,14 @@ def side_seam(B, co, front_x):
     return math.copysign(abs(d) + pos(front_x - abs(co.x)) * 2.0, d)
 
 
+def armpit_side(J, B, co):
+    """1 on the torso's sides just under the armholes, where the swinging upper arms pass within a few mm
+    of the vest (selftest arm clearance): the vest keeps its v16 offset there, no folds, no raised binding"""
+    neck, sh_x = J["neck_01"].z, J["upperarm_l"].x
+    return (ss(0.065, 0.04, abs(co.y - B.cy(co.z))) * ss(sh_x - 0.11, sh_x - 0.08, abs(co.x))
+            * win(co.z, neck - 0.26, neck - 0.13, 0.03))
+
+
 def tank(J, B, under_vest):
     hip, neck = J["pelvis"].z, J["neck_01"].z
 
@@ -217,7 +225,8 @@ def vest(J, B):
     sh_x = J["upperarm_l"].x
 
     def fold(co, n, ed):
-        d = 0.0011 * (1.0 - ss(0.005, 0.009, ed))                       # binding round every edge
+        pit = armpit_side(J, B, co)
+        d = 0.0011 * (1.0 - ss(0.005, 0.009, ed))                        # binding round every edge
         low = ss(neck - 0.17, hip + 0.1, co.z)                           # 0 chest .. 1 hem
         if co.y < 0:
             # the open fronts hang in a few soft vertical folds, deeper towards the hem
@@ -226,12 +235,15 @@ def vest(J, B):
         else:
             # soft horizontal folds over the lower back
             d += ridge((co.z - hip) / 0.019 * math.pi + _nz(co, 6, 1.0), co) * 0.0026 * win(co.z, hip + 0.1, hip + 0.22, 0.03)
-        # under the arms: diagonal folds running from the armpit
+        # the sides under the armholes, where the arms swing past within a centimetre: flat apart from a
+        # few shallow diagonal folds running from the armpit
+        side = ss(0.035, 0.015, abs(co.y - B.cy(co.z))) * ss(sh_x - 0.12, sh_x - 0.08, abs(co.x)) * win(co.z, hip, neck - 0.13, 0.03)
+        d *= (1.0 - 0.8 * side) * (1.0 - pit)
         arm = win(co.z, neck - 0.2, neck - 0.11, 0.03) * ss(sh_x - 0.11, sh_x - 0.06, abs(co.x))
-        d += ridge((co.z * 0.8 + abs(co.x) * 0.7) / 0.012 * math.pi, co, 9.0) * 0.003 * arm
-        # hangs a little off the shorts' waistband
-        d += 0.004 * (1.0 - ss(hip + 0.085, hip + 0.13, co.z))
-        return d + drape(co, 0.0016)
+        d += ridge((co.z * 0.8 + abs(co.x) * 0.7) / 0.012 * math.pi, co, 9.0) * 0.003 * arm * (1.0 - pit)
+        # hangs a little off the shorts' waistband (less at the sides, where the arms swing past)
+        d += 0.004 * (1.0 - ss(hip + 0.085, hip + 0.13, co.z)) * (1.0 - 0.6 * side)
+        return d + drape(co, 0.0016) * (1.0 - 0.8 * side) * (1.0 - pit)
 
     def seam(co):
         return side_seam(B, co, 0.07)

@@ -342,7 +342,9 @@ def build(rig, body, arm):
 
     def tank_off(co, n):
         # thinner under the vest's armholes, which hug the skin
-        return 0.0042 - 0.0016 * fabric.ss(neck_z - 0.17, neck_z - 0.12, co.z) * fabric.ss(sh_x - 0.11, sh_x - 0.07, abs(co.x))
+        # (and under the vest's sides below them, which sit closer in for the swinging arms)
+        return 0.0042 - 0.0016 * max(fabric.ss(neck_z - 0.17, neck_z - 0.12, co.z) * fabric.ss(sh_x - 0.11, sh_x - 0.07, abs(co.x)),
+                                     fabric.armpit_side(J, B, co))
 
     tank = shell(body, "Tank", tank_sel, tank_off, "tank", solid=0.0008, relax=20, resample=True,
                  cloth=fabric.tank(J, B, under_vest))
@@ -366,7 +368,7 @@ def build(rig, body, arm):
             return False
         return True
 
-    vest = shell(body, "Vest", vest_sel, lambda co, n: 0.0085 + max(0.0, (hip_z + 0.2) - co.z) * 0.03, "vest", solid=0.0035, relax=24,
+    vest = shell(body, "Vest", vest_sel, lambda co, n: 0.0085 - 0.0025 * fabric.armpit_side(J, B, co) + max(0.0, (hip_z + 0.2) - co.z) * 0.03, "vest", solid=0.0035, relax=24,
                  hug=lambda co: co.z > neck_z - 0.09 and abs(co.x) > sh_x - 0.055, cloth=fabric.vest(J, B))
 
     # ---- yellow shorts, flared hem
