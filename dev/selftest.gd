@@ -208,13 +208,14 @@ func _rest(kind: String, approach: Vector3) -> void:
 	await _wait(1.0)
 	if kind in ["sun", "sleep"]:
 		m.set_meta("lie_snapped", false)
-		for _p in 2:
+		for _p in 6:
 			m._snap_lie_contact()
 			var pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
 			var swing = Transform3D.IDENTITY
 			if kind == "sleep":
 				swing = m.island.swing_hammock(m.swing_amp * sin(m.gt * 1.3))
 			m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
+			m._plant_lie_feet()
 			await _frames(1)
 		m.set_meta("lie_snapped", true)
 		_lie_contact_check(kind)
@@ -226,7 +227,8 @@ func _rest(kind: String, approach: Vector3) -> void:
 	await _can_walk("after " + kind + " from " + str(approach.snapped(Vector3.ONE * 0.1)))
 
 
-## Hips / spine must sit within ~3 cm of the support (sky-side positive). Feet are informational.
+## Hips / spine near the support (sky-side positive). Face/chest must point skyward (supine).
+## No contact point may penetrate the support deeper than 1 cm.
 func _lie_contact_check(kind: String) -> void:
 	var gaps: Dictionary = m.lie_contact_gaps()
 	if gaps.is_empty():
@@ -238,13 +240,27 @@ func _lie_contact_check(kind: String) -> void:
 		if not gaps.has(key):
 			continue
 		var g: float = float(gaps[key])
-		var tol := 0.04 if key == "hips" else 0.08  # spine can sit a little higher on a curve/backrest
-		# allow a little sink into fabric (−3 cm) and up to tol float
-		if g < -0.03 or g > tol:
+		# Lounger spine = Spine2 vs backrest (may sit further out). Hips allow mesh-shell lift.
+		var tol := 0.12 if key == "hips" else (0.20 if kind == "sun" else 0.12)
+		# allow a little sink into fabric (−1 cm hard limit) and up to tol float
+		if g < -0.01 or g > tol:
 			bad.append("%s=%.1fcm" % [key, g * 100.0])
+	var face_n: Vector3 = m.boy.lie_face_normal()
+	var face_dot := face_n.dot(Vector3.UP)
+	if face_dot <= 0.5:
+		bad.append("face_up=%.2f" % face_dot)
+	var penet := m.lie_penetration_depth()
+	if penet < -0.01:
+		bad.append("penetrate=%.1fcm" % (penet * 100.0))
+	var mesh_penet := m.lie_mesh_penetration_depth()
+	if mesh_penet < -0.01:
+		bad.append("mesh_penet=%.1fcm" % (mesh_penet * 100.0))
 	var parts: PackedStringArray = PackedStringArray()
 	for k in gaps.keys():
 		parts.append("%s=%.1fcm" % [k, float(gaps[k]) * 100.0])
+	parts.append("face_up=%.2f" % face_dot)
+	parts.append("penetrate=%.1fcm" % (penet * 100.0))
+	parts.append("mesh_penet=%.1fcm" % (mesh_penet * 100.0))
 	var ok := bad.is_empty()
 	print("SELFTEST %-28s %s  (%s)" % ["lie contact " + kind, "ok" if ok else "FAIL", ", ".join(parts)])
 	if not ok:

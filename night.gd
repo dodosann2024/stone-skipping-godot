@@ -40,15 +40,16 @@ func build(island: Island) -> void:
 		halos.append(hm)
 		if kind != "path":
 			var ol := OmniLight3D.new()
-			ol.light_color = Color(1.0, 0.72, 0.38)
-			ol.omni_range = 4.5 if kind == "dock" else 3.5
-			ol.omni_attenuation = 1.3
+			ol.light_color = Color(1.0, 0.70, 0.35)
+			# Warm lanterns that actually reach the boy on the dock / porch (~5–6 m).
+			ol.omni_range = 6.0 if kind == "dock" else 5.0
+			ol.omni_attenuation = 1.05
 			ol.shadow_enabled = false
 			ol.position = p + Vector3(0, -0.15, 0)
 			ol.visible = false
 			add_child(ol)
 			lamp_lights.append(ol)
-			lamp_energy.append(1.4 if kind == "dock" else 1.1)
+			lamp_energy.append(2.8 if kind == "dock" else 1.8)
 	# lighthouse: glow, a local light on the tower top and two opposite beams sweeping round
 	var bh := ShaderMaterial.new()
 	bh.shader = halo_sh

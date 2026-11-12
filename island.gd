@@ -24,9 +24,10 @@ var lounger_xf := Transform3D.IDENTITY
 var lounger_seat_half := Vector3(0.3, 0.025, 0.5)   # half-extents of the flat seat cushion
 var lounger_back_half := Vector3(0.3, 0.025, 0.35)  # half-extents of the tilted backrest
 var lounger_seat_tilt := 0.1                         # rad about local +X (slight foot-down)
-var lounger_back_tilt := -0.9                        # rad about local +X (reclined backrest)
+var lounger_back_tilt := -0.66                       # rad about local +X (~38° from flat — chaise recline)
 var lounger_seat_local := Vector3(0, 0.3, 0)          # seat centre in lounger_xf
-var lounger_back_local := Vector3(0, 0.55, -0.6)      # backrest centre in lounger_xf
+# Backrest sits behind the hinge and a bit above the seat so it doesn't overhang into the boy.
+var lounger_back_local := Vector3(0, 0.58, -0.72)
 var umbrella_pos := Vector3.ZERO
 var hut_pos := Vector3.ZERO
 var lighthouse_pos := Vector3.ZERO
@@ -1489,11 +1490,11 @@ func _build_beach_life() -> void:
 	var cxf = Transform3D(Basis(Vector3.UP, tyaw), cp)
 	lounger_xf = cxf
 	lounger_seat_tilt = 0.1
-	lounger_back_tilt = -0.9
+	lounger_back_tilt = -0.66
 	lounger_seat_local = Vector3(0, 0.3, 0)
-	lounger_back_local = Vector3(0, 0.55, -0.6)
+	lounger_back_local = Vector3(0, 0.58, -0.72)
 	lounger_seat_half = Vector3(0.3, 0.025, 0.5)
-	lounger_back_half = Vector3(0.3, 0.025, 0.35)
+	lounger_back_half = Vector3(0.3, 0.025, 0.32)
 	var lc: Vector3 = cxf * Vector3(0, 0, -0.08)
 	wall_b(Vector2(lc.x, lc.z), Vector2(0.33, 0.62), tyaw, cp.y - 0.3, cp.y + 0.9, "躺椅")
 	var lface: Vector3 = cxf.basis * Vector3(1, 0, 0)
@@ -1826,18 +1827,33 @@ func lounger_seat_point(u: float) -> Dictionary:
 		"along": (lounger_xf.basis * (b * Vector3(0, 0, -1))).normalized(),
 	}
 
-## Lounger backrest surface. v=0 near the seat hinge, v=1 at the raised head end.
-## The mesh tilts with Basis(RIGHT, back_tilt); +local Z maps upward toward the headrest.
+## Lounger backrest FRONT surface (the face the boy rests on). v=0 near the seat hinge,
+## v=1 at the raised head end. Normal points out of the cushion (sky + toward the open seat).
 func lounger_back_point(v: float) -> Dictionary:
 	v = clampf(v, 0.0, 1.0)
 	# v=0 at −Z (toward seat / lower), v=1 at +Z (head / higher after tilt)
 	var z := lerpf(-lounger_back_half.z, lounger_back_half.z, v)
 	var b := Basis(Vector3.RIGHT, lounger_back_tilt)
-	var local := lounger_back_local + b * Vector3(0.0, lounger_back_half.y, z)
+	# Centre of the board slab, then step to the cushion face.
+	var centre := lounger_xf * (lounger_back_local + b * Vector3(0.0, 0.0, z))
+	var along := (lounger_xf.basis * (b * Vector3(0, 0, 1))).normalized()  # toward head end
+	var side := (lounger_xf.basis * Vector3.RIGHT).normalized()
+	# Outward cushion normal = along × side, flipped to the skyward / seat-open side.
+	var n := along.cross(side).normalized()
+	if n.y < 0.0:
+		n = -n
+	# Prefer the side that faces the seat (toward the feet).
+	var feet_dir := (lounger_seat_point(0.0)["pos"] as Vector3) - (lounger_seat_point(1.0)["pos"] as Vector3)
+	if n.dot(feet_dir.normalized()) < 0.0:
+		n = -n
+		# If that flip pointed us into the ground, blend toward sky so contact stays outside.
+		if n.y < 0.2:
+			n = (n * 0.35 + Vector3.UP * 0.65 + feet_dir.normalized() * 0.4).normalized()
+	var pos: Vector3 = centre + n * lounger_back_half.y
 	return {
-		"pos": lounger_xf * local,
-		"normal": (lounger_xf.basis * (b * Vector3.UP)).normalized(),
-		"along": (lounger_xf.basis * (b * Vector3(0, 0, 1))).normalized(),  # toward head end
+		"pos": pos,
+		"normal": n,
+		"along": along,
 	}
 
 ## Body-parameter surface for sunbathing: s=0 feet (seat), s≈0.45 hips (hinge), s=1 head (backrest).
