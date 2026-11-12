@@ -539,48 +539,73 @@ func end_activity() -> void:
 	show_stone(true)
 
 
-## Procedural supine pose on bind/rest (straight legs). Do not rotate thighs — Mixamo local
-## axes swing the shin skyward under rest_lie_b. Hammock gets a soft spine sag; sun stays flat
-## with arms at the sides and a gentle breath.
+## Dedicated per-spot supine poses on Mixamo bind. Large thigh Z lifts a shin skyward under
+## rest_lie_b — keep UpLeg small and bend at the knee (Leg) instead. Blends with lie_k (~0.6 s).
 func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
-	var w := smoothstep(0.35, 0.95, lie_k)
+	var w := smoothstep(0.0, 1.0, lie_k)
 	if w <= 0.001 or skel == null:
 		return
-	var breath := sin(tt * 1.35) * 0.025 * w
+	var breath := sin(tt * 1.35) * 0.03 * w
 	if kind == "sleep":
-		# soft hammock sag through the spine (local +X arches the back into the fabric)
-		_pose_abs("mixamorig_Spine", Vector3(0.18 + breath * 0.5, 0.0, 0.0), w)
-		_pose_abs("mixamorig_Spine1", Vector3(0.22 + breath, 0.0, 0.0), w)
-		_pose_abs("mixamorig_Spine2", Vector3(0.12 + breath * 0.6, 0.0, 0.0), w)
-		# chin slightly up (negative local X) tips the front brim over the face while supine;
-		# chin-down would press the rear brim into the fabric like a pillow behind the head
-		_pose_abs("mixamorig_Neck", Vector3(-0.25, 0.0, 0.0), w)
-		_pose_abs("mixamorig_Head", Vector3(-0.55 + breath * 0.2, 0.05, 0.0), w)
-		# both arms at the sides — any large local Z lifts a limb skyward under rest_lie_b
-		_pose_abs("mixamorig_LeftShoulder", Vector3(0.02, 0.03, 0.04), w)
-		_pose_abs("mixamorig_RightShoulder", Vector3(0.02, -0.03, -0.04), w)
-		_pose_abs("mixamorig_LeftArm", Vector3(0.05, 0.02, 0.05), w)
-		_pose_abs("mixamorig_RightArm", Vector3(0.05, -0.02, -0.05), w)
-		_pose_abs("mixamorig_LeftForeArm", Vector3(0.04, 0.0, 0.03), w)
-		_pose_abs("mixamorig_RightForeArm", Vector3(0.04, 0.0, -0.03), w)
-		_pose_abs("mixamorig_LeftHand", Vector3(0.0, 0.0, 0.0), w)
-		_pose_abs("mixamorig_RightHand", Vector3(0.0, 0.0, 0.0), w)
+		_apply_hammock_pose(w, breath)
+	elif kind == "sun":
+		_apply_lounger_pose(w, breath)
 	else:
-		# sun / seatlie: flat spine, hat seated on the head, arms at the sides near bind/rest
-		_pose_abs("mixamorig_Spine", Vector3(breath * 0.6, 0.0, 0.0), w)
-		_pose_abs("mixamorig_Spine1", Vector3(breath * 1.1, 0.0, 0.0), w)
-		_pose_abs("mixamorig_Spine2", Vector3(breath * 0.8, 0.0, 0.0), w)
-		_pose_abs("mixamorig_Neck", Vector3(0.12, 0.0, 0.0), w)
-		_pose_abs("mixamorig_Head", Vector3(0.18 + breath * 0.3, 0.0, 0.0), w)
-		_pose_abs("mixamorig_LeftShoulder", Vector3(0.02, 0.02, 0.04), w)
-		_pose_abs("mixamorig_RightShoulder", Vector3(0.02, -0.02, -0.04), w)
-		_pose_abs("mixamorig_LeftArm", Vector3(0.04, 0.02, 0.06), w)
-		_pose_abs("mixamorig_RightArm", Vector3(0.04, -0.02, -0.06), w)
-		_pose_abs("mixamorig_LeftForeArm", Vector3(0.02, 0.0, 0.04), w)
-		_pose_abs("mixamorig_RightForeArm", Vector3(0.02, 0.0, -0.04), w)
-		_pose_abs("mixamorig_LeftHand", Vector3(0.0, 0.0, 0.0), w)
-		_pose_abs("mixamorig_RightHand", Vector3(0.0, 0.0, 0.0), w)
+		_apply_seatlie_pose(w, breath)
 	skel.force_update_transform()
+
+
+## Hammock: soft spine sag into the fabric, hands on belly, head tipped aside.
+## No leg bone offsets — any UpLeg/Leg euler under rest_lie_b lifts a shin skyward.
+func _apply_hammock_pose(w: float, breath: float) -> void:
+	_pose_abs("mixamorig_Hips", Vector3(0.14 + breath * 0.25, 0.03, 0.0), w)
+	_pose_abs("mixamorig_Spine", Vector3(0.26 + breath * 0.45, 0.03, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.28 + breath * 0.6, 0.02, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.18 + breath * 0.35, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Neck", Vector3(0.1, 0.14, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(0.12 + breath * 0.2, 0.18, 0.02), w)
+	_pose_abs("mixamorig_LeftShoulder", Vector3(0.02, 0.06, 0.04), w)
+	_pose_abs("mixamorig_RightShoulder", Vector3(0.02, -0.06, -0.04), w)
+	_pose_abs("mixamorig_LeftArm", Vector3(0.12, 0.22, 0.06), w)
+	_pose_abs("mixamorig_RightArm", Vector3(0.12, -0.22, -0.06), w)
+	_pose_abs("mixamorig_LeftForeArm", Vector3(0.35, 0.04, 0.1), w)
+	_pose_abs("mixamorig_RightForeArm", Vector3(0.35, -0.04, -0.1), w)
+	_pose_abs("mixamorig_LeftHand", Vector3(0.03, 0.0, 0.05), w)
+	_pose_abs("mixamorig_RightHand", Vector3(0.03, 0.0, -0.05), w)
+
+
+## Lounger: positive spine X tips the torso up the backrest once rest_lie_b is applied;
+## legs stay at bind so they rest on the flat seat. No leg bone offsets.
+func _apply_lounger_pose(w: float, breath: float) -> void:
+	_pose_abs("mixamorig_Hips", Vector3(0.16 + breath * 0.2, 0.02, 0.0), w)
+	_pose_abs("mixamorig_Spine", Vector3(0.3 + breath * 0.3, 0.02, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.32 + breath * 0.35, 0.02, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.22 + breath * 0.25, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Neck", Vector3(0.08, 0.12, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(0.1 + breath * 0.15, 0.16, 0.02), w)
+	_pose_abs("mixamorig_LeftShoulder", Vector3(0.02, 0.05, 0.03), w)
+	_pose_abs("mixamorig_RightShoulder", Vector3(0.02, -0.05, -0.03), w)
+	_pose_abs("mixamorig_LeftArm", Vector3(0.1, 0.2, 0.05), w)
+	_pose_abs("mixamorig_RightArm", Vector3(0.1, -0.2, -0.05), w)
+	_pose_abs("mixamorig_LeftForeArm", Vector3(0.3, 0.04, 0.08), w)
+	_pose_abs("mixamorig_RightForeArm", Vector3(0.3, -0.04, -0.08), w)
+	_pose_abs("mixamorig_LeftHand", Vector3(0.02, 0.0, 0.04), w)
+	_pose_abs("mixamorig_RightHand", Vector3(0.02, 0.0, -0.04), w)
+
+
+## Bench / log lie-back: soft flat supine with a little knee bend (kept for seatlie).
+func _apply_seatlie_pose(w: float, breath: float) -> void:
+	_pose_abs("mixamorig_Spine", Vector3(0.06 + breath * 0.5, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.08 + breath, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.05 + breath * 0.5, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Neck", Vector3(0.1, 0.12, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(0.12 + breath * 0.3, 0.15, 0.0), w)
+	_pose_abs("mixamorig_LeftShoulder", Vector3(0.03, 0.08, 0.05), w)
+	_pose_abs("mixamorig_RightShoulder", Vector3(0.03, -0.08, -0.05), w)
+	_pose_abs("mixamorig_LeftArm", Vector3(0.15, 0.22, 0.08), w)
+	_pose_abs("mixamorig_RightArm", Vector3(0.15, -0.22, -0.08), w)
+	_pose_abs("mixamorig_LeftForeArm", Vector3(0.32, 0.04, 0.1), w)
+	_pose_abs("mixamorig_RightForeArm", Vector3(0.32, -0.04, -0.1), w)
 
 
 func _pose_abs(bone: String, euler: Vector3, w: float) -> void:
@@ -588,6 +613,28 @@ func _pose_abs(bone: String, euler: Vector3, w: float) -> void:
 	if bi < 0:
 		return
 	skel.set_bone_pose_rotation(bi, Quaternion.IDENTITY.slerp(Quaternion.from_euler(euler), w))
+
+
+## World positions of key bones after the current lie pose (for contact checks / snaps).
+func lie_bone_world(bone: String) -> Vector3:
+	if skel == null:
+		return global_position
+	var bi := skel.find_bone(bone)
+	if bi < 0:
+		return global_position
+	return (skel.global_transform * skel.get_bone_global_pose(bi)).origin
+
+
+## Approximate back-of-body contact points (hips / mid-spine / head / both feet) in world space.
+## into_bed pushes from the bone toward the support (thin back offset — Tripo is a slim mesh).
+func lie_contact_points(into_bed: Vector3, back_offset := 0.025) -> Dictionary:
+	into_bed = into_bed.normalized()
+	var hips := lie_bone_world(B_HIPS) + into_bed * back_offset
+	var spine := lie_bone_world("mixamorig_Spine1") + into_bed * back_offset
+	var head := lie_bone_world(B_HEAD) + into_bed * (back_offset + 0.01)
+	var foot_l := lie_bone_world(B_FOOT[0]) + into_bed * 0.015
+	var foot_r := lie_bone_world(B_FOOT[1]) + into_bed * 0.015
+	return {"hips": hips, "spine": spine, "head": head, "foot_l": foot_l, "foot_r": foot_r}
 
 
 func throw_stance() -> Array:

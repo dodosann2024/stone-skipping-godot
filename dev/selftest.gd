@@ -206,12 +206,49 @@ func _rest(kind: String, approach: Vector3) -> void:
 		fails.append(kind + " never lay down")
 		return
 	await _wait(1.0)
+	if kind in ["sun", "sleep"]:
+		m.set_meta("lie_snapped", false)
+		for _p in 2:
+			m._snap_lie_contact()
+			var pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
+			var swing = Transform3D.IDENTITY
+			if kind == "sleep":
+				swing = m.island.swing_hammock(m.swing_amp * sin(m.gt * 1.3))
+			m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
+			await _frames(1)
+		m.set_meta("lie_snapped", true)
+		_lie_contact_check(kind)
 	m._wake()
 	if not await _until(func() -> bool: return m.mode == m.Mode.EXPLORE, 6.0):
 		fails.append(kind + " never got up")
 		return
 	await _frames(3)
 	await _can_walk("after " + kind + " from " + str(approach.snapped(Vector3.ONE * 0.1)))
+
+
+## Hips / spine must sit within ~3 cm of the support (sky-side positive). Feet are informational.
+func _lie_contact_check(kind: String) -> void:
+	var gaps: Dictionary = m.lie_contact_gaps()
+	if gaps.is_empty():
+		fails.append(kind + " contact: no gaps")
+		print("SELFTEST %-28s FAIL  (no gaps)" % ("lie contact " + kind))
+		return
+	var bad: Array = []
+	for key in ["hips", "spine"]:
+		if not gaps.has(key):
+			continue
+		var g: float = float(gaps[key])
+		var tol := 0.04 if key == "hips" else 0.08  # spine can sit a little higher on a curve/backrest
+		# allow a little sink into fabric (−3 cm) and up to tol float
+		if g < -0.03 or g > tol:
+			bad.append("%s=%.1fcm" % [key, g * 100.0])
+	var parts: PackedStringArray = PackedStringArray()
+	for k in gaps.keys():
+		parts.append("%s=%.1fcm" % [k, float(gaps[k]) * 100.0])
+	var ok := bad.is_empty()
+	print("SELFTEST %-28s %s  (%s)" % ["lie contact " + kind, "ok" if ok else "FAIL", ", ".join(parts)])
+	if not ok:
+		fails.append(kind + " contact: " + ", ".join(bad))
 
 var jitter := 0
 
@@ -693,11 +730,16 @@ func run(main: Node) -> void:
 	_slide_check()
 	await _turn_check()
 	await _can_walk("start")
-	# towel: from both sides and from the sea end
+	# sunbathing on the lounger (approach from both sides and the foot end)
+	var lounger_ap: Vector3 = m.island.towel_pos
+	for st in m.island.seats:
+		if st["name"] == "躺椅":
+			lounger_ap = st["approach"]
+			break
 	var td: Vector3 = m.island.towel_dir
 	var sd: Vector3 = td.cross(Vector3.UP).normalized()
-	for off: Vector3 in [sd * 1.4, -sd * 1.4, td * 1.6, -td * 1.8]:
-		await _rest("sun", m.island.towel_pos + off)
+	for off: Vector3 in [Vector3.ZERO, sd * 0.4, -sd * 0.4, td * 0.5]:
+		await _rest("sun", lounger_ap + off)
 	# hammock: both sides
 	var hs: Array = m._hammock_spot()
 	for s: float in [1.6, -1.6]:

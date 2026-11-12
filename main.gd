@@ -923,7 +923,9 @@ func _update_action_kind() -> void:
 		if Vector2(p.x - bed.x, p.z - bed.z).length() < 1.9:
 			k = "sleep"
 		var tp := island.towel_pos
-		if Vector2(p.x - tp.x, p.z - tp.z).length() < 1.7:
+		var lp: Vector3 = island.lounger_seat_point(0.5)["pos"]
+		if Vector2(p.x - tp.x, p.z - tp.z).length() < 1.7 \
+				or Vector2(p.x - lp.x, p.z - lp.z).length() < 1.6:
 			k = "sun"
 		var best := 1.25
 		for i in island.seats.size():
@@ -1245,20 +1247,9 @@ func _begin_rest(kind: String) -> void:
 	rest_t = 0.0
 	rest_cam_yaw = INF
 	move_vel = Vector3.ZERO
+	set_meta("lie_snapped", false)
 	if kind == "sleep":
-		var hs := _hammock_spot()
-		var bed: Vector3 = hs[0]
-		var along: Vector3 = hs[1]
-		var side: Vector3 = hs[2]
-		rest_side = side
-		rest_seat = bed + side * 0.27 + Vector3(0, 0.11, 0)
-		rest_seat.y = maxf(rest_seat.y, Island.ground_h(rest_seat.x, rest_seat.z) + 0.3)
-		# keep the head near the sag centre (wide brim sticks through the rising ends/sides)
-		rest_lie = bed + Vector3(0, 0.36, 0) + along * 0.08
-		rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
-		# slight roll so one shoulder dips and the brim rides above one side wall
-		rest_lie_b = _lie_basis(along) * Basis(Vector3.FORWARD, 0.18)
-		rest_approach = rest_seat + side * 0.26
+		_setup_hammock_rest()
 	elif kind == "seat":
 		var st: Dictionary = island.seats[seat_i]
 		var face: Vector3 = seat_face
@@ -1277,15 +1268,8 @@ func _begin_rest(kind: String) -> void:
 			rest_lie += face * 0.05
 		rest_lie_b = _lie_basis(rest_side)
 	else:
-		var td := island.towel_dir
-		var tp := island.towel_pos
-		rest_side = td.cross(Vector3.UP).normalized()
-		rest_seat = tp + td * 0.06 + Vector3(0, 0.1, 0)
-		# flat on the towel — world-up so the back rests on the mat with a little brim clearance
-		rest_lie = tp + td * 0.02 + Vector3(0, 0.14, 0)
-		rest_sit_b = Basis(Vector3.UP, atan2(-td.x, -td.z))
-		rest_lie_b = _lie_basis(-td)
-		rest_approach = rest_seat + td * 0.36
+		# 晒太阳 on the deck-chair lounger (tilted backrest + flat seat), not the flat towel
+		_setup_lounger_rest()
 	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
 	var pl := boy.activity(kind, 1.0, 0.0, 0.0)
 	rest_root_sit = rest_seat - rest_sit_b * pl
@@ -1297,6 +1281,69 @@ func _begin_rest(kind: String) -> void:
 
 const LIE_BACK := 0.085   # pelvis centre above the seat when lying on the back
 const SEAT_LIE_DUR := 1.6
+const LIE_BLEND_DUR := 0.6  # sun / hammock sit→lie blend
+## Body half-length used to place hips/head/feet on lounger & hammock (Tripo ~0.8 m tall).
+const LIE_BODY_HALF := 0.38
+const LIE_CONTACT_TOL := 0.02  # 0–2 cm gap target after snap
+
+
+## Hammock nap: hips at the sag centre, head/feet slightly raised; body follows the fabric curve.
+func _setup_hammock_rest() -> void:
+	var hs := _hammock_spot()
+	var along: Vector3 = hs[1]
+	var side: Vector3 = hs[2]
+	rest_side = side
+	var bed: Vector3 = island.hammock_point(0.5)
+	rest_seat = bed + side * 0.27 + Vector3(0, 0.11, 0)
+	rest_seat.y = maxf(rest_seat.y, Island.ground_h(rest_seat.x, rest_seat.z) + 0.3)
+	# head toward hammock_a so the wide brim clears one rising end
+	var head_t := 0.5 - LIE_BODY_HALF / maxf(island.hammock_a.distance_to(island.hammock_b), 0.01)
+	var foot_t := 0.5 + LIE_BODY_HALF / maxf(island.hammock_a.distance_to(island.hammock_b), 0.01)
+	var hip_f: Dictionary = island.hammock_frame(0.5)
+	var head_f: Dictionary = island.hammock_frame(clampf(head_t, 0.05, 0.95))
+	var head_dir: Vector3 = ((head_f["pos"] as Vector3) - (hip_f["pos"] as Vector3)).normalized()
+	if head_dir.dot(along) < 0.0:
+		head_dir = -head_dir
+	rest_lie_b = _lie_basis(head_dir)
+	# rest_lie = world pelvis target; snap settles the final centimetres
+	rest_lie = (hip_f["pos"] as Vector3) + (hip_f["normal"] as Vector3) * 0.04
+	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
+	rest_approach = rest_seat + side * 0.26
+	# stash foot/head targets for contact snap after the first posed frame
+	set_meta("lie_head_t", clampf(head_t, 0.05, 0.95))
+	set_meta("lie_foot_t", clampf(foot_t, 0.05, 0.95))
+
+
+## Sunbathing on the blue lounger: root flat on the seat so legs rest on the cushion;
+## spine bones tip the torso onto the reclined backrest (see Boy._apply_lounger_pose).
+func _setup_lounger_rest() -> void:
+	var hip_s := 0.58  # hips near the seat/backrest hinge so feet fit on the seat
+	var head_s := 0.85
+	var foot_s := 0.08
+	var seat_h: Dictionary = island.lounger_seat_point(hip_s)
+	var along: Vector3 = (seat_h["along"] as Vector3).normalized()
+	var side: Vector3 = along.cross(Vector3.UP).normalized()
+	if side.length_squared() < 1e-6:
+		side = island.lounger_xf.basis.x.normalized()
+	rest_side = side
+	var st_i := -1
+	for i in island.seats.size():
+		if island.seats[i]["name"] == "躺椅":
+			st_i = i
+			break
+	if st_i >= 0:
+		rest_approach = island.seats[st_i]["approach"]
+		rest_seat = island.seats[st_i]["top"] + Vector3(0, 0.05, 0)
+	else:
+		rest_seat = seat_h["pos"] + side * 0.35
+		rest_approach = rest_seat + side * 0.4
+	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
+	# Flat-on-seat basis — keeps feet on the cushion; spine pose tips onto the backrest
+	rest_lie_b = _lie_basis(along)
+	rest_lie = (seat_h["pos"] as Vector3) + (seat_h["normal"] as Vector3) * 0.04
+	set_meta("lie_head_s", head_s)
+	set_meta("lie_foot_s", foot_s)
+	set_meta("lie_hip_s", hip_s)
 
 ## sit -> lie back along the bench / log (the seated boy's「躺下」)
 func _lie_down() -> void:
@@ -1319,6 +1366,100 @@ func _lie_basis(head_dir: Vector3) -> Basis:
 	var z := Vector3.DOWN - y * Vector3.DOWN.dot(y)
 	z = z.normalized()
 	return Basis(y.cross(z), y, z)
+
+
+## Current hammock swing that maps rest-world → swung-world (identity when not sleeping).
+func _lie_swing() -> Transform3D:
+	if rest_kind == "sleep" and island.hammock_node:
+		var mid := (island.hammock_a + island.hammock_b) * 0.5
+		return island.hammock_node.global_transform * Transform3D(Basis.IDENTITY, -mid)
+	return Transform3D.IDENTITY
+
+
+## After the lie pose is applied, nudge rest_lie so contact points sit 0–2 cm above the support.
+func _snap_lie_contact() -> void:
+	if rest_kind != "sun" and rest_kind != "sleep":
+		return
+	var into_bed: Vector3 = rest_lie_b.z
+	var pts: Dictionary = boy.lie_contact_points(into_bed, 0.025)
+	var swing := _lie_swing()
+	var gaps: Array = []  # signed: positive = floating above surface
+	var mean_n: Vector3
+	if rest_kind == "sleep":
+		var hip_f: Dictionary = island.hammock_frame(0.5)
+		var foot_f: Dictionary = island.hammock_frame(float(get_meta("lie_foot_t", 0.6)))
+		var hip_p: Vector3 = swing * (hip_f["pos"] as Vector3)
+		var hip_n: Vector3 = (swing.basis * (hip_f["normal"] as Vector3)).normalized()
+		var foot_p: Vector3 = swing * (foot_f["pos"] as Vector3)
+		var foot_n: Vector3 = (swing.basis * (foot_f["normal"] as Vector3)).normalized()
+		gaps.append(_signed_gap(pts["hips"], hip_p, hip_n))
+		gaps.append(_signed_gap(pts["hips"], hip_p, hip_n))
+		gaps.append(_signed_gap(pts["spine"], hip_p, hip_n))
+		gaps.append(_signed_gap(pts["foot_l"], foot_p, foot_n))
+		gaps.append(_signed_gap(pts["foot_r"], foot_p, foot_n))
+		mean_n = hip_n
+	else:
+		var hip_s: Dictionary = island.lounger_seat_point(float(get_meta("lie_hip_s", 0.58)))
+		var mid_s: Dictionary = island.lounger_seat_point(0.65)
+		gaps.append(_signed_gap(pts["hips"], hip_s["pos"], hip_s["normal"]))
+		gaps.append(_signed_gap(pts["spine"], mid_s["pos"], mid_s["normal"]))
+		mean_n = hip_s["normal"]
+	var mean_g := 0.0
+	var deepest := 1e9
+	for g in gaps:
+		mean_g += float(g)
+		deepest = minf(deepest, float(g))
+	mean_g /= float(gaps.size())
+	var target := 0.008
+	var adjust := deepest - target
+	if deepest >= -0.005:
+		adjust = mean_g - target
+	# rest_lie is in rest-space; move along the rest-space normal
+	var rest_n: Vector3 = mean_n
+	if rest_kind == "sleep":
+		rest_n = island.hammock_frame(0.5)["normal"]
+	rest_lie -= rest_n * adjust
+
+
+func _signed_gap(point: Vector3, surface: Vector3, normal: Vector3) -> float:
+	# positive ⇒ point is on the outward (sky) side of the surface = floating
+	return (point - surface).dot(normal.normalized())
+
+
+## Gaps for selftest / debug: {hips, spine, head, foot_l, foot_r} in metres (sky-side positive).
+func lie_contact_gaps() -> Dictionary:
+	if rest_kind != "sun" and rest_kind != "sleep":
+		return {}
+	var into_bed: Vector3 = rest_lie_b.z
+	var pts: Dictionary = boy.lie_contact_points(into_bed, 0.025)
+	var swing := _lie_swing()
+	var out := {}
+	if rest_kind == "sleep":
+		var hip_f: Dictionary = island.hammock_frame(0.5)
+		var head_f: Dictionary = island.hammock_frame(float(get_meta("lie_head_t", 0.4)))
+		var foot_f: Dictionary = island.hammock_frame(float(get_meta("lie_foot_t", 0.6)))
+		var hip_p: Vector3 = swing * (hip_f["pos"] as Vector3)
+		var hip_n: Vector3 = (swing.basis * (hip_f["normal"] as Vector3)).normalized()
+		var head_p: Vector3 = swing * (head_f["pos"] as Vector3)
+		var head_n: Vector3 = (swing.basis * (head_f["normal"] as Vector3)).normalized()
+		var foot_p: Vector3 = swing * (foot_f["pos"] as Vector3)
+		var foot_n: Vector3 = (swing.basis * (foot_f["normal"] as Vector3)).normalized()
+		out["hips"] = _signed_gap(pts["hips"], hip_p, hip_n)
+		out["spine"] = _signed_gap(pts["spine"], hip_p, hip_n)
+		out["head"] = _signed_gap(pts["head"], head_p, head_n)
+		out["foot_l"] = _signed_gap(pts["foot_l"], foot_p, foot_n)
+		out["foot_r"] = _signed_gap(pts["foot_r"], foot_p, foot_n)
+	else:
+		var hip_s: Dictionary = island.lounger_seat_point(float(get_meta("lie_hip_s", 0.58)))
+		var mid_s: Dictionary = island.lounger_seat_point(0.7)
+		var head_s: Dictionary = island.lounger_back_point(0.55)
+		var foot_s: Dictionary = island.lounger_seat_point(float(get_meta("lie_foot_s", 0.08)))
+		out["hips"] = _signed_gap(pts["hips"], hip_s["pos"], hip_s["normal"])
+		out["spine"] = _signed_gap(pts["spine"], mid_s["pos"], mid_s["normal"])
+		out["head"] = _signed_gap(pts["head"], head_s["pos"], head_s["normal"])
+		out["foot_l"] = _signed_gap(pts["foot_l"], foot_s["pos"], foot_s["normal"])
+		out["foot_r"] = _signed_gap(pts["foot_r"], foot_s["pos"], foot_s["normal"])
+	return out
 
 func _wake() -> void:
 	if mode == Mode.REST and rest_phase == 4:
@@ -1391,7 +1532,7 @@ func _rest_tick(delta: float) -> void:
 					_update_action_kind()
 					_update_ui()
 		3, 5:
-			var dur2 := SEAT_LIE_DUR if rest_kind == "seat" else 1.0
+			var dur2 := SEAT_LIE_DUR if rest_kind == "seat" else LIE_BLEND_DUR
 			var k2 := clampf(rest_t / dur2, 0.0, 1.0)
 			if rest_phase == 5:
 				k2 = 1.0 - k2
@@ -1421,6 +1562,13 @@ func _rest_tick(delta: float) -> void:
 				swing_amp = lerpf(swing_amp, 0.07, 1.0 - exp(-delta * 1.0))
 				swing = island.swing_hammock(swing_amp * sin(gt * 1.3))
 			boy.global_transform = swing * Transform3D(rest_lie_b, rest_lie - rest_lie_b * pl3)
+			# contact snap so back/hips/feet sit 0–2 cm above the support (re-pose between passes)
+			if rest_t > 0.05 and (not get_meta("lie_snapped", false) or fmod(rest_t, 1.5) < delta):
+				for _pass in 2:
+					_snap_lie_contact()
+					pl3 = boy.activity(_act_kind(), 1.0, 1.0, gt)
+					boy.global_transform = swing * Transform3D(rest_lie_b, rest_lie - rest_lie_b * pl3)
+				set_meta("lie_snapped", true)
 	# floating Zzz above the sleeping head
 	zzz.visible = sleep and rest_phase == 4
 	if zzz.visible:
