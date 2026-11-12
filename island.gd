@@ -1492,9 +1492,10 @@ func _build_beach_life() -> void:
 	lounger_seat_tilt = 0.1
 	lounger_back_tilt = -0.66
 	lounger_seat_local = Vector3(0, 0.3, 0)
-	lounger_back_local = Vector3(0, 0.62, -0.85)
-	lounger_seat_half = Vector3(0.3, 0.025, 0.5)
-	lounger_back_half = Vector3(0.3, 0.025, 0.30)
+	# Board behind the hinge; far enough that the hat rests on the front face when reclined.
+	lounger_back_local = Vector3(0, 0.66, -0.98)
+	lounger_seat_half = Vector3(0.3, 0.03, 0.5)
+	lounger_back_half = Vector3(0.3, 0.045, 0.34)
 	var lc: Vector3 = cxf * Vector3(0, 0, -0.08)
 	wall_b(Vector2(lc.x, lc.z), Vector2(0.33, 0.62), tyaw, cp.y - 0.3, cp.y + 0.9, "躺椅")
 	var lface: Vector3 = cxf.basis * Vector3(1, 0, 0)
@@ -1855,6 +1856,35 @@ func lounger_back_point(v: float) -> Dictionary:
 		"normal": n,
 		"along": along,
 	}
+
+## True when `world` projects onto the finite backrest cushion (with a small margin).
+func lounger_back_contains(world: Vector3, margin := 0.04) -> bool:
+	var mid: Dictionary = lounger_back_point(0.5)
+	var n: Vector3 = (mid["normal"] as Vector3).normalized()
+	var along: Vector3 = (mid["along"] as Vector3).normalized()
+	var side: Vector3 = n.cross(along).normalized()
+	var d: Vector3 = world - (mid["pos"] as Vector3)
+	# Reject points far from the board plane before the in-plane test.
+	if absf(d.dot(n)) > 0.35:
+		return false
+	var u := d.dot(along)  # along pad length from centre
+	var v := d.dot(side)
+	return absf(u) <= lounger_back_half.z + margin and absf(v) <= lounger_back_half.x + margin
+
+
+## True when `world` projects onto the finite seat cushion (with a small margin).
+func lounger_seat_contains(world: Vector3, margin := 0.04) -> bool:
+	var mid: Dictionary = lounger_seat_point(0.5)
+	var n: Vector3 = (mid["normal"] as Vector3).normalized()
+	var along: Vector3 = (mid["along"] as Vector3).normalized()
+	var side: Vector3 = n.cross(along).normalized()
+	var d: Vector3 = world - (mid["pos"] as Vector3)
+	if absf(d.dot(n)) > 0.35:
+		return false
+	var u := d.dot(along)
+	var v := d.dot(side)
+	return absf(u) <= lounger_seat_half.z + margin and absf(v) <= lounger_seat_half.x + margin
+
 
 ## Body-parameter surface for sunbathing: s=0 feet (seat), s≈0.45 hips (hinge), s=1 head (backrest).
 func lounger_body_surface(s: float) -> Dictionary:

@@ -344,11 +344,13 @@ func set_night_k(k: float) -> void:
 		# Day: warm under-brim fill. Night: nearly off so dock lanterns / moonlight light him
 		# like the world (no day-bright paste-on body with a dark face).
 		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.55, 0.65, 0.95), k)
-		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.03, k)
+		# Night: fill nearly off so world moon/lanterns light face and body the same way.
+		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.0, k)
 	if _night_rim:
-		# Subtle cool rim so edges read under moonlight without flattening the body.
-		_night_rim.light_energy = lerpf(0.0, 0.12, k)
+		# Cool moon-side rim so edges read without a day-bright paste-on fill.
+		_night_rim.light_energy = lerpf(0.0, 0.16, k)
 		_night_rim.light_color = Color(0.55, 0.65, 0.95)
+		_night_rim.position = Vector3(0.0, 0.04, 0.14).lerp(Vector3(0.0, 0.06, 0.18), k)
 
 
 func _tune_boy_material() -> void:
@@ -605,29 +607,28 @@ func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
 	skel.force_update_transform()
 
 
-## Hammock: mild U-sag into the fabric, chin slightly up, head tipped aside.
+## Hammock: mild U-sag into the fabric, chin up so the baked hat stays above the fabric.
 ## Arms stay on the idle-seed pose (overwriting them stretches the shorts into a spike).
 func _apply_hammock_pose(w: float, breath: float) -> void:
-	_pose_abs("mixamorig_Spine", Vector3(0.06 + breath * 0.3, 0.02, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(0.08 + breath * 0.35, 0.02, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(0.05 + breath * 0.2, 0.0, 0.0), w)
-	# Chin strongly forward so the baked hat brim lifts clear of the fabric sides.
-	_pose_abs("mixamorig_Neck", Vector3(0.16, 0.03, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(0.18 + breath * 0.05, 0.04, 0.02), w)
+	_pose_abs("mixamorig_Spine", Vector3(0.04 + breath * 0.3, 0.02, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.05 + breath * 0.35, 0.02, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.04 + breath * 0.2, 0.0, 0.0), w)
+	# Strong chin tip so the baked hat crown does not poke through the fabric underside.
+	_pose_abs("mixamorig_Neck", Vector3(-0.20, 0.03, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.26 + breath * 0.05, 0.04, 0.02), w)
 
 
-## Lounger: flat root + hips pitch tips the torso onto the ~38° backrest. Soft knee bend keeps
-## heels on the cushion after the pitch. Keep hips pitch ≤0.48 and skip absolute arm eulers
-## (those stretch the Tripo shorts into a yellow spike). Idle-seed arms stay along the body.
+## Lounger: flat root + hips pitch tips the torso onto the ~38° backrest. Skip absolute arm/UpLeg
+## eulers (those stretch the Tripo shorts into a yellow spike). Chin tips hat onto the pad.
 func _apply_lounger_pose(w: float, breath: float) -> void:
-	_pose_add("mixamorig_Hips", Vector3(0.20, 0.0, 0.0), w)
-	# No UpLeg/Leg overrides — idle-seed legs + foot plant; extras stretch shorts into spikes.
-	_pose_abs("mixamorig_Spine", Vector3(0.04 + breath * 0.2, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(0.05 + breath * 0.25, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(0.04 + breath * 0.15, 0.0, 0.0), w)
-	# Chin forward so the baked straw hat rests on top of the pad, not inside it.
-	_pose_abs("mixamorig_Neck", Vector3(0.08, 0.02, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(0.10 + breath * 0.06, 0.03, 0.0), w)
+	# Root already aims hips→head along the chaise; no big hip eulers (those spike the shorts).
+	_pose_abs("mixamorig_Spine", Vector3(0.02 + breath * 0.15, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.03 + breath * 0.2, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.02 + breath * 0.1, 0.0, 0.0), w)
+	# Mild chin tip so the baked straw hat rests on the pad face.
+	_pose_abs("mixamorig_Neck", Vector3(-0.14, 0.02, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.18 + breath * 0.06, 0.03, 0.0), w)
+
 
 
 ## Plant both feet onto a world-space seat plane (keeps heels on the lounger after a hips pitch).
@@ -711,6 +712,78 @@ func lie_contact_points(into_bed: Vector3, back_offset := 0.04) -> Dictionary:
 	var foot_l := lie_bone_world(B_FOOT[0]) + into_bed * 0.02
 	var foot_r := lie_bone_world(B_FOOT[1]) + into_bed * 0.02
 	return {"hips": hips, "spine": spine, "head": head, "foot_l": foot_l, "foot_r": foot_r}
+
+
+## Cached bind-pose skin buffers for lie penetration (BoyMesh + baked hat verts).
+var _skin_verts: PackedVector3Array = PackedVector3Array()
+var _skin_bones: PackedInt32Array = PackedInt32Array()
+var _skin_weights: PackedFloat32Array = PackedFloat32Array()
+var _skin_ready := false
+
+
+func _ensure_skin_cache() -> void:
+	if _skin_ready or skel == null:
+		return
+	_skin_ready = true
+	for c in skel.get_children():
+		if not (c is MeshInstance3D):
+			continue
+		var mi := c as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		var mesh := mi.mesh as ArrayMesh
+		if mesh == null or mesh.get_surface_count() < 1:
+			continue
+		var arrays: Array = mesh.surface_get_arrays(0)
+		if arrays.is_empty():
+			continue
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var bones_a = arrays[Mesh.ARRAY_BONES]
+		var weights_a = arrays[Mesh.ARRAY_WEIGHTS]
+		if verts.is_empty() or bones_a == null or weights_a == null:
+			continue
+		_skin_verts = verts
+		# Godot may store bones as PackedInt32Array or PackedFloat32Array depending on importer.
+		_skin_bones = PackedInt32Array()
+		_skin_bones.resize(verts.size() * 4)
+		_skin_weights = PackedFloat32Array()
+		_skin_weights.resize(verts.size() * 4)
+		for i in verts.size() * 4:
+			_skin_bones[i] = int(bones_a[i])
+			_skin_weights[i] = float(weights_a[i])
+		break
+
+
+## Sample skinned mesh vertices in world space (stride so ~max_samples points). Includes the
+## baked Tripo hat/body. Used by lie mesh-penetration selftest and contact snap.
+func skinned_sample_world(max_samples := 500) -> Array[Vector3]:
+	_ensure_skin_cache()
+	var out: Array[Vector3] = []
+	if skel == null or _skin_verts.is_empty():
+		return out
+	skel.force_update_transform()
+	var n: int = _skin_verts.size()
+	var step: int = maxi(1, n / maxi(max_samples, 1))
+	# Precompute bone world = skel.global * pose * rest_inv for used bones.
+	var bone_xf: Array[Transform3D] = []
+	bone_xf.resize(skel.get_bone_count())
+	for bi in skel.get_bone_count():
+		bone_xf[bi] = skel.global_transform * skel.get_bone_global_pose(bi) * skel.get_bone_global_rest(bi).affine_inverse()
+	for i in range(0, n, step):
+		var v: Vector3 = _skin_verts[i]
+		var skinned := Vector3.ZERO
+		var wsum := 0.0
+		for j in 4:
+			var bi: int = _skin_bones[i * 4 + j]
+			var w: float = _skin_weights[i * 4 + j]
+			if w <= 0.0 or bi < 0 or bi >= bone_xf.size():
+				continue
+			skinned += bone_xf[bi] * v * w
+			wsum += w
+		if wsum < 0.01:
+			continue
+		out.append(skinned / wsum)
+	return out
 
 
 func throw_stance() -> Array:

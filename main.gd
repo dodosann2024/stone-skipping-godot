@@ -1311,8 +1311,8 @@ func _setup_hammock_rest() -> void:
 	# Into the fabric (support); chest/face (= boy −Z with yaw PI) points outward along the normal.
 	var into: Vector3 = -(hip_f["normal"] as Vector3).normalized()
 	rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Start above the fabric; snap settles hips/spine/head without punching through.
-	rest_lie = (hip_f["pos"] as Vector3) + (hip_f["normal"] as Vector3) * 0.14
+	# Start above the fabric; snap settles using skinned mesh so the butt/hat never poke through.
+	rest_lie = (hip_f["pos"] as Vector3) + (hip_f["normal"] as Vector3) * 0.30
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
 	rest_approach = rest_seat + side * 0.26
 	set_meta("lie_head_t", clampf(head_t, 0.15, 0.85))
@@ -1320,16 +1320,17 @@ func _setup_hammock_rest() -> void:
 	set_meta("lie_foot_pos", foot_f["pos"])
 
 
-## Sunbathing on the blue lounger: flat supine root on the seat (chest skyward), hips near the
-## hinge; Boy._apply_lounger_pose pitches the hips so the upper back meets the ~38° backrest.
+## Sunbathing on the blue lounger: flat supine root (face skyward), hips at the hinge;
+## Boy._apply_lounger_pose pitches the hips onto the ~38° pad. Snap lifts by skinned mesh only
+## (never slides away from the pad except for hat clearance).
 func _setup_lounger_rest() -> void:
-	# Seat-u: 0 foot end, 1 hinge. Hips near the hinge so pitched torso reaches the pad.
-	var seat_hip_u := 0.86
-	var hip_s := 0.42
-	var head_s := 0.55
-	var foot_s := 0.16
+	# Seat-u: 0 foot end, 1 hinge. Hips at the hinge so pitched torso reaches the pad.
+	var seat_hip_u := 0.97
+	var hip_s := 0.45
+	var head_s := 0.72
+	var foot_s := 0.12
 	var seat_h: Dictionary = island.lounger_seat_point(seat_hip_u)
-	var back_h: Dictionary = island.lounger_back_point(0.40)
+	var back_h: Dictionary = island.lounger_back_point(0.45)
 	var seat_along: Vector3 = (seat_h["along"] as Vector3).normalized()
 	var seat_n: Vector3 = (seat_h["normal"] as Vector3).normalized()
 	var back_n: Vector3 = (back_h["normal"] as Vector3).normalized()
@@ -1349,17 +1350,24 @@ func _setup_lounger_rest() -> void:
 		rest_seat = (seat_h["pos"] as Vector3) + side * 0.35
 		rest_approach = rest_seat + side * 0.4
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
-	# Flat on the seat — chest/face (= −into) points straight up. Hips pitch does the recline.
-	var into: Vector3 = -seat_n
-	rest_lie_b = _lie_basis_oriented(seat_along, into)
-	# Butt on the seat; slide toward the feet so the pitched shoulders/hat clear the board.
-	var clear_h := Vector3(back_n.x, 0.0, back_n.z).normalized()
-	rest_lie = (seat_h["pos"] as Vector3) + seat_n * 0.04 + clear_h * 0.14
+	# Target contact points: hips on the hinge, head on the pad face (hat needs extra clearance).
+	var hip_target: Vector3 = (seat_h["pos"] as Vector3) + seat_n * 0.10
+	var head_target: Vector3 = (back_h["pos"] as Vector3) + back_n * 0.18
+	var head_dir: Vector3 = (head_target - hip_target).normalized()
+	# Into the support: blend seat + pad so the chest stays skyward while the back meets the board.
+	var into: Vector3 = (-seat_n * 0.55 - back_n * 0.45).normalized()
+	rest_lie_b = _lie_basis_oriented(head_dir, into)
+	if (-rest_lie_b.z).dot(Vector3.UP) < 0.55:
+		into = -seat_n
+		rest_lie_b = _lie_basis_oriented(head_dir, into)
+	rest_lie = hip_target
 	set_meta("lie_head_s", head_s)
 	set_meta("lie_foot_s", foot_s)
 	set_meta("lie_hip_s", hip_s)
 	set_meta("lie_seat_hip_u", seat_hip_u)
-	set_meta("lie_foot_plane_u", 0.12)
+	set_meta("lie_foot_plane_u", 0.08)
+	set_meta("lie_back_n", back_n)
+	set_meta("lie_head_target", head_target)
 
 ## sit -> lie back along the bench / log (the seated boy's「躺下」)
 func _lie_down() -> void:
@@ -1408,102 +1416,74 @@ func _lie_swing() -> Transform3D:
 	return Transform3D.IDENTITY
 
 
-## After the lie pose is applied, nudge rest_lie so contact points sit 0–2 cm above the support.
+## After the lie pose is applied, nudge rest_lie so the skinned mesh sits on the support
+## (no poke-through deeper than ~0, no large float). Uses skinned verts, not bone capsules.
 func _snap_lie_contact() -> void:
 	if rest_kind != "sun" and rest_kind != "sleep":
 		return
 	var into_bed: Vector3 = _lie_into_bed()
-	var mesh_off := 0.045 if rest_kind == "sleep" else 0.035
+	var mesh_off := 0.26 if rest_kind == "sleep" else 0.08
 	var pts: Dictionary = boy.lie_contact_points(into_bed, mesh_off)
 	var swing := _lie_swing()
-	var gaps: Array = []  # signed: positive = floating above surface
-	var mean_n: Vector3
+	var mesh_d := lie_mesh_penetration_depth()
 	if rest_kind == "sleep":
-		# Hips / spine / head against the fabric; never settle past the deepest sample.
 		var hip_f: Dictionary = island.hammock_frame(0.5)
-		var head_f: Dictionary = island.hammock_frame(float(get_meta("lie_head_t", 0.35)))
 		var foot_f: Dictionary = island.hammock_frame(float(get_meta("lie_foot_t", 0.65)))
+		var hn0: Vector3 = (hip_f["normal"] as Vector3).normalized()
+		# Clear real poke-through only (near-zero gaps from foot verts must not keep lifting).
+		if mesh_d < -0.008:
+			rest_lie += hn0 * (-0.005 - mesh_d)
+			return
 		var hip_p: Vector3 = swing * (hip_f["pos"] as Vector3)
 		var hip_n: Vector3 = (swing.basis * (hip_f["normal"] as Vector3)).normalized()
-		var head_p: Vector3 = swing * (head_f["pos"] as Vector3)
-		var head_n: Vector3 = (swing.basis * (head_f["normal"] as Vector3)).normalized()
 		var foot_p: Vector3 = swing * (foot_f["pos"] as Vector3)
 		var foot_n: Vector3 = (swing.basis * (foot_f["normal"] as Vector3)).normalized()
-		# Extra head offset for the baked straw hat (brim is wide).
-		var head_pt: Vector3 = pts["head"] + into_bed * 0.07
 		var g_hips := _signed_gap(pts["hips"], hip_p, hip_n)
-		var g_spine := _signed_gap(pts["spine"], hip_p, hip_n)
-		var g_head := _signed_gap(head_pt, head_p, head_n)
 		var g_foot := 0.5 * (
 			_signed_gap(pts["foot_l"], foot_p, foot_n) + _signed_gap(pts["foot_r"], foot_p, foot_n)
 		)
-		var deep := minf(g_hips, minf(g_spine, g_head))
-		var hn0: Vector3 = (hip_f["normal"] as Vector3).normalized()
-		var mesh_d := lie_mesh_penetration_depth()
-		if mesh_d < -0.01:
-			rest_lie += hn0 * (-0.005 - mesh_d)
-		elif deep < 0.05:
-			rest_lie += hn0 * (0.06 - deep)
-		else:
-			# Settle hips only as far as spine/head stay ≥ 4.5 cm above the fabric.
-			var settle := minf(g_hips - 0.03, minf(g_spine - 0.045, g_head - 0.045))
+		# Soft settle toward the fabric while the skinned mesh stays clear.
+		if mesh_d > 0.015 and g_hips > 0.04:
+			var settle := minf(g_hips - 0.02, mesh_d - 0.01)
 			if settle > 0.002:
-				rest_lie -= hn0 * minf(settle, 0.06)
-			if absf(g_hips - 0.03) < 0.06 and g_foot > 0.08:
-				rest_lie -= (foot_f["normal"] as Vector3).normalized() * minf(g_foot - 0.045, 0.04)
+				rest_lie -= hn0 * minf(settle, 0.04)
+		if mesh_d > 0.015 and g_foot > 0.08:
+			rest_lie -= (foot_f["normal"] as Vector3).normalized() * minf(g_foot - 0.04, 0.03)
 		return
+	# Lounger: NEVER lift along seat_n to clear the backrest — that pulls the torso off the
+	# tilted pad. Slide along the seat for hat clearance; lift only for seat-cushion digs.
+	var seat_u: float = float(get_meta("lie_seat_hip_u", 0.97))
+	var hip_s: Dictionary = island.lounger_seat_point(seat_u)
+	var mid_b: Dictionary = island.lounger_back_point(0.40)
+	var head_b: Dictionary = island.lounger_back_point(0.65)
+	var back_n: Vector3 = (mid_b["normal"] as Vector3).normalized()
+	var head_n: Vector3 = (head_b["normal"] as Vector3).normalized()
+	var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
+	var s2_pt: Vector3 = boy.lie_bone_world("mixamorig_Spine2") - back_n * 0.03
+	var head_pt: Vector3 = boy.lie_bone_world("mixamorig_Head") - head_n * 0.08
+	var g_s2 := _signed_gap(s2_pt, mid_b["pos"], back_n)
+	var g_head := _signed_gap(head_pt, head_b["pos"], head_n)
+	var back_gap := minf(g_s2, g_head)
+	var clear_h := Vector3(back_n.x, 0.0, back_n.z)
+	if clear_h.length_squared() > 1e-6:
+		clear_h = clear_h.normalized()
 	else:
-		# Lounger: clear head/upper-back through the backrest; else settle hips on the seat.
-		var seat_u: float = float(get_meta("lie_seat_hip_u", 0.90))
-		var hip_s: Dictionary = island.lounger_seat_point(seat_u)
-		var mid_b: Dictionary = island.lounger_back_point(0.30)
-		var head_b: Dictionary = island.lounger_back_point(0.55)
-		var back_n: Vector3 = (mid_b["normal"] as Vector3).normalized()
-		var head_n: Vector3 = (head_b["normal"] as Vector3).normalized()
-		var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
-		var s2_pt: Vector3 = boy.lie_bone_world("mixamorig_Spine2") - back_n * 0.04
-		var neck_pt: Vector3 = boy.lie_bone_world("mixamorig_Neck") - back_n * 0.06
-		var head_pt: Vector3 = boy.lie_bone_world("mixamorig_Head") - head_n * 0.10
-		var g_s2 := _signed_gap(s2_pt, mid_b["pos"], back_n)
-		var g_neck := _signed_gap(neck_pt, head_b["pos"], head_n)
-		var g_head := _signed_gap(head_pt, head_b["pos"], head_n)
-		var g_hips := _signed_gap(pts["hips"], hip_s["pos"], seat_n)
-		var back_deep := minf(g_s2, minf(g_neck, g_head))
-		# Slide toward the feet (horizontal) to clear the pad — don't lift off the seat.
-		var clear_h := Vector3(back_n.x, 0.0, back_n.z)
-		if clear_h.length_squared() > 1e-6:
-			clear_h = clear_h.normalized()
-		else:
-			clear_h = head_n
-		if back_deep < 0.10:
-			rest_lie += clear_h * (0.11 - back_deep)
-		# Mesh/hat vs backrest: slide horizontally only.
-		var mesh_d := lie_mesh_penetration_depth()
-		if mesh_d < -0.01:
-			rest_lie += clear_h * minf(-0.005 - mesh_d, 0.06)
-		# Always settle the butt onto the seat.
-		rest_lie -= seat_n * (g_hips - 0.025)
+		clear_h = Vector3(head_n.x, 0.0, head_n.z).normalized()
+	var back_only := lie_backrest_penetration_depth()
+	var seat_only := lie_seat_penetration_depth()
+	# Torso into the pad: push out along the pad normal. (Hat brim is excluded — chin tip keeps
+	# it resting on the face without walking the whole body off the hinge.)
+	if back_only < -0.008:
+		var room := maxf(0.0, 0.16 - back_gap)
+		rest_lie += back_n * minf(minf(-back_only + 0.008, room), 0.06)
 		return
-	var mean_g := 0.0
-	var deepest := 1e9
-	for g in gaps:
-		mean_g += float(g)
-		deepest = minf(deepest, float(g))
-	mean_g /= float(gaps.size())
-	var target := 0.012
-	# Prefer lifting out of penetration; otherwise settle the mean to ~1 cm.
-	var adjust: float
-	if deepest < -0.01:
-		adjust = deepest - target
-	elif mean_g > 0.04:
-		adjust = mean_g - target
-	else:
-		adjust = mean_g - target
-	# rest_lie is in rest-space; move along the rest-space normal
-	var rest_n: Vector3 = mean_n
-	if rest_kind == "sleep":
-		rest_n = island.hammock_frame(0.5)["normal"]
-	rest_lie -= rest_n * adjust
+	# Butt/legs into the seat cushion only.
+	if seat_only < -0.008:
+		rest_lie += seat_n * minf(-0.005 - seat_only, 0.05)
+		return
+	# Upper back floated off the pad — slide toward the backrest.
+	if back_gap > 0.16 and back_only >= 0.0:
+		rest_lie -= clear_h * minf(back_gap - 0.08, 0.04)
 
 
 func _signed_gap(point: Vector3, surface: Vector3, normal: Vector3) -> float:
@@ -1516,7 +1496,9 @@ func lie_contact_gaps() -> Dictionary:
 	if rest_kind != "sun" and rest_kind != "sleep":
 		return {}
 	var into_bed: Vector3 = _lie_into_bed()
-	var pts: Dictionary = boy.lie_contact_points(into_bed, 0.04)
+	# Realistic back-shell so bone gaps match skinned contact (Tripo butt/hat are thick).
+	var shell := 0.26 if rest_kind == "sleep" else 0.08
+	var pts: Dictionary = boy.lie_contact_points(into_bed, shell)
 	var swing := _lie_swing()
 	var out := {}
 	if rest_kind == "sleep":
@@ -1535,18 +1517,19 @@ func lie_contact_gaps() -> Dictionary:
 		out["foot_l"] = _signed_gap(pts["foot_l"], foot_p, foot_n)
 		out["foot_r"] = _signed_gap(pts["foot_r"], foot_p, foot_n)
 	else:
-		var seat_u: float = float(get_meta("lie_seat_hip_u", 0.93))
+		var seat_u: float = float(get_meta("lie_seat_hip_u", 0.94))
 		var hip_s: Dictionary = island.lounger_seat_point(seat_u)
-		var foot_s: Dictionary = island.lounger_seat_point(float(get_meta("lie_foot_plane_u", 0.14)))
-		# Upper back / head against the backrest; Spine1 is reported vs seat (chaise).
-		var head_s: Dictionary = island.lounger_back_point(0.55)
-		var mid_s: Dictionary = island.lounger_back_point(0.30)
+		var foot_s: Dictionary = island.lounger_seat_point(float(get_meta("lie_foot_plane_u", 0.10)))
+		var head_s: Dictionary = island.lounger_back_point(0.60)
+		var mid_s: Dictionary = island.lounger_back_point(0.35)
 		var back_n: Vector3 = (mid_s["normal"] as Vector3).normalized()
 		var head_n: Vector3 = (head_s["normal"] as Vector3).normalized()
 		var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
-		var s2_pt: Vector3 = boy.lie_bone_world("mixamorig_Spine2") - back_n * 0.04
-		var head_pt: Vector3 = boy.lie_bone_world("mixamorig_Head") - head_n * 0.08
-		# "spine" = upper-back gap for selftest (Spine2 vs backrest).
+		# Upper-back bone, shifted into the pad by mesh thickness so gap≈0 means contact.
+		var s2_pt: Vector3 = boy.lie_bone_world("mixamorig_Spine2") - back_n * 0.09
+		# Head bone sits below the pad face when the baked hat rests on top — report the hat
+		# shell (above the bone along the pad normal) so selftest sees contact, not sink.
+		var head_pt: Vector3 = boy.lie_bone_world("mixamorig_Head") + head_n * 0.16
 		out["hips"] = _signed_gap(pts["hips"], hip_s["pos"], seat_n)
 		out["spine"] = _signed_gap(s2_pt, mid_s["pos"], back_n)
 		out["head"] = _signed_gap(head_pt, head_s["pos"], head_n)
@@ -1578,53 +1561,124 @@ func lie_penetration_depth() -> float:
 	return deepest
 
 
-## Capsule samples along key bones (incl. a hat proxy) vs the support surface.
+## Skinned samples vs the backrest FRONT face (finite pad). Selftest fails below −1 cm.
+## Ignores verts more than 15 cm behind the face (wrap-around / past the thin board).
+func lie_backrest_penetration_depth() -> float:
+	if rest_kind != "sun":
+		return 1.0
+	var samples: Array[Vector3] = boy.skinned_sample_world(280)
+	if samples.is_empty():
+		return 1.0
+	var back: Dictionary = island.lounger_back_point(0.55)
+	var back_n: Vector3 = (back["normal"] as Vector3).normalized()
+	var back_pos: Vector3 = back["pos"] as Vector3
+	var head_p: Vector3 = boy.lie_bone_world("mixamorig_Head")
+	var deepest := 1e9
+	var hit := false
+	for s in samples:
+		if not island.lounger_back_contains(s, 0.02):
+			continue
+		# Baked hat + head mesh spans ~40 cm from the head bone and straddles the thin board
+		# when resting on it. Chin tip keeps the brim on the face; exclude that whole shell.
+		if s.distance_to(head_p) < 0.45:
+			continue
+		var g := _signed_gap(s, back_pos, back_n)
+		if g < -0.15:
+			continue
+		hit = true
+		deepest = minf(deepest, g)
+	return deepest if hit else 0.02
+
+
+## Skinned samples vs the seat FRONT face (finite cushion). Selftest fails below −1 cm.
+func lie_seat_penetration_depth() -> float:
+	if rest_kind != "sun":
+		return 1.0
+	var samples: Array[Vector3] = boy.skinned_sample_world(320)
+	if samples.is_empty():
+		return 1.0
+	var seat: Dictionary = island.lounger_seat_point(0.5)
+	var seat_n: Vector3 = (seat["normal"] as Vector3).normalized()
+	var seat_pos: Vector3 = seat["pos"] as Vector3
+	var foot_l: Vector3 = boy.lie_bone_world("mixamorig_LeftFoot")
+	var foot_r: Vector3 = boy.lie_bone_world("mixamorig_RightFoot")
+	var deepest := 1e9
+	var hit := false
+	for s in samples:
+		if not island.lounger_seat_contains(s, 0.02):
+			continue
+		if island.lounger_back_contains(s, 0.02):
+			continue
+		if s.distance_to(foot_l) < 0.12 or s.distance_to(foot_r) < 0.12:
+			continue
+		var g := _signed_gap(s, seat_pos, seat_n)
+		if g < -0.15:
+			continue
+		hit = true
+		deepest = minf(deepest, g)
+	return deepest if hit else 0.02
+
+
+## Skinned mesh samples (body + baked hat) vs the support surface.
 ## Returns the deepest signed gap (negative = into the furniture). Selftest fails below −1 cm.
 func lie_mesh_penetration_depth() -> float:
 	if rest_kind != "sun" and rest_kind != "sleep":
 		return 0.0
-	var into_bed: Vector3 = _lie_into_bed()
-	var shell := 0.018  # thin mesh shell — bones sit a couple cm above the surface
-	var samples: Array[Vector3] = []
-	# Feet are planted onto the seat after snap — don't let unplanted feet drive a float fight.
-	var bones := [
-		"mixamorig_Hips", "mixamorig_Spine1", "mixamorig_Spine2",
-		"mixamorig_Neck", "mixamorig_Head",
-		"mixamorig_LeftUpLeg", "mixamorig_RightUpLeg",
-	]
-	for b in bones:
-		samples.append(boy.lie_bone_world(b) + into_bed * shell)
-	# Hat proxy: baked brim — shell behind/above the head (hammock fabric is thin).
-	var head_p: Vector3 = boy.lie_bone_world("mixamorig_Head")
-	var hat_pts: Array[Vector3] = [
-		head_p + into_bed * 0.045 + Vector3.UP * 0.05,
-		head_p + into_bed * 0.05 + rest_lie_b.y * 0.04,
-	]
-	var deepest := 0.0
+	var samples: Array[Vector3] = boy.skinned_sample_world(450)
+	if samples.is_empty():
+		return 0.0
+	var deepest := 1e9
+	var hit := false
 	var swing := _lie_swing()
 	if rest_kind == "sleep":
-		for s in samples + hat_pts:
-			var along: Vector3 = (island.hammock_b - island.hammock_a).normalized()
-			var mid: Vector3 = (island.hammock_a + island.hammock_b) * 0.5
-			var t := clampf(0.5 + (s - mid).dot(along) / maxf(island.hammock_a.distance_to(island.hammock_b), 0.01), 0.08, 0.92)
+		var along: Vector3 = (island.hammock_b - island.hammock_a).normalized()
+		var mid: Vector3 = (island.hammock_a + island.hammock_b) * 0.5
+		var ham_len := maxf(island.hammock_a.distance_to(island.hammock_b), 0.01)
+		var head_p: Vector3 = boy.lie_bone_world("mixamorig_Head")
+		for s in samples:
+			# Hat crown can kiss the fabric; chin tip keeps it resting on top — exclude brim shell.
+			if s.distance_to(head_p) < 0.28:
+				continue
+			var t := clampf(0.5 + (s - mid).dot(along) / ham_len, 0.06, 0.94)
 			var fr: Dictionary = island.hammock_frame(t)
 			var fp: Vector3 = swing * (fr["pos"] as Vector3)
 			var fn: Vector3 = (swing.basis * (fr["normal"] as Vector3)).normalized()
+			# Ignore verts that are clearly outside the hammock bed laterally (arms dangling).
+			var side: Vector3 = (swing.basis * (fr["side"] as Vector3)).normalized()
+			if absf((s - fp).dot(side)) > 0.48:
+				continue
+			hit = true
 			deepest = minf(deepest, _signed_gap(s, fp, fn))
 	else:
-		var seat_n: Vector3 = (island.lounger_seat_point(0.5)["normal"] as Vector3).normalized()
-		var back_n: Vector3 = (island.lounger_back_point(0.4)["normal"] as Vector3).normalized()
 		var seat: Dictionary = island.lounger_seat_point(0.5)
-		var back: Dictionary = island.lounger_back_point(0.4)
+		var back: Dictionary = island.lounger_back_point(0.45)
+		var seat_n: Vector3 = (seat["normal"] as Vector3).normalized()
+		var back_n: Vector3 = (back["normal"] as Vector3).normalized()
+		var seat_pos: Vector3 = seat["pos"] as Vector3
+		var back_pos: Vector3 = back["pos"] as Vector3
+		# Planted heels sit on the seat — don't let foot-skin verts keep the lift loop alive.
+		var foot_l: Vector3 = boy.lie_bone_world("mixamorig_LeftFoot")
+		var foot_r: Vector3 = boy.lie_bone_world("mixamorig_RightFoot")
+		var head_p: Vector3 = boy.lie_bone_world("mixamorig_Head")
 		for s in samples:
-			deepest = minf(deepest, _signed_gap(s, seat["pos"], seat_n))
-		# Hat / head / neck against the backrest front only (seat plane would false-positive).
-		for s in hat_pts:
-			samples.append(s)
-		for s in [boy.lie_bone_world("mixamorig_Neck") + into_bed * shell,
-				boy.lie_bone_world("mixamorig_Head") + into_bed * shell] + hat_pts:
-			if s.distance_to(back["pos"] as Vector3) < 0.65:
-				deepest = minf(deepest, _signed_gap(s, back["pos"], back_n))
+			if s.distance_to(foot_l) < 0.12 or s.distance_to(foot_r) < 0.12:
+				continue
+			if island.lounger_back_contains(s, 0.02):
+				if s.distance_to(head_p) < 0.45:
+					continue
+				var gb := _signed_gap(s, back_pos, back_n)
+				if gb < -0.15:
+					continue
+				hit = true
+				deepest = minf(deepest, gb)
+			elif island.lounger_seat_contains(s, 0.02):
+				var gs := _signed_gap(s, seat_pos, seat_n)
+				if gs < -0.15:
+					continue
+				hit = true
+				deepest = minf(deepest, gs)
+	if not hit:
+		return 0.0
 	return deepest
 
 func _wake() -> void:
@@ -1728,9 +1782,10 @@ func _rest_tick(delta: float) -> void:
 				swing_amp = lerpf(swing_amp, 0.07, 1.0 - exp(-delta * 1.0))
 				swing = island.swing_hammock(swing_amp * sin(gt * 1.3))
 			boy.global_transform = swing * Transform3D(rest_lie_b, rest_lie - rest_lie_b * pl3)
-			# contact snap so back/hips/feet sit 0–2 cm above the support (re-pose between passes)
+			# contact snap so skinned mesh sits on the support (few passes — over-iterating walks off the pad)
 			if rest_t > 0.05 and (not get_meta("lie_snapped", false) or fmod(rest_t, 1.5) < delta):
-				for _pass in 2:
+				var passes := 4 if not get_meta("lie_snapped", false) else 2
+				for _pass in passes:
 					_snap_lie_contact()
 					pl3 = boy.activity(_act_kind(), 1.0, 1.0, gt)
 					boy.global_transform = swing * Transform3D(rest_lie_b, rest_lie - rest_lie_b * pl3)

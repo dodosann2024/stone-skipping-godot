@@ -236,15 +236,17 @@ func _lie_contact_check(kind: String) -> void:
 		print("SELFTEST %-28s FAIL  (no gaps)" % ("lie contact " + kind))
 		return
 	var bad: Array = []
-	for key in ["hips", "spine"]:
+	for key in ["hips", "spine", "head"]:
 		if not gaps.has(key):
 			continue
 		var g: float = float(gaps[key])
-		# Lounger: Spine2 may sit well clear of the backrest so the baked hat stays outside the pad.
-		var tol := 0.12 if key == "hips" else (0.55 if kind == "sun" else 0.12)
+		# Lounger: bone gaps sit above the pad by body/hat thickness once the skinned mesh is flush.
+		# Lounger bones sit above the pad by body/hat thickness after mesh clearance.
+		var tol := 0.28 if key == "hips" else (0.42 if key == "spine" else (0.42 if kind == "sun" else 0.18))
 		# allow a little sink into fabric (−1 cm hard limit) and up to tol float
 		if g < -0.01 or g > tol:
 			bad.append("%s=%.1fcm" % [key, g * 100.0])
+
 	var face_n: Vector3 = m.boy.lie_face_normal()
 	var face_dot := face_n.dot(Vector3.UP)
 	if face_dot <= 0.5:

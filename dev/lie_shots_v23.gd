@@ -28,7 +28,7 @@ func g() -> void:
 		m.rest_phase = 4
 		m.rest_t = 1.0
 		m.set_meta("lie_snapped", false)
-		for _p in 8:
+		for _p in 4:
 			var pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
 			var swing := Transform3D.IDENTITY
 			if kind == "sleep":
