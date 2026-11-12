@@ -249,31 +249,34 @@ def build_mesh(rig, R, mat_skin, mat_hair):
             v.co.z = mix(v.co.z, neck_top.z + 0.02 * R, t * 0.35)
 
     bm.normal_update()
-    # ---- hair: thick soft rounded mass (sides/back have volume under the hat); soft bangs, no paper edge
+    # ---- hair: Concept A — thin skull-hug shell (~1.5 cm), chunky bangs, short side/back tufts.
+    # Must sit INSIDE the hat; silhouette never exceeds hat brim.
     hair_mark = bm.verts.layers.float.new("hr")
-    H = C + Vector((0.0, 0.02 * R, 0.0))
-    hel = bmesh.ops.create_icosphere(bm, subdivisions=5, radius=R * 1.18,
-                                     matrix=Matrix.Translation(H))
+    H = C + Vector((0.0, 0.01 * R, 0.0))
+    HAIR_T = 0.012  # ~1.2 cm skull-hug shell (Concept A: 1–2 cm)
+    hel = bmesh.ops.create_icosphere(
+        bm, subdivisions=4, radius=R + HAIR_T,
+        matrix=Matrix.Translation(H))
     for v in hel["verts"]:
         v[hair_mark] = 1.0
-    bang_cs = [H + Vector((bx * R, -0.72 * R, 0.08 * R + bz * R))
-               for bx, bz in ((-0.30, 0.03), (-0.10, 0.0), (0.10, 0.0), (0.30, 0.03))]
+    # open a large face window so the shell is a thin cap+nape, not a brown dome over the face
     bm.faces.ensure_lookup_table()
     hdel = []
     for f in list(bm.faces):
         if not all(v[hair_mark] > 0.5 for v in f.verts):
             continue
         q = f.calc_center_median() - H
-        # only open the face half; keep sides and back as a full rounded mass (not bald under the hat)
-        if q.y < -0.20 * R:
-            ang = math.atan2(q.x, max(1e-4, -q.y))
-            # single soft lobe — no high-frequency cos(4θ) sawtooth
-            lobe = (0.5 * (1.0 + math.cos(ang * 2.0))) ** 1.5
-            line = 0.06 * R + 0.14 * R * lobe
-            if q.z < line - 0.04 * R and abs(q.x) < 0.68 * R:
-                hdel.append(f)
+        n = q.normalized() if q.length > 1e-8 else Vector((0, -1, 0))
+        # delete most of the forward hemisphere below mid-forehead
+        if n.y < -0.12 and n.z < 0.42:
+            hdel.append(f)
+        # temples open so bangs read as clumps, not a solid helmet front
+        elif n.y < -0.28 and abs(n.x) < 0.62 and n.z < 0.58:
+            hdel.append(f)
     if hdel:
         bmesh.ops.delete(bm, geom=hdel, context="FACES")
+    # clamp every hair vert to a thin shell (~1.0–1.4 cm) — never exceed hat brim
+    MAX_HAIR = R + 0.014
     bm.verts.ensure_lookup_table()
     for v in list(bm.verts):
         if not v.is_valid or v[hair_mark] < 0.5:
@@ -282,61 +285,62 @@ def build_mesh(rig, R, mat_skin, mat_hair):
         if q.length < 1e-6:
             continue
         n = q.normalized()
-        # plump crown + sides + nape (reads as a soft mass in side/back view)
-        side = max(0.0, abs(n.x) - 0.10)
-        back = max(0.0, n.y)
-        v.co += n * (0.018 * R + 0.035 * R * max(0.0, n.z) + 0.040 * R * side + 0.035 * R * back)
-        # drop the back/side hairline lower so the nape isn't paper-thin / bald
-        if q.y > -0.15 * R and q.z < 0.10 * R:
-            v.co.z -= 0.06 * R * _ss(-0.15 * R, 0.45 * R, q.y)
-            v.co += n * 0.02 * R * back
-        if q.y < 0.05 * R:
-            ang = math.atan2(q.x, max(1e-4, -q.y + 0.02 * R))
-            lobe = (0.5 * (1.0 + math.cos(ang * 2.0))) ** 1.5
-            line = 0.06 * R + 0.14 * R * lobe
-            if abs(q.z - line) < 0.16 * R and q.y < -0.15 * R:
-                # smooth rounded hairline (no sawtooth / paper cut)
-                v.co.z = mix(v.co.z, H.z + line, 0.75)
-                v.co.y = min(v.co.y, H.y - 0.18 * R - 0.08 * R * lobe)
-        for bc in bang_cs:
-            d = v.co - bc
-            g = max(0.0, 1.0 - (d.x * d.x / (0.22 * R) ** 2 + d.y * d.y / (0.18 * R) ** 2 + d.z * d.z / (0.22 * R) ** 2))
-            g = g * g * (3.0 - 2.0 * g)
-            v.co += Vector((0.0, -0.045 * R * g, -0.035 * R * g))
-    # soft bevel on the open hairline (two passes for a rounded rim, not a paper edge)
-    for _pass in range(2):
-        bm.edges.ensure_lookup_table()
-        rim = [e for e in bm.edges if e.is_boundary and all(v[hair_mark] > 0.5 for v in e.verts)]
-        if not rim:
-            break
+        want = R + 0.010 + 0.003 * max(0.0, n.z)
+        v.co = H + n * min(want, MAX_HAIR)
+        # nape / side hairline a bit lower (short tufts hugging skull)
+        if n.y > -0.20 and n.z < 0.20:
+            v.co.z -= 0.040 * R * _ss(-0.15, 0.55, n.y)
+    # chunky rounded bang clumps over the forehead (Concept A) — under the hat brim
+    bang_cs = [
+        H + Vector((bx * R, -0.90 * R, 0.08 * R + bz * R))
+        for bx, bz in ((-0.34, 0.05), (-0.12, 0.0), (0.12, 0.0), (0.34, 0.05))
+    ]
+    for bc in bang_cs:
+        bang = bmesh.ops.create_icosphere(
+            bm, subdivisions=2, radius=0.055 * R,
+            matrix=Matrix.Translation(bc) @ Matrix.Scale(1.35, 4, (1, 0, 0))
+            @ Matrix.Scale(0.55, 4, (0, 1, 0)) @ Matrix.Scale(1.25, 4, (0, 0, 1)))
+        for v in bang["verts"]:
+            v[hair_mark] = 1.0
+            # keep bangs close to the forehead, never a giant outer sphere
+            q = v.co - H
+            if q.length > MAX_HAIR + 0.010:
+                v.co = H + q.normalized() * (MAX_HAIR + 0.008)
+            # hang bang tips slightly down over the forehead
+            v.co.z -= 0.018 * R
+            v.co.y -= 0.012 * R
+    # soft rim on the open hairline
+    bm.edges.ensure_lookup_table()
+    rim = [e for e in bm.edges if e.is_boundary and all(v[hair_mark] > 0.5 for v in e.verts)]
+    if rim:
         ret = bmesh.ops.extrude_edge_only(bm, edges=rim)
         for v in ret["geom"]:
             if isinstance(v, bmesh.types.BMVert):
                 v[hair_mark] = 1.0
                 q = v.co - H
                 if q.length > 1e-6:
-                    v.co += q.normalized() * (0.014 * R if _pass == 0 else 0.008 * R)
-                    v.co += Vector((0.0, 0.010 * R, -0.012 * R))
-    # laplace-ish smooth on hair rim verts so bangs read soft, not faceted
+                    v.co += q.normalized() * 0.006
+                    v.co += Vector((0.0, 0.004, -0.008))
+                    q2 = v.co - H
+                    if q2.length > MAX_HAIR + 0.01:
+                        v.co = H + q2.normalized() * (MAX_HAIR + 0.008)
+    # light smooth on hair boundary
     bm.verts.ensure_lookup_table()
-    bm.edges.ensure_lookup_table()
     for _ in range(2):
         moves = []
         for v in bm.verts:
-            if not v.is_valid or v[hair_mark] < 0.5:
-                continue
-            if not v.is_boundary:
+            if not v.is_valid or v[hair_mark] < 0.5 or not v.is_boundary:
                 continue
             nbrs = [e.other_vert(v).co for e in v.link_edges if e.other_vert(v) is not None]
-            if not nbrs:
-                continue
-            avg = sum(nbrs, Vector()) / len(nbrs)
-            moves.append((v, v.co.lerp(avg, 0.45)))
+            if nbrs:
+                avg = sum(nbrs, Vector()) / len(nbrs)
+                moves.append((v, v.co.lerp(avg, 0.35)))
         for v, co in moves:
             v.co = co
 
     bm.verts.ensure_lookup_table()
     bm.faces.ensure_lookup_table()
+    bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
     bm.normal_update()
 
     # bake hair/skin face flags from the hair_mark layer BEFORE to_mesh (radius heuristics paint the face brown)

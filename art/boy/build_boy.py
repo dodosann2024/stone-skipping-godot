@@ -24,9 +24,9 @@ STYLIZED = True
 COLORS = {
     "skin": (1.0, 0.78, 0.60),
     "tank": (0.95, 0.94, 0.90),
-    "vest": (0.82, 0.18, 0.16),
-    "shorts": (0.97, 0.82, 0.32),
-    "hair": (0.28, 0.17, 0.11),
+    "vest": (0.90, 0.16, 0.14),   # Concept A bright red (not maroon)
+    "shorts": (0.98, 0.86, 0.28),
+    "hair": (0.26, 0.15, 0.10),
     "sandal": (0.42, 0.28, 0.18),
     "strap": (0.38, 0.24, 0.15),
     "hat": (0.90, 0.78, 0.52),
@@ -619,14 +619,13 @@ def hat(rig, body, hair, head_top, cartoon=None):
         ring0 = [p for p in hv if base0 - 0.01 < p.z < base0 + 0.04] or list(hv)
         rx0 = max(abs(p.x) for p in ring0) + 0.004
         ry0 = (max(p.y for p in ring0) - min(p.y for p in ring0)) * 0.5 + 0.004
-    # worn, not perched: the band goes round the cartoon skull / hair volume
-    # tip the brim back so eyes+smile read at the default game camera (Concept A)
-    HAIR, TILT, FRONT = 0.006, 32.0, 0.12
+    # Concept A: straw boater sits ON TOP of thin skull-hug hair, tipped slightly back
+    # so forehead + bangs show. Band around skull+~1.5 cm hair — never swallowed by hair.
+    HAIR, TILT, FRONT = 0.014, 20.0, 0.058
     hc = Vector(rig.data.bones["head"].head_local)
     if cartoon:
-        # synthetic smooth skull for a stable kid-sized hat (mesh ears/bangs must not drive the band).
-        # Nearly round band; keep radius small enough for hammock clearance + hat IK grip.
-        C, R = Vector(cartoon["C"]), float(cartoon["R"]) * 0.82
+        # seat on skull + thin hair shell (matches cartoon_head HAIR_T)
+        C, R = Vector(cartoon["C"]), float(cartoon["R"]) + 0.015
         skull = []
         for i in range(48):
             for j in range(24):
@@ -636,8 +635,8 @@ def hat(rig, body, hair, head_top, cartoon=None):
                     continue
                 skull.append(C + Vector((math.sin(ph) * math.cos(th) * R,
                                          math.sin(ph) * math.sin(th) * R,
-                                         math.cos(ph) * R * 0.95)))
-        head_top = C.z + R * 0.95 + 0.006
+                                         math.cos(ph) * R * 0.98)))
+        head_top = C.z + R * 0.98 + 0.002
     else:
         hair_mi = {i for i, m in enumerate(hair.data.materials) if m and m.name == "hair"}
         skin_v = {vi for p in hair.data.polygons if p.material_index not in hair_mi for vi in p.vertices}
@@ -659,11 +658,14 @@ def hat(rig, body, hair, head_top, cartoon=None):
         cy = (max(p.y for p in ring) + min(p.y for p in ring)) * 0.5
         ry = (max(p.y for p in ring) - min(p.y for p in ring)) * 0.5 + HAIR
         if cartoon:
-            # force a kid-sized round band (tilted sampling otherwise collapses ry)
-            rr = max(0.09, min(0.105, (rx + ry) * 0.5))
+            # band MUST clear skull + thin hair (R≈14 cm + 1.5 cm) — never clamp below that
+            # or the hair swallows the hat (Concept A failure mode)
+            hair_r = float(cartoon["R"]) + 0.016
+            rr = max(hair_r + 0.006, (rx + ry) * 0.5)
+            rr = min(rr, hair_r + 0.018)  # snug on hair, not a huge cylinder
             rx = ry = rr
         # front of the band at FRONT below the top of the head
-        piv = Vector((0.0, cy + ry * 0.55, head_top - FRONT - ry * 1.2 * math.sin(math.radians(TILT))))
+        piv = Vector((0.0, cy + ry * 0.25, head_top - FRONT - ry * 0.7 * math.sin(math.radians(TILT))))
     loc = [inv @ (p - piv) + piv for p in skull]
     wall = [(1.0, 0.3), (0.97, 0.62), (0.82, 0.86), (0.5, 0.97), (0.0, 1.0)]
 
@@ -676,21 +678,21 @@ def hat(rig, body, hair, head_top, cartoon=None):
     # crown just tall enough that the skull and its flattened hair stay inside the tapering wall.
     # clamp so a tipped skull never blows the crown into a tall cylinder.
     ch = max(p.z for p in loc) - base_z + HAIR + 0.004
-    ch = min(max(ch, 0.055), 0.095)
+    ch = min(max(ch, 0.050), 0.085)
     for _ in range(40):
         if not any(math.hypot(p.x / (rx - HAIR * 0.4), (p.y - cy) / (ry - HAIR * 0.4)) > crown_s((p.z - base_z + HAIR) / ch)
                    for p in loc if 0.0 < (p.z - base_z + HAIR) < ch):
             break
         ch += 0.002
-        if ch > 0.11:
+        if ch > 0.10:
             break
-    ch = min(ch, 0.10)
-    bs = min(1.35, max(1.05, (rx0 + ry0) / max(rx + ry, 1e-6)))
+    ch = min(ch, 0.090)
+    bs = min(1.45, max(1.15, (rx0 + ry0) / max(rx + ry, 1e-6)))
     if cartoon:
-        bs = 1.12  # compact brim — clears hammock/bench for the shorter chibi body
+        bs = 1.18  # boater brim; keep modest so seated poses clear the bench backrest
     prof = [  # (radius scale, z) from the crown top down to the brim edge
         (0.0, ch), (0.5, ch * 0.97), (0.82, ch * 0.86), (0.97, ch * 0.62), (1.0, ch * 0.3), (1.01, 0.0),
-        (1.05, -0.003), (1.14 * bs, -0.005), (1.22 * bs, -0.009), (1.28 * bs, -0.014), (1.32 * bs, -0.018),
+        (1.04, -0.003), (1.10 * bs, -0.005), (1.16 * bs, -0.008), (1.20 * bs, -0.012), (1.22 * bs, -0.015),
     ]
     print("HAT seat: band %.1f cm below the top at the front, %.1f at the back, ring %.1f x %.1f cm, crown %.1f cm, tilt %.0f deg"
           % ((head_top - (base_z + (piv.y - cy + ry) * math.sin(math.radians(TILT)))) * 100,
@@ -702,7 +704,10 @@ def hat(rig, body, hair, head_top, cartoon=None):
         r = []
         for j in range(seg):
             t = j / seg * 2 * math.pi
-            p = Vector((math.cos(t) * rx * s, cy + math.sin(t) * ry * s, base_z + z))
+            # +Y is the character's back: shorten the rear brim so seat poses clear the bench
+            back = max(0.0, math.sin(t))
+            rk = 1.0 - (0.28 * back if s > 1.05 else 0.0)
+            p = Vector((math.cos(t) * rx * s * rk, cy + math.sin(t) * ry * s * rk, base_z + z))
             r.append(bm.verts.new(piv + tilt @ (p - piv)))
         rings.append(r)
     for i in range(len(rings) - 1):
@@ -868,7 +873,7 @@ def main():
             rig, body, material("skin"), material("eye"), material("hair"), face_path,
             head_scale=1.0, head_r=info["HEAD_R"])
         face.RECT = tuple(cinfo["face_rect"])
-        mats = {n: material(n) for n in ("tank", "vest", "shorts", "sandal", "strap", "band", "gold")}
+        mats = {n: material(n) for n in ("tank", "vest", "shorts", "sandal", "strap", "band", "gold", "skin")}
         tank, vest, shorts, sandals = stylized_body.build_clothes(rig, body, mats)
         stylized_body.make_flower_shorts_texture(shorts_tex)
         # hat on cartoon skull

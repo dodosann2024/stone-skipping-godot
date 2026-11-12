@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode cull_back;
+render_mode cull_disabled; // Concept A soft body: avoid spike silhouettes from flipped limb normals
 // v6 boy: soft, low-contrast shading in the "Wired to Fish" spirit — flat albedo per material,
 // wide wrapped diffuse with a warm terminator, cool shadow side (from the ambient), baked AO in
 // COLOR.r, a faint rim. The face's painted detail (brows, lash line, lips, blush) is a map in UV2 (front

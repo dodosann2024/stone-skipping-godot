@@ -5,7 +5,7 @@ from mathutils import Vector
 
 FPS = 30
 LOOPS = {"idle", "stroll", "walk", "run", "hammock_sleep", "sun_rest", "seat_rest", "seat_nap"}
-RIGID = ("Hat", "Glasses", "Stone", "Eyes", "BoyHead")  # BoyHead is its own skinned mesh with morphs
+RIGID = ("Hat", "Glasses", "Stone", "Eyes", "BoyHead")  # mitts are skinned into BoyMesh
 OWN_UV2 = ("hair", "tank", "vest", "shorts")
 
 

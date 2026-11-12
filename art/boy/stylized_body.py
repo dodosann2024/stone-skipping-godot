@@ -40,7 +40,7 @@ def retarget_chibi(rig):
     mid_z = chest_z - 0.07
     pel_z = 0.44
     hip_x = 0.078
-    sh_x = 0.108
+    sh_x = 0.122  # outboard shoulders so chubby arms clear the round torso in throws
     knee_z = 0.215
     ankle_z = 0.045
     ball_y = -0.065
@@ -71,18 +71,17 @@ def retarget_chibi(rig):
         set_bone("ball_" + s, (sx * hip_x * 0.9, ball_y, 0.01),
                  (sx * hip_x * 0.9, ball_y - 0.03, GROUND + 0.005), "foot_" + s)
 
-    # arms — short soft limbs
+    # arms — short soft limbs, kept clear of the torso for throw clearance
     for s, sx in (("l", 1.0), ("r", -1.0)):
-        set_bone("clavicle_" + s, (sx * 0.03, 0.0, sh_z),
-                 (sx * sh_x * 0.78, 0.0, sh_z - 0.005), "spine_03")
-        # a touch longer / more outboard arms so throw/cheer clear the round torso
-        set_bone("upperarm_" + s, (sx * sh_x * 0.78, 0.0, sh_z - 0.005),
-                 (sx * (sh_x + 0.11), 0.02, sh_z - 0.155), "clavicle_" + s)
-        set_bone("lowerarm_" + s, (sx * (sh_x + 0.11), 0.02, sh_z - 0.155),
-                 (sx * (sh_x + 0.135), 0.03, sh_z - 0.29), "upperarm_" + s)
+        set_bone("clavicle_" + s, (sx * 0.035, 0.0, sh_z),
+                 (sx * sh_x * 0.82, 0.0, sh_z - 0.005), "spine_03")
+        set_bone("upperarm_" + s, (sx * sh_x * 0.82, 0.0, sh_z - 0.005),
+                 (sx * (sh_x + 0.12), 0.025, sh_z - 0.155), "clavicle_" + s)
+        set_bone("lowerarm_" + s, (sx * (sh_x + 0.12), 0.025, sh_z - 0.155),
+                 (sx * (sh_x + 0.145), 0.035, sh_z - 0.29), "upperarm_" + s)
         # hand bone length kept for hat IK grip reach; mesh is a mitt pinned to hand_*
-        set_bone("hand_" + s, (sx * (sh_x + 0.135), 0.03, sh_z - 0.29),
-                 (sx * (sh_x + 0.145), 0.04, sh_z - 0.35), "lowerarm_" + s)
+        set_bone("hand_" + s, (sx * (sh_x + 0.145), 0.035, sh_z - 0.29),
+                 (sx * (sh_x + 0.155), 0.045, sh_z - 0.35), "lowerarm_" + s)
         # finger bones exist for hat grip / boy.gd IK — no finger *mesh* (mitt only)
         hand = eb["hand_" + s]
         hx, hy, hz = hand.tail
@@ -109,7 +108,11 @@ def retarget_chibi(rig):
 
 
 def _add_capsule(bm, a, b, r0, r1, seg=10, rings=6, mat=0):
-    """soft capsule between a and b (radii r0 at a, r1 at b)."""
+    """soft capsule between a and b (radii r0 at a, r1 at b).
+
+    Ends are FLAT disks (full radius) — never a center tip vertex. Pointed end-caps
+    were reading as needle spikes under skinning/smooth.
+    """
     d = b - a
     L = d.length
     if L < 1e-6:
@@ -128,21 +131,26 @@ def _add_capsule(bm, a, b, r0, r1, seg=10, rings=6, mat=0):
             p = c + (x * math.cos(ang) + z * math.sin(ang)) * rr
             ring.append(bm.verts.new(p))
         verts.append(ring)
-    faces = []
     for i in range(rings):
         for j in range(seg):
-            f = bm.faces.new((verts[i][j], verts[i][(j + 1) % seg],
-                              verts[i + 1][(j + 1) % seg], verts[i + 1][j]))
+            # winding so outward normal points away from the bone axis
+            f = bm.faces.new((verts[i][j], verts[i + 1][j],
+                              verts[i + 1][(j + 1) % seg], verts[i][(j + 1) % seg]))
             f.material_index = mat
-            faces.append(f)
-    # end caps
-    for end, ring, inward in ((a, verts[0], y), (b, verts[-1], -y)):
-        mid = bm.verts.new(end - inward * (r0 if end == a else r1) * 0.15)
+    # flat disk caps — outward facing (mid verts MUST be returned so callers tag part codes;
+    # untagged mids were getting pelvis weights and collapsing wrists into spikes)
+    mids = []
+    for ring, outward in ((verts[0], -y), (verts[-1], y)):
+        mid = bm.verts.new(sum((v.co for v in ring), Vector()) / len(ring) + outward * 0.001)
+        mids.append(mid)
         for j in range(seg):
-            f = bm.faces.new((ring[j], ring[(j + 1) % seg], mid))
+            # order depends on which end so normal points outward along the bone
+            if outward.dot(y) > 0:
+                f = bm.faces.new((ring[j], ring[(j + 1) % seg], mid))
+            else:
+                f = bm.faces.new((ring[(j + 1) % seg], ring[j], mid))
             f.material_index = mat
-            faces.append(f)
-    return [v for ring in verts for v in ring]
+    return [v for ring in verts for v in ring] + mids
 
 
 def _add_sphere(bm, c, r, cuts=3, mat=0, scale=(1, 1, 1)):
@@ -166,8 +174,8 @@ def build_mesh(rig, mat_skin):
     sh = H["spine_03"]
     neck = H["neck_01"]
     torso_c = Vector((0.0, 0.01, (pel.z + sh.z) * 0.5))
-    # slightly narrower chest so short upper arms clear the torso in throw/cheer
-    torso_rx, torso_ry, torso_rz = 0.095, 0.085, (sh.z - pel.z) * 0.55 + 0.04
+    # narrower chest so upper arms clear the torso in throw/cheer (selftest arm clearance)
+    torso_rx, torso_ry, torso_rz = 0.082, 0.078, (sh.z - pel.z) * 0.55 + 0.04
     tv = _add_sphere(bm, torso_c, 1.0, cuts=4, mat=0,
                      scale=(torso_rx, torso_ry, torso_rz))
     for v in tv:
@@ -175,16 +183,16 @@ def build_mesh(rig, mat_skin):
         # softer belly out front (-Y), flat-ish back
         d = v.co - torso_c
         if d.y < 0:
-            v.co.y -= 0.015 * _ss(0.0, torso_ry, -d.y)
+            v.co.y -= 0.012 * _ss(0.0, torso_ry, -d.y)
         # narrow toward neck
         k = _ss(pel.z, sh.z + 0.02, v.co.z)
-        v.co.x *= 1.0 - 0.25 * k
-        v.co.y *= 1.0 - 0.15 * k
+        v.co.x *= 1.0 - 0.30 * k
+        v.co.y *= 1.0 - 0.18 * k
 
     # soft shoulder pads (keep tight so upper arms clear the torso in throw)
     for s, sx in ((1, 1.0), (2, -1.0)):
-        sc = Vector((sx * 0.095, 0.0, sh.z - 0.01))
-        for v in _add_sphere(bm, sc, 0.045, cuts=2, mat=0, scale=(1.05, 0.85, 0.7)):
+        sc = Vector((sx * 0.088, 0.0, sh.z - 0.01))
+        for v in _add_sphere(bm, sc, 0.038, cuts=2, mat=0, scale=(1.0, 0.8, 0.65)):
             v[part] = 0
 
     # short natural neck stump (head mesh continues it)
@@ -194,61 +202,49 @@ def build_mesh(rig, mat_skin):
                           0.055, 0.048, seg=12, rings=4):
         v[part] = 5
 
-    # ---- arms
+    # ---- arms: chubby constant-radius cylinders + mitt spheres (all skinned)
     for side, sx, pcode in (("l", 1.0, 1), ("r", -1.0, 2)):
         ua = H["upperarm_" + side]
         la = H["lowerarm_" + side]
         hd = H["hand_" + side]
         ht = T["hand_" + side]
-        # thicker soft limbs (chibi) — previous radii collapsed to needles under idle bend
-        for v in _add_capsule(bm, ua, la, 0.048, 0.044, seg=12, rings=6):
+        for v in _add_capsule(bm, ua, la, 0.046, 0.044, seg=12, rings=7):
             v[part] = pcode
-        for v in _add_capsule(bm, la, hd, 0.042, 0.038, seg=12, rings=6):
+        for v in _add_capsule(bm, la, hd, 0.042, 0.040, seg=12, rings=7):
             v[part] = pcode
-        # chubby mitt hand only (no separate finger tips — those skinned into "icicles")
-        palm = hd.lerp(ht, 0.30)
-        for v in _add_sphere(bm, palm, 0.048, cuts=2, mat=0,
-                             scale=(1.0, 1.0, 0.85)):
+        # rounded mitt + thumb at the palm (skinned 100% to hand_*)
+        palm = hd.lerp(ht, 0.40)
+        for v in _add_sphere(bm, palm, 0.038, cuts=2, mat=0, scale=(1.15, 1.05, 0.92)):
             v[part] = pcode
-        # soft thumb bump kept close to the mitt so weights stay on hand_*
-        tc = palm + Vector((sx * 0.024, 0.012, 0.01))
-        for v in _add_sphere(bm, tc, 0.018, cuts=1, mat=0, scale=(0.9, 1.0, 0.8)):
+        tc = palm + Vector((sx * 0.028, 0.010, 0.005))
+        for v in _add_sphere(bm, tc, 0.016, cuts=1, mat=0, scale=(1.0, 1.05, 0.9)):
             v[part] = pcode
 
-    # ---- legs
+    # ---- legs: chubby rounded cylinders + soft feet
     for side, sx, pcode in (("l", 1.0, 3), ("r", -1.0, 4)):
         th = H["thigh_" + side]
         kf = H["calf_" + side]
         ft = H["foot_" + side]
         bl = H["ball_" + side]
-        for v in _add_capsule(bm, th, kf, 0.062, 0.052, seg=12, rings=6):
+        for v in _add_capsule(bm, th, kf, 0.075, 0.062, seg=12, rings=7):
             v[part] = pcode
-        for v in _add_capsule(bm, kf, ft, 0.046, 0.038, seg=12, rings=6):
+        for v in _add_capsule(bm, kf, ft, 0.055, 0.045, seg=12, rings=7):
             v[part] = pcode
-        # small soft foot (slightly longer so gait heel/toe pads match probe offsets)
         foot_c = Vector((ft.x, (ft.y + bl.y) * 0.5 - 0.01, 0.02))
-        for v in _add_sphere(bm, foot_c, 0.042, cuts=2, mat=0, scale=(0.65, 1.55, 0.42)):
+        for v in _add_sphere(bm, foot_c, 0.046, cuts=2, mat=0, scale=(0.70, 1.45, 0.48)):
             v[part] = pcode
             v.co.z = max(v.co.z, GROUND + 0.004)
 
-    # merge nearby verts so capsules fuse into one soft body (less doll-joint look)
-    bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=0.014)
-    try:
-        bmesh.ops.smooth_vert(bm, verts=list(bm.verts), factor=0.35, use_axis_x=True, use_axis_y=True, use_axis_z=True)
-        bmesh.ops.smooth_vert(bm, verts=list(bm.verts), factor=0.25, use_axis_x=True, use_axis_y=True, use_axis_z=True)
-    except Exception:
-        pass
+    # NO global remove_doubles — merging arm tips into torso verts was assigning
+    # pelvis weights to wrists and collapsing arms into needle spikes.
     bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
 
     me = bpy.data.meshes.new("Body")
     bm.to_mesh(me)
-    # pull part codes before free
     part_codes = [0] * len(me.vertices)
     bm.verts.ensure_lookup_table()
-    # after to_mesh, indices match
     for i, v in enumerate(bm.verts):
-        if i < len(part_codes):
-            part_codes[i] = v[part]
+        part_codes[i] = int(v[part])
     bm.free()
     me.materials.append(mat_skin)
     for p in me.polygons:
@@ -257,7 +253,6 @@ def build_mesh(rig, mat_skin):
     body = bpy.data.objects.new("Body", me)
     bpy.context.scene.collection.objects.link(body)
     body.parent = rig
-    # vertex groups for all bones
     for b in rig.data.bones:
         body.vertex_groups.new(name=b.name)
     _auto_weight(body, rig, part_codes)
@@ -269,7 +264,8 @@ def build_mesh(rig, mat_skin):
 
 
 def _auto_weight(body, rig, part_codes):
-    """simple distance/part weights — good enough for soft stylized limbs."""
+    """Hard-ish limb weights. Arm/leg verts NEVER get torso bones — that was
+    collapsing wrists into the pelvis and reading as needle spikes."""
     H = {b.name: Vector(b.head_local) for b in rig.data.bones}
     T = {b.name: Vector(b.tail_local) for b in rig.data.bones}
     me = body.data
@@ -278,9 +274,9 @@ def _auto_weight(body, rig, part_codes):
         if code == 0:
             return ["pelvis", "spine_01", "spine_02", "spine_03", "neck_01"]
         if code == 1:
-            return ["clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "deltoid_l"]
+            return ["upperarm_l", "lowerarm_l", "hand_l", "clavicle_l"]
         if code == 2:
-            return ["clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "deltoid_r"]
+            return ["upperarm_r", "lowerarm_r", "hand_r", "clavicle_r"]
         if code == 3:
             return ["thigh_l", "calf_l", "foot_l", "ball_l"]
         if code == 4:
@@ -292,31 +288,49 @@ def _auto_weight(body, rig, part_codes):
         ab = b - a
         L2 = ab.length_squared + 1e-12
         t = max(0.0, min(1.0, (co - a).dot(ab) / L2))
-        return (a + ab * t - co).length
+        return (a + ab * t - co).length, t
 
     for i, v in enumerate(me.vertices):
         code = part_codes[i] if i < len(part_codes) else 0
         names = [n for n in bones_for(code) if n in body.vertex_groups]
         if not names:
             names = ["pelvis"]
-        # mitt hands: pin 100% to hand_* so finger/idle poses cannot stretch spikes
+        scored = []
+        for n in names:
+            d, t = dist_bone(v.co, n)
+            scored.append((n, d, t))
+        # nearest bone dominates; mild blend only with the runner-up on the same limb
+        scored.sort(key=lambda x: x[1])
+        n0, d0, t0 = scored[0]
+        # mitt / distal hand region → lock to hand_*
         if code in (1, 2):
             hand = "hand_l" if code == 1 else "hand_r"
-            d_hand = dist_bone(v.co, hand) if hand in H else 1.0
-            if d_hand < 0.075:
-                for n in names:
-                    body.vertex_groups[n].add([i], 0.0, "REPLACE")
+            palm = H[hand].lerp(T[hand], 0.4)
+            if (v.co - palm).length < 0.070 or (hand in body.vertex_groups and d0 < 0.02 and "hand" in n0):
                 body.vertex_groups[hand].add([i], 1.0, "REPLACE")
                 continue
-        dists = [(n, dist_bone(v.co, n)) for n in names]
-        # softmin weights
-        soft = [(n, math.exp(-d * 28.0)) for n, d in dists]
+            # prefer segment by projection: upper vs lower vs hand along the chain
+            ua = "upperarm_l" if code == 1 else "upperarm_r"
+            la = "lowerarm_l" if code == 1 else "lowerarm_r"
+            # use nearest of the three arm bones with sharp falloff
+            arm_names = [ua, la, hand]
+            ad = [(n, dist_bone(v.co, n)[0]) for n in arm_names if n in body.vertex_groups]
+            ad.sort(key=lambda x: x[1])
+            wts = []
+            for n, d in ad:
+                wts.append((n, math.exp(-d * 55.0)))
+            s = sum(w for _, w in wts) + 1e-12
+            # boost winner so shafts stay cylindrical
+            wts[0] = (wts[0][0], wts[0][1] * 4.0)
+            s = sum(w for _, w in wts) + 1e-12
+            for n, w in wts:
+                body.vertex_groups[n].add([i], w / s, "REPLACE")
+            continue
+        # torso / legs: soft blend among allowed bones only
+        soft = [(n, math.exp(-d * 32.0)) for n, d, _t in scored]
         s = sum(w for _, w in soft) + 1e-12
         for n, w in soft:
             body.vertex_groups[n].add([i], w / s, "REPLACE")
-        # always a little pelvis on torso
-        if code == 0:
-            body.vertex_groups["pelvis"].add([i], 0.15, "ADD")
 
 
 def build_clothes(rig, body, mats):
@@ -328,23 +342,23 @@ def build_clothes(rig, body, mats):
     sh_z = H["spine_03"].z
     knee_z = H["calf_l"].z
 
-    # ---- vest: Concept A red V-neck with gold buttons (no white tank bib)
-    # hang lower over the waistband so the back seam does not flash skin
+    # ---- vest: Concept A CLOSED bright-red sleeveless vest + 3 gold buttons
+    # Full wrap around the torso; tiny armholes only (large deletions made a flat plank).
     vest = _cloth_torso(rig, body, "Vest", mats["vest"],
-                        z0=pel_z - 0.01, z1=neck_z - 0.015,
-                        rx=0.122, ry=0.102, open_front=0.014, v_neck=0.045,
-                        solid=0.0055)
+                        z0=pel_z - 0.01, z1=neck_z - 0.005,
+                        rx=0.125, ry=0.105, open_front=0.0, v_neck=0.018,
+                        solid=0.008, armholes=True)
     _gold_buttons(vest, mats.get("gold") or mats["vest"],
-                  [Vector((0.0, -0.104, sh_z - 0.045 - 0.032 * i)) for i in range(3)])
+                  [Vector((0.0, -0.108, sh_z - 0.038 - 0.036 * i)) for i in range(3)])
 
-    # thin undershirt only at the sides / under arms (not a front bib)
-    tank = _cloth_torso(rig, body, "Tank", mats["tank"],
+    # soft skin-colored liner under the vest (never shows as grey blocks)
+    tank = _cloth_torso(rig, body, "Tank", mats["skin"] if "skin" in mats else mats["tank"],
                         z0=pel_z + 0.02, z1=sh_z - 0.02,
-                        rx=0.114, ry=0.094, open_front=0.07, v_neck=0.0,
-                        solid=0.0015)
+                        rx=0.112, ry=0.095, open_front=0.0, v_neck=0.0,
+                        solid=0.002, armholes=True)
 
-    # ---- shorts: raise waist under the vest hem
-    shorts = _shorts(rig, body, mats["shorts"], hem_z=knee_z + 0.06, waist_z=pel_z + 0.12)
+    # ---- shorts: clean mid-thigh hem + flower UV
+    shorts = _shorts(rig, body, mats["shorts"], hem_z=knee_z + 0.05, waist_z=pel_z + 0.11)
 
     # ---- sandals
     sandals = []
@@ -354,71 +368,62 @@ def build_clothes(rig, body, mats):
     return tank, vest, shorts, sandals
 
 
-def _cloth_torso(rig, body, name, mat, z0, z1, rx, ry, open_front, v_neck, solid):
+def _cloth_torso(rig, body, name, mat, z0, z1, rx, ry, open_front, v_neck, solid, armholes=False):
+    """Single outward shell (no solidify) — solidify was z-fighting and reading as striped maroon."""
     bm = bmesh.new()
-    seg, rings = 20, 8
+    seg, rings = 24, 10
     rings_v = []
     for i in range(rings + 1):
         t = i / rings
         z = _mix(z0, z1, t)
-        # slight waist
+        # soft chest egg — wider mid, slightly tucked waist
         waist = 1.0 - 0.08 * math.sin(t * math.pi)
-        rxi, ryi = rx * waist, ry * waist
-        ring = []
-        for j in range(seg):
-            ang = 2 * math.pi * j / seg - math.pi * 0.5  # 0 = front (-Y)
-            x = math.cos(ang) * rxi
-            y = math.sin(ang) * ryi
-            # V-neck / open front on the front half
-            front = max(0.0, -y / max(ryi, 1e-6))
-            if open_front > 0 and front > 0.55 and abs(x) < open_front + v_neck * t:
-                continue
-            if v_neck > 0 and front > 0.7 and z > z1 - v_neck * 1.2 and abs(x) < v_neck * (0.3 + 1.4 * (z - (z1 - v_neck)) / max(v_neck, 1e-6)):
-                continue
-            ring.append(bm.verts.new(Vector((x, y, z))))
-        rings_v.append(ring)
-    # connect consecutive rings by nearest angle — skip open gaps
-    # simpler: rebuild as closed then delete front faces
-    bm.clear()
-    rings_v = []
-    for i in range(rings + 1):
-        t = i / rings
-        z = _mix(z0, z1, t)
-        waist = 1.0 - 0.08 * math.sin(t * math.pi)
-        rxi, ryi = rx * waist, ry * waist
+        chest = 1.0 + 0.06 * math.sin(t * math.pi)
+        rxi, ryi = rx * waist * chest, ry * waist * (0.95 + 0.08 * chest)
         ring = [bm.verts.new(Vector((math.cos(2 * math.pi * j / seg - math.pi * 0.5) * rxi,
                                      math.sin(2 * math.pi * j / seg - math.pi * 0.5) * ryi, z)))
                 for j in range(seg)]
         rings_v.append(ring)
     for i in range(rings):
         for j in range(seg):
-            bm.faces.new((rings_v[i][j], rings_v[i][(j + 1) % seg],
-                          rings_v[i + 1][(j + 1) % seg], rings_v[i + 1][j]))
-    # delete front V / open faces
+            # outward winding (right-hand, looking from outside)
+            bm.faces.new((rings_v[i][j], rings_v[i + 1][j],
+                          rings_v[i + 1][(j + 1) % seg], rings_v[i][(j + 1) % seg]))
     kill = []
+    ah_z = z1 - 0.085  # shoulder-height armhole centre
+    ah_r = 0.048
     for f in bm.faces:
         c = f.calc_center_median()
-        if c.y >= -0.02:
-            continue
-        if open_front > 0 and abs(c.x) < open_front + 0.01 + 0.04 * _ss(z0, z1, c.z):
-            if c.z > z0 + 0.02:
+        if v_neck > 0 and c.y < -0.02 and c.z > z1 - v_neck and abs(c.x) < v_neck * 0.50:
+            kill.append(f)
+        # tiny rounded armholes only — do NOT strip the whole side wall
+        if armholes and abs(c.x) > rx * 0.70:
+            d = math.hypot(abs(c.x) - rx * 0.92, (c.z - ah_z) * 1.15)
+            if d < ah_r and abs(c.y) < ry * 0.55:
                 kill.append(f)
-                continue
-        if v_neck > 0 and c.z > z1 - v_neck and abs(c.x) < v_neck * 0.85:
+        if open_front > 0 and c.y < -0.02 and abs(c.x) < open_front and c.z > z0 + 0.03:
             kill.append(f)
     if kill:
         bmesh.ops.delete(bm, geom=kill, context="FACES")
+    # slight outward offset instead of solidify (avoids inner shell z-fight)
     if solid > 0:
-        try:
-            bmesh.ops.solidify(bm, geom=list(bm.faces), thickness=solid)
-        except Exception:
-            pass
+        bm.normal_update()
+        for v in bm.verts:
+            if v.normal.length > 1e-6:
+                v.co += v.normal.normalized() * solid
+    bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
     me = bpy.data.meshes.new(name)
     bm.to_mesh(me)
     bm.free()
     me.materials.append(mat)
     for p in me.polygons:
         p.use_smooth = True
+        # force outward: flip if center is inside the torso axis
+        n = p.normal
+        c = p.center
+        radial = Vector((c.x, c.y, 0.0))
+        if radial.length > 1e-6 and n.dot(radial.normalized()) < 0.0:
+            p.flip()
     ob = bpy.data.objects.new(name, me)
     bpy.context.scene.collection.objects.link(ob)
     ob.parent = rig
@@ -461,44 +466,46 @@ def _gold_buttons(vest, mat, centres):
 
 
 def _shorts(rig, body, mat, hem_z, waist_z):
+    """Clean mid-thigh yellow shorts — flat even hem, no solidify jagged edges."""
     bm = bmesh.new()
-    # soft flared cylinder + crotch bridge
-    seg, rings = 20, 6
-    H = {b.name: Vector(b.head_local) for b in rig.data.bones}
+    seg, rings = 22, 7
     for side, sx in (("l", 1.0), ("r", -1.0)):
-        cx = sx * 0.05
+        cx = sx * 0.048
         rings_v = []
         for i in range(rings + 1):
             t = i / rings
             z = _mix(waist_z, hem_z, t)
-            flare = 1.0 + 0.35 * t * t
-            rx, ry = 0.07 * flare, 0.065 * flare
-            ring = [bm.verts.new(Vector((cx + math.cos(2 * math.pi * j / seg) * rx,
+            flare = 1.0 + 0.22 * t
+            # merge toward center at waist so legs meet cleanly
+            cxi = cx * (0.35 + 0.65 * t)
+            rx, ry = 0.078 * flare, 0.070 * flare
+            ring = [bm.verts.new(Vector((cxi + math.cos(2 * math.pi * j / seg) * rx,
                                          math.sin(2 * math.pi * j / seg) * ry, z)))
                     for j in range(seg)]
             rings_v.append(ring)
         for i in range(rings):
             for j in range(seg):
-                bm.faces.new((rings_v[i][j], rings_v[i][(j + 1) % seg],
-                              rings_v[i + 1][(j + 1) % seg], rings_v[i + 1][j]))
-    # waist bridge
-    bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=0.01)
-    try:
-        bmesh.ops.solidify(bm, geom=list(bm.faces), thickness=0.003)
-    except Exception:
-        pass
+                bm.faces.new((rings_v[i][j], rings_v[i + 1][j],
+                              rings_v[i + 1][(j + 1) % seg], rings_v[i][(j + 1) % seg]))
+    # light waist weld only (keep hem rings untouched so the cut stays clean)
+    waist_vs = [v for v in bm.verts if abs(v.co.z - waist_z) < 0.012]
+    if waist_vs:
+        bmesh.ops.remove_doubles(bm, verts=waist_vs, dist=0.018)
+    bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
     me = bpy.data.meshes.new("Shorts")
     bm.to_mesh(me)
     bm.free()
     me.materials.append(mat)
     for p in me.polygons:
         p.use_smooth = True
-    # UV for flower pattern
+        radial = Vector((p.center.x, p.center.y, 0.0))
+        if radial.length > 1e-6 and p.normal.dot(radial.normalized()) < 0.0:
+            p.flip()
     uv = me.uv_layers.new(name="UVMap")
     for p in me.polygons:
         for li, vi in zip(p.loop_indices, p.vertices):
             co = me.vertices[vi].co
-            uv.data[li].uv = ((co.x + 0.2) * 2.2, (co.z - hem_z) * 3.5)
+            uv.data[li].uv = ((co.x + 0.25) * 2.8, (co.z - hem_z) * 3.6)
     ob = bpy.data.objects.new("Shorts", me)
     bpy.context.scene.collection.objects.link(ob)
     ob.parent = rig
@@ -586,22 +593,21 @@ def make_flower_shorts_texture(path, n=256):
         img.file_format = "PNG"
         img.save()
         return path
-    im = Image.new("RGB", (n, n), (247, 209, 82))
+    im = Image.new("RGB", (n, n), (250, 214, 70))
     dr = ImageDraw.Draw(im)
     random.seed(22)
-    for _ in range(18):
+    for _ in range(22):
         cx, cy = random.randint(10, n - 10), random.randint(10, n - 10)
-        r = random.randint(14, 28)
-        # petals
+        r = random.randint(16, 32)
+        # cream hibiscus petals — high contrast so they read at game distance
         for a in range(5):
             ang = a * 72 * math.pi / 180
             px = cx + int(math.cos(ang) * r * 0.55)
             py = cy + int(math.sin(ang) * r * 0.55)
             dr.ellipse((px - r // 2, py - r // 2, px + r // 2, py + r // 2),
-                       fill=(245, 230, 190))
-        dr.ellipse((cx - r // 3, cy - r // 3, cx + r // 3, cy + r // 3), fill=(240, 220, 160))
-        # leaf
+                       fill=(255, 245, 220))
+        dr.ellipse((cx - r // 3, cy - r // 3, cx + r // 3, cy + r // 3), fill=(255, 236, 190))
         lx, ly = cx + r, cy + r // 2
-        dr.ellipse((lx - 8, ly - 4, lx + 8, ly + 4), fill=(230, 215, 170))
+        dr.ellipse((lx - 9, ly - 5, lx + 9, ly + 5), fill=(235, 225, 175))
     im.save(path)
     return path

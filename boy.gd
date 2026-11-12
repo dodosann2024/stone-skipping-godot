@@ -280,7 +280,7 @@ func _setup_materials() -> void:
 	# albedo per Blender material name; kinds: 0 skin, 1 cloth, 2 hair, 3 straw, 4 props
 	var look := {
 		"skin": [Color(1.0, 0.78, 0.60), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
-		"vest": [Color(0.82, 0.18, 0.16), 1], "shorts": [Color(0.97, 0.82, 0.32), 1],
+		"vest": [Color(0.95, 0.20, 0.16), 1], "shorts": [Color(0.98, 0.86, 0.28), 1],
 		"hair": [Color(0.28, 0.17, 0.11), 2], "sandal": [Color(0.42, 0.28, 0.18), 1],
 		"strap": [Color(0.38, 0.24, 0.15), 1], "hat": [Color(0.92, 0.80, 0.55), 3],
 		"band": [Color(0.78, 0.16, 0.14), 1], "gold": [Color(0.92, 0.72, 0.22), 4],
@@ -291,11 +291,13 @@ func _setup_materials() -> void:
 	var fabric := {
 		"tank": {"fabric": 0, "thread": Color(0.97, 0.96, 0.93), "hem_stitch": 0.006, "fade": 0.0,
 			"wear": 0.15, "sheen": 0.35, "translucency": 0.16},
-		"vest": {"fabric": 1, "thread": Color(0.88, 0.45, 0.37), "binding": Color(0.60, 0.17, 0.14),
-			"binding_w": 0.0055, "hem_stitch": 0.0075, "fade": 0.3, "wear": 0.3, "sheen": 0.25, "wrinkle": 0.003,
-			"pit_depth": 0.009},
-		"shorts": {"fabric": 2, "thread": Color(0.99, 0.89, 0.58), "hem_stitch": 0.011, "fade": 0.25,
-			"wear": 0.3, "sheen": 0.2, "legs": 1.0},
+		"vest": {"fabric": 1, "thread": Color(0.95, 0.40, 0.32), "binding": Color(0.75, 0.18, 0.14),
+			"binding_w": 0.003, "hem_stitch": 0.005, "fade": 0.08, "wear": 0.1, "sheen": 0.15, "wrinkle": 0.0,
+			"pit_depth": 0.0, "ao_strength": 0.15, "weave": 12.0, "bump": 0.00004},
+		"shorts": {"fabric": 2, "thread": Color(0.99, 0.89, 0.58), "hem_stitch": 0.006, "fade": 0.08,
+			"wear": 0.1, "sheen": 0.12, "legs": 1.0, "pattern_mix": 1.0, "ao_strength": 0.2,
+			"weave": 10.0, "bump": 0.00003,
+			"pattern_tex": preload("res://textures/shorts_flowers.png")},
 	}
 	var made := {}     # one material per name: BoyMesh and BoyHead share the skin
 	for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
