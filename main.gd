@@ -1296,27 +1296,40 @@ func _setup_hammock_rest() -> void:
 	var bed: Vector3 = island.hammock_point(0.5)
 	rest_seat = bed + side * 0.27 + Vector3(0, 0.11, 0)
 	rest_seat.y = maxf(rest_seat.y, Island.ground_h(rest_seat.x, rest_seat.z) + 0.3)
-	# Keep the body shorter than the fabric so head/feet stay inside the sag (not past the ends).
-	var ham_len := maxf(island.hammock_a.distance_to(island.hammock_b), 0.01)
-	var half := minf(LIE_BODY_HALF * 0.85, ham_len * 0.22)
-	var head_t := 0.5 - half / ham_len
-	var foot_t := 0.5 + half / ham_len
-	var hip_f: Dictionary = island.hammock_frame(0.5)
-	var head_f: Dictionary = island.hammock_frame(clampf(head_t, 0.15, 0.85))
-	var foot_f: Dictionary = island.hammock_frame(clampf(foot_t, 0.15, 0.85))
-	# Head axis follows the fabric curve (hips lowest → head raised).
-	var head_dir: Vector3 = ((head_f["pos"] as Vector3) - (hip_f["pos"] as Vector3)).normalized()
+	# Compact span in the widest mid-pocket — Tripo brim must not clear either taper.
+	var head_t := 0.56
+	var hip_t := 0.49
+	var foot_t := 0.40
+	var hip_f: Dictionary = island.hammock_frame(hip_t)
+	var head_f: Dictionary = island.hammock_frame(head_t)
+	var foot_f: Dictionary = island.hammock_frame(foot_t)
+	# Follow the hammock centreline (along + mild sag), never a near-zero mid-pocket chord.
+	var head_dir: Vector3 = ((head_f["pos"] as Vector3) - (hip_f["pos"] as Vector3))
+	if head_dir.length_squared() < 1e-6:
+		head_dir = along
+	else:
+		head_dir = head_dir.normalized()
 	if head_dir.dot(along) < 0.0:
-		head_dir = -head_dir
-	# Into the fabric (support); chest/face (= boy −Z with yaw PI) points outward along the normal.
-	var into: Vector3 = -(hip_f["normal"] as Vector3).normalized()
+		# Swap ends so meta t matches bone direction.
+		var tmp := head_t
+		head_t = foot_t
+		foot_t = tmp
+		head_f = island.hammock_frame(head_t)
+		foot_f = island.hammock_frame(foot_t)
+		head_dir = ((head_f["pos"] as Vector3) - (hip_f["pos"] as Vector3)).normalized()
+	# Bias into −UP so the spine settles in the trough rather than riding a side wall.
+	var into: Vector3 = (-Vector3.UP).lerp(-(hip_f["normal"] as Vector3).normalized(), 0.15).normalized()
 	rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Start above the fabric; snap settles using skinned mesh so the butt/hat never poke through.
-	rest_lie = (hip_f["pos"] as Vector3) + (hip_f["normal"] as Vector3) * 0.30
+	# Centreline, then a fixed bias away from the approach/camera side so the wide
+	# Tripo brim settles in the trough instead of hanging over the near rim.
+	var hip_pos: Vector3 = hip_f["pos"] as Vector3
+	# Slight far-side bias so side cameras don't silhouette the brim over the near rim.
+	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.14 - side * 0.18
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
 	rest_approach = rest_seat + side * 0.26
-	set_meta("lie_head_t", clampf(head_t, 0.15, 0.85))
-	set_meta("lie_foot_t", clampf(foot_t, 0.15, 0.85))
+	set_meta("lie_head_t", head_t)
+	set_meta("lie_hip_t", hip_t)
+	set_meta("lie_foot_t", foot_t)
 	set_meta("lie_foot_pos", foot_f["pos"])
 
 
@@ -1427,28 +1440,50 @@ func _snap_lie_contact() -> void:
 	var swing := _lie_swing()
 	var mesh_d := lie_mesh_penetration_depth()
 	if rest_kind == "sleep":
-		var hip_f: Dictionary = island.hammock_frame(0.5)
-		var foot_f: Dictionary = island.hammock_frame(float(get_meta("lie_foot_t", 0.65)))
-		var hn0: Vector3 = (hip_f["normal"] as Vector3).normalized()
-		# Clear real poke-through only (near-zero gaps from foot verts must not keep lifting).
-		if mesh_d < -0.008:
-			rest_lie += hn0 * (-0.005 - mesh_d)
-			return
+		var hip_f: Dictionary = island.hammock_frame(float(get_meta("lie_hip_t", 0.55)))
+		var head_f0: Dictionary = island.hammock_frame(float(get_meta("lie_head_t", 0.42)))
+		var foot_f: Dictionary = island.hammock_frame(float(get_meta("lie_foot_t", 0.70)))
+		var side0: Vector3 = (hip_f["side"] as Vector3).normalized()
+		var head_w: Vector3 = boy.lie_bone_world("mixamorig_Head")
 		var hip_p: Vector3 = swing * (hip_f["pos"] as Vector3)
-		var hip_n: Vector3 = (swing.basis * (hip_f["normal"] as Vector3)).normalized()
-		var foot_p: Vector3 = swing * (foot_f["pos"] as Vector3)
-		var foot_n: Vector3 = (swing.basis * (foot_f["normal"] as Vector3)).normalized()
-		var g_hips := _signed_gap(pts["hips"], hip_p, hip_n)
-		var g_foot := 0.5 * (
-			_signed_gap(pts["foot_l"], foot_p, foot_n) + _signed_gap(pts["foot_r"], foot_p, foot_n)
-		)
-		# Soft settle toward the fabric while the skinned mesh stays clear.
-		if mesh_d > 0.015 and g_hips > 0.04:
-			var settle := minf(g_hips - 0.02, mesh_d - 0.01)
-			if settle > 0.002:
-				rest_lie -= hn0 * minf(settle, 0.04)
-		if mesh_d > 0.015 and g_foot > 0.08:
-			rest_lie -= (foot_f["normal"] as Vector3).normalized() * minf(g_foot - 0.04, 0.03)
+		var hip_side: Vector3 = (swing.basis * side0).normalized()
+		var hn0: Vector3 = (swing.basis * (hip_f["normal"] as Vector3)).normalized()
+		if hn0.y < 0.2:
+			hn0 = Vector3.UP
+		# Centre hips + hat mid on the trough. The Tripo brim spans ~0.6 m, so worst-side
+		# clamps oscillate — mid-lat is the stable target.
+		var along0: Vector3 = (island.hammock_b - island.hammock_a).normalized()
+		var mid0: Vector3 = (island.hammock_a + island.hammock_b) * 0.5
+		var ham_len0: float = maxf(island.hammock_a.distance_to(island.hammock_b), 0.01)
+		var samples: Array[Vector3] = boy.skinned_sample_world(360)
+		var lat_min := 1e9
+		var lat_max := -1e9
+		var n_hat := 0
+		for s in samples:
+			if s.distance_to(head_w) > 0.40:
+				continue
+			n_hat += 1
+			var t_s: float = clampf(0.5 + (s - mid0).dot(along0) / ham_len0, 0.05, 0.95)
+			var fr_s: Dictionary = island.hammock_frame(t_s)
+			var side_s: Vector3 = (swing.basis * (fr_s["side"] as Vector3)).normalized()
+			var fp_s: Vector3 = swing * (fr_s["pos"] as Vector3)
+			var lat_s: float = (s - fp_s).dot(side_s)
+			lat_min = minf(lat_min, lat_s)
+			lat_max = maxf(lat_max, lat_s)
+		# Mild far-side bias + mid-lat lock (hip_side = frame.side; rest_side is opposite).
+		var far_target: float = 0.14 * (-1.0 if rest_side.dot(hip_side) > 0.0 else 1.0)
+		var hip_lat0: float = (pts["hips"] - hip_p).dot(hip_side)
+		var hat_mid: float = 0.5 * (lat_min + lat_max) if n_hat > 4 else hip_lat0
+		var corr: float = 0.5 * (hip_lat0 - far_target) + 0.5 * (hat_mid - far_target)
+		if absf(corr) > 0.004:
+			rest_lie -= hip_side * clampf(corr, -0.20, 0.20)
+		# Mesh-only vertical: lift out of real poke-through, else settle to kiss the fabric.
+		# Bone gaps use a thick back-shell offset and fight the mesh signal — ignore them here.
+		if mesh_d < -0.018:
+			rest_lie += hn0 * minf(-0.006 - mesh_d, 0.04)
+		elif mesh_d > -0.002:
+			# Even a tiny clear gap means he is hovering — ease him onto the cloth.
+			rest_lie -= hn0 * minf(maxf(mesh_d + 0.006, 0.004), 0.025)
 		return
 	# Lounger: NEVER lift along seat_n to clear the backrest — that pulls the torso off the
 	# tilted pad. Slide along the seat for hat clearance; lift only for seat-cushion digs.
@@ -1636,16 +1671,16 @@ func lie_mesh_penetration_depth() -> float:
 		var ham_len := maxf(island.hammock_a.distance_to(island.hammock_b), 0.01)
 		var head_p: Vector3 = boy.lie_bone_world("mixamorig_Head")
 		for s in samples:
-			# Hat crown can kiss the fabric; chin tip keeps it resting on top — exclude brim shell.
-			if s.distance_to(head_p) < 0.28:
+			# Hat/head handled by lateral recenter + chin tip; excluding them here stops
+			# the lift/settle oscillation when the brim kisses the fabric.
+			if s.distance_to(head_p) < 0.32:
 				continue
 			var t := clampf(0.5 + (s - mid).dot(along) / ham_len, 0.06, 0.94)
 			var fr: Dictionary = island.hammock_frame(t)
 			var fp: Vector3 = swing * (fr["pos"] as Vector3)
 			var fn: Vector3 = (swing.basis * (fr["normal"] as Vector3)).normalized()
-			# Ignore verts that are clearly outside the hammock bed laterally (arms dangling).
 			var side: Vector3 = (swing.basis * (fr["side"] as Vector3)).normalized()
-			if absf((s - fp).dot(side)) > 0.48:
+			if absf((s - fp).dot(side)) > 0.50:
 				continue
 			hit = true
 			deepest = minf(deepest, _signed_gap(s, fp, fn))
@@ -2622,31 +2657,31 @@ func _update_night(delta: float, force := false) -> void:
 	night_k = move_toward(night_k, target, delta / 2.5)
 	var k := smoothstep(0.0, 1.0, night_k)
 	RenderingServer.global_shader_parameter_set("night_k", k)
-	sky_mat.sky_top_color = Color(0.40, 0.58, 0.76).lerp(Color(0.025, 0.05, 0.13), k)
-	sky_mat.sky_horizon_color = Color(0.78, 0.85, 0.88).lerp(Color(0.09, 0.14, 0.25), k)
+	# Keep night sky readable (v22 iPhone look), not crushed black.
+	sky_mat.sky_top_color = Color(0.40, 0.58, 0.76).lerp(Color(0.08, 0.14, 0.28), k)
+	sky_mat.sky_horizon_color = Color(0.78, 0.85, 0.88).lerp(Color(0.18, 0.26, 0.42), k)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
-	sky_mat.ground_bottom_color = Color(0.30, 0.46, 0.52).lerp(Color(0.02, 0.05, 0.09), k)
+	sky_mat.ground_bottom_color = Color(0.30, 0.46, 0.52).lerp(Color(0.06, 0.10, 0.18), k)
 	var qd := Basis.from_euler(SUN_DAY * PI / 180.0).get_rotation_quaternion()
 	var qn := Basis.from_euler(MOON_NIGHT * PI / 180.0).get_rotation_quaternion()
 	sun.basis = Basis(qd.slerp(qn, k))
-	# Cool blue moonlight key. Compatibility soft-blur is weak, so we also drop energy /
-	# shadow opacity and keep cool ambient modest so lantern OmniLights can actually read.
-	sun.light_energy = lerpf(1.0, 0.14, k)
-	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(0.50, 0.64, 0.98), k)
+	# Moonlit blue world (readable ground/sea/sky like the v22 iPhone shots). Compatibility
+	# soft-blur is weak, so softness comes from opacity + ambient fill.
+	sun.light_energy = lerpf(1.0, 0.58, k)
+	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(0.58, 0.72, 1.0), k)
 	sun.shadow_blur = lerpf(2.5, 8.0, k)
-	sun.light_angular_distance = lerpf(1.2, 7.0, k)
-	sun.shadow_opacity = lerpf(1.0, 0.22, k)
+	sun.light_angular_distance = lerpf(1.2, 6.0, k)
+	sun.shadow_opacity = lerpf(1.0, 0.35, k)
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.5 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
-	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.14, 0.22, 0.40), k)
-	env.ambient_light_sky_contribution = lerpf(1.0, 0.20, k)
-	# Modest cool ambient: softens moon shadows without washing out lantern warmth.
-	env.ambient_light_energy = lerpf(0.55, 0.40, k)
-	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.08, 0.12, 0.22), k)
-	# Do not raise exposure at night — that pastes the boy bright onto a dark world.
-	env.tonemap_exposure = lerpf(0.95, 0.88, k)
-	env.adjustment_saturation = lerpf(1.05, 0.86, k)
-	env.adjustment_contrast = lerpf(1.02, 0.90, k)
-	env.adjustment_brightness = lerpf(0.98, 0.92, k)
+	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.28, 0.38, 0.58), k)
+	env.ambient_light_sky_contribution = lerpf(1.0, 0.55, k)
+	env.ambient_light_energy = lerpf(0.55, 0.92, k)
+	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.14, 0.20, 0.34), k)
+	# Night exposure: lift the world; boy extras stay off so he matches the ground.
+	env.tonemap_exposure = lerpf(0.95, 1.18, k)
+	env.adjustment_saturation = lerpf(1.05, 0.92, k)
+	env.adjustment_contrast = lerpf(1.02, 0.96, k)
+	env.adjustment_brightness = lerpf(0.98, 1.02, k)
 	var moon := sun.global_basis.z.normalized()
 	island.water_mat.set_shader_parameter("glint_dir", moon)
 	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(0.8, 0.88, 1.0), k))

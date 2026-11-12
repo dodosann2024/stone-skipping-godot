@@ -28,7 +28,9 @@ func g() -> void:
 		m.rest_phase = 4
 		m.rest_t = 1.0
 		m.set_meta("lie_snapped", false)
-		for _p in 4:
+		# Extra snap passes for hammock lateral recentering.
+		var passes := 22 if kind == "sleep" else 4
+		for _p in passes:
 			var pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
 			var swing := Transform3D.IDENTITY
 			if kind == "sleep":
@@ -67,6 +69,12 @@ func g() -> void:
 		print(kind, " hips", m.boy.lie_bone_world("mixamorig_Hips"),
 			" head", m.boy.lie_bone_world("mixamorig_Head"),
 			" foot", m.boy.lie_bone_world("mixamorig_LeftFoot"))
+		if kind == "sleep":
+			var hf: Dictionary = m.island.hammock_frame(float(m.get_meta("lie_head_t", 0.42)))
+			var hw: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
+			var side_u: Vector3 = (hf["side"] as Vector3).normalized()
+			print("sleep lat_head", (hw - (hf["pos"] as Vector3)).dot(side_u),
+				" lat_hips", (m.boy.lie_bone_world("mixamorig_Hips") - m.island.hammock_frame(float(m.get_meta("lie_hip_t", 0.55)))["pos"]).dot(side_u))
 
 		var hips: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
 		var head: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
@@ -77,9 +85,17 @@ func g() -> void:
 			side = m.rest_side
 		var prefix := "lounger" if kind == "sun" else "hammock"
 		# side / 3-4 closeups
+		# Prefer the hammock's true side axis so the U-sag reads clearly.
+		var ham_side: Vector3 = m.rest_side
+		if ham_side.length_squared() < 1e-6:
+			ham_side = side
+		# Look from the occupied side of the trough (boy is biased −rest_side) so the
+		# brim reads inside the near wall instead of silhouetting across empty fabric.
+		var look_side: Vector3 = -ham_side if kind == "sleep" else ham_side
 		var shots: Array = [
-			["side", atan2(side.x, side.z), 0.08, 2.5, hips.lerp(head, 0.35)],
-			["34", atan2(side.x, side.z) + 0.65, 0.28, 2.7, hips.lerp(head, 0.35)],
+			["side", atan2(look_side.x, look_side.z), 0.48, 2.9, hips.lerp(head, 0.4)],
+			["34", atan2(look_side.x, look_side.z) + 0.55, 0.40, 2.9, hips.lerp(head, 0.4)],
+			["top", atan2(look_side.x, look_side.z), 1.25, 3.4, hips.lerp(head, 0.45)],
 		]
 		# Default gameplay rest camera
 		m.rest_cam_yaw = INF

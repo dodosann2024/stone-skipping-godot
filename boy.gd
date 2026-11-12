@@ -344,42 +344,37 @@ func _build_face_fill() -> void:
 func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 	k = clampf(k, 0.0, 1.0)
 	if face_fill:
-		# Day: warm under-brim fill. Night: faint cool fill so face matches body
-		# (readable, not glowing — and not darker than the vest).
-		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.62, 0.74, 0.98), k)
-		# Tight cool fill under the brim. Tripo bakes dark AO into the face tex, so night
-		# needs a stronger head-local fill than day to keep face as readable as the body.
-		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.75, k)
-		face_fill.omni_range = lerpf(0.4, 0.48, k)
-		face_fill.omni_attenuation = lerpf(1.4, 1.25, k)
-		face_fill.position = Vector3(0.0, -0.02, -0.1).lerp(Vector3(0.0, 0.0, -0.12), k)
+		# Day: warm under-brim fill. Night: nearly off so moon/lanterns light him like the world
+		# (target: body luminance within ~1.3× of nearby ground unless a lantern is next to him).
+		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.60, 0.72, 0.95), k)
+		# Night fill fully off — moon/lanterns alone must light him like the ground.
+		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.0, k)
+		face_fill.omni_range = lerpf(0.4, 0.45, k)
+		face_fill.omni_attenuation = lerpf(1.4, 1.3, k)
+		face_fill.position = Vector3(0.0, -0.02, -0.1)
 	if _night_rim:
-		# Cool moon-side rim for silhouettes when the moon is behind him.
-		_night_rim.light_energy = lerpf(0.0, 0.30, k)
-		_night_rim.light_color = Color(0.58, 0.72, 1.0)
-		_night_rim.omni_range = lerpf(0.55, 0.7, k)
-		# Prefer world moon direction projected into head space; fall back to local +Z.
-		var local_off := Vector3(0.0, 0.05, 0.16)
+		# No private rim at night (was the "pasted on" studio look on dark paths).
+		_night_rim.light_energy = 0.0
+		_night_rim.light_color = Color(0.55, 0.68, 0.98)
+		_night_rim.omni_range = lerpf(0.55, 0.65, k)
+		var local_off := Vector3(0.0, 0.04, 0.14)
 		if moon_dir.length_squared() > 0.01 and parts.has("head") and parts["head"] is Node3D:
 			var head := parts["head"] as Node3D
-			var world_off: Vector3 = moon_dir.normalized() * 0.20 + Vector3(0, 0.04, 0)
+			var world_off: Vector3 = moon_dir.normalized() * 0.16 + Vector3(0, 0.03, 0)
 			local_off = head.global_transform.basis.inverse() * world_off
-			if local_off.length() < 0.08:
-				local_off = Vector3(0.0, 0.05, 0.16)
+			if local_off.length() < 0.06:
+				local_off = Vector3(0.0, 0.04, 0.14)
 			else:
-				local_off = local_off.normalized() * 0.20
+				local_off = local_off.normalized() * 0.16
 		_night_rim.position = local_off
-	# Dim + cool the boy albedo at night so bright Tripo textures don't look day-pasted
-	# onto a dark world. Day values stay exactly as tuned for concept_A.
+	# Dim + cool the boy albedo at night so Tripo textures match the moonlit ground.
 	if _boy_mat:
-		_boy_mat.albedo_color = _boy_albedo_day.lerp(Color(0.50, 0.58, 0.68, 1.0), k)
-		_boy_mat.metallic_specular = lerpf(0.2, 0.06, k)
-		_boy_mat.roughness = lerpf(0.78, 0.90, k)
-		# Cool lift so the hat-AO'd face stays readable at night. Keep it low so he
-		# doesn't glow; day leaves emission off.
-		_boy_mat.emission_enabled = k > 0.01
-		_boy_mat.emission = Color(0.22, 0.28, 0.38)
-		_boy_mat.emission_energy_multiplier = lerpf(0.0, 0.55, k)
+		_boy_mat.albedo_color = _boy_albedo_day.lerp(Color(0.40, 0.46, 0.55, 1.0), k)
+		_boy_mat.metallic_specular = lerpf(0.2, 0.04, k)
+		_boy_mat.roughness = lerpf(0.78, 0.93, k)
+		_boy_mat.emission_enabled = false
+		_boy_mat.emission_energy_multiplier = 0.0
+		_boy_mat.emission = Color(0, 0, 0, 1)
 
 
 func _tune_boy_material() -> void:
@@ -639,15 +634,15 @@ func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
 	skel.force_update_transform()
 
 
-## Hammock: mild U-sag into the fabric, chin up so the baked hat stays above the fabric.
-## Arms stay on the idle-seed pose (overwriting them stretches the shorts into a spike).
+## Hammock: mild curl into the U. Roll the head so the baked brim rests beside the
+## cheek in the trough (hat-beside-head nap) instead of hanging over the near rim.
 func _apply_hammock_pose(w: float, breath: float) -> void:
-	_pose_abs("mixamorig_Spine", Vector3(0.04 + breath * 0.3, 0.02, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(0.05 + breath * 0.35, 0.02, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(0.04 + breath * 0.2, 0.0, 0.0), w)
-	# Strong chin tip so the baked hat crown does not poke through the fabric underside.
-	_pose_abs("mixamorig_Neck", Vector3(-0.20, 0.03, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.26 + breath * 0.05, 0.04, 0.02), w)
+	_pose_abs("mixamorig_Spine", Vector3(0.12 + breath * 0.1, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.16 + breath * 0.12, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.10 + breath * 0.08, 0.0, 0.0), w)
+	# Chin/face tip only (no roll) — rolls drove the wide brim past the near rim.
+	_pose_abs("mixamorig_Neck", Vector3(-0.32, 0.16, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.48 + breath * 0.03, 0.28, 0.0), w)
 
 
 ## Lounger: flat root + hips pitch tips the torso onto the ~38° backrest. Skip absolute arm/UpLeg

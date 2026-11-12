@@ -42,10 +42,10 @@ func build(island: Island) -> void:
 		# OmniLights, so keep real lights for dock / porch / beacon where the boy stands.
 		if kind != "path":
 			var ol := OmniLight3D.new()
-			ol.light_color = Color(1.0, 0.68, 0.32)
-			# Warm lanterns that actually reach the boy and the planks (~5–6 m).
-			ol.omni_range = 6.0 if kind == "dock" else 5.5
-			ol.omni_attenuation = 0.65
+			ol.light_color = Color(1.0, 0.64, 0.30) if kind == "dock" else Color(1.0, 0.68, 0.32)
+			# Warm dock lanterns light the boy AND the planks without blowing exposure.
+			ol.omni_range = 6.5 if kind == "dock" else 5.5
+			ol.omni_attenuation = 0.7 if kind == "dock" else 0.65
 			ol.shadow_enabled = false
 			ol.light_specular = 0.35
 			ol.position = p + Vector3(0, -0.15, 0)
@@ -53,6 +53,19 @@ func build(island: Island) -> void:
 			add_child(ol)
 			lamp_lights.append(ol)
 			lamp_energy.append(5.5 if kind == "dock" else 3.2)
+			# Soft deck fill so planks read warm under his feet (keep modest).
+			if kind == "dock":
+				var deck := OmniLight3D.new()
+				deck.light_color = Color(1.0, 0.58, 0.25)
+				deck.omni_range = 3.8
+				deck.omni_attenuation = 1.0
+				deck.shadow_enabled = false
+				deck.light_specular = 0.1
+				deck.position = Vector3(p.x * 0.3, p.y - 1.4, p.z + 0.35)
+				deck.visible = false
+				add_child(deck)
+				lamp_lights.append(deck)
+				lamp_energy.append(2.2)
 	# lighthouse: glow, a local light on the tower top and two opposite beams sweeping round
 	var bh := ShaderMaterial.new()
 	bh.shader = halo_sh

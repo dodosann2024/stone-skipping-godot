@@ -1748,22 +1748,40 @@ func _build_palms() -> void:
 	var mid = (a + b) * 0.5
 	var HB = MeshBuilder.new()
 	var ab = b - a
-	var side = ab.cross(Vector3.UP).normalized() * 0.4
+	# Extra-wide trough so the Tripo straw hat (~0.6 m brim) sits clearly inside the bed.
+	var side = ab.cross(Vector3.UP).normalized() * 1.15
 	for s in 10:
 		var t0 = s / 10.0
 		var t1 = (s + 1) / 10.0
 		var p0 = a + ab * t0 + Vector3(0, -0.6 * sin(PI * t0), 0) - mid
 		var p1 = a + ab * t1 + Vector3(0, -0.6 * sin(PI * t1), 0) - mid
-		var w0 = side * sin(PI * clamp(t0 * 1.2 - 0.1, 0.0, 1.0)) + side * 0.05
-		var w1 = side * sin(PI * clamp(t1 * 1.2 - 0.1, 0.0, 1.0)) + side * 0.05
-		for st in 3:
-			var u0 = -1.0 + st * 2.0 / 3.0
-			var u1 = u0 + 2.0 / 3.0
-			var col = [Color(0.95, 0.4, 0.3), Color(0.98, 0.88, 0.5), Color(0.3, 0.6, 0.8)][st]
-			var A = p0 + w0 * u0 + Vector3(0, -0.12 * (1.0 - u0 * u0), 0)
-			var B = p0 + w0 * u1 + Vector3(0, -0.12 * (1.0 - u1 * u1), 0)
-			var C = p1 + w1 * u1 + Vector3(0, -0.12 * (1.0 - u1 * u1), 0)
-			var D = p1 + w1 * u0 + Vector3(0, -0.12 * (1.0 - u0 * u0), 0)
+		var w0 = side * sin(PI * clamp(t0 * 1.15 - 0.075, 0.0, 1.0)) + side * 0.06
+		var w1 = side * sin(PI * clamp(t1 * 1.15 - 0.075, 0.0, 1.0)) + side * 0.06
+		# Wide centre bed (red) + thin blue rim so the boy reads inside the fabric, not on the edge.
+		for st in 2:
+			var u0: float = -1.0 if st == 0 else 0.72
+			var u1: float = -0.72 if st == 0 else 1.0
+			# st0: left rim (blue), then centre bed filled below; st1: right rim.
+			# Centre bed drawn as its own pair of faces spanning -0.72..0.72.
+			var col = Color(0.3, 0.6, 0.8)
+			# Moderate U walls: deep enough to cradle, shallow enough that the brim stays under the rim.
+			var A = p0 + w0 * u0 + Vector3(0, -0.28 * (1.0 - u0 * u0), 0)
+			var B = p0 + w0 * u1 + Vector3(0, -0.28 * (1.0 - u1 * u1), 0)
+			var C = p1 + w1 * u1 + Vector3(0, -0.28 * (1.0 - u1 * u1), 0)
+			var D = p1 + w1 * u0 + Vector3(0, -0.28 * (1.0 - u0 * u0), 0)
+			HB.face(A, B, C, col, col, col, Vector3.UP)
+			HB.face(A, C, D, col, col, col, Vector3.UP)
+			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
+			HB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
+		# Centre bed (terracotta / yellow) — the actual sleeping surface.
+		for st in 2:
+			var u0: float = -0.72 if st == 0 else 0.0
+			var u1: float = 0.0 if st == 0 else 0.72
+			var col = Color(0.95, 0.4, 0.3) if st == 0 else Color(0.98, 0.88, 0.5)
+			var A = p0 + w0 * u0 + Vector3(0, -0.28 * (1.0 - u0 * u0), 0)
+			var B = p0 + w0 * u1 + Vector3(0, -0.28 * (1.0 - u1 * u1), 0)
+			var C = p1 + w1 * u1 + Vector3(0, -0.28 * (1.0 - u1 * u1), 0)
+			var D = p1 + w1 * u0 + Vector3(0, -0.28 * (1.0 - u0 * u0), 0)
 			HB.face(A, B, C, col, col, col, Vector3.UP)
 			HB.face(A, C, D, col, col, col, Vector3.UP)
 			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
@@ -1797,8 +1815,8 @@ func hammock_bed() -> Vector3:
 func hammock_point(t: float) -> Vector3:
 	t = clampf(t, 0.0, 1.0)
 	var p := hammock_a.lerp(hammock_b, t)
-	# mesh: y = lerp(a,b) - 0.6*sin(πt) - 0.12*(1-u²) with u=0 on the centreline
-	p.y = lerpf(hammock_a.y, hammock_b.y, t) - 0.6 * sin(PI * t) - 0.12
+	# mesh: y = lerp(a,b) - 0.6*sin(πt) - 0.28*(1-u²) with u=0 on the centreline
+	p.y = lerpf(hammock_a.y, hammock_b.y, t) - 0.6 * sin(PI * t) - 0.28
 	return p
 
 ## Unit tangent along the hammock fabric (a→b), and the upward normal of the sag.
