@@ -1384,6 +1384,8 @@ func _setup_lounger_rest() -> void:
 		rest_lie_b = _lie_basis_oriented(head_dir, into)
 	# Hips on the seat cushion (hat is on the sand — no brim lift).
 	var hip_target: Vector3 = (seat_h["pos"] as Vector3) + seat_n * 0.10
+	# Bias slightly toward the pad so the first snap pass isn't fighting a 15 cm float.
+	hip_target += back_n * 0.04
 	rest_lie = hip_target
 	set_meta("lie_head_s", head_s)
 	set_meta("lie_foot_s", foot_s)
@@ -1499,26 +1501,30 @@ func _snap_lie_contact() -> void:
 	var seat_along: Vector3 = (hip_s["along"] as Vector3).normalized()  # toward hinge
 	var crease: Vector3 = (hip_s["pos"] as Vector3) + seat_n * 0.09
 	# Mesh-near-bone contact: head/spine onto the pad, hips on the seat.
-	var g_s2 := _mesh_gap_near(boy.lie_bone_world("mixamorig_Spine2"), mid_b["pos"], back_n, 0.16)
+	var g_s2 := minf(
+		_mesh_gap_near(boy.lie_bone_world("mixamorig_Spine1"), mid_b["pos"], back_n, 0.14),
+		_mesh_gap_near(boy.lie_bone_world("mixamorig_Spine2"), mid_b["pos"], back_n, 0.14))
 	var g_head := _mesh_gap_near(boy.lie_bone_world("mixamorig_Head"), head_b["pos"], head_n, 0.18)
 	var g_hip := _mesh_gap_near(boy.lie_bone_world("mixamorig_Hips"), hip_s["pos"], seat_n, 0.18)
 	var mesh_torso := lie_mesh_penetration_depth(false)
-	# Blend head-on-pad with dig clearance so we converge instead of oscillating.
+	# Blend head/spine/hips onto their pads; keep steps small so we converge.
 	var move := Vector3.ZERO
 	if g_head > 0.015:
-		move -= head_n * minf(g_head - 0.006, 0.035)
-		move += seat_along * minf((g_head - 0.006) * 0.35, 0.02)
+		move -= head_n * minf(g_head - 0.006, 0.03)
+		move += seat_along * minf((g_head - 0.006) * 0.3, 0.015)
 	if mesh_torso < -0.012 or g_s2 < -0.012:
 		var dig := minf(mesh_torso, g_s2)
-		move += back_n * minf(-dig - 0.002, 0.03)
-	if g_hip < -0.012:
-		move += seat_n * minf(-g_hip - 0.002, 0.025)
-	elif g_hip > 0.025 and g_head <= 0.03:
-		move -= seat_n * minf(g_hip - 0.01, 0.025)
-	if g_s2 > 0.02 and g_head <= 0.025:
+		move += back_n * minf(-dig - 0.002, 0.025)
+	elif g_s2 > 0.02:
 		move -= back_n * minf(g_s2 - 0.008, 0.02)
-	if move.length() > 0.06:
-		move = move.normalized() * 0.06
+	# Hips onto the seat — always, but gentler while the head is still settling.
+	if g_hip > 0.02:
+		var hip_step := 0.035 if g_head <= 0.04 else 0.015
+		move -= seat_n * minf(g_hip - 0.01, hip_step)
+	elif g_hip < -0.012:
+		move += seat_n * minf(-g_hip - 0.002, 0.02)
+	if move.length() > 0.05:
+		move = move.normalized() * 0.05
 	rest_lie += move
 
 
@@ -1563,7 +1569,10 @@ func lie_contact_gaps() -> Dictionary:
 		var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
 		# Mesh-near-bone gaps: contact ≤2 cm means the skin kisses the pad, not a bone capsule.
 		out["hips"] = _mesh_gap_near(boy.lie_bone_world("mixamorig_Hips"), hip_s["pos"], seat_n, 0.18)
-		out["spine"] = _mesh_gap_near(boy.lie_bone_world("mixamorig_Spine2"), mid_s["pos"], back_n, 0.16)
+		# Worst of Spine1/Spine2 so a mid-back dig isn't hidden by a lucky Spine2 sample.
+		out["spine"] = minf(
+			_mesh_gap_near(boy.lie_bone_world("mixamorig_Spine1"), mid_s["pos"], back_n, 0.14),
+			_mesh_gap_near(boy.lie_bone_world("mixamorig_Spine2"), mid_s["pos"], back_n, 0.14))
 		out["head"] = _mesh_gap_near(boy.lie_bone_world("mixamorig_Head"), head_s["pos"], head_n, 0.18)
 		out["foot_l"] = _signed_gap(pts["foot_l"], foot_s["pos"], seat_n)
 		out["foot_r"] = _signed_gap(pts["foot_r"], foot_s["pos"], seat_n)

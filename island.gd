@@ -37,8 +37,9 @@ var lounger_back_half := Vector3(0.32, 0.04, 0.58)   # long backrest: full torso
 var lounger_seat_tilt := 0.08                        # rad about local +X (slight foot-down)
 var lounger_back_tilt := 0.70                         # ~40° chaise: head rises away from seat
 var lounger_seat_local := Vector3(0, 0.34, 0.08)      # seat centre in lounger_xf
-# Hinge at the seat rear (−local Z); +tilt raises the −Z (head) end.
-var lounger_back_local := Vector3(0, 0.78, -0.72)
+# Centre past the seat hinge (−local Z); raised so the pad clears the crease/thighs.
+# +tilt raises the −Z (head) end.
+var lounger_back_local := Vector3(0, 0.92, -0.78)
 var umbrella_pos := Vector3.ZERO
 var hut_pos := Vector3.ZERO
 var lighthouse_pos := Vector3.ZERO
@@ -1505,10 +1506,10 @@ func _build_beach_life() -> void:
 	lounger_seat_tilt = 0.08
 	lounger_back_tilt = 0.70  # ~40°; head rises away from the seat (−local Z)
 	lounger_seat_local = Vector3(0, 0.34, 0.08)
-	# Hinge at the seat rear; long pad supports spine + head.
-	lounger_back_local = Vector3(0, 0.78, -0.72)
+	# Pad raised/cleared of the crease so thighs sit on the seat, not through the board.
+	lounger_back_local = Vector3(0, 0.92, -0.78)
 	lounger_seat_half = Vector3(0.32, 0.035, 0.55)
-	lounger_back_half = Vector3(0.32, 0.04, 0.58)
+	lounger_back_half = Vector3(0.32, 0.04, 0.55)
 	var lc: Vector3 = cxf * Vector3(0, 0, -0.05)
 	wall_b(Vector2(lc.x, lc.z), Vector2(0.36, 0.75), tyaw, cp.y - 0.3, cp.y + 1.1, "躺椅")
 	var lface: Vector3 = cxf.basis * Vector3(1, 0, 0)
