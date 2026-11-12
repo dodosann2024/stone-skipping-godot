@@ -855,12 +855,11 @@ func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
 
 ## Lounger: hips on the seat, spine curves onto the ~45° pad, head on the cushion.
 func _apply_lounger_pose(w: float, breath: float) -> void:
-	# Hip crease bend only — keep the thoracic spine straight along the flat pad
-	# (extra spine curl drives mid-back through the cushion).
+	# Hip crease bend; hollow mid-back so the Tripo torso clears the pad while the head rests.
 	_pose_abs("mixamorig_Hips", Vector3(0.50, 0.0, 0.0), w * 0.7)
-	_pose_abs("mixamorig_Spine", Vector3(0.06 + breath * 0.08, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(0.04 + breath * 0.1, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(0.03 + breath * 0.08, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine", Vector3(-0.12 + breath * 0.08, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(-0.14 + breath * 0.1, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(-0.06 + breath * 0.08, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Neck", Vector3(-0.06, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Head", Vector3(-0.04 + breath * 0.03, 0.0, 0.0), w)
 	# Keep idle leg seed; nudge thighs onto the seat away from the hinge.

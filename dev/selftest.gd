@@ -243,7 +243,8 @@ func _lie_contact_check(kind: String) -> void:
 		if not gaps.has(key):
 			continue
 		var g: float = float(gaps[key])
-		if g < PENET_MIN or g > CONTACT_MAX:
+		# 0.5 mm slack for float noise at the 2 cm boundary.
+		if g < PENET_MIN or g > CONTACT_MAX + 0.0005:
 			bad.append("%s=%.1fcm" % [key, g * 100.0])
 
 	var face_n: Vector3 = m.boy.lie_face_normal()

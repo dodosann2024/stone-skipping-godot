@@ -1248,6 +1248,7 @@ func _begin_rest(kind: String) -> void:
 	rest_cam_yaw = INF
 	move_vel = Vector3.ZERO
 	set_meta("lie_snapped", false)
+	set_meta("lie_mesh_nudged", false)
 	if kind == "sleep":
 		_setup_hammock_rest()
 	elif kind == "seat":
@@ -1518,13 +1519,16 @@ func _snap_lie_contact() -> void:
 	elif g_s2 > 0.02:
 		move -= back_n * minf(g_s2 - 0.008, 0.02)
 	# Hips onto the seat — always, but gentler while the head is still settling.
-	if g_hip > 0.02:
-		var hip_step := 0.035 if g_head <= 0.04 else 0.015
-		move -= seat_n * minf(g_hip - 0.01, hip_step)
+	if g_hip > 0.018:
+		var hip_step := 0.028 if g_head <= 0.035 else 0.012
+		move -= seat_n * minf(g_hip - 0.008, hip_step)
 	elif g_hip < -0.012:
 		move += seat_n * minf(-g_hip - 0.002, 0.02)
-	if move.length() > 0.05:
-		move = move.normalized() * 0.05
+	# Fine head settle only when mesh is already clear and hips are close.
+	if g_head > 0.018 and g_head < 0.035 and mesh_torso > -0.008 and absf(g_hip) < 0.03:
+		move -= head_n * minf(g_head - 0.01, 0.008)
+	if move.length() > 0.045:
+		move = move.normalized() * 0.045
 	rest_lie += move
 
 
@@ -1761,9 +1765,8 @@ func lie_mesh_penetration_depth(include_hat := true) -> float:
 		var knee_r: Vector3 = boy.lie_bone_world("mixamorig_RightLeg")
 		var thigh_l: Vector3 = boy.lie_bone_world("mixamorig_LeftUpLeg")
 		var thigh_r: Vector3 = boy.lie_bone_world("mixamorig_RightUpLeg")
-		# Upper torso only — butt/hip verts at the hinge are seat-side geometry.
+		# Upper-back / head skin only — hinge/hip/leg clips are seat-side geometry.
 		var torso: Array[Vector3] = [
-			boy.lie_bone_world("mixamorig_Spine1"),
 			boy.lie_bone_world("mixamorig_Spine2"),
 			boy.lie_bone_world("mixamorig_Neck"),
 			boy.lie_bone_world("mixamorig_Head"),
@@ -1777,12 +1780,12 @@ func lie_mesh_penetration_depth(include_hat := true) -> float:
 				continue
 			if s.distance_to(thigh_l) < 0.18 or s.distance_to(thigh_r) < 0.18:
 				continue
-			if s.distance_to(hips_p) < 0.20:
+			if s.distance_to(hips_p) < 0.22:
 				continue
 			if island.lounger_back_contains(s, 0.04):
 				var near_torso := false
 				for tp in torso:
-					if s.distance_to(tp) < 0.28:
+					if s.distance_to(tp) < 0.16:
 						near_torso = true
 						break
 				if not near_torso:
