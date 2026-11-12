@@ -208,13 +208,16 @@ func _rest(kind: String, approach: Vector3) -> void:
 	await _wait(1.0)
 	if kind in ["sun", "sleep"]:
 		m.set_meta("lie_snapped", false)
-		for _p in 6:
-			m._snap_lie_contact()
-			var pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
-			var swing = Transform3D.IDENTITY
-			if kind == "sleep":
-				swing = m.island.swing_hammock(m.swing_amp * sin(m.gt * 1.3))
-			m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
+		for _p in 10:
+			if kind == "sun":
+				m.boy.clear_foot_plant()
+			for _s in 4:
+				m._snap_lie_contact()
+				var pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
+				var swing = Transform3D.IDENTITY
+				if kind == "sleep":
+					swing = m.island.swing_hammock(m.swing_amp * sin(m.gt * 1.3))
+				m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
 			m._plant_lie_feet()
 			await _frames(1)
 		m.set_meta("lie_snapped", true)

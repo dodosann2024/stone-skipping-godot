@@ -28,20 +28,23 @@ func g() -> void:
 		m.rest_phase = 4
 		m.rest_t = 1.0
 		m.set_meta("lie_snapped", false)
-		# Extra snap passes for hammock lateral recentering.
+		# Extra snap passes for hammock lateral recentering / lounger foam settle.
 		var passes := 35 if kind == "sleep" else 55
 		for _p in passes:
-			var pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
-			var swing := Transform3D.IDENTITY
-			if kind == "sleep":
-				swing = m.island.swing_hammock(0.0)
-			m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
-			# Fabric takes weight first, then the body snaps onto the occupied surface.
-			if kind == "sleep":
-				m._update_hammock_load()
-			m._snap_lie_contact()
-			pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
-			m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
+			if kind == "sun":
+				m.boy.clear_foot_plant()
+			for _s in 4:
+				var pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
+				var swing := Transform3D.IDENTITY
+				if kind == "sleep":
+					swing = m.island.swing_hammock(0.0)
+				m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
+				# Fabric takes weight first, then the body snaps onto the occupied surface.
+				if kind == "sleep":
+					m._update_hammock_load()
+				m._snap_lie_contact()
+				pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
+				m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
 			m._plant_lie_feet()
 			await process_frame
 		m.set_meta("lie_snapped", true)
@@ -67,6 +70,18 @@ func g() -> void:
 			swing3 = m.island.swing_hammock(0.0)
 		m.boy.global_transform = swing3 * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl3)
 		m._plant_lie_feet()
+		# Force a single consistent hat state AFTER the freeze loop (activity would re-sync).
+		if kind == "sun":
+			m.boy.set_hat_mode("beside", m.boy.hat_beside_world)
+		else:
+			m.boy.set_hat_mode("face")
+		# One more idle frame with hat locked so cameras see the final state.
+		for _h in 3:
+			if m.zzz and is_instance_valid(m.zzz):
+				m.zzz.visible = false
+			await process_frame
+		print(kind, " hat_mode=", m.boy.hat_mode,
+			" hat_pos=", m.boy.hat.global_position if m.boy.hat else Vector3.ZERO)
 
 		var face_n: Vector3 = m.boy.lie_face_normal()
 		print(kind, " gaps", m.lie_contact_gaps(), " face_up", face_n.dot(Vector3.UP),

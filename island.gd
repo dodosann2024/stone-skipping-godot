@@ -32,10 +32,9 @@ var towel_pos := Vector3.ZERO
 var towel_dir := Vector3.FORWARD   # towel long axis, pointing out to sea (feet end)
 ## Deck-chair lounger (晒太阳): root transform, seat/backrest sizes, and hinge in local Z.
 var lounger_xf := Transform3D.IDENTITY
-	## Contact plane at the foam top. Visual pad is thick so thighs can sink into foam
-	## while hip skin stays within ~2 cm of the top (see _build_beach_life).
-var lounger_seat_half := Vector3(0.32, 0.08, 0.55)
-var lounger_back_half := Vector3(0.32, 0.06, 0.58)   # long backrest: full torso + head
+## Contact plane at the foam top. Pads are ~7 cm thick — legs rest ON TOP with light compress.
+var lounger_seat_half := Vector3(0.32, 0.03, 0.55)
+var lounger_back_half := Vector3(0.32, 0.04, 0.58)   # long backrest: full torso + head
 var lounger_seat_tilt := 0.08                        # rad about local +X (slight foot-down)
 var lounger_back_tilt := 0.70                         # ~40° chaise: head rises away from seat
 var lounger_seat_local := Vector3(0, 0.34, 0.08)      # seat centre in lounger_xf
@@ -1508,11 +1507,11 @@ func _build_beach_life() -> void:
 	lounger_xf = cxf
 	lounger_seat_tilt = 0.08
 	lounger_back_tilt = 0.70  # ~40°; head rises away from the seat (−local Z)
-	lounger_seat_local = Vector3(0, 0.38, 0.08)
-	# Pad raised/cleared of the crease so thighs sit on the seat, not through the board.
+	lounger_seat_local = Vector3(0, 0.34, 0.08)
+	# Pad raised clear of the crease so thighs rest ON the seat surface.
 	lounger_back_local = Vector3(0, 0.92, -0.78)
-	lounger_seat_half = Vector3(0.32, 0.08, 0.55)
-	lounger_back_half = Vector3(0.32, 0.06, 0.55)
+	lounger_seat_half = Vector3(0.32, 0.03, 0.55)
+	lounger_back_half = Vector3(0.32, 0.04, 0.55)
 	var lc: Vector3 = cxf * Vector3(0, 0, -0.05)
 	wall_b(Vector2(lc.x, lc.z), Vector2(0.36, 0.75), tyaw, cp.y - 0.3, cp.y + 1.1, "躺椅")
 	var lface: Vector3 = cxf.basis * Vector3(1, 0, 0)
@@ -1526,12 +1525,12 @@ func _build_beach_life() -> void:
 		for lz in [-0.42, 0.48]:
 			var leg_h: float = 0.34
 			boxb(SB, Vector3(0.045, leg_h, 0.045), cxf * Transform3D(Basis.IDENTITY, Vector3(lx, leg_h * 0.5, lz)), wood)
-	# Seat frame + deep foam cushion (thighs sink in; wood board stays clear underneath).
-	boxb(SB, Vector3(0.68, 0.04, 1.12), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local + Vector3(0, -0.09, 0)), wood)
-	boxb(SB, Vector3(0.64, 0.16, 1.08), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local), cush)
-	# Backrest frame + thick cushion (~45°) — torso sinks into foam, not through the board.
-	boxb(SB, Vector3(0.68, 0.04, 1.18), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local + Vector3(0, -0.06, 0)), wood)
-	boxb(SB, Vector3(0.64, 0.12, 1.14), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local), cush)
+	# Seat frame + ~7 cm cushion (legs lie ON TOP; 2–4 cm compress max).
+	boxb(SB, Vector3(0.68, 0.04, 1.12), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local + Vector3(0, -0.04, 0)), wood)
+	boxb(SB, Vector3(0.64, 0.06, 1.08), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local), cush)
+	# Backrest frame + cushion (~40°) — torso/head rest on the pad surface.
+	boxb(SB, Vector3(0.68, 0.04, 1.18), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local + Vector3(0, -0.04, 0)), wood)
+	boxb(SB, Vector3(0.64, 0.08, 1.14), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local), cush)
 	# Armrests — outboard of the cushion so heels stay clear of the rails.
 	for lx2 in [-0.40, 0.40]:
 		boxb(SB, Vector3(0.045, 0.04, 0.7), cxf * Transform3D(Basis.IDENTITY, Vector3(lx2, 0.48, 0.05)), wood)

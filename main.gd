@@ -1340,15 +1340,15 @@ func _setup_hammock_rest() -> void:
 func _setup_lounger_rest() -> void:
 	# Real chaise: hips on the seat just forward of the crease (butt on cushion, not in the hinge
 	# corner), spine along the ~45° pad, head on the pad.
-	# Hips forward of the hinge so thighs rest on the seat, not through the backrest.
-	var seat_hip_u := 0.78
+	# Hips just forward of the crease so thighs rest on the seat top (not in the hinge).
+	var seat_hip_u := 0.82
 	var hip_s := 0.42
 	var head_s := 0.82
 	var foot_s := 0.10
 	var seat_h: Dictionary = island.lounger_seat_point(seat_hip_u)
-	# Head target mid-pad (reachable); long pad still supports the skull there.
+	# Head mid-pad so the skull rests on cushion (reachable, not past the top rail).
 	var back_h: Dictionary = island.lounger_back_point(0.62)
-	var back_mid: Dictionary = island.lounger_back_point(0.38)
+	var back_mid: Dictionary = island.lounger_back_point(0.42)
 	var seat_along: Vector3 = (seat_h["along"] as Vector3).normalized()
 	var seat_n: Vector3 = (seat_h["normal"] as Vector3).normalized()
 	var back_n: Vector3 = (back_mid["normal"] as Vector3).normalized()
@@ -1376,16 +1376,16 @@ func _setup_lounger_rest() -> void:
 		rest_seat = (seat_h["pos"] as Vector3) + side * 0.35
 		rest_approach = rest_seat + side * 0.4
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
-	# Into: mostly the backrest, with a little seat so the butt can sit in the crease.
-	var into: Vector3 = (-back_n * 0.75 - seat_n * 0.25).normalized()
+	# Into: follow the backrest so the torso lies ON the pad (not hunched forward).
+	var into: Vector3 = (-back_n * 0.90 - seat_n * 0.10).normalized()
 	rest_lie_b = _lie_basis_oriented(head_dir, into)
 	# Guard: face (= −into after basis) must look skyward.
-	if (-rest_lie_b.z).dot(Vector3.UP) < 0.45:
-		into = (-back_n * 0.9 - seat_n * 0.1).normalized()
+	if (-rest_lie_b.z).dot(Vector3.UP) < 0.50:
+		into = (-back_n * 0.96 - seat_n * 0.04).normalized()
 		rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Hips on the foam top; Tripo butt hangs below the hip bone into the cushion.
-	var hip_target: Vector3 = (seat_h["pos"] as Vector3) + seat_n * 0.10
-	hip_target += back_n * 0.04
+	# Start ~14 cm above foam; snap settles the back onto the pad.
+	var hip_target: Vector3 = (seat_h["pos"] as Vector3) + seat_n * 0.14
+	hip_target += back_n * 0.025
 	rest_lie = hip_target
 	set_meta("lie_head_s", head_s)
 	set_meta("lie_foot_s", foot_s)
@@ -1393,10 +1393,10 @@ func _setup_lounger_rest() -> void:
 	set_meta("lie_seat_hip_u", seat_hip_u)
 	set_meta("lie_foot_plane_u", 0.12)
 	set_meta("lie_back_n", back_n)
-	set_meta("lie_head_target", (back_h["pos"] as Vector3) + back_n * 0.08)
-	# Sand spot beside the chaise for the detached hat.
-	var sand_hat: Vector3 = rest_seat + side * 0.55 + seat_along * 0.15
-	sand_hat.y = Island.ground_h(sand_hat.x, sand_hat.z) + 0.03
+	set_meta("lie_head_target", (back_h["pos"] as Vector3) + back_n * 0.04)
+	# Sand beside the chaise — clearly off the body, flat on the ground (no float).
+	var sand_hat: Vector3 = (island.lounger_xf.origin) + side * 1.25 + seat_along * 0.15
+	sand_hat.y = Island.ground_h(sand_hat.x, sand_hat.z) + 0.015
 	set_meta("lie_hat_sand", sand_hat)
 	boy.hat_beside_world = sand_hat
 
@@ -1490,7 +1490,7 @@ func _snap_lie_contact() -> void:
 		elif hip_gap < -0.01 or head_gap < -0.01:
 			rest_lie += hn0 * minf(-minf(hip_gap, head_gap), 0.03)
 		return
-	# Lounger: re-anchor hips to the crease every pass, then tiny mesh clears only.
+	# Lounger: foam sink OK; fail only on wood-board punch. Settle hips/head onto the pads.
 	var seat_u: float = float(get_meta("lie_seat_hip_u", 0.96))
 	var hip_s: Dictionary = island.lounger_seat_point(seat_u)
 	var mid_b: Dictionary = island.lounger_back_point(0.38)
@@ -1499,36 +1499,42 @@ func _snap_lie_contact() -> void:
 	var head_n: Vector3 = (head_b["normal"] as Vector3).normalized()
 	var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
 	var seat_along: Vector3 = (hip_s["along"] as Vector3).normalized()  # toward hinge
-	var crease: Vector3 = (hip_s["pos"] as Vector3) + seat_n * 0.10
-	# Mesh-near-bone contact: head/spine onto the pad, hips on the seat.
+	# Bone gaps with a skin shell. Wide mesh probes at Spine2 falsely "kiss" via butt verts
+	# at the crease while the torso floats ~12 cm in front of the pad (#45 hunch look).
+	var spine1_w: Vector3 = boy.lie_bone_world("mixamorig_Spine1")
+	var spine2_w: Vector3 = boy.lie_bone_world("mixamorig_Spine2")
+	var head_w: Vector3 = boy.lie_bone_world("mixamorig_Head")
+	var hips_w: Vector3 = boy.lie_bone_world("mixamorig_Hips")
+	# Skin shell so bones settle onto the pad without burying Tripo flesh.
+	const SKIN_BACK := 0.045
+	const SKIN_HEAD := 0.055
+	const SKIN_HIP := 0.08
 	var g_s2 := minf(
-		_mesh_gap_near(boy.lie_bone_world("mixamorig_Spine1"), mid_b["pos"], back_n, 0.14),
-		_mesh_gap_near(boy.lie_bone_world("mixamorig_Spine2"), mid_b["pos"], back_n, 0.14))
-	var g_head := _mesh_gap_near(boy.lie_bone_world("mixamorig_Head"), head_b["pos"], head_n, 0.18)
-	var g_hip := _mesh_gap_near(boy.lie_bone_world("mixamorig_Hips"), hip_s["pos"], seat_n, 0.18)
-	var mesh_torso := lie_mesh_penetration_depth(false)
-	var seat_board := lie_seat_penetration_depth()
+		_signed_gap(spine1_w, mid_b["pos"], back_n) - SKIN_BACK,
+		_signed_gap(spine2_w, mid_b["pos"], back_n) - SKIN_BACK)
+	var g_head := _signed_gap(head_w, head_b["pos"], head_n) - SKIN_HEAD
+	var g_hip := _signed_gap(hips_w, hip_s["pos"], seat_n) - SKIN_HIP
 	var move := Vector3.ZERO
-	# Board punch-through (foam sink is OK).
-	if seat_board < -0.01:
-		move += seat_n * minf(-seat_board - 0.002, 0.03)
-	if g_head > 0.015:
-		move -= head_n * minf(g_head - 0.006, 0.03)
-		move += seat_along * minf((g_head - 0.006) * 0.3, 0.015)
-	if mesh_torso < -0.012 or g_s2 < -0.012:
-		var dig := minf(mesh_torso, g_s2)
-		move += back_n * minf(-dig - 0.002, 0.025)
-	elif g_s2 > 0.02:
-		move -= back_n * minf(g_s2 - 0.008, 0.02)
-	if g_hip > 0.018 and seat_board > -0.008:
-		var hip_step := 0.028 if g_head <= 0.035 else 0.012
-		move -= seat_n * minf(minf(g_hip - 0.008, seat_board + 0.02), hip_step)
-	elif g_hip < -0.012:
-		move += seat_n * minf(-g_hip - 0.002, 0.02)
-	if g_head > 0.018 and g_head < 0.035 and mesh_torso > -0.008 and absf(g_hip) < 0.03:
-		move -= head_n * minf(g_head - 0.01, 0.008)
-	if move.length() > 0.045:
-		move = move.normalized() * 0.045
+	# Pull the reclined torso onto the pad. -back_n sinks into the seat — compensate.
+	if g_s2 > 0.012:
+		var pull := minf(g_s2 - 0.006, 0.035)
+		move -= back_n * pull
+		move += seat_n * pull * 0.45
+	elif g_s2 < -0.01:
+		move += back_n * minf(-g_s2 - 0.002, 0.04)
+	if g_head > 0.012:
+		var hpull := minf(g_head - 0.006, 0.035)
+		move -= head_n * hpull
+		move += seat_n * hpull * 0.35
+		move += seat_along * minf(hpull * 0.2, 0.01)
+	elif g_head < -0.01:
+		move += head_n * minf(-g_head - 0.002, 0.04)
+	if g_hip > 0.015:
+		move -= seat_n * minf(g_hip - 0.008, 0.022)
+	elif g_hip < -0.01:
+		move += seat_n * minf(-g_hip - 0.002, 0.03)
+	if move.length() > 0.05:
+		move = move.normalized() * 0.05
 	rest_lie += move
 
 
@@ -1572,12 +1578,12 @@ func lie_contact_gaps() -> Dictionary:
 		var head_n: Vector3 = (head_s["normal"] as Vector3).normalized()
 		var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
 		# Mesh-near-bone gaps: contact ≤2 cm means the skin kisses the pad, not a bone capsule.
-		out["hips"] = _mesh_gap_near(boy.lie_bone_world("mixamorig_Hips"), hip_s["pos"], seat_n, 0.18)
-		# Worst of Spine1/Spine2 so a mid-back dig isn't hidden by a lucky Spine2 sample.
+		# Bone + skin shell. Tight mesh probes only (r≤0.08) — wide probes read butt as spine.
+		out["hips"] = _signed_gap(boy.lie_bone_world("mixamorig_Hips"), hip_s["pos"], seat_n) - 0.08
 		out["spine"] = minf(
-			_mesh_gap_near(boy.lie_bone_world("mixamorig_Spine1"), mid_s["pos"], back_n, 0.14),
-			_mesh_gap_near(boy.lie_bone_world("mixamorig_Spine2"), mid_s["pos"], back_n, 0.14))
-		out["head"] = _mesh_gap_near(boy.lie_bone_world("mixamorig_Head"), head_s["pos"], head_n, 0.18)
+			_signed_gap(boy.lie_bone_world("mixamorig_Spine1"), mid_s["pos"], back_n) - 0.045,
+			_signed_gap(boy.lie_bone_world("mixamorig_Spine2"), mid_s["pos"], back_n) - 0.045)
+		out["head"] = _signed_gap(boy.lie_bone_world("mixamorig_Head"), head_s["pos"], head_n) - 0.055
 		out["foot_l"] = _signed_gap(pts["foot_l"], foot_s["pos"], seat_n)
 		out["foot_r"] = _signed_gap(pts["foot_r"], foot_s["pos"], seat_n)
 	return out
@@ -1608,8 +1614,9 @@ func _plant_lie_feet() -> void:
 	boy.lie_foot_plane_point = foot_plane["pos"]
 	boy.lie_foot_plane_normal = foot_plane["normal"]
 	boy.lie_foot_plant = true
-	# Heels/knees kiss the foam top (small sink into the cushion is fine).
-	boy.plant_feet_on_plane(boy.lie_foot_plane_point, boy.lie_foot_plane_normal, 0.012)
+	# Heels + knees above foam top; hips carry the thighs (no UpLeg override).
+	boy.lie_foot_plant_gap = 0.08
+	boy.plant_feet_on_plane(boy.lie_foot_plane_point, boy.lie_foot_plane_normal, boy.lie_foot_plant_gap, true)
 
 
 ## Deepest penetration of lie contact points into the support (negative = into the surface).
@@ -1624,7 +1631,7 @@ func lie_penetration_depth() -> float:
 	return deepest
 
 
-## Skinned samples vs the rigid backrest BOARD under the foam. Foam sink is expected.
+## Skinned samples vs the rigid backrest BOARD under the foam. Foam kiss is OK.
 func lie_backrest_penetration_depth() -> float:
 	if rest_kind != "sun":
 		return 1.0
@@ -1676,7 +1683,7 @@ func lounger_back_slab_clear() -> float:
 
 
 ## Skinned samples vs the rigid seat BOARD under the foam cushion.
-## Sinking into the soft pad is expected (weight); failing means punching through the wood.
+## 2–4 cm foam compress is expected; failing means punching through the wood.
 func lie_seat_penetration_depth() -> float:
 	if rest_kind != "sun":
 		return 1.0
@@ -1685,7 +1692,6 @@ func lie_seat_penetration_depth() -> float:
 		return 1.0
 	var seat: Dictionary = island.lounger_seat_point(0.5)
 	var seat_n: Vector3 = (seat["normal"] as Vector3).normalized()
-	# Board sits ~cushion thickness below the contact (foam top) plane.
 	var foam_h: float = maxf(island.lounger_seat_half.y * 2.0, 0.06)
 	var board_pos: Vector3 = (seat["pos"] as Vector3) - seat_n * foam_h
 	var deepest := 1e9
@@ -1696,7 +1702,7 @@ func lie_seat_penetration_depth() -> float:
 		if island.lounger_back_contains(s, 0.02):
 			continue
 		var g := _signed_gap(s, board_pos, seat_n)
-		# Ignore far-under samples from the underside of the thin board (wrap-around).
+		# Ignore wrap-around under the thin board.
 		if g < -0.25:
 			continue
 		hit = true
@@ -1904,6 +1910,10 @@ func _rest_tick(delta: float) -> void:
 			boy.activity("seat", 1.0, 1.0, rest_t)
 			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 		4:
+			# Drop prior foot overrides before posing — planted knees while hips float
+			# stretch Tripo thighs through the cushion.
+			if rest_kind == "sun":
+				boy.clear_foot_plant()
 			var pl3 := boy.activity(_act_kind(), 1.0, 1.0, gt)
 			if sleep:
 				swing_amp = lerpf(swing_amp, 0.07, 1.0 - exp(-delta * 1.0))
@@ -1911,7 +1921,7 @@ func _rest_tick(delta: float) -> void:
 			boy.global_transform = swing * Transform3D(rest_lie_b, rest_lie - rest_lie_b * pl3)
 			# contact snap so skinned mesh sits on the support (few passes — over-iterating walks off the pad)
 			if rest_t > 0.05 and (not get_meta("lie_snapped", false) or fmod(rest_t, 1.5) < delta):
-				var passes := 4 if not get_meta("lie_snapped", false) else 2
+				var passes := 6 if not get_meta("lie_snapped", false) else 2
 				for _pass in passes:
 					_snap_lie_contact()
 					pl3 = boy.activity(_act_kind(), 1.0, 1.0, gt)

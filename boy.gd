@@ -141,10 +141,11 @@ var _night_rim: OmniLight3D
 var _face_fill_day_energy := 0.35
 var _boy_mat: StandardMaterial3D
 var _boy_albedo_day := Color(1.08, 0.98, 0.92, 1.0)
-## When set, lounger pose plants heels on this seat plane after the hips pitch.
+## When set, lounger pose plants heels/knees/thighs on this seat plane after the hips pitch.
 var lie_foot_plant := false
 var lie_foot_plane_point := Vector3.ZERO
 var lie_foot_plane_normal := Vector3.UP
+var lie_foot_plant_gap := 0.12
 
 
 func _ready() -> void:
@@ -353,16 +354,16 @@ func _split_baked_hat() -> void:
 				wh += float(weights_a[i * 4 + j])
 		var local: Vector3 = head_inv * verts[i]
 		var r := Vector2(local.x, local.z).length()
-		# Cut the whole straw hat (brim + crown + band). Leave only close scalp/hair for the
-		# body mesh — otherwise a second baked hat stays on the head when the split hat detaches.
+		# Cut brim + crown. Generous face/cheek shell — keep cheeks; strip rear brim leftovers.
 		var hat_vert := false
-		if wh > 0.40:
-			if local.y > 0.08 and r > 0.10:
-				hat_vert = true
-			elif local.y > 0.16 and r > 0.06:
-				hat_vert = true
+		var face_shell := local.y < 0.16 and r < 0.13 and local.z > -0.02
+		if (not face_shell) and wh > 0.32:
+			if local.y > 0.08 and r > 0.09:
+				hat_vert = true  # brim (incl. rear crescent leftovers)
+			elif local.y > 0.15 and r > 0.055:
+				hat_vert = true  # crown wall
 			elif local.y > 0.22:
-				hat_vert = true
+				hat_vert = true  # crown top
 		mark[i] = 1 if hat_vert else 0
 	var body_idx := PackedInt32Array()
 	var hat_idx := PackedInt32Array()
@@ -370,10 +371,22 @@ func _split_baked_hat() -> void:
 		var ia := indices[t]
 		var ib := indices[t + 1]
 		var ic := indices[t + 2]
-		if mark[ia] and mark[ib] and mark[ic]:
+		var hat_n := int(mark[ia]) + int(mark[ib]) + int(mark[ic])
+		# Majority-hat → detachable hat. Rear-brim leftovers (any marked vert, behind ears)
+		# are deleted from the body so no straw crescent stays on the scalp.
+		var rear_leftover := false
+		if hat_n >= 1:
+			for ii in [ia, ib, ic]:
+				var loc2: Vector3 = head_inv * verts[ii]
+				if loc2.y > 0.08 and Vector2(loc2.x, loc2.z).length() > 0.08 and loc2.z < 0.02:
+					rear_leftover = true
+					break
+		if hat_n >= 2:
 			hat_idx.append(ia)
 			hat_idx.append(ib)
 			hat_idx.append(ic)
+		elif rear_leftover:
+			pass  # drop from body — don't keep a brim shard on the head
 		else:
 			body_idx.append(ia)
 			body_idx.append(ib)
@@ -432,27 +445,58 @@ func _split_baked_hat() -> void:
 	_scalp_cover = MeshInstance3D.new()
 	_scalp_cover.name = "ScalpCover"
 	var sm := SphereMesh.new()
-	sm.radius = 0.09
-	sm.height = 0.11
+	# Small crown cap only — a large sphere bled through the forehead as a beige smear.
+	sm.radius = 0.075
+	sm.height = 0.09
 	sm.radial_segments = 12
 	sm.rings = 6
 	_scalp_cover.mesh = sm
 	var scalp_mat := StandardMaterial3D.new()
-	scalp_mat.albedo_color = Color(0.92, 0.72, 0.55)
-	scalp_mat.roughness = 0.85
+	scalp_mat.albedo_color = Color(0.45, 0.28, 0.18)  # hair-brown, not skin
+	scalp_mat.roughness = 0.9
 	_scalp_cover.material_override = scalp_mat
-	_scalp_cover.position = Vector3(0.0, 0.07, 0.0)
+	_scalp_cover.position = Vector3(0.0, 0.125, 0.0)
+	# Hidden by default — a visible scalp sphere reads as a straw remnant on the head.
 	_scalp_cover.visible = false
 	_hat_attach.add_child(_scalp_cover)
 
 
-## Detached chest/belly local pose — rests ON the torso, follows Spine2 breath.
+## Hat mesh verts sit near bind-pose head height (AABB centre ~+0.86 local Y). Place the
+## VISUAL centre, not the node origin, on the target — otherwise the brim floats a metre away.
+func _hat_mesh_center_local() -> Vector3:
+	if hat == null or hat.mesh == null:
+		return Vector3(0.0, 0.86, 0.0)
+	return hat.mesh.get_aabb().get_center()
+
+
+## Detached chest/face pose in ChestAttach-local space. Uses the live face normal so the
+## brim rests ON the sternum / over the face — Mixamo Spine2 +Z is lateral when supine.
 func _hat_chest_local(face_tip: bool) -> Transform3D:
-	if face_tip:
-		# Brim toward the face, crown on the sternum (never through fabric/backrest).
-		return Transform3D(Basis.from_euler(Vector3(0.35, 0.2, 0.1)), Vector3(0.0, 0.06, 0.14))
-	# Flat on the belly.
-	return Transform3D(Basis.from_euler(Vector3(1.15, 0.4, 0.25)), Vector3(0.0, 0.10, 0.12))
+	if _chest_attach == null or not is_instance_valid(_chest_attach):
+		return Transform3D(Basis.from_euler(Vector3(1.05, 0.0, 0.0)), Vector3(0.0, 0.02, 0.09))
+	var face: Vector3 = lie_face_normal()
+	if face.length_squared() < 1e-6:
+		face = Vector3.UP
+	face = face.normalized()
+	var along: Vector3 = lie_bone_world("mixamorig_Head") - lie_bone_world("mixamorig_Hips")
+	if along.length_squared() < 1e-6:
+		along = _chest_attach.global_transform.basis.y
+	along = along.normalized()
+	# Visual centre pressed onto the sternum/belly (toward the feet).
+	var want_center: Vector3 = lie_bone_world("mixamorig_Spine2") + face * (0.045 if face_tip else 0.04)
+	want_center -= along * (0.04 if face_tip else 0.06)
+	var hz := face
+	var hy := along - hz * along.dot(hz)
+	if hy.length_squared() < 1e-6:
+		hy = _chest_attach.global_transform.basis.y
+	hy = hy.normalized()
+	var hx := hy.cross(hz).normalized()
+	hy = hz.cross(hx).normalized()
+	var tip := 0.55 if face_tip else 0.25
+	var world_b := Basis(hx, hy, hz) * Basis.from_euler(Vector3(tip, 0.0, 0.0))
+	# origin so that origin + basis * mesh_center = want_center
+	var world_origin: Vector3 = want_center - world_b * _hat_mesh_center_local()
+	return _chest_attach.global_transform.affine_inverse() * Transform3D(world_b, world_origin)
 
 
 func _hat_beside_xf(beside_world: Vector3) -> Transform3D:
@@ -460,8 +504,15 @@ func _hat_beside_xf(beside_world: Vector3) -> Transform3D:
 	if p == Vector3.ZERO:
 		p = hat_beside_world
 	if p == Vector3.ZERO:
-		p = global_position + Vector3(0.45, 0.04, 0.12)
-	return Transform3D(Basis.from_euler(Vector3(0.15, 0.9, 0.4)), p)
+		p = global_position + Vector3(0.55, 0.03, 0.15)
+	# Nearly flat on the sand — crown slightly tipped.
+	var b := Basis.from_euler(Vector3(0.02, 1.1, 0.05))
+	# Pin the VISUAL centre to the sand (mesh centre is ~0.86 above the node origin).
+	var ground_y: float = Island.ground_h(p.x, p.z) + 0.02
+	var center_local: Vector3 = _hat_mesh_center_local()
+	var origin := p
+	origin.y = ground_y - (b * center_local).y
+	return Transform3D(b, origin)
 
 
 ## Snap hat to a named seat (no blend). Prefer sync_hat_lie for sit↔lie.
@@ -471,7 +522,8 @@ func set_hat_mode(mode: String, beside_world: Vector3 = Vector3.ZERO) -> void:
 	hat_mode = mode
 	hat.visible = true
 	if _scalp_cover:
-		_scalp_cover.visible = mode != "head"
+		# Keep scalp cover off — it looked like a floating hat fragment on the head.
+		_scalp_cover.visible = false
 	if mode == "head":
 		if hat.get_parent() != _hat_attach:
 			if hat.get_parent():
@@ -486,14 +538,23 @@ func set_hat_mode(mode: String, beside_world: Vector3 = Vector3.ZERO) -> void:
 				hat.get_parent().remove_child(hat)
 			_chest_attach.add_child(hat)
 		hat.transform = _hat_chest_local(mode == "face")
+		# Slightly smaller on the chest so it doesn't swallow the frame.
+		hat.scale = Vector3.ONE * 0.82
 		_hat_blend = 1.0
 	elif mode == "beside":
-		if hat.get_parent() != self:
+		# Parent to the scene root so the hat stays on the sand when the boy moves.
+		var root: Node = get_tree().current_scene if get_tree() else self
+		if root == null:
+			root = self
+		if hat.get_parent() != root:
 			if hat.get_parent():
 				hat.get_parent().remove_child(hat)
-			add_child(hat)
+			root.add_child(hat)
 		hat.global_transform = _hat_beside_xf(beside_world)
+		hat.scale = Vector3.ONE
 		_hat_blend = 1.0
+	if mode == "head":
+		hat.scale = Vector3.ONE
 
 
 ## Blend hat on/off the head over the sit↔lie window (same 0.6 s as LIE_BLEND_DUR).
@@ -505,7 +566,7 @@ func sync_hat_lie(kind: String, lie_k: float) -> void:
 	_hat_blend = b
 	hat.visible = true
 	if _scalp_cover:
-		_scalp_cover.visible = b > 0.25
+		_scalp_cover.visible = false
 	if b <= 0.001:
 		set_hat_mode("head")
 		return
@@ -795,6 +856,9 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	if full_lie:
 		_seed_lie_from_sit()
 		_apply_lie_pose(kind, lie_k, tt)
+		# Seek clears pose overrides — keep thighs planted on the lounger cushion.
+		if lie_foot_plant and kind == "sun":
+			plant_feet_on_plane(lie_foot_plane_point, lie_foot_plane_normal, lie_foot_plant_gap, true)
 		# Real kids take the hat off when lying — blend over the same sit↔lie window.
 		sync_hat_lie(kind, lie_k)
 	else:
@@ -877,23 +941,23 @@ func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
 	skel.force_update_transform()
 
 
-## Lounger: hips on the seat, spine curves onto the ~45° pad, head on the cushion.
+## Lounger: hips in the crease, back flat on the ~40° pad, head resting on it — not hunched.
 func _apply_lounger_pose(w: float, breath: float) -> void:
-	# Hip crease bend; mild hollow so shoulders/head rest on the pad while the butt sits.
-	_pose_abs("mixamorig_Hips", Vector3(0.48, 0.0, 0.0), w * 0.7)
-	_pose_abs("mixamorig_Spine", Vector3(-0.08 + breath * 0.08, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(-0.10 + breath * 0.1, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(-0.04 + breath * 0.08, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Neck", Vector3(-0.05, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.03 + breath * 0.03, 0.0, 0.0), w)
-	# Thighs onto the deep foam seat; feet clear of the armrests.
-	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.38, 0.05, 0.06), w * 0.7)
-	_pose_add("mixamorig_RightUpLeg", Vector3(-0.38, -0.05, -0.06), w * 0.7)
-	_pose_add("mixamorig_LeftLeg", Vector3(0.22, 0.0, 0.0), w * 0.5)
-	_pose_add("mixamorig_RightLeg", Vector3(0.22, 0.0, 0.0), w * 0.5)
-	_pose_add("mixamorig_LeftFoot", Vector3(0.05, 0.0, 0.06), w * 0.45)
-	_pose_add("mixamorig_RightFoot", Vector3(0.05, 0.0, -0.06), w * 0.45)
-	# Hands on the belly (sky side) — euler alone puts them through the pad when reclined.
+	# Root basis follows the ~40° backrest. Do NOT pitch Hips — that tilts the whole
+	# torso off the pad (#45 upright hunch). Bend UpLegs instead so thighs lie on the seat.
+	_pose_abs("mixamorig_Hips", Vector3(0.0, 0.0, 0.0), w * 0.5)
+	_pose_abs("mixamorig_Spine", Vector3(-0.02 + breath * 0.04, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(-0.02 + breath * 0.05, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(-0.01 + breath * 0.03, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Neck", Vector3(0.0, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(0.0 + breath * 0.02, 0.0, 0.0), w)
+	# ~40° crease: thighs along the seat toward the foot end (keeps Mixamo UpLeg π twist).
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.75, 0.06, 0.10), w)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-0.75, -0.06, -0.10), w)
+	_pose_add("mixamorig_LeftLeg", Vector3(0.22, 0.0, 0.0), w * 0.7)
+	_pose_add("mixamorig_RightLeg", Vector3(0.22, 0.0, 0.0), w * 0.7)
+	_pose_add("mixamorig_LeftFoot", Vector3(0.05, 0.0, 0.16), w * 0.55)
+	_pose_add("mixamorig_RightFoot", Vector3(0.05, 0.0, -0.16), w * 0.55)
 	_rest_hands_on_belly(w)
 
 ## Hammock: curl into the occupied cradle. Hat is detached (on face/chest) — head rests on fabric.
@@ -942,7 +1006,7 @@ func plant_feet_on_plane(plane_point: Vector3, plane_normal: Vector3, gap := 0.0
 	if skel == null:
 		return
 	plane_normal = plane_normal.normalized()
-	# Feet + knees only. Overriding UpLeg stretches Tripo thigh skin through the pad.
+	# Feet + knees only. UpLeg overrides stretch Tripo thigh skin through the cushion.
 	var bones: Array[String] = [B_FOOT[0], B_FOOT[1]]
 	if include_knees:
 		bones.append_array(["mixamorig_LeftLeg", "mixamorig_RightLeg"])
@@ -952,7 +1016,7 @@ func plant_feet_on_plane(plane_point: Vector3, plane_normal: Vector3, gap := 0.0
 			continue
 		var xf: Transform3D = skel.global_transform * skel.get_bone_global_pose(bi)
 		var g := (xf.origin - plane_point).dot(plane_normal)
-		# Only lift out of the pad — never pull a floating limb down through cloth.
+		# Only lift out of the pad.
 		if g >= gap:
 			continue
 		var planted := Transform3D(xf.basis, xf.origin - plane_normal * (g - gap))
@@ -1304,6 +1368,9 @@ func _tick(delta: float) -> void:
 	if anim == "activity" and act_lie_k > 0.45 and act_kind in ["sun", "sleep", "seatlie"]:
 		_seed_lie_from_sit()
 		_apply_lie_pose(act_kind, act_lie_k, act_tt)
+		# Idle seek clears global pose overrides — re-plant so thighs stay ON the cushion.
+		if lie_foot_plant and act_kind == "sun":
+			plant_feet_on_plane(lie_foot_plane_point, lie_foot_plane_normal, lie_foot_plant_gap, true)
 	else:
 		if ap and not ap.active:
 			ap.active = true
