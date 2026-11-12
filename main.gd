@@ -1345,8 +1345,9 @@ func _setup_lounger_rest() -> void:
 	var head_s := 0.82
 	var foot_s := 0.10
 	var seat_h: Dictionary = island.lounger_seat_point(seat_hip_u)
-	var back_h: Dictionary = island.lounger_back_point(0.80)
-	var back_mid: Dictionary = island.lounger_back_point(0.42)
+	# Head target mid-pad (reachable); long pad still supports the skull there.
+	var back_h: Dictionary = island.lounger_back_point(0.62)
+	var back_mid: Dictionary = island.lounger_back_point(0.38)
 	var seat_along: Vector3 = (seat_h["along"] as Vector3).normalized()
 	var seat_n: Vector3 = (seat_h["normal"] as Vector3).normalized()
 	var back_n: Vector3 = (back_mid["normal"] as Vector3).normalized()
@@ -1490,39 +1491,35 @@ func _snap_lie_contact() -> void:
 	# Lounger: re-anchor hips to the crease every pass, then tiny mesh clears only.
 	var seat_u: float = float(get_meta("lie_seat_hip_u", 0.96))
 	var hip_s: Dictionary = island.lounger_seat_point(seat_u)
-	var mid_b: Dictionary = island.lounger_back_point(0.40)
-	var head_b: Dictionary = island.lounger_back_point(0.72)
+	var mid_b: Dictionary = island.lounger_back_point(0.38)
+	var head_b: Dictionary = island.lounger_back_point(0.62)
 	var back_n: Vector3 = (mid_b["normal"] as Vector3).normalized()
 	var head_n: Vector3 = (head_b["normal"] as Vector3).normalized()
 	var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
 	var seat_along: Vector3 = (hip_s["along"] as Vector3).normalized()  # toward hinge
 	var crease: Vector3 = (hip_s["pos"] as Vector3) + seat_n * 0.09
-	# Clear deep torso digs, then settle until bone contact ≤2 cm with thick shell.
-	var back_only := lie_backrest_penetration_depth()
-	var seat_only := lie_seat_penetration_depth()
+	# Mesh-near-bone contact: head/spine onto the pad, hips on the seat.
+	var g_s2 := _mesh_gap_near(boy.lie_bone_world("mixamorig_Spine2"), mid_b["pos"], back_n, 0.16)
+	var g_head := _mesh_gap_near(boy.lie_bone_world("mixamorig_Head"), head_b["pos"], head_n, 0.18)
+	var g_hip := _mesh_gap_near(boy.lie_bone_world("mixamorig_Hips"), hip_s["pos"], seat_n, 0.18)
 	var mesh_torso := lie_mesh_penetration_depth(false)
-	var s2_pt: Vector3 = boy.lie_bone_world("mixamorig_Spine2") - back_n * 0.26
-	var head_pt: Vector3 = boy.lie_bone_world("mixamorig_Head") - head_n * 0.22
-	var g_s2 := _signed_gap(s2_pt, mid_b["pos"], back_n)
-	var g_head := _signed_gap(head_pt, head_b["pos"], head_n)
-	var hip_now: Vector3 = boy.lie_bone_world("mixamorig_Hips")
-	var g_hip := _signed_gap(hip_now + into_bed * 0.08, hip_s["pos"], seat_n)
-	if back_only < -0.02 or mesh_torso < -0.02:
-		var dig := minf(back_only, mesh_torso)
-		rest_lie += back_n * minf(-dig - 0.002, 0.045)
-	elif seat_only < -0.015:
-		rest_lie += seat_n * minf(-seat_only - 0.002, 0.03)
-	elif g_s2 > 0.02 or g_head > 0.02:
-		# Sink onto the pad; light mesh kisses are fine with the thick shell.
-		var sink := maxf(g_s2, g_head) - 0.008
-		if mesh_torso < -0.012:
-			sink *= 0.35
-		rest_lie -= back_n * minf(sink, 0.04)
-		rest_lie += seat_along * minf(sink * 0.4, 0.02)
-	elif g_hip > 0.03:
-		rest_lie -= seat_n * minf(g_hip - 0.015, 0.03)
-	elif g_hip < -0.01:
-		rest_lie += seat_n * minf(-g_hip, 0.025)
+	# Blend head-on-pad with dig clearance so we converge instead of oscillating.
+	var move := Vector3.ZERO
+	if g_head > 0.015:
+		move -= head_n * minf(g_head - 0.006, 0.035)
+		move += seat_along * minf((g_head - 0.006) * 0.35, 0.02)
+	if mesh_torso < -0.012 or g_s2 < -0.012:
+		var dig := minf(mesh_torso, g_s2)
+		move += back_n * minf(-dig - 0.002, 0.03)
+	if g_hip < -0.012:
+		move += seat_n * minf(-g_hip - 0.002, 0.025)
+	elif g_hip > 0.025 and g_head <= 0.03:
+		move -= seat_n * minf(g_hip - 0.01, 0.025)
+	if g_s2 > 0.02 and g_head <= 0.025:
+		move -= back_n * minf(g_s2 - 0.008, 0.02)
+	if move.length() > 0.06:
+		move = move.normalized() * 0.06
+	rest_lie += move
 
 
 func _signed_gap(point: Vector3, surface: Vector3, normal: Vector3) -> float:
@@ -1559,20 +1556,35 @@ func lie_contact_gaps() -> Dictionary:
 		var seat_u: float = float(get_meta("lie_seat_hip_u", 0.96))
 		var hip_s: Dictionary = island.lounger_seat_point(seat_u)
 		var foot_s: Dictionary = island.lounger_seat_point(float(get_meta("lie_foot_plane_u", 0.10)))
-		var head_s: Dictionary = island.lounger_back_point(0.70)
-		var mid_s: Dictionary = island.lounger_back_point(0.40)
+		var head_s: Dictionary = island.lounger_back_point(0.62)
+		var mid_s: Dictionary = island.lounger_back_point(0.38)
 		var back_n: Vector3 = (mid_s["normal"] as Vector3).normalized()
 		var head_n: Vector3 = (head_s["normal"] as Vector3).normalized()
 		var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
-		# Tripo torso/skull thickness along the pad normal (mesh-kiss ≈ gap 0).
-		var s2_pt: Vector3 = boy.lie_bone_world("mixamorig_Spine2") - back_n * 0.26
-		var head_pt: Vector3 = boy.lie_bone_world("mixamorig_Head") - head_n * 0.22
-		out["hips"] = _signed_gap(pts["hips"], hip_s["pos"], seat_n)
-		out["spine"] = _signed_gap(s2_pt, mid_s["pos"], back_n)
-		out["head"] = _signed_gap(head_pt, head_s["pos"], head_n)
+		# Mesh-near-bone gaps: contact ≤2 cm means the skin kisses the pad, not a bone capsule.
+		out["hips"] = _mesh_gap_near(boy.lie_bone_world("mixamorig_Hips"), hip_s["pos"], seat_n, 0.18)
+		out["spine"] = _mesh_gap_near(boy.lie_bone_world("mixamorig_Spine2"), mid_s["pos"], back_n, 0.16)
+		out["head"] = _mesh_gap_near(boy.lie_bone_world("mixamorig_Head"), head_s["pos"], head_n, 0.18)
 		out["foot_l"] = _signed_gap(pts["foot_l"], foot_s["pos"], seat_n)
 		out["foot_r"] = _signed_gap(pts["foot_r"], foot_s["pos"], seat_n)
 	return out
+
+
+## Closest skinned sample near a bone, signed along the support normal (sky-side positive).
+func _mesh_gap_near(bone_pos: Vector3, surface: Vector3, normal: Vector3, radius: float) -> float:
+	var samples: Array[Vector3] = boy.skinned_sample_world(500)
+	normal = normal.normalized()
+	var best := 1e9
+	var hit := false
+	for s in samples:
+		if s.distance_to(bone_pos) > radius:
+			continue
+		hit = true
+		best = minf(best, _signed_gap(s, surface, normal))
+	if not hit:
+		# Fallback: bone with a small shell.
+		return _signed_gap(bone_pos - normal * 0.08, surface, normal)
+	return best
 
 
 ## After a lounger hips-pitch, plant heels on the seat plane so they don't punch through.

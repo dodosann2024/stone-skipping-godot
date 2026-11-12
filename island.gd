@@ -35,7 +35,7 @@ var lounger_xf := Transform3D.IDENTITY
 var lounger_seat_half := Vector3(0.32, 0.035, 0.55)  # half-extents of the seat cushion
 var lounger_back_half := Vector3(0.32, 0.04, 0.58)   # long backrest: full torso + head
 var lounger_seat_tilt := 0.08                        # rad about local +X (slight foot-down)
-var lounger_back_tilt := 0.79                         # ~45° chaise: head rises away from seat
+var lounger_back_tilt := 0.70                         # ~40° chaise: head rises away from seat
 var lounger_seat_local := Vector3(0, 0.34, 0.08)      # seat centre in lounger_xf
 # Hinge at the seat rear (−local Z); +tilt raises the −Z (head) end.
 var lounger_back_local := Vector3(0, 0.78, -0.72)
@@ -1503,7 +1503,7 @@ func _build_beach_life() -> void:
 	var cxf = Transform3D(Basis(Vector3.UP, tyaw), cp)
 	lounger_xf = cxf
 	lounger_seat_tilt = 0.08
-	lounger_back_tilt = 0.79  # ~45°; head rises away from the seat (−local Z)
+	lounger_back_tilt = 0.70  # ~40°; head rises away from the seat (−local Z)
 	lounger_seat_local = Vector3(0, 0.34, 0.08)
 	# Hinge at the seat rear; long pad supports spine + head.
 	lounger_back_local = Vector3(0, 0.78, -0.72)
