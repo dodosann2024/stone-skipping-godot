@@ -73,7 +73,7 @@ const HAT_LIE := {"": [0.0, 0.16, 0.5, 0.72, 0.92], "seatlie": [0.3, 0.55, 0.9, 
 const HAT_LIFT := 0.07   # the hat's arc away from his face (skeleton m)
 const HAT_TIP := {"sleep": -0.6, "seatlie": -0.55}   # rad, left side of the brim up over his face
 # hat-local shift over his face: getting up from the towel his left thumb sweeps past the crown
-const HAT_SHIFT := {"sun": Vector3(-0.032, 0.0, 0.0)}
+const HAT_SHIFT := {"sun": Vector3(-0.045, 0.0, 0.0)}
 var hat_tip := 0.0
 var hat_shift := Vector3.ZERO
 
@@ -279,7 +279,7 @@ func _cloth_mat(col: Color, p: Dictionary) -> ShaderMaterial:
 func _setup_materials() -> void:
 	# albedo per Blender material name; kinds: 0 skin, 1 cloth, 2 hair, 3 straw, 4 props
 	var look := {
-		"skin": [Color(1.0, 0.82, 0.64), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
+		"skin": [Color(1.0, 0.76, 0.55), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
 		"vest": [Color(0.80, 0.27, 0.22), 1], "shorts": [Color(0.96, 0.80, 0.36), 1],
 		"hair": [Color(0.30, 0.20, 0.14), 2], "sandal": [Color(0.36, 0.60, 0.64), 1],
 		"strap": [Color(0.95, 0.93, 0.88), 1], "hat": [Color(0.92, 0.80, 0.55), 3],
@@ -312,6 +312,11 @@ func _setup_materials() -> void:
 				mi.set_surface_override_material(i, em)
 				continue
 			if not look.has(n):
+				continue
+			if n == "hair" and String(mi.name) == "BoyHead":
+				# cartoon helmet: flat warm mass (lock shader's strand lighting reads as a waffle grid)
+				var hm := _mat(Color(0.58, 0.40, 0.24), 1)
+				mi.set_surface_override_material(i, hm)
 				continue
 			var m := _mat(look[n][0], look[n][1])
 			made[n] = m
@@ -675,7 +680,9 @@ func _update_cloth(delta: float) -> void:
 	for i in 2:
 		var arm := skel.get_bone_global_pose(skel.find_bone(["upperarm_l", "upperarm_r"][i])).basis.y.normalized()
 		pit[i] = smoothstep(deg_to_rad(50.0), deg_to_rad(110.0), arm.angle_to(-up))
-	var inv := hair_mi.global_transform.basis.inverse()
+	# cloth sway is expressed in the boy's mesh space; prefer hair / head / skeleton as the frame
+	var frame: Node3D = hair_mi if hair_mi else (head_mi if head_mi else skel)
+	var inv := frame.global_transform.basis.inverse()
 	for m in cloth_mats:
 		m.set_shader_parameter("pit", pit)
 		m.set_shader_parameter("sway", inv * cloth_off)
@@ -1454,7 +1461,7 @@ func _setup_hat_seats() -> void:
 	# crown, the chin / forehead / cheeks outside it are all lower (head-frame z <= 0.093)
 	var hr := skel.get_bone_global_rest(head_bone)
 	var fb := _frame_rot(up, fwd, hr.basis.z, -hr.basis.y)
-	hat_face_xf = hr.affine_inverse() * Transform3D(fb, hr * Vector3(0, 0.03, 0.10) - fb * hat_band_c)
+	hat_face_xf = hr.affine_inverse() * Transform3D(fb, hr * Vector3(0, 0.04, 0.12) - fb * hat_band_c)
 	for sd: String in ["l", "r"]:
 		# the grip: the brim by his temple (the front of it is out of reach of a hand on the head), fingers
 		# in over the top of it, palm down on it, the wrist just outside the edge
@@ -1464,7 +1471,13 @@ func _setup_hat_seats() -> void:
 			if (v - hat_band_c).dot(d) > (edge - hat_band_c).dot(d):
 				edge = v
 		var f := (-d - up * 0.35).normalized()
-		hat_grip[sd] = [edge - f * 0.065 + up * 0.022, f, -up]
+		# keep the grip inside a reachable radius from the band centre (larger chibi brims otherwise
+		# leave the knuckles several cm short during hammock / sun lie transitions)
+		var from_c := edge - hat_band_c
+		var max_r := 0.105
+		if from_c.length() > max_r:
+			edge = hat_band_c + from_c.normalized() * max_r
+		hat_grip[sd] = [edge - f * 0.05 + up * 0.02, f, -up]
 		var names := ["clavicle_", "upperarm_", "lowerarm_", "hand_", "deltoid_"].map(func(n: String) -> int: return skel.find_bone(n + sd))
 		arm_bones[sd] = names
 		var hr2 := skel.get_bone_global_rest(names[3])
@@ -1584,7 +1597,7 @@ func hat_grip_gap() -> float:
 
 # expression -> morph weights (MakeHuman expression units baked in Blender, see art/boy/face.py)
 const EXPR := {
-	"smile": {"smile": 0.5, "open": 0.0, "blink": 0.02},
+	"smile": {"smile": 0.65, "open": 0.0, "blink": 0.02},
 	"laugh": {"smile": 1.0, "open": 0.42, "squint": 0.55, "brow_up": 0.35},
 	"run": {"smile": 0.75, "open": 0.14, "squint": 0.2},
 	"oops": {"brow_in": 0.9, "frown": 0.3, "open": 0.2, "brow_up": 0.25},

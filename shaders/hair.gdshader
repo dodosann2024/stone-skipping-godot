@@ -10,9 +10,9 @@ render_mode cull_back;
 // Per vertex: COLOR.r baked AO, COLOR.b under the hat crown; UV2.x sway weight (0 root .. 1 tip, 0 on the
 // mass), 1 - UV2.y = 1 on the mass.
 
-uniform vec3 root_col : source_color = vec3(0.42, 0.28, 0.15);
-uniform vec3 mid_col : source_color = vec3(0.60, 0.40, 0.22);
-uniform vec3 tip_col : source_color = vec3(0.72, 0.52, 0.32);
+uniform vec3 root_col : source_color = vec3(0.45, 0.30, 0.16);
+uniform vec3 mid_col : source_color = vec3(0.62, 0.42, 0.24);
+uniform vec3 tip_col : source_color = vec3(0.74, 0.54, 0.34);
 uniform float ao_strength = 0.6;
 uniform float fill_sky = 0.13;
 uniform float fill_bounce = 0.2;

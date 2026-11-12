@@ -10,6 +10,7 @@ import shoulder
 import hair as hairkit
 import fabric
 import face
+import cartoon_head
 from bl_ext.user_default.mpfb.services.humanservice import HumanService
 from bl_ext.user_default.mpfb.services.targetservice import TargetService
 
@@ -19,7 +20,7 @@ HEAD_SCALE = 1.38
 
 # albedo (linear-ish sRGB values; Godot overrides the materials but keeps these as the base colors)
 COLORS = {
-    "skin": (0.93, 0.74, 0.60),
+    "skin": (1.0, 0.78, 0.58),
     "tank": (0.95, 0.94, 0.90),
     "vest": (0.80, 0.22, 0.18),
     "shorts": (0.97, 0.80, 0.30),
@@ -65,9 +66,8 @@ def make_body():
     macro.update({"gender": 1.0, "age": 0.24, "muscle": 0.45, "weight": 0.36, "proportions": 0.7, "height": 0.5})
     macro["race"] = {"asian": 0.5, "caucasian": 0.4, "african": 0.1}
     base = HumanService.create_human(macro_detail_dict=macro, scale=0.1)
+    # cartoon head replaces the MH face; keep a light child head so the neck stump matches a kid
     face.child_head(base, macro)
-    face.shape(base)
-    face.cute(base)
     rig = HumanService.add_builtin_rig(base, "game_engine")
     px = HumanService.add_mhclo_asset(DATA + "proxymeshes/male1591/male1591.proxy", base, asset_type="Proxymeshes", subdiv_levels=0)
     eyes = HumanService.add_mhclo_asset(DATA + "eyes/low-poly/low-poly.mhclo", base, asset_type="Eyes", subdiv_levels=0)
@@ -381,7 +381,7 @@ def arm_weights(body):
     return arm
 
 
-def build(rig, body, arm):
+def build(rig, body, arm, cartoon=None):
     J = {b.name: Vector(b.head_local) for b in rig.data.bones}
     neck_z = J["neck_01"].z
     sh_x = J["upperarm_l"].x
@@ -476,33 +476,6 @@ def build(rig, body, arm):
                    cloth=fabric.shorts(J, B, hem_z, hip_z + 0.095))
     fabric.drawstring(rig, body, shorts, hip_z + 0.095, material("cord"), _tube)
 
-    # ---- the v16 hair volume: only sizes the hat now (hair.py grows the hair cards under it)
-    head_top = max(v.co.z for v in body.data.vertices)
-    hc = J["head"]
-
-    def hair_sel(f):
-        c = fc(f)
-        if c.z < hc.z + 0.03:
-            return False
-        if c.y < hc.y - 0.02 and c.z < head_top - 0.075:      # face
-            return False
-        if abs(c.x) > 0.055 and c.z < hc.z + 0.085 and c.y < hc.y + 0.02:  # ears / temples
-            return False
-        return True
-
-    rnd = random.Random(5)
-    noise = {}
-
-    def hair_off(co, n):
-        key = (round(co.x, 3), round(co.y, 3), round(co.z, 3))
-        if key not in noise:
-            noise[key] = rnd.random()
-        k = noise[key]
-        up = max(0.0, co.z - (hc.z + 0.05)) / 0.12
-        return 0.009 + 0.004 * up + 0.005 * k
-
-    envelope = shell(body, "HairEnvelope", hair_sel, hair_off, "hair", solid=0.006)
-
     # remove body faces hidden under the tank top / shorts (keeps the tri count down, no poke-through)
     bm = bmesh.new()
     bm.from_mesh(body.data)
@@ -520,12 +493,14 @@ def build(rig, body, arm):
     bm.free()
 
     sandals(rig, body)
-    hat_info = hat(rig, body, envelope, head_top)
-    bpy.data.objects.remove(envelope)
-    hair = hairkit.build(rig, body, hat_info, material("hair"))
+    # hat seats on the cartoon skull — use the whole BoyHead (skin+hair) as the volume proxy
+    head = bpy.data.objects["BoyHead"]
+    head_top = cartoon["head_top"] if cartoon else max(v.co.z for v in head.data.vertices)
+    hat_info = hat(rig, body, head, head_top, cartoon=cartoon)
+    # hair already lives on BoyHead — no separate hairkit mesh
     glasses(rig, body)
     stone(rig)
-    return [tank, vest, shorts, hair]
+    return [tank, vest, shorts]
 
 
 def sandals(rig, body):
@@ -629,20 +604,43 @@ def _rigid_foot(o, rig, side):
     mod.object = rig
 
 
-def hat(rig, body, hair, head_top):
+def hat(rig, body, hair, head_top, cartoon=None):
     """woven straw hat: lathed crown + wide, slightly drooping brim, red band. Rigid on the head bone."""
     # the v16 hat (band round the loose hair volume) only sets the brim's outer size now
     base0 = head_top - 0.062
-    hv = [v.co for v in hair.data.vertices]
-    ring0 = [p for p in hv if base0 - 0.01 < p.z < base0 + 0.04] + [v.co for v in body.data.vertices if abs(v.co.z - base0) < 0.01]
-    rx0 = max(abs(p.x) for p in ring0) + 0.004
-    ry0 = (max(p.y for p in ring0) - min(p.y for p in ring0)) * 0.5 + 0.004
-    # worn, not perched: the band goes round the skull (plus the hair it presses flat) through the forehead
-    # ~4.5 cm below the top of the head, above the ears and round the back of the head, tipped back 15 deg
-    # with a modest brim, so his eyes show under it from the game camera
-    HAIR, TILT, FRONT = 0.009, 16.0, 0.05
-    hc = rig.data.bones["head"].head_local
-    skull = [v.co.copy() for v in body.data.vertices if v.co.z > hc.z + 0.05]
+    if cartoon:
+        R0 = float(cartoon["R"]) * 0.88
+        rx0, ry0 = R0 + 0.008, R0 * 1.02 + 0.008
+    else:
+        hv = [v.co for v in hair.data.vertices]
+        ring0 = [p for p in hv if base0 - 0.01 < p.z < base0 + 0.04] or list(hv)
+        rx0 = max(abs(p.x) for p in ring0) + 0.004
+        ry0 = (max(p.y for p in ring0) - min(p.y for p in ring0)) * 0.5 + 0.004
+    # worn, not perched: the band goes round the cartoon skull / hair volume
+    HAIR, TILT, FRONT = 0.008, 20.0, 0.07
+    hc = Vector(rig.data.bones["head"].head_local)
+    if cartoon:
+        # synthetic smooth skull for a stable kid-sized hat (mesh ears/bangs must not drive the band).
+        # Cap band radius near the pre-chibi size so the brim stays reachable for hat IK.
+        C, R = Vector(cartoon["C"]), float(cartoon["R"]) * 0.88
+        skull = []
+        for i in range(48):
+            for j in range(24):
+                th = 2 * math.pi * i / 48
+                ph = math.pi * j / 24
+                # upper 70% of a sphere
+                if math.cos(ph) < -0.2:
+                    continue
+                skull.append(C + Vector((math.sin(ph) * math.cos(th) * R,
+                                         math.sin(ph) * math.sin(th) * R * 0.95,
+                                         math.cos(ph) * R)))
+        head_top = C.z + R + 0.01
+    else:
+        hair_mi = {i for i, m in enumerate(hair.data.materials) if m and m.name == "hair"}
+        skin_v = {vi for p in hair.data.polygons if p.material_index not in hair_mi for vi in p.vertices}
+        skull = [hair.data.vertices[i].co.copy() for i in skin_v if hair.data.vertices[i].co.z > hc.z + 0.03]
+        if len(skull) < 20:
+            skull = [v.co.copy() for v in hair.data.vertices if v.co.z > hc.z + 0.03]
     tilt = Matrix.Rotation(math.radians(-TILT), 4, "X")
     inv = tilt.inverted()
     piv = Vector((0.0, -0.01, head_top - 0.07))
@@ -650,6 +648,10 @@ def hat(rig, body, hair, head_top):
         loc = [inv @ (p - piv) + piv for p in skull]
         base_z = piv.z
         ring = [p for p in loc if base_z - 0.004 < p.z < base_z + 0.012]
+        if not ring:
+            ring = [p for p in loc if base_z - 0.02 < p.z < base_z + 0.03]
+        if not ring:
+            ring = list(loc)
         rx = max(abs(p.x) for p in ring) + HAIR
         cy = (max(p.y for p in ring) + min(p.y for p in ring)) * 0.5
         ry = (max(p.y for p in ring) - min(p.y for p in ring)) * 0.5 + HAIR
@@ -730,12 +732,26 @@ def _bone_child(ob, rig, bone):
 def glasses(rig, body):
     """round sunglasses (shown while sunbathing)"""
     bm = bmesh.new()
-    ec = face.eye_centres(bpy.data.objects["Eyes"])
+    # cartoon Eyes: centres from body["eyes_uv"] + head joint, or fall back to mesh bbox
+    hz = rig.data.bones["head"].head_local.z
+    if "eyes_uv" in body:
+        uv = list(body["eyes_uv"])
+        ec = {1: Vector((uv[0][0], -0.12, hz + uv[0][1])), -1: Vector((uv[1][0], -0.12, hz + uv[1][1]))}
+        # refine Y from BoyHead front
+        head = bpy.data.objects.get("BoyHead")
+        if head:
+            for sx in (1, -1):
+                near = [v.co for v in head.data.vertices if abs(v.co.x - ec[sx].x) < 0.02 and abs(v.co.z - (hz + uv[0][1])) < 0.02]
+                if near:
+                    ec[sx] = Vector((ec[sx].x, min(p.y for p in near) + 0.01, ec[sx].z))
+    else:
+        ec = face.eye_centres(bpy.data.objects["Eyes"])
     eye_z = (ec[1].z + ec[-1].z) * 0.5
     fy = {}
+    head = bpy.data.objects.get("BoyHead") or body
     for sx in (1, -1):
-        near = [v.co for v in body.data.vertices if abs(v.co.x - ec[sx].x) < 0.012 and abs(v.co.z - eye_z) < 0.012]
-        fy[sx] = min(p.y for p in near) - 0.006
+        near = [v.co for v in head.data.vertices if abs(v.co.x - ec[sx].x) < 0.02 and abs(v.co.z - eye_z) < 0.02]
+        fy[sx] = (min(p.y for p in near) - 0.006) if near else ec[sx].y - 0.02
     lens_r = 0.0135
     for sx in (1, -1):
         c = Vector((ec[sx].x + 0.0005 * sx, fy[sx], eye_z))
@@ -807,16 +823,19 @@ def face_uv2(rig, body):
 def main():
     clear()
     rig, body = make_body()
+    # body still needs a closed mouth slit for the MH mesh, but the visible head is replaced
     close_eyes(rig, body)
     scale_head(rig, body)
-    face_uv2(rig, body)
-    face.paint(body, rig, os.path.join(os.path.dirname(__file__), "../../textures/face_detail.png"))
-    _bone_child(bpy.data.objects["Eyes"], rig, "head")
+    # dedicated stylized head (cuts MH head, builds BoyHead + Eyes + face map)
+    face_path = os.path.join(os.path.dirname(__file__), "../../textures/face_detail.png")
+    chead, ceyes, cinfo = cartoon_head.install(
+        rig, body, material("skin"), material("eye"), material("hair"), face_path, HEAD_SCALE)
+    face.RECT = tuple(cinfo["face_rect"])
     arm = arm_weights(body)
     shoulder.sculpt(rig, body)
     shoulder.add_helpers(rig)
     shoulder.reweight(rig, body)
-    parts = build(rig, body, arm)
+    parts = build(rig, body, arm, cartoon=cinfo)
     print("TRIS", {o.name: sum(len(p.vertices) - 2 for p in o.data.polygons) for o in bpy.data.objects if o.type == "MESH"})
     save = arg("--save")
     if save:
