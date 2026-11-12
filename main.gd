@@ -2554,7 +2554,9 @@ func _update_throw_pad() -> void:
 
 func _explore_cam() -> Array:
 	var tall := _tall()
-	var t := player.global_position + Vector3(0, 0.55, 0)
+	# Tripo: aim a little higher so the baked face stays readable under the brim
+	var hy := 0.68 if boy.meta.get("tripo", false) else 0.55
+	var t := player.global_position + Vector3(0, hy, 0)
 	return [t, ex_yaw, ex_pitch, ex_dist * (1.1 if tall else 1.0)]
 
 func _rest_cam() -> Array:
@@ -2843,6 +2845,10 @@ func _run_sim_report() -> void:
 ## gait kinematics at the walking and running speeds (dev/walk_metrics.gd)
 func _walk_metrics_report() -> void:
 	if not ResourceLoader.exists("res://dev/walk_metrics.gd"):
+		return
+	# Tripo Mixamo bone names don't match the procedural game_engine profile walk_metrics expects
+	if boy.meta.get("tripo", false):
+		print("SIM gait metrics skipped — Tripo Mixamo (no game_engine bone map)")
 		return
 	for sp: Array in [["stroll", 0.55], ["walk 0.85", 0.85], ["walk", 1.15], ["run", 2.7]]:
 		var r: Array = load("res://dev/walk_metrics.gd").measure(self, float(sp[1]))
