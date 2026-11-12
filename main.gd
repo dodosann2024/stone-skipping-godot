@@ -90,8 +90,8 @@ var demo_cam := false
 var demo_nocut := false   # showcase stills of a prop: no see-through cut-out towards the boy
 var ex_yaw := 0.0
 # slightly telephoto follow camera, pitched down enough to see eyes + smile under the hat brim
-var ex_pitch := 0.30
-var ex_dist := 4.8
+var ex_pitch := 0.26
+var ex_dist := 4.5
 var last_drag := -10.0
 
 # explore

@@ -1,7 +1,7 @@
-"""Builds the v6 boy: MPFB2 (MakeHuman, CC0) teen body + game_engine skeleton, clothes / hair /
-flip-flops as offset shells of the body, a lathed straw hat on the head bone.
+"""Builds the v22 Concept A boy: soft Nintendo / Animal-Crossing stylized full character
+on a retargeted game_engine skeleton (same bone names as before for boy.gd / clips / hat IK).
 
-blender -b --python art/boy/build_boy.py -- [--render DIR] [--save FILE.blend]
+blender -b --python art/boy/build_boy.py -- [--render DIR] [--save FILE.blend] [--export DIR]
 """
 import bpy, bmesh, sys, os, math, random
 from mathutils import Vector, Matrix
@@ -11,28 +11,31 @@ import hair as hairkit
 import fabric
 import face
 import cartoon_head
+import stylized_body
 from bl_ext.user_default.mpfb.services.humanservice import HumanService
 from bl_ext.user_default.mpfb.services.targetservice import TargetService
 
 ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 DATA = os.path.expanduser("~/.config/blender/4.5/mpfb/data/")
-HEAD_SCALE = 1.38
+HEAD_SCALE = 1.0   # stylized head owns proportions; MH head scale unused
+STYLIZED = True
 
 # albedo (linear-ish sRGB values; Godot overrides the materials but keeps these as the base colors)
 COLORS = {
-    "skin": (1.0, 0.78, 0.58),
+    "skin": (1.0, 0.78, 0.60),
     "tank": (0.95, 0.94, 0.90),
-    "vest": (0.80, 0.22, 0.18),
-    "shorts": (0.97, 0.80, 0.30),
-    "hair": (0.24, 0.16, 0.11),
-    "sandal": (0.30, 0.55, 0.62),
-    "strap": (0.95, 0.93, 0.88),
+    "vest": (0.82, 0.18, 0.16),
+    "shorts": (0.97, 0.82, 0.32),
+    "hair": (0.28, 0.17, 0.11),
+    "sandal": (0.42, 0.28, 0.18),
+    "strap": (0.38, 0.24, 0.15),
     "hat": (0.90, 0.78, 0.52),
-    "band": (0.75, 0.20, 0.17),
+    "band": (0.78, 0.16, 0.14),
+    "gold": (0.92, 0.72, 0.22),
     "lens": (0.06, 0.07, 0.09),
     "stone": (0.52, 0.52, 0.50),
     "cord": (0.93, 0.91, 0.85),
-    "eye": (0.92, 0.90, 0.86),
+    "eye": (0.98, 0.97, 0.94),
     "mouth": (0.30, 0.10, 0.09),
 }
 
@@ -617,14 +620,13 @@ def hat(rig, body, hair, head_top, cartoon=None):
         rx0 = max(abs(p.x) for p in ring0) + 0.004
         ry0 = (max(p.y for p in ring0) - min(p.y for p in ring0)) * 0.5 + 0.004
     # worn, not perched: the band goes round the cartoon skull / hair volume
-    # tip the brim back further so eyes+smile read at the default game camera
-    HAIR, TILT, FRONT = 0.010, 30.0, 0.10
+    # tip the brim back so eyes+smile read at the default game camera (Concept A)
+    HAIR, TILT, FRONT = 0.006, 32.0, 0.12
     hc = Vector(rig.data.bones["head"].head_local)
     if cartoon:
         # synthetic smooth skull for a stable kid-sized hat (mesh ears/bangs must not drive the band).
-        # Cap band radius near the pre-chibi size so the brim stays reachable for hat IK.
-        C, R = Vector(cartoon["C"]), float(cartoon["R"]) * 0.90
-        # slightly longer front-back so a tipped band still gets a stable oval ring
+        # Nearly round band; keep radius small enough for hammock clearance + hat IK grip.
+        C, R = Vector(cartoon["C"]), float(cartoon["R"]) * 0.82
         skull = []
         for i in range(48):
             for j in range(24):
@@ -633,9 +635,9 @@ def hat(rig, body, hair, head_top, cartoon=None):
                 if math.cos(ph) < -0.15:
                     continue
                 skull.append(C + Vector((math.sin(ph) * math.cos(th) * R,
-                                         math.sin(ph) * math.sin(th) * R * 1.05,
-                                         math.cos(ph) * R * 0.98)))
-        head_top = C.z + R * 0.98 + 0.008
+                                         math.sin(ph) * math.sin(th) * R,
+                                         math.cos(ph) * R * 0.95)))
+        head_top = C.z + R * 0.95 + 0.006
     else:
         hair_mi = {i for i, m in enumerate(hair.data.materials) if m and m.name == "hair"}
         skin_v = {vi for p in hair.data.polygons if p.material_index not in hair_mi for vi in p.vertices}
@@ -656,8 +658,12 @@ def hat(rig, body, hair, head_top, cartoon=None):
         rx = max(abs(p.x) for p in ring) + HAIR
         cy = (max(p.y for p in ring) + min(p.y for p in ring)) * 0.5
         ry = (max(p.y for p in ring) - min(p.y for p in ring)) * 0.5 + HAIR
+        if cartoon:
+            # force a kid-sized round band (tilted sampling otherwise collapses ry)
+            rr = max(0.09, min(0.105, (rx + ry) * 0.5))
+            rx = ry = rr
         # front of the band at FRONT below the top of the head
-        piv = Vector((0.0, cy + ry * 0.8, head_top - FRONT - ry * 1.8 * math.sin(math.radians(TILT))))
+        piv = Vector((0.0, cy + ry * 0.55, head_top - FRONT - ry * 1.2 * math.sin(math.radians(TILT))))
     loc = [inv @ (p - piv) + piv for p in skull]
     wall = [(1.0, 0.3), (0.97, 0.62), (0.82, 0.86), (0.5, 0.97), (0.0, 1.0)]
 
@@ -679,10 +685,12 @@ def hat(rig, body, hair, head_top, cartoon=None):
         if ch > 0.11:
             break
     ch = min(ch, 0.10)
-    bs = (rx0 + ry0) / (rx + ry)
+    bs = min(1.35, max(1.05, (rx0 + ry0) / max(rx + ry, 1e-6)))
+    if cartoon:
+        bs = 1.12  # compact brim — clears hammock/bench for the shorter chibi body
     prof = [  # (radius scale, z) from the crown top down to the brim edge
         (0.0, ch), (0.5, ch * 0.97), (0.82, ch * 0.86), (0.97, ch * 0.62), (1.0, ch * 0.3), (1.01, 0.0),
-        (1.06, -0.003), (1.22 * bs, -0.005), (1.38 * bs, -0.009), (1.52 * bs, -0.015), (1.57 * bs, -0.019),
+        (1.05, -0.003), (1.14 * bs, -0.005), (1.22 * bs, -0.009), (1.28 * bs, -0.014), (1.32 * bs, -0.018),
     ]
     print("HAT seat: band %.1f cm below the top at the front, %.1f at the back, ring %.1f x %.1f cm, crown %.1f cm, tilt %.0f deg"
           % ((head_top - (base_z + (piv.y - cy + ry) * math.sin(math.radians(TILT)))) * 100,
@@ -826,27 +834,66 @@ def face_uv2(rig, body):
     print("EYES UV", body["eyes_uv"][:])
 
 
+def make_rig_only():
+    """MPFB game_engine rig only — MH body mesh is discarded after retarget."""
+    macro = TargetService.get_default_macro_info_dict()
+    macro.update({"gender": 1.0, "age": 0.18, "muscle": 0.3, "weight": 0.4, "proportions": 0.55, "height": 0.35})
+    macro["race"] = {"asian": 0.55, "caucasian": 0.35, "african": 0.1}
+    base = HumanService.create_human(macro_detail_dict=macro, scale=0.1)
+    rig = HumanService.add_builtin_rig(base, "game_engine")
+    px = HumanService.add_mhclo_asset(DATA + "proxymeshes/male1591/male1591.proxy", base, asset_type="Proxymeshes", subdiv_levels=0)
+    bpy.data.objects.remove(base)
+    # drop MH eyes / proxy — we build stylized meshes next
+    for name in list(bpy.data.objects.keys()):
+        o = bpy.data.objects[name]
+        if o != rig and o.type == "MESH":
+            bpy.data.objects.remove(o, do_unlink=True)
+    rig.name = rig.data.name = "BoyRig"
+    shoulder.add_helpers(rig)
+    return rig
+
+
 def main():
     clear()
-    rig, body = make_body()
-    # body still needs a closed mouth slit for the MH mesh, but the visible head is replaced
-    close_eyes(rig, body)
-    scale_head(rig, body)
-    # dedicated stylized head (cuts MH head, builds BoyHead + Eyes + face map)
     face_path = os.path.join(os.path.dirname(__file__), "../../textures/face_detail.png")
-    chead, ceyes, cinfo = cartoon_head.install(
-        rig, body, material("skin"), material("eye"), material("hair"), face_path, HEAD_SCALE)
-    face.RECT = tuple(cinfo["face_rect"])
-    arm = arm_weights(body)
-    shoulder.sculpt(rig, body)
-    shoulder.add_helpers(rig)
-    shoulder.reweight(rig, body)
-    parts = build(rig, body, arm, cartoon=cinfo)
-    # bury leftover MH neck / crumpled tank+vest collar under the cartoon neck flare
-    for name in ("Body", "Tank", "Vest"):
-        ob = bpy.data.objects.get(name)
-        if ob:
-            cartoon_head.clean_collar(rig, [ob])
+    shorts_tex = os.path.join(os.path.dirname(__file__), "../../textures/shorts_flowers.png")
+    if STYLIZED:
+        rig = make_rig_only()
+        info = stylized_body.retarget_chibi(rig)
+        # ensure gold material exists for vest buttons
+        material("gold")
+        body = stylized_body.build_mesh(rig, material("skin"))
+        # head sized to retargeted neck / HEAD_R
+        chead, ceyes, cinfo = cartoon_head.install(
+            rig, body, material("skin"), material("eye"), material("hair"), face_path,
+            head_scale=1.0, head_r=info["HEAD_R"])
+        face.RECT = tuple(cinfo["face_rect"])
+        mats = {n: material(n) for n in ("tank", "vest", "shorts", "sandal", "strap", "band", "gold")}
+        tank, vest, shorts, sandals = stylized_body.build_clothes(rig, body, mats)
+        stylized_body.make_flower_shorts_texture(shorts_tex)
+        # hat on cartoon skull
+        head_top = cinfo["head_top"]
+        hat(rig, body, chead, head_top, cartoon=cinfo)
+        glasses(rig, body)
+        stone(rig)
+        # no MH collar cleanup needed
+        parts = [tank, vest, shorts]
+    else:
+        rig, body = make_body()
+        close_eyes(rig, body)
+        scale_head(rig, body)
+        chead, ceyes, cinfo = cartoon_head.install(
+            rig, body, material("skin"), material("eye"), material("hair"), face_path, HEAD_SCALE)
+        face.RECT = tuple(cinfo["face_rect"])
+        arm = arm_weights(body)
+        shoulder.sculpt(rig, body)
+        shoulder.add_helpers(rig)
+        shoulder.reweight(rig, body)
+        parts = build(rig, body, arm, cartoon=cinfo)
+        for name in ("Body", "Tank", "Vest"):
+            ob = bpy.data.objects.get(name)
+            if ob:
+                cartoon_head.clean_collar(rig, [ob])
     print("TRIS", {o.name: sum(len(p.vertices) - 2 for p in o.data.polygons) for o in bpy.data.objects if o.type == "MESH"})
     save = arg("--save")
     if save:

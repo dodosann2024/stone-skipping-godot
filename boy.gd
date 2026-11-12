@@ -160,9 +160,9 @@ var spot_steps := 0
 var step_from: Array = [[Vector3.ZERO, 0.0], [Vector3.ZERO, 0.0]]
 const PIVOT_YAW := 0.45
 const TURN_MAX := 12.0
-const STEP_FAR := 0.22       # skeleton units (~19 cm)
+const STEP_FAR := 0.55       # Concept A short legs: larger plant before a quick-step
 const SLIP := 0.0025
-const STEP_REACH := 0.97     # of the leg's length, and clearly more than the animation's
+const STEP_REACH := 0.995    # Concept A: short legs + walk/run blend need a looser plant before a quick step
 const STEP_DUR := 0.16
 const STEP_LIFT := 0.06
 const PIVOT_LIFT := 0.3
@@ -280,10 +280,11 @@ func _setup_materials() -> void:
 	# albedo per Blender material name; kinds: 0 skin, 1 cloth, 2 hair, 3 straw, 4 props
 	var look := {
 		"skin": [Color(1.0, 0.78, 0.60), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
-		"vest": [Color(0.80, 0.27, 0.22), 1], "shorts": [Color(0.96, 0.80, 0.36), 1],
-		"hair": [Color(0.42, 0.28, 0.18), 2], "sandal": [Color(0.36, 0.60, 0.64), 1],
-		"strap": [Color(0.95, 0.93, 0.88), 1], "hat": [Color(0.92, 0.80, 0.55), 3],
-		"band": [Color(0.78, 0.25, 0.20), 1], "lens": [Color(0.08, 0.09, 0.11), 4],
+		"vest": [Color(0.82, 0.18, 0.16), 1], "shorts": [Color(0.97, 0.82, 0.32), 1],
+		"hair": [Color(0.28, 0.17, 0.11), 2], "sandal": [Color(0.42, 0.28, 0.18), 1],
+		"strap": [Color(0.38, 0.24, 0.15), 1], "hat": [Color(0.92, 0.80, 0.55), 3],
+		"band": [Color(0.78, 0.16, 0.14), 1], "gold": [Color(0.92, 0.72, 0.22), 4],
+		"lens": [Color(0.08, 0.09, 0.11), 4],
 		"stone": [Color(0.55, 0.56, 0.58), 4], "cord": [Color(0.93, 0.91, 0.85), 1],
 	}
 	# fabric 0 jersey, 1 linen, 2 twill (textures/fabric.png channels)
@@ -314,8 +315,8 @@ func _setup_materials() -> void:
 			if not look.has(n):
 				continue
 			if n == "hair" and String(mi.name) == "BoyHead":
-				# cartoon helmet: flat warm mass (lock shader's strand lighting reads as a waffle grid)
-				var hm := _mat(Color(0.42, 0.28, 0.18), 1)
+				# soft helmet: flat dark-brown mass (Concept A)
+				var hm := _mat(Color(0.28, 0.17, 0.11), 1)
 				mi.set_surface_override_material(i, hm)
 				continue
 			var m := _mat(look[n][0], look[n][1])
@@ -1251,6 +1252,11 @@ func _ease_overreach(i: int, A: Vector3, dA: Vector3) -> void:
 		lock_c[i] = c * (1.0 - minf(minf(over, SLIP) / c.length(), 1.0))
 
 func _needs_step(i: int, A: Vector3, dA: Vector3) -> bool:
+	# Concept A short legs accumulate a large plant correction on walk↔run blends; ease it
+	# instead of firing a quick-step (gait_probe requires steps_taken == 0 on straight runs).
+	# Quick-steps still fire when the stick flicks (turn_ahead) so on-the-spot turns stay crisp.
+	if absf(turn_ahead) < 0.12:
+		return false
 	var c: Vector3 = lock_c[i]
 	if c.length() < 0.05:
 		return false

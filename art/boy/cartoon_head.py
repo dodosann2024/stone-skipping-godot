@@ -217,16 +217,15 @@ def build_mesh(rig, R, mat_skin, mat_hair):
             if d.x * s < 0:
                 v.co.x = ec.x - 0.02 * R * s
 
-    # short, slightly thick child neck that blends into the shoulders (not a long pale stick).
-    # reaches well into the vest so there is no floating gap / stump seam.
-    neck_top = C + Vector((0.0, 0.02 * R, -0.68 * R))
-    neck_bot = Vector((hb.x, hb.y + 0.02, hb.z - 0.095))
+    # short, thick child neck that blends into the shoulders (Concept A — not a stick).
+    neck_top = C + Vector((0.0, 0.02 * R, -0.62 * R))
+    neck_bot = Vector((hb.x, hb.y + 0.02, hb.z - 0.08))
     rings = []
-    for p, rr in ((neck_top, 0.44 * R),
-                  (neck_top.lerp(neck_bot, 0.35), 0.50 * R),
-                  (neck_top.lerp(neck_bot, 0.70), 0.60 * R),
-                  (neck_bot, 0.72 * R)):  # wide flare into shoulders / vest
-        ring = [bm.verts.new(p + Vector((math.cos(a) * rr, math.sin(a) * rr * 0.88, 0.0)))
+    for p, rr in ((neck_top, 0.50 * R),
+                  (neck_top.lerp(neck_bot, 0.35), 0.56 * R),
+                  (neck_top.lerp(neck_bot, 0.70), 0.66 * R),
+                  (neck_bot, 0.78 * R)):  # wide flare into shoulders / vest
+        ring = [bm.verts.new(p + Vector((math.cos(a) * rr, math.sin(a) * rr * 0.90, 0.0)))
                 for a in (2 * math.pi * j / 20 for j in range(20))]
         rings.append(ring)
     for i in range(len(rings) - 1):
@@ -518,19 +517,19 @@ def build_eyes(rig, eyes, eye_r, mat):
                 # soft edge into iris so the pupil never reads as a square texel hole
                 t = rr / max(pupil_r, 1e-4)
                 edge = _ss(0.82, 1.0, t)
-                pr, pg, pb = 0.05, 0.035, 0.03
-                ir, ig, ib = 0.78, 0.48, 0.20
+                pr, pg, pb = 0.04, 0.025, 0.02
+                ir, ig, ib = 0.28, 0.16, 0.10  # dark brown (Concept A)
                 rgb = (pr * (1 - edge) + ir * edge, pg * (1 - edge) + ig * edge,
                        pb * (1 - edge) + ib * edge, 1.0)
             elif rr < iris_r:
                 t = (rr - pupil_r) / max(iris_r - pupil_r, 1e-4)
-                r = 0.78 - 0.28 * t
-                g = 0.48 - 0.22 * t
-                b = 0.20 - 0.08 * t
+                # dark brown iris with soft limbus → white sclera ring
+                r = 0.32 - 0.12 * t
+                g = 0.18 - 0.08 * t
+                b = 0.11 - 0.04 * t
                 if t > 0.78:
                     k = (t - 0.78) / 0.22
-                    # dark limbus ring, then blend toward sclera at the very edge
-                    r, g, b = r * (1 - 0.55 * k) + 0.12 * k, g * (1 - 0.55 * k) + 0.08 * k, b * (1 - 0.55 * k) + 0.05 * k
+                    r, g, b = r * (1 - 0.55 * k) + 0.10 * k, g * (1 - 0.55 * k) + 0.06 * k, b * (1 - 0.55 * k) + 0.04 * k
                     if t > 0.92:
                         k2 = (t - 0.92) / 0.08
                         r = r * (1 - k2) + sclera[0] * k2
@@ -697,25 +696,41 @@ def bind_head(ob, rig):
     mod.object = rig
 
 
-def install(rig, body, mat_skin, mat_eye, mat_hair, face_path, head_scale=1.38):
-    """cut MH head, build cartoon BoyHead + Eyes, paint face. Returns (head, eyes, info)."""
-    # estimate R from the current (scaled) head if still present, else from head bone
+def install(rig, body, mat_skin, mat_eye, mat_hair, face_path, head_scale=1.38, head_r=None):
+    """build stylized BoyHead + Eyes, paint face. Returns (head, eyes, info).
+
+    If head_r is given (Concept A full-body path), use it directly and only trim any
+    leftover body verts above the neck. Otherwise fall back to measuring / cutting an MH head.
+    """
     hb = Vector(rig.data.bones["head"].head_local)
-    # body still has MH head before cut — measure
-    head_vs = [v.co for v in body.data.vertices if _weight(body, v, "head") > 0.5 and v.co.z > hb.z]
-    if head_vs:
-        top = max(v.z for v in head_vs)
-        # half-width
-        hw = max(abs(v.x) for v in head_vs)
-        R0 = max(0.5 * (top - hb.z), hw) * 0.95
+    if head_r is not None:
+        R = float(head_r)
     else:
-        R0 = 0.10
-    R = R0 * CHIBI
+        head_vs = [v.co for v in body.data.vertices if _weight(body, v, "head") > 0.5 and v.co.z > hb.z]
+        if head_vs:
+            top = max(v.z for v in head_vs)
+            hw = max(abs(v.x) for v in head_vs)
+            R0 = max(0.5 * (top - hb.z), hw) * 0.95
+        else:
+            R0 = 0.10
+        R = R0 * CHIBI * head_scale / 1.38
     if "Eyes" in bpy.data.objects:
         bpy.data.objects.remove(bpy.data.objects["Eyes"], do_unlink=True)
     if "BoyHead" in bpy.data.objects:
         bpy.data.objects.remove(bpy.data.objects["BoyHead"], do_unlink=True)
-    cut_body_head(rig, body)
+    if head_r is None:
+        # MH path: cut the realistic head/neck off the body
+        cut_body_head(rig, body)
+    else:
+        # Concept A path: body is already a soft stump; just trim anything above the neck joint
+        bm = bmesh.new()
+        bm.from_mesh(body.data)
+        kill = [f for f in bm.faces if f.calc_center_median().z > hb.z + 0.01]
+        if kill:
+            bmesh.ops.delete(bm, geom=kill, context="FACES")
+        bm.to_mesh(body.data)
+        bm.free()
+        body.data.update()
     head, eyes_c, info = build_mesh(rig, R, mat_skin, mat_hair)
     bind_head(head, rig)
     add_shape_keys(head, info)
