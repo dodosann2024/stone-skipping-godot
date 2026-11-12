@@ -570,8 +570,8 @@ func end_activity() -> void:
 
 ## Seed bone poses from the idle clip (straight legs, natural cloth) instead of the bind/T-pose,
 ## which stretches the Tripo shorts into a yellow spike once the root is horizontal.
+## Keep any foot-plant overrides — main re-applies them after the world transform each frame.
 func _seed_lie_from_sit() -> void:
-	clear_foot_plant()
 	if tree:
 		tree.active = false
 	if ap == null:
@@ -611,26 +611,23 @@ func _apply_hammock_pose(w: float, breath: float) -> void:
 	_pose_abs("mixamorig_Spine", Vector3(0.06 + breath * 0.3, 0.02, 0.0), w)
 	_pose_abs("mixamorig_Spine1", Vector3(0.08 + breath * 0.35, 0.02, 0.0), w)
 	_pose_abs("mixamorig_Spine2", Vector3(0.05 + breath * 0.2, 0.0, 0.0), w)
-	# Keep the baked hat out of the fabric; face still reads skyward.
-	_pose_abs("mixamorig_Neck", Vector3(-0.06, 0.06, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.08 + breath * 0.1, 0.08, 0.02), w)
+	# Chin strongly forward so the baked hat brim lifts clear of the fabric sides.
+	_pose_abs("mixamorig_Neck", Vector3(0.16, 0.03, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(0.18 + breath * 0.05, 0.04, 0.02), w)
 
 
 ## Lounger: flat root + hips pitch tips the torso onto the ~38° backrest. Soft knee bend keeps
 ## heels on the cushion after the pitch. Keep hips pitch ≤0.48 and skip absolute arm eulers
 ## (those stretch the Tripo shorts into a yellow spike). Idle-seed arms stay along the body.
 func _apply_lounger_pose(w: float, breath: float) -> void:
-	_pose_add("mixamorig_Hips", Vector3(0.36, 0.0, 0.0), w)
-	_pose_add("mixamorig_LeftUpLeg", Vector3(0.16, 0.02, 0.02), w)
-	_pose_add("mixamorig_RightUpLeg", Vector3(0.16, -0.02, -0.02), w)
-	_pose_add("mixamorig_LeftLeg", Vector3(-0.10, 0.0, 0.0), w)
-	_pose_add("mixamorig_RightLeg", Vector3(-0.10, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine", Vector3(0.05 + breath * 0.2, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(0.07 + breath * 0.25, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(0.06 + breath * 0.15, 0.0, 0.0), w)
-	# Chin slightly forward so the baked straw hat rests above the pad, not inside it.
-	_pose_abs("mixamorig_Neck", Vector3(-0.02, 0.03, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.04 + breath * 0.08, 0.04, 0.0), w)
+	_pose_add("mixamorig_Hips", Vector3(0.20, 0.0, 0.0), w)
+	# No UpLeg/Leg overrides — idle-seed legs + foot plant; extras stretch shorts into spikes.
+	_pose_abs("mixamorig_Spine", Vector3(0.04 + breath * 0.2, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.05 + breath * 0.25, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.04 + breath * 0.15, 0.0, 0.0), w)
+	# Chin forward so the baked straw hat rests on top of the pad, not inside it.
+	_pose_abs("mixamorig_Neck", Vector3(0.08, 0.02, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(0.10 + breath * 0.06, 0.03, 0.0), w)
 
 
 ## Plant both feet onto a world-space seat plane (keeps heels on the lounger after a hips pitch).

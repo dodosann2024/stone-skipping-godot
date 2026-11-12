@@ -1312,7 +1312,7 @@ func _setup_hammock_rest() -> void:
 	var into: Vector3 = -(hip_f["normal"] as Vector3).normalized()
 	rest_lie_b = _lie_basis_oriented(head_dir, into)
 	# Start above the fabric; snap settles hips/spine/head without punching through.
-	rest_lie = (hip_f["pos"] as Vector3) + (hip_f["normal"] as Vector3) * 0.12
+	rest_lie = (hip_f["pos"] as Vector3) + (hip_f["normal"] as Vector3) * 0.14
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
 	rest_approach = rest_seat + side * 0.26
 	set_meta("lie_head_t", clampf(head_t, 0.15, 0.85))
@@ -1354,7 +1354,7 @@ func _setup_lounger_rest() -> void:
 	rest_lie_b = _lie_basis_oriented(seat_along, into)
 	# Butt on the seat; slide toward the feet so the pitched shoulders/hat clear the board.
 	var clear_h := Vector3(back_n.x, 0.0, back_n.z).normalized()
-	rest_lie = (seat_h["pos"] as Vector3) + seat_n * 0.04 + clear_h * 0.12
+	rest_lie = (seat_h["pos"] as Vector3) + seat_n * 0.04 + clear_h * 0.14
 	set_meta("lie_head_s", head_s)
 	set_meta("lie_foot_s", foot_s)
 	set_meta("lie_hip_s", hip_s)
@@ -1429,8 +1429,8 @@ func _snap_lie_contact() -> void:
 		var head_n: Vector3 = (swing.basis * (head_f["normal"] as Vector3)).normalized()
 		var foot_p: Vector3 = swing * (foot_f["pos"] as Vector3)
 		var foot_n: Vector3 = (swing.basis * (foot_f["normal"] as Vector3)).normalized()
-		# Extra head offset for the baked straw hat.
-		var head_pt: Vector3 = pts["head"] + into_bed * 0.05
+		# Extra head offset for the baked straw hat (brim is wide).
+		var head_pt: Vector3 = pts["head"] + into_bed * 0.07
 		var g_hips := _signed_gap(pts["hips"], hip_p, hip_n)
 		var g_spine := _signed_gap(pts["spine"], hip_p, hip_n)
 		var g_head := _signed_gap(head_pt, head_p, head_n)
@@ -1442,15 +1442,15 @@ func _snap_lie_contact() -> void:
 		var mesh_d := lie_mesh_penetration_depth()
 		if mesh_d < -0.01:
 			rest_lie += hn0 * (-0.005 - mesh_d)
-		elif deep < 0.04:
-			rest_lie += hn0 * (0.055 - deep)
+		elif deep < 0.05:
+			rest_lie += hn0 * (0.06 - deep)
 		else:
-			# Settle hips only as far as spine/head stay ≥ 3.5 cm above the fabric.
-			var settle := minf(g_hips - 0.025, minf(g_spine - 0.035, g_head - 0.035))
+			# Settle hips only as far as spine/head stay ≥ 4.5 cm above the fabric.
+			var settle := minf(g_hips - 0.03, minf(g_spine - 0.045, g_head - 0.045))
 			if settle > 0.002:
-				rest_lie -= hn0 * minf(settle, 0.08)
-			if absf(g_hips - 0.025) < 0.06 and g_foot > 0.07:
-				rest_lie -= (foot_f["normal"] as Vector3).normalized() * minf(g_foot - 0.04, 0.05)
+				rest_lie -= hn0 * minf(settle, 0.06)
+			if absf(g_hips - 0.03) < 0.06 and g_foot > 0.08:
+				rest_lie -= (foot_f["normal"] as Vector3).normalized() * minf(g_foot - 0.045, 0.04)
 		return
 	else:
 		# Lounger: clear head/upper-back through the backrest; else settle hips on the seat.
@@ -1563,7 +1563,7 @@ func _plant_lie_feet() -> void:
 	boy.lie_foot_plane_point = foot_plane["pos"]
 	boy.lie_foot_plane_normal = foot_plane["normal"]
 	boy.lie_foot_plant = true
-	boy.plant_feet_on_plane(boy.lie_foot_plane_point, boy.lie_foot_plane_normal, 0.02)
+	boy.plant_feet_on_plane(boy.lie_foot_plane_point, boy.lie_foot_plane_normal, 0.04)
 
 
 ## Deepest penetration of lie contact points into the support (negative = into the surface).
@@ -1594,11 +1594,11 @@ func lie_mesh_penetration_depth() -> float:
 	]
 	for b in bones:
 		samples.append(boy.lie_bone_world(b) + into_bed * shell)
-	# Hat proxy: baked brim — a modest shell behind the head (not a huge balloon).
+	# Hat proxy: baked brim — shell behind/above the head (hammock fabric is thin).
 	var head_p: Vector3 = boy.lie_bone_world("mixamorig_Head")
 	var hat_pts: Array[Vector3] = [
-		head_p + into_bed * 0.03 + Vector3.UP * 0.04,
-		head_p + into_bed * 0.035 + rest_lie_b.y * 0.03,
+		head_p + into_bed * 0.045 + Vector3.UP * 0.05,
+		head_p + into_bed * 0.05 + rest_lie_b.y * 0.04,
 	]
 	var deepest := 0.0
 	var swing := _lie_swing()

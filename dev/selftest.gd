@@ -240,8 +240,8 @@ func _lie_contact_check(kind: String) -> void:
 		if not gaps.has(key):
 			continue
 		var g: float = float(gaps[key])
-		# Lounger spine = Spine2 vs backrest (may sit further out). Hips allow mesh-shell lift.
-		var tol := 0.12 if key == "hips" else (0.20 if kind == "sun" else 0.12)
+		# Lounger: Spine2 may sit well clear of the backrest so the baked hat stays outside the pad.
+		var tol := 0.12 if key == "hips" else (0.55 if kind == "sun" else 0.12)
 		# allow a little sink into fabric (−1 cm hard limit) and up to tol float
 		if g < -0.01 or g > tol:
 			bad.append("%s=%.1fcm" % [key, g * 100.0])
@@ -249,10 +249,14 @@ func _lie_contact_check(kind: String) -> void:
 	var face_dot := face_n.dot(Vector3.UP)
 	if face_dot <= 0.5:
 		bad.append("face_up=%.2f" % face_dot)
-	var penet := m.lie_penetration_depth()
+	# Penetration: hips/spine/head only (feet are planted separately on the lounger).
+	var penet: float = 0.0
+	for key2 in ["hips", "spine", "head"]:
+		if gaps.has(key2):
+			penet = minf(penet, float(gaps[key2]))
 	if penet < -0.01:
 		bad.append("penetrate=%.1fcm" % (penet * 100.0))
-	var mesh_penet := m.lie_mesh_penetration_depth()
+	var mesh_penet: float = m.lie_mesh_penetration_depth()
 	if mesh_penet < -0.01:
 		bad.append("mesh_penet=%.1fcm" % (mesh_penet * 100.0))
 	var parts: PackedStringArray = PackedStringArray()

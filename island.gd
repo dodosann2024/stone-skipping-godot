@@ -26,8 +26,8 @@ var lounger_back_half := Vector3(0.3, 0.025, 0.35)  # half-extents of the tilted
 var lounger_seat_tilt := 0.1                         # rad about local +X (slight foot-down)
 var lounger_back_tilt := -0.66                       # rad about local +X (~38° from flat — chaise recline)
 var lounger_seat_local := Vector3(0, 0.3, 0)          # seat centre in lounger_xf
-# Backrest sits behind the hinge and a bit above the seat so it doesn't overhang into the boy.
-var lounger_back_local := Vector3(0, 0.58, -0.72)
+# Backrest sits well behind the hinge so a supine boy on the seat never intersects the board.
+var lounger_back_local := Vector3(0, 0.62, -0.85)
 var umbrella_pos := Vector3.ZERO
 var hut_pos := Vector3.ZERO
 var lighthouse_pos := Vector3.ZERO
@@ -1492,9 +1492,9 @@ func _build_beach_life() -> void:
 	lounger_seat_tilt = 0.1
 	lounger_back_tilt = -0.66
 	lounger_seat_local = Vector3(0, 0.3, 0)
-	lounger_back_local = Vector3(0, 0.58, -0.72)
+	lounger_back_local = Vector3(0, 0.62, -0.85)
 	lounger_seat_half = Vector3(0.3, 0.025, 0.5)
-	lounger_back_half = Vector3(0.3, 0.025, 0.32)
+	lounger_back_half = Vector3(0.3, 0.025, 0.30)
 	var lc: Vector3 = cxf * Vector3(0, 0, -0.08)
 	wall_b(Vector2(lc.x, lc.z), Vector2(0.33, 0.62), tyaw, cp.y - 0.3, cp.y + 0.9, "躺椅")
 	var lface: Vector3 = cxf.basis * Vector3(1, 0, 0)
