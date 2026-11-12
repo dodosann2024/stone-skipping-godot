@@ -129,6 +129,8 @@ var act_tt := 0.0
 var face_fill: OmniLight3D
 var _night_rim: OmniLight3D
 var _face_fill_day_energy := 0.35
+var _boy_mat: StandardMaterial3D
+var _boy_albedo_day := Color(1.08, 0.98, 0.92, 1.0)
 ## When set, lounger pose plants heels on this seat plane after the hips pitch.
 var lie_foot_plant := false
 var lie_foot_plane_point := Vector3.ZERO
@@ -326,31 +328,58 @@ func _build_face_fill() -> void:
 	# Cool moonlight rim — only on at night, opposite the fill so edges read without flattening him.
 	_night_rim = OmniLight3D.new()
 	_night_rim.name = "NightRim"
-	_night_rim.light_color = Color(0.55, 0.65, 0.95)
+	_night_rim.light_color = Color(0.55, 0.68, 0.98)
 	_night_rim.light_energy = 0.0
-	_night_rim.omni_range = 0.55
-	_night_rim.omni_attenuation = 1.6
+	_night_rim.omni_range = 0.75
+	_night_rim.omni_attenuation = 1.2
 	_night_rim.shadow_enabled = false
-	_night_rim.light_specular = 0.05
+	_night_rim.light_specular = 0.08
 	_night_rim.light_cull_mask = 2
 	parts["head"].add_child(_night_rim)
 	_night_rim.position = Vector3(0.0, 0.04, 0.12)
 
 
 ## Blend the character-only fill with the world night look. k=0 day, k=1 full night.
-func set_night_k(k: float) -> void:
+## moon_dir: world direction toward the moon disk (sun.global_basis.z); used to place the rim.
+func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 	k = clampf(k, 0.0, 1.0)
 	if face_fill:
-		# Day: warm under-brim fill. Night: nearly off so dock lanterns / moonlight light him
-		# like the world (no day-bright paste-on body with a dark face).
-		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.55, 0.65, 0.95), k)
-		# Night: fill nearly off so world moon/lanterns light face and body the same way.
-		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.0, k)
+		# Day: warm under-brim fill. Night: faint cool fill so face matches body
+		# (readable, not glowing — and not darker than the vest).
+		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.62, 0.74, 0.98), k)
+		# Tight cool fill under the brim. Tripo bakes dark AO into the face tex, so night
+		# needs a stronger head-local fill than day to keep face as readable as the body.
+		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.75, k)
+		face_fill.omni_range = lerpf(0.4, 0.48, k)
+		face_fill.omni_attenuation = lerpf(1.4, 1.25, k)
+		face_fill.position = Vector3(0.0, -0.02, -0.1).lerp(Vector3(0.0, 0.0, -0.12), k)
 	if _night_rim:
-		# Cool moon-side rim so edges read without a day-bright paste-on fill.
-		_night_rim.light_energy = lerpf(0.0, 0.16, k)
-		_night_rim.light_color = Color(0.55, 0.65, 0.95)
-		_night_rim.position = Vector3(0.0, 0.04, 0.14).lerp(Vector3(0.0, 0.06, 0.18), k)
+		# Cool moon-side rim for silhouettes when the moon is behind him.
+		_night_rim.light_energy = lerpf(0.0, 0.30, k)
+		_night_rim.light_color = Color(0.58, 0.72, 1.0)
+		_night_rim.omni_range = lerpf(0.55, 0.7, k)
+		# Prefer world moon direction projected into head space; fall back to local +Z.
+		var local_off := Vector3(0.0, 0.05, 0.16)
+		if moon_dir.length_squared() > 0.01 and parts.has("head") and parts["head"] is Node3D:
+			var head := parts["head"] as Node3D
+			var world_off: Vector3 = moon_dir.normalized() * 0.20 + Vector3(0, 0.04, 0)
+			local_off = head.global_transform.basis.inverse() * world_off
+			if local_off.length() < 0.08:
+				local_off = Vector3(0.0, 0.05, 0.16)
+			else:
+				local_off = local_off.normalized() * 0.20
+		_night_rim.position = local_off
+	# Dim + cool the boy albedo at night so bright Tripo textures don't look day-pasted
+	# onto a dark world. Day values stay exactly as tuned for concept_A.
+	if _boy_mat:
+		_boy_mat.albedo_color = _boy_albedo_day.lerp(Color(0.50, 0.58, 0.68, 1.0), k)
+		_boy_mat.metallic_specular = lerpf(0.2, 0.06, k)
+		_boy_mat.roughness = lerpf(0.78, 0.90, k)
+		# Cool lift so the hat-AO'd face stays readable at night. Keep it low so he
+		# doesn't glow; day leaves emission off.
+		_boy_mat.emission_enabled = k > 0.01
+		_boy_mat.emission = Color(0.22, 0.28, 0.38)
+		_boy_mat.emission_energy_multiplier = lerpf(0.0, 0.55, k)
 
 
 func _tune_boy_material() -> void:
@@ -376,11 +405,14 @@ func _tune_boy_material() -> void:
 		mat.emission = Color(0, 0, 0, 1)
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 		# warm multiply toward concept_A (saturated red / peach / straw) without adding light
-		mat.albedo_color = Color(1.08, 0.98, 0.92, 1.0)
+		mat.albedo_color = _boy_albedo_day
 		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
 		mat.disable_receive_shadows = false
-		mat.cull_mode = BaseMaterial3D.CULL_BACK
+		# Tripo/Mixamo can flip face/limb normals; back-face cull blacks out the face under
+		# the brim while the vest still lights. Match the old boy.gdshader (cull_disabled).
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		mi.material_override = mat
+		_boy_mat = mat
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mi.transparency = 0
 		# layer 1 (world) + layer 2 (face fill only) — still lit by the sun on layer 1

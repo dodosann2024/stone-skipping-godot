@@ -2629,25 +2629,30 @@ func _update_night(delta: float, force := false) -> void:
 	var qd := Basis.from_euler(SUN_DAY * PI / 180.0).get_rotation_quaternion()
 	var qn := Basis.from_euler(MOON_NIGHT * PI / 180.0).get_rotation_quaternion()
 	sun.basis = Basis(qd.slerp(qn, k))
-	# Cool blue moonlight key — softer and less harsh than the day sun so palm shadows
-	# don't look like midday.
-	sun.light_energy = lerpf(1.0, 0.22, k)
-	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(0.50, 0.62, 0.95), k)
-	sun.shadow_blur = lerpf(2.5, 7.0, k)
-	sun.light_angular_distance = lerpf(1.2, 4.5, k)
-	sun.shadow_opacity = lerpf(1.0, 0.55, k)
+	# Cool blue moonlight key. Compatibility soft-blur is weak, so we also drop energy /
+	# shadow opacity and keep cool ambient modest so lantern OmniLights can actually read.
+	sun.light_energy = lerpf(1.0, 0.14, k)
+	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(0.50, 0.64, 0.98), k)
+	sun.shadow_blur = lerpf(2.5, 8.0, k)
+	sun.light_angular_distance = lerpf(1.2, 7.0, k)
+	sun.shadow_opacity = lerpf(1.0, 0.22, k)
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.5 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
-	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.06, 0.10, 0.20), k)
-	env.ambient_light_sky_contribution = 1.0 - k
-	env.ambient_light_energy = lerpf(0.55, 0.22, k)
-	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.07, 0.11, 0.19), k)
-	env.tonemap_exposure = lerpf(1.0, 1.15, k)
-	env.adjustment_saturation = lerpf(0.85, 0.9, k)
+	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.14, 0.22, 0.40), k)
+	env.ambient_light_sky_contribution = lerpf(1.0, 0.20, k)
+	# Modest cool ambient: softens moon shadows without washing out lantern warmth.
+	env.ambient_light_energy = lerpf(0.55, 0.40, k)
+	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.08, 0.12, 0.22), k)
+	# Do not raise exposure at night — that pastes the boy bright onto a dark world.
+	env.tonemap_exposure = lerpf(0.95, 0.88, k)
+	env.adjustment_saturation = lerpf(1.05, 0.86, k)
+	env.adjustment_contrast = lerpf(1.02, 0.90, k)
+	env.adjustment_brightness = lerpf(0.98, 0.92, k)
 	var moon := sun.global_basis.z.normalized()
 	island.water_mat.set_shader_parameter("glint_dir", moon)
 	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(0.8, 0.88, 1.0), k))
 	island.water_mat.set_shader_parameter("night", k)
-	island.glow_mat.set_shader_parameter("boost", lerpf(1.5, 3.4, k))
+	# Day: dim the unshaded lantern glass; night: bright warm bulbs.
+	island.glow_mat.set_shader_parameter("boost", lerpf(0.35, 3.4, k))
 	island.cloud_mat.set_shader_parameter("tint", Color(1, 1, 1).lerp(Color(0.13, 0.16, 0.26), k))
 	island.campfire.night = k
 	for tn in island.torches:
@@ -2656,9 +2661,9 @@ func _update_night(delta: float, force := false) -> void:
 		(b["node"] as Node3D).visible = k < 0.5
 	if night_amb:
 		night_amb.volume_db = lerpf(-60.0, -13.0, sqrt(k))
-	# Character fill must track night — otherwise he looks day-pasted onto the scene.
+	# Character fill / rim must track night so face and body match the world.
 	if boy:
-		boy.set_night_k(k)
+		boy.set_night_k(k, moon)
 
 func _toggle_sound() -> void:
 	muted = not muted
