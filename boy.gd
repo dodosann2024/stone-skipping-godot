@@ -123,6 +123,10 @@ var spot_clock := 0.0
 var spot_emitted := 0
 var pivot_grace := 0.0
 var lie_settle := 0.0  # local model drop while sit-as-lie (main pins pelvis via global_transform)
+var act_kind := ""
+var act_lie_k := 0.0
+var act_tt := 0.0
+var face_fill: OmniLight3D
 
 
 func _ready() -> void:
@@ -147,6 +151,8 @@ func _ready() -> void:
 	_build_stone()
 	_build_hat_proxy()
 	_build_glasses_stub()
+	_build_face_fill()
+	_tune_boy_material()
 	release_stand = _probe_release("throw_stand")
 	# crouch: clearly lower release so water entry is flatter than standing
 	release_crouch = release_stand + Vector3(0.02, -0.14 * SCALE, 0.04)
@@ -298,6 +304,50 @@ func _build_glasses_stub() -> void:
 	parts["head"].add_child(glasses)
 
 
+func _build_face_fill() -> void:
+	# Strong under-brim fill, but ONLY on the boy mesh (layer 2) so it can't bloom the towel/hammock.
+	face_fill = OmniLight3D.new()
+	face_fill.name = "FaceFill"
+	face_fill.light_color = Color(1.0, 0.95, 0.88)
+	face_fill.light_energy = 6.0
+	face_fill.omni_range = 0.6
+	face_fill.omni_attenuation = 0.85
+	face_fill.shadow_enabled = false
+	face_fill.light_specular = 0.0
+	face_fill.light_cull_mask = 2  # boy mesh only (see _tune_boy_material)
+	parts["head"].add_child(face_fill)
+	face_fill.position = Vector3(0.0, -0.015, -0.1)
+
+
+func _tune_boy_material() -> void:
+	# Tripo embeds metallic=1 which blacks out the face under the brim. Drop metal, add a soft
+	# emission lift, and skip receive-shadows so the brim can't self-shadow the face.
+	if skel == null:
+		return
+	for c in skel.get_children():
+		if not (c is MeshInstance3D):
+			continue
+		var mi := c as MeshInstance3D
+		var src: Material = mi.get_active_material(0)
+		if src == null:
+			continue
+		var mat := src.duplicate() as StandardMaterial3D
+		if mat == null:
+			continue
+		mat.metallic = 0.0
+		mat.roughness = 0.68
+		mat.emission_enabled = true
+		mat.emission = Color(0.68, 0.52, 0.42)
+		mat.emission_energy_multiplier = 0.85
+		mat.emission_operator = BaseMaterial3D.EMISSION_OP_ADD
+		mat.disable_receive_shadows = true
+		mi.material_override = mat
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		# layer 1 (world) + layer 2 (face fill only) — still lit by the sun on layer 1
+		mi.layers = 1 | 2
+		break
+
+
 func b2g(v) -> Vector3:
 	# Blender Z-up meta coords -> Godot Y-up, then SCALE
 	if typeof(v) == TYPE_ARRAY or typeof(v) == TYPE_PACKED_FLOAT32_ARRAY:
@@ -389,6 +439,9 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 		prev_sit = 0.0 if sit_k < 1.0 else 1.0
 		prev_lie = 0.0
 	anim = "activity"
+	act_kind = kind
+	act_lie_k = lie_k
+	act_tt = tt
 	var pre: String = {"sleep": "hammock_", "sun": "sun_", "seat": "seat_", "seatlie": "seat_"}[kind]
 	var clip: String
 	var u: float
@@ -409,12 +462,18 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 		u = fposmod(tt, 4.0) / 4.0
 	prev_sit = sit_k
 	prev_lie = lie_k
-	# All rest aliases play the Tripo "sit" clip (or idle when standing)
+	# Sitting uses Tripo sit; full lie freezes the AnimationTree and poses bones to a flat supine
 	var play_clip := "sit"
+	var seek_len := float(clips["sit"]["length"])
+	var full_lie := lie_k > 0.45 and kind in ["sun", "sleep", "seatlie"]
 	if sit_k < 0.05 and lie_k <= 0.0:
 		play_clip = "idle"
-	var L := float(clips.get(clip, clips["sit"])["length"])
-	_play(play_clip, clampf(u, 0.0, 0.99) * float(clips["sit"]["length"]), 0.2)
+		seek_len = float(clips["idle"]["length"])
+	elif full_lie:
+		play_clip = "idle"
+		seek_len = float(clips["idle"]["length"])
+		u = 0.0
+	_play(play_clip, clampf(u, 0.0, 0.99) * seek_len, 0.2 if not full_lie else 0.0)
 	act_target = 1.0
 	act_w = 1.0 if sit_k > 0.02 or lie_k > 0.0 else act_w
 	act_rate = 8.0
@@ -422,17 +481,27 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	glasses.visible = kind == "sun" and lie_k > 0.5
 	blob.visible = sit_k < 0.3 and lie_k <= 0.0
 	show_stone(false)
-	# main.gd already applies rest_lie_b / rest_sit_b — do not tip the mesh here
 	model.rotation.x = 0.0
-	# Sit-as-lie: drop the mesh in model space (main pins Boy origin so pelvis hits rest_lie)
-	if kind in ["sun", "sleep", "seatlie"]:
-		lie_settle = lerpf(0.0, 0.28, smoothstep(0.0, 1.0, lie_k))
+	# lie_settle used to nudge model.position.y, but once rest_lie_b is applied that local +Y
+	# is the head axis (along the bed), not world-up — so it slid him along the towel/hammock.
+	# Height above the surface is owned by main's rest_lie.y only.
+	lie_settle = 0.0
+	model.position = model_base
+	if full_lie:
+		if tree:
+			tree.active = false
+		if ap:
+			ap.active = false
+			ap.stop()
+		_reset_to_rest_pose()
+		_apply_lie_pose(kind, lie_k, tt)
 	else:
-		lie_settle = 0.0
-	model.position = model_base + Vector3(0.0, -lie_settle, 0.0)
-	_apply_mixer()
-	# Live pelvis in boy space WITHOUT the settle (so main's rest_lie math stays stable)
-	var pel := _live_pelvis() + Vector3(0.0, lie_settle, 0.0)
+		if ap and not ap.active:
+			ap.active = true
+		if tree and not tree.active:
+			tree.active = true
+		_apply_mixer()
+	var pel := _live_pelvis()
 	if pel.y < 0.05:
 		pel = Vector3(0.0, Island.SEAT_TOP, 0.0)
 	return pel
@@ -445,7 +514,13 @@ func end_activity() -> void:
 	blob.visible = true
 	model.rotation.x = 0.0
 	lie_settle = 0.0
+	act_kind = ""
+	act_lie_k = 0.0
 	model.position = model_base
+	if ap:
+		ap.active = true
+	if tree:
+		tree.active = true
 	if act_frames == 0 and pre_act.size() == 7:
 		anim = pre_act[0]; act_w = pre_act[1]; act_target = pre_act[2]
 		slot_clip.assign(pre_act[3]); slot_t.assign(pre_act[4]); cur_slot = pre_act[5]; ab_w = pre_act[6]
@@ -456,6 +531,53 @@ func end_activity() -> void:
 	act_w = 0.0
 	has_prev = false
 	show_stone(true)
+
+
+## Procedural supine pose on bind/rest (straight legs). Do not rotate thighs — Mixamo local
+## axes swing the shin skyward under rest_lie_b. Hammock gets a soft spine sag; sun stays flat
+## with arms at the sides and a gentle breath.
+func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
+	var w := smoothstep(0.35, 0.95, lie_k)
+	if w <= 0.001 or skel == null:
+		return
+	var breath := sin(tt * 1.35) * 0.025 * w
+	# keep the head near bind — large nods drive the baked brim into the bed
+	_pose_abs("mixamorig_Neck", Vector3(0.08, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(0.1 + breath * 0.3, 0.0, 0.0), w)
+	if kind == "sleep":
+		# soft hammock sag through the spine (local +X arches the back into the fabric)
+		_pose_abs("mixamorig_Spine", Vector3(0.18 + breath * 0.5, 0.0, 0.0), w)
+		_pose_abs("mixamorig_Spine1", Vector3(0.22 + breath, 0.0, 0.0), w)
+		_pose_abs("mixamorig_Spine2", Vector3(0.12 + breath * 0.6, 0.0, 0.0), w)
+		# chin-down puts the wide brim over the face (clears side walls + fabric behind the head)
+		_pose_abs("mixamorig_Neck", Vector3(0.55, 0.0, 0.0), w)
+		_pose_abs("mixamorig_Head", Vector3(0.95 + breath * 0.3, 0.15, 0.0), w)
+		# one arm hanging off the hammock, the other soft on the belly
+		_pose_abs("mixamorig_LeftShoulder", Vector3(0.05, 0.12, 0.3), w)
+		_pose_abs("mixamorig_RightShoulder", Vector3(0.08, -0.1, -0.15), w)
+		_pose_abs("mixamorig_LeftArm", Vector3(0.45, 0.12, 1.45), w)
+		_pose_abs("mixamorig_RightArm", Vector3(-0.15, -0.08, -0.45), w)
+		_pose_abs("mixamorig_LeftForeArm", Vector3(0.1, 0.0, 0.35), w)
+		_pose_abs("mixamorig_RightForeArm", Vector3(0.25, 0.05, -0.55), w)
+	else:
+		_pose_abs("mixamorig_Spine", Vector3(breath * 0.6, 0.0, 0.0), w)
+		_pose_abs("mixamorig_Spine1", Vector3(breath * 1.1, 0.0, 0.0), w)
+		_pose_abs("mixamorig_Spine2", Vector3(breath * 0.8, 0.0, 0.0), w)
+		# arms relaxed along the sides (sun / seatlie)
+		_pose_abs("mixamorig_LeftShoulder", Vector3(0.05, 0.05, 0.2), w)
+		_pose_abs("mixamorig_RightShoulder", Vector3(0.05, -0.05, -0.2), w)
+		_pose_abs("mixamorig_LeftArm", Vector3(0.15, 0.1, 1.15), w)
+		_pose_abs("mixamorig_RightArm", Vector3(0.15, -0.1, -1.15), w)
+		_pose_abs("mixamorig_LeftForeArm", Vector3(0.05, 0.0, 0.25), w)
+		_pose_abs("mixamorig_RightForeArm", Vector3(0.05, 0.0, -0.25), w)
+	skel.force_update_transform()
+
+
+func _pose_abs(bone: String, euler: Vector3, w: float) -> void:
+	var bi := skel.find_bone(bone)
+	if bi < 0:
+		return
+	skel.set_bone_pose_rotation(bi, Quaternion.IDENTITY.slerp(Quaternion.from_euler(euler), w))
 
 
 func throw_stance() -> Array:
@@ -472,9 +594,15 @@ func _to_idle() -> void:
 	act_rate = 6.0
 	stopping = false
 	react_kind = ""
+	act_kind = ""
+	act_lie_k = 0.0
 	model.rotation.x = 0.0
 	lie_settle = 0.0
 	model.position = model_base
+	if ap:
+		ap.active = true
+	if tree:
+		tree.active = true
 
 
 func _resolve_clip(name: String) -> String:
@@ -636,8 +764,27 @@ func _tick(delta: float) -> void:
 			else:
 				slot_t[i] = fposmod(slot_t[i] + delta, maxf(L, 0.01)) if clips.get(slot_clip[i], {}).get("loop", false) else minf(slot_t[i] + delta, L)
 
-	_apply_mixer()
+	if anim == "activity" and act_lie_k > 0.45 and act_kind in ["sun", "sleep", "seatlie"]:
+		if tree:
+			tree.active = false
+		if ap:
+			ap.active = false
+		_reset_to_rest_pose()
+		_apply_lie_pose(act_kind, act_lie_k, act_tt)
+	else:
+		if ap and not ap.active:
+			ap.active = true
+		if tree and not tree.active:
+			tree.active = true
+		_apply_mixer()
 	_update_blob()
+
+
+func _reset_to_rest_pose() -> void:
+	if skel == null:
+		return
+	skel.reset_bone_poses()
+	skel.force_update_transform()
 
 
 func _apply_mixer() -> void:

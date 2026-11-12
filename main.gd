@@ -245,7 +245,8 @@ func _ready() -> void:
 		night_on = true
 		night_k = 1.0
 		_update_night(0.0, true)
-	_snap_explore_cam()
+	# First paint: face the Tripo boy (3/4-front). Later _place()/walk snaps back to follow-behind.
+	_snap_explore_cam(true)
 	if is_web and _opt("hatprobe") == "1":
 		RenderingServer.frame_pre_draw.connect(_hat_probe_tick)
 		_hat_probe_place.call_deferred(_opt("at"))
@@ -300,13 +301,17 @@ func _build_player() -> void:
 	boy = Boy.new()
 	player = boy
 	add_child(boy)
-	# start on the beach at the foot of the dock, looking along it
-	var sp := Vector3(0.6, 0, island.dock_start_z + 3.2)
+	# start on the beach near the dock, facing the pier — camera sits on the open-sand side
+	var sp := Vector3(1.35, 0, island.dock_start_z + 4.0)
 	sp.y = _surface(sp.x, sp.z)
 	boy.position = sp
-	face_yaw = 0.15
+	face_yaw = -0.35
 	boy.rotation.y = face_yaw
 	ground_y = sp.y
+	# Default view: 3/4-front so the Tripo face is readable (drag still orbits 360°)
+	ex_yaw = face_yaw + PI + 0.45
+	ex_pitch = 0.22
+	ex_dist = 4.0
 	boy.released.connect(_launch)
 	boy.footstep.connect(_on_footstep)
 	boy.foot_flat.connect(_stamp_footprint)
@@ -359,6 +364,8 @@ func _build_environment() -> void:
 	sun.light_color = Color(1.0, 0.93, 0.82)
 	sun.shadow_enabled = true
 	sun.shadow_blur = 2.5
+	# wider sun disk → softer brim penumbra on the face without washing the beach
+	sun.light_angular_distance = 4.0
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
 	if is_web:
@@ -1245,9 +1252,11 @@ func _begin_rest(kind: String) -> void:
 		rest_side = side
 		rest_seat = bed + side * 0.27 + Vector3(0, 0.11, 0)
 		rest_seat.y = maxf(rest_seat.y, Island.ground_h(rest_seat.x, rest_seat.z) + 0.3)
-		rest_lie = bed + Vector3(0, 0.12, 0) - along * 0.05
+		# keep the head near the sag centre (wide brim sticks through the rising ends/sides)
+		rest_lie = bed + Vector3(0, 0.36, 0) + along * 0.08
 		rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
-		rest_lie_b = _lie_basis(along)
+		# slight roll so one shoulder dips and the brim rides above one side wall
+		rest_lie_b = _lie_basis(along) * Basis(Vector3.FORWARD, 0.18)
 		rest_approach = rest_seat + side * 0.26
 	elif kind == "seat":
 		var st: Dictionary = island.seats[seat_i]
@@ -1271,11 +1280,10 @@ func _begin_rest(kind: String) -> void:
 		var tp := island.towel_pos
 		rest_side = td.cross(Vector3.UP).normalized()
 		rest_seat = tp + td * 0.06 + Vector3(0, 0.1, 0)
-		rest_lie = tp + td * 0.1 + Vector3(0, 0.1, 0)
+		# flat on the towel — world-up so the back rests on the mat with a little brim clearance
+		rest_lie = tp + td * 0.02 + Vector3(0, 0.14, 0)
 		rest_sit_b = Basis(Vector3.UP, atan2(-td.x, -td.z))
-		var gh := Island.ground_h(tp.x - td.x * 0.8, tp.z - td.z * 0.8)
-		var gf := Island.ground_h(tp.x + td.x * 0.8, tp.z + td.z * 0.8)
-		rest_lie_b = _lie_basis(-td + Vector3(0, (gh - gf) / 1.6, 0))
+		rest_lie_b = _lie_basis(-td)
 		rest_approach = rest_seat + td * 0.36
 	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
 	var pl := boy.activity(kind, 1.0, 0.0, 0.0)
@@ -1303,9 +1311,10 @@ func _lie_down() -> void:
 func _act_kind() -> String:
 	return "seatlie" if rest_kind == "seat" and seat_lying else rest_kind
 
-## lying on the back: local +Y (head) along head_dir, local -Z (chest) facing the sky
+## lying on the back: local +Y (head) along head_dir, local -Z (chest) facing the sky.
+## Tiny up-bias only — a large bias propped the Tripo boy into a sit-up on the towel/hammock.
 func _lie_basis(head_dir: Vector3) -> Basis:
-	var y := (head_dir.normalized() + Vector3(0, 0.12, 0)).normalized()
+	var y := (head_dir.normalized() + Vector3(0, 0.03, 0)).normalized()
 	var z := Vector3.DOWN - y * Vector3.DOWN.dot(y)
 	z = z.normalized()
 	return Basis(y.cross(z), y, z)
@@ -2611,8 +2620,9 @@ func _seg_hits_trunk(a: Vector3, b: Vector3, pts: Array) -> bool:
 			return true
 	return false
 
-func _snap_explore_cam() -> void:
-	ex_yaw = face_yaw
+func _snap_explore_cam(front := false) -> void:
+	# follow-behind while exploring; optional 3/4-front for start / face checks
+	ex_yaw = face_yaw + PI + 0.45 if front else face_yaw
 	var c := _explore_cam()
 	cam_target = c[0]; cam_yaw = c[1]; cam_pitch = c[2]; cam_dist = c[3]
 
