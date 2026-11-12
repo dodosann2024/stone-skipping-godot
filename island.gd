@@ -32,8 +32,10 @@ var towel_pos := Vector3.ZERO
 var towel_dir := Vector3.FORWARD   # towel long axis, pointing out to sea (feet end)
 ## Deck-chair lounger (晒太阳): root transform, seat/backrest sizes, and hinge in local Z.
 var lounger_xf := Transform3D.IDENTITY
-var lounger_seat_half := Vector3(0.32, 0.035, 0.55)  # half-extents of the seat cushion
-var lounger_back_half := Vector3(0.32, 0.04, 0.58)   # long backrest: full torso + head
+	## Contact plane at the foam top. Visual pad is thick so thighs can sink into foam
+	## while hip skin stays within ~2 cm of the top (see _build_beach_life).
+var lounger_seat_half := Vector3(0.32, 0.08, 0.55)
+var lounger_back_half := Vector3(0.32, 0.06, 0.58)   # long backrest: full torso + head
 var lounger_seat_tilt := 0.08                        # rad about local +X (slight foot-down)
 var lounger_back_tilt := 0.70                         # ~40° chaise: head rises away from seat
 var lounger_seat_local := Vector3(0, 0.34, 0.08)      # seat centre in lounger_xf
@@ -1497,19 +1499,20 @@ func _build_beach_life() -> void:
 		var g1 = ground_h(sc.x + out.x * 0.18, sc.z + out.z * 0.18)
 		var tilt = atan2(g0 - g1, 0.36)
 		boxb(SB, Vector3(0.9, 0.03, 0.37), Transform3D(Basis(Vector3.UP, tyaw) * Basis(Vector3.RIGHT, tilt), Vector3(sc.x, (g0 + g1) * 0.5 + 0.03, sc.z)), col)
-	# Beach chaise: clear of the towel, facing the sea/sun, legs on the sand.
+	# Beach chaise: clear of the towel/umbrella/bushes, facing the sea/sun, legs on sand.
 	var side_beach: Vector3 = out.cross(Vector3.UP).normalized()
-	var cp = tw + side_beach * 1.35 + out * 0.15
+	# Slightly more seaward + lateral so the backrest clears inland foliage.
+	var cp = tw + side_beach * 1.55 + out * 0.55
 	cp.y = ground_h(cp.x, cp.z)
 	var cxf = Transform3D(Basis(Vector3.UP, tyaw), cp)
 	lounger_xf = cxf
 	lounger_seat_tilt = 0.08
 	lounger_back_tilt = 0.70  # ~40°; head rises away from the seat (−local Z)
-	lounger_seat_local = Vector3(0, 0.34, 0.08)
+	lounger_seat_local = Vector3(0, 0.38, 0.08)
 	# Pad raised/cleared of the crease so thighs sit on the seat, not through the board.
 	lounger_back_local = Vector3(0, 0.92, -0.78)
-	lounger_seat_half = Vector3(0.32, 0.035, 0.55)
-	lounger_back_half = Vector3(0.32, 0.04, 0.55)
+	lounger_seat_half = Vector3(0.32, 0.08, 0.55)
+	lounger_back_half = Vector3(0.32, 0.06, 0.55)
 	var lc: Vector3 = cxf * Vector3(0, 0, -0.05)
 	wall_b(Vector2(lc.x, lc.z), Vector2(0.36, 0.75), tyaw, cp.y - 0.3, cp.y + 1.1, "躺椅")
 	var lface: Vector3 = cxf.basis * Vector3(1, 0, 0)
@@ -1523,15 +1526,15 @@ func _build_beach_life() -> void:
 		for lz in [-0.42, 0.48]:
 			var leg_h: float = 0.34
 			boxb(SB, Vector3(0.045, leg_h, 0.045), cxf * Transform3D(Basis.IDENTITY, Vector3(lx, leg_h * 0.5, lz)), wood)
-	# Seat frame + cushion.
-	boxb(SB, Vector3(0.68, 0.04, 1.12), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local + Vector3(0, -0.04, 0)), wood)
-	boxb(SB, Vector3(0.64, 0.07, 1.08), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local), cush)
-	# Backrest frame + long cushion (~45°).
-	boxb(SB, Vector3(0.68, 0.04, 1.18), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local + Vector3(0, -0.04, 0)), wood)
-	boxb(SB, Vector3(0.64, 0.08, 1.14), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local), cush)
-	# Armrests.
-	for lx2 in [-0.34, 0.34]:
-		boxb(SB, Vector3(0.05, 0.04, 0.7), cxf * Transform3D(Basis.IDENTITY, Vector3(lx2, 0.48, 0.05)), wood)
+	# Seat frame + deep foam cushion (thighs sink in; wood board stays clear underneath).
+	boxb(SB, Vector3(0.68, 0.04, 1.12), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local + Vector3(0, -0.09, 0)), wood)
+	boxb(SB, Vector3(0.64, 0.16, 1.08), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local), cush)
+	# Backrest frame + thick cushion (~45°) — torso sinks into foam, not through the board.
+	boxb(SB, Vector3(0.68, 0.04, 1.18), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local + Vector3(0, -0.06, 0)), wood)
+	boxb(SB, Vector3(0.64, 0.12, 1.14), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local), cush)
+	# Armrests — outboard of the cushion so heels stay clear of the rails.
+	for lx2 in [-0.40, 0.40]:
+		boxb(SB, Vector3(0.045, 0.04, 0.7), cxf * Transform3D(Basis.IDENTITY, Vector3(lx2, 0.48, 0.05)), wood)
 	# surfboard stuck in the sand
 	var sp = shore_pt(0.55, 3.5)
 	wall_c(Vector2(sp.x, sp.z), 0.17, sp.y - 0.2, sp.y + 2.0, "冲浪板")
@@ -1845,8 +1848,9 @@ func _rebuild_hammock_mesh() -> void:
 		var w1 := hammock_half_w * (0.15 + 0.85 * taper1)
 		var p0 := hammock_a + ab * t0 + Vector3(0, y0, 0) - mid
 		var p1 := hammock_a + ab * t1 + Vector3(0, y1, 0) - mid
-		# wrap depth rises at the sides so the fabric cradles the body
-		var wrap := 0.18 if hammock_occupied else 0.12
+		# Cradle: centre deep (−wrap), side rails rise so fabric wraps the body.
+		var wrap := 0.30 if hammock_occupied else 0.12
+		var rail := 0.14 if hammock_occupied else 0.0
 		for st in hammock_nu - 1:
 			var u0 := lerpf(-1.0, 1.0, float(st) / float(hammock_nu - 1))
 			var u1 := lerpf(-1.0, 1.0, float(st + 1) / float(hammock_nu - 1))
@@ -1857,10 +1861,12 @@ func _rebuild_hammock_mesh() -> void:
 				col = Color(0.95, 0.4, 0.3)
 			else:
 				col = Color(0.98, 0.88, 0.5)
-			var A = p0 + side_u * (w0 * u0) + Vector3(0, -wrap * (1.0 - u0 * u0), 0)
-			var B = p0 + side_u * (w0 * u1) + Vector3(0, -wrap * (1.0 - u1 * u1), 0)
-			var C = p1 + side_u * (w1 * u1) + Vector3(0, -wrap * (1.0 - u1 * u1), 0)
-			var D = p1 + side_u * (w1 * u0) + Vector3(0, -wrap * (1.0 - u0 * u0), 0)
+			var cy0 := -wrap * (1.0 - u0 * u0) + rail * (u0 * u0)
+			var cy1 := -wrap * (1.0 - u1 * u1) + rail * (u1 * u1)
+			var A = p0 + side_u * (w0 * u0) + Vector3(0, cy0, 0)
+			var B = p0 + side_u * (w0 * u1) + Vector3(0, cy1, 0)
+			var C = p1 + side_u * (w1 * u1) + Vector3(0, cy1, 0)
+			var D = p1 + side_u * (w1 * u0) + Vector3(0, cy0, 0)
 			HB.face(A, B, C, col, col, col, Vector3.UP)
 			HB.face(A, C, D, col, col, col, Vector3.UP)
 			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
@@ -1884,7 +1890,7 @@ func hammock_point(t: float) -> Vector3:
 	var y_off := lerpf(_ham_cur_y[i0] if _ham_cur_y.size() > i0 else -hammock_empty_sag * sin(PI * t),
 		_ham_cur_y[i1] if _ham_cur_y.size() > i1 else -hammock_empty_sag * sin(PI * t), f)
 	# Centre wrap depth (u=0).
-	var wrap := 0.18 if hammock_occupied else 0.12
+	var wrap := 0.30 if hammock_occupied else 0.12
 	p.y = lerpf(hammock_a.y, hammock_b.y, t) + y_off - wrap
 	return p
 
@@ -2106,6 +2112,20 @@ func _blade(base: Vector3, dir: Vector3, h: float, w: float, lean: float, g: Col
 		prev_l = l
 		prev_r = r
 
+func _near_beach_prop(x: float, z: float) -> bool:
+	# Keep grass/bushes out of the lounger, towel, umbrella and hammock footprints.
+	if Vector2(x - lounger_xf.origin.x, z - lounger_xf.origin.z).length() < 2.2:
+		return true
+	if Vector2(x - towel_pos.x, z - towel_pos.z).length() < 1.6:
+		return true
+	if Vector2(x - umbrella_pos.x, z - umbrella_pos.z).length() < 1.8:
+		return true
+	var ham_mid := (hammock_a + hammock_b) * 0.5
+	if Vector2(x - ham_mid.x, z - ham_mid.z).length() < 2.4:
+		return true
+	return false
+
+
 func _build_vegetation() -> void:
 	var placed = 0
 	var tries = 0
@@ -2121,6 +2141,8 @@ func _build_vegetation() -> void:
 		if Vector2(x - lighthouse_pos.x, z - lighthouse_pos.z).length() < 2.6:
 			continue
 		if Vector2(x - hut_pos.x, z - hut_pos.z).length() < 4.0 or Vector2(x - campfire_pos.x, z - campfire_pos.z).length() < 3.2:
+			continue
+		if _near_beach_prop(x, z):
 			continue
 		var p = gp(x, z)
 		var inland = -d
@@ -2142,7 +2164,8 @@ func _build_vegetation() -> void:
 	for i in 40:
 		var th = rng.randf() * TAU
 		var p = shore_pt(th, rng.randf_range(3.5, 5.5))
-		if path_dist(p.x, p.z) > 1.0 and absf(wrapf(th + PI / 2.0, -PI, PI)) > 0.2:
+		if path_dist(p.x, p.z) > 1.0 and absf(wrapf(th + PI / 2.0, -PI, PI)) > 0.2 \
+				and not _near_beach_prop(p.x, p.z):
 			_grass(p, 1.0)
 	# fence along the lighthouse path
 	var pl: Array = paths[1]

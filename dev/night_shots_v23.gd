@@ -33,10 +33,14 @@ func g() -> void:
 		await process_frame
 
 	var moon: Vector3 = m.sun.global_basis.z.normalized()
+	var emis := 0.0
+	if m.boy._boy_mat != null:
+		emis = m.boy._boy_mat.emission_energy_multiplier
 	print("MOON", moon, "e", m.sun.light_energy, "opac", m.sun.shadow_opacity,
 		"amb", m.env.ambient_light_energy, "exp", m.env.tonemap_exposure,
 		"fill", m.boy.face_fill.light_energy, "rim", m.boy._night_rim.light_energy,
-		"emis", m.boy._boy_mat.emission_energy_multiplier, "lamps", m.night_fx.lamp_lights.size())
+		"emis", emis, "lamps", m.night_fx.lamp_lights.size(),
+		"boy_mat", m.boy._boy_mat != null)
 
 	var shot_paths: Array[String] = []
 	var shot_pos: Array[Vector3] = []
@@ -125,9 +129,12 @@ func g() -> void:
 				print("FAIL images too similar ", i, " ", j, " d=", mean_d)
 				ok = false
 
+	var alb := Color(0, 0, 0, 1)
+	if m.boy._boy_mat != null:
+		alb = m.boy._boy_mat.albedo_color
 	print("DONE glow", m.island.glow_mat.get_shader_parameter("boost"),
-		"fill", m.boy.face_fill.light_energy, "albedo", m.boy._boy_mat.albedo_color,
-		"ok", ok)
+		"fill", m.boy.face_fill.light_energy, "albedo", alb,
+		"boy_mat", m.boy._boy_mat != null, "ok", ok)
 	quit(0 if ok else 1)
 
 

@@ -1383,9 +1383,8 @@ func _setup_lounger_rest() -> void:
 	if (-rest_lie_b.z).dot(Vector3.UP) < 0.45:
 		into = (-back_n * 0.9 - seat_n * 0.1).normalized()
 		rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Hips on the seat cushion (hat is on the sand — no brim lift).
+	# Hips on the foam top; Tripo butt hangs below the hip bone into the cushion.
 	var hip_target: Vector3 = (seat_h["pos"] as Vector3) + seat_n * 0.10
-	# Bias slightly toward the pad so the first snap pass isn't fighting a 15 cm float.
 	hip_target += back_n * 0.04
 	rest_lie = hip_target
 	set_meta("lie_head_s", head_s)
@@ -1500,7 +1499,7 @@ func _snap_lie_contact() -> void:
 	var head_n: Vector3 = (head_b["normal"] as Vector3).normalized()
 	var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
 	var seat_along: Vector3 = (hip_s["along"] as Vector3).normalized()  # toward hinge
-	var crease: Vector3 = (hip_s["pos"] as Vector3) + seat_n * 0.09
+	var crease: Vector3 = (hip_s["pos"] as Vector3) + seat_n * 0.10
 	# Mesh-near-bone contact: head/spine onto the pad, hips on the seat.
 	var g_s2 := minf(
 		_mesh_gap_near(boy.lie_bone_world("mixamorig_Spine1"), mid_b["pos"], back_n, 0.14),
@@ -1508,8 +1507,11 @@ func _snap_lie_contact() -> void:
 	var g_head := _mesh_gap_near(boy.lie_bone_world("mixamorig_Head"), head_b["pos"], head_n, 0.18)
 	var g_hip := _mesh_gap_near(boy.lie_bone_world("mixamorig_Hips"), hip_s["pos"], seat_n, 0.18)
 	var mesh_torso := lie_mesh_penetration_depth(false)
-	# Blend head/spine/hips onto their pads; keep steps small so we converge.
+	var seat_board := lie_seat_penetration_depth()
 	var move := Vector3.ZERO
+	# Board punch-through (foam sink is OK).
+	if seat_board < -0.01:
+		move += seat_n * minf(-seat_board - 0.002, 0.03)
 	if g_head > 0.015:
 		move -= head_n * minf(g_head - 0.006, 0.03)
 		move += seat_along * minf((g_head - 0.006) * 0.3, 0.015)
@@ -1518,13 +1520,11 @@ func _snap_lie_contact() -> void:
 		move += back_n * minf(-dig - 0.002, 0.025)
 	elif g_s2 > 0.02:
 		move -= back_n * minf(g_s2 - 0.008, 0.02)
-	# Hips onto the seat — always, but gentler while the head is still settling.
-	if g_hip > 0.018:
+	if g_hip > 0.018 and seat_board > -0.008:
 		var hip_step := 0.028 if g_head <= 0.035 else 0.012
-		move -= seat_n * minf(g_hip - 0.008, hip_step)
+		move -= seat_n * minf(minf(g_hip - 0.008, seat_board + 0.02), hip_step)
 	elif g_hip < -0.012:
 		move += seat_n * minf(-g_hip - 0.002, 0.02)
-	# Fine head settle only when mesh is already clear and hips are close.
 	if g_head > 0.018 and g_head < 0.035 and mesh_torso > -0.008 and absf(g_hip) < 0.03:
 		move -= head_n * minf(g_head - 0.01, 0.008)
 	if move.length() > 0.045:
@@ -1608,7 +1608,8 @@ func _plant_lie_feet() -> void:
 	boy.lie_foot_plane_point = foot_plane["pos"]
 	boy.lie_foot_plane_normal = foot_plane["normal"]
 	boy.lie_foot_plant = true
-	boy.plant_feet_on_plane(boy.lie_foot_plane_point, boy.lie_foot_plane_normal, 0.04)
+	# Heels/knees kiss the foam top (small sink into the cushion is fine).
+	boy.plant_feet_on_plane(boy.lie_foot_plane_point, boy.lie_foot_plane_normal, 0.012)
 
 
 ## Deepest penetration of lie contact points into the support (negative = into the surface).
@@ -1623,8 +1624,7 @@ func lie_penetration_depth() -> float:
 	return deepest
 
 
-## Skinned samples vs the backrest FRONT face (finite pad). Selftest fails below −1 cm.
-## Ignores verts more than 15 cm behind the face (wrap-around / past the thin board).
+## Skinned samples vs the rigid backrest BOARD under the foam. Foam sink is expected.
 func lie_backrest_penetration_depth() -> float:
 	if rest_kind != "sun":
 		return 1.0
@@ -1633,7 +1633,8 @@ func lie_backrest_penetration_depth() -> float:
 		return 1.0
 	var back: Dictionary = island.lounger_back_point(0.55)
 	var back_n: Vector3 = (back["normal"] as Vector3).normalized()
-	var back_pos: Vector3 = back["pos"] as Vector3
+	var foam_h: float = maxf(island.lounger_back_half.y * 2.0, 0.08)
+	var board_pos: Vector3 = (back["pos"] as Vector3) - back_n * foam_h
 	var foot_l: Vector3 = boy.lie_bone_world("mixamorig_LeftFoot")
 	var foot_r: Vector3 = boy.lie_bone_world("mixamorig_RightFoot")
 	var thigh_l: Vector3 = boy.lie_bone_world("mixamorig_LeftUpLeg")
@@ -1662,9 +1663,8 @@ func lie_backrest_penetration_depth() -> float:
 				break
 		if not near_torso:
 			continue
-		var g := _signed_gap(s, back_pos, back_n)
-		# Ignore only verts clearly behind the board slab (not shallow poke-through).
-		if g < -(lounger_back_slab_clear()):
+		var g := _signed_gap(s, board_pos, back_n)
+		if g < -0.25:
 			continue
 		hit = true
 		deepest = minf(deepest, g)
@@ -1675,33 +1675,29 @@ func lounger_back_slab_clear() -> float:
 	return island.lounger_back_half.y * 2.0 + 0.08
 
 
-## Skinned samples vs the seat FRONT face (finite cushion). Selftest fails below −1 cm.
+## Skinned samples vs the rigid seat BOARD under the foam cushion.
+## Sinking into the soft pad is expected (weight); failing means punching through the wood.
 func lie_seat_penetration_depth() -> float:
 	if rest_kind != "sun":
 		return 1.0
-	var samples: Array[Vector3] = boy.skinned_sample_world(320)
+	var samples: Array[Vector3] = boy.skinned_sample_world(360)
 	if samples.is_empty():
 		return 1.0
 	var seat: Dictionary = island.lounger_seat_point(0.5)
 	var seat_n: Vector3 = (seat["normal"] as Vector3).normalized()
-	var seat_pos: Vector3 = seat["pos"] as Vector3
-	var foot_l: Vector3 = boy.lie_bone_world("mixamorig_LeftFoot")
-	var foot_r: Vector3 = boy.lie_bone_world("mixamorig_RightFoot")
-	var knee_l: Vector3 = boy.lie_bone_world("mixamorig_LeftLeg")
-	var knee_r: Vector3 = boy.lie_bone_world("mixamorig_RightLeg")
+	# Board sits ~cushion thickness below the contact (foam top) plane.
+	var foam_h: float = maxf(island.lounger_seat_half.y * 2.0, 0.06)
+	var board_pos: Vector3 = (seat["pos"] as Vector3) - seat_n * foam_h
 	var deepest := 1e9
 	var hit := false
 	for s in samples:
-		if not island.lounger_seat_contains(s, 0.02):
+		if not island.lounger_seat_contains(s, 0.05):
 			continue
 		if island.lounger_back_contains(s, 0.02):
 			continue
-		if s.distance_to(foot_l) < 0.22 or s.distance_to(foot_r) < 0.22:
-			continue
-		if s.distance_to(knee_l) < 0.14 or s.distance_to(knee_r) < 0.14:
-			continue
-		var g := _signed_gap(s, seat_pos, seat_n)
-		if g < -0.20:
+		var g := _signed_gap(s, board_pos, seat_n)
+		# Ignore far-under samples from the underside of the thin board (wrap-around).
+		if g < -0.25:
 			continue
 		hit = true
 		deepest = minf(deepest, g)
@@ -1790,14 +1786,19 @@ func lie_mesh_penetration_depth(include_hat := true) -> float:
 						break
 				if not near_torso:
 					continue
-				var gb := _signed_gap(s, back_pos, back_n)
-				if gb < -lounger_back_slab_clear():
+				# Foam sink OK — fail only if we punch the wood board under the pad.
+				var foam_b := maxf(island.lounger_back_half.y * 2.0, 0.08)
+				var board_b := back_pos - back_n * foam_b
+				var gb := _signed_gap(s, board_b, back_n)
+				if gb < -0.25:
 					continue
 				hit = true
 				deepest = minf(deepest, gb)
 			elif island.lounger_seat_contains(s, 0.04):
-				var gs := _signed_gap(s, seat_pos, seat_n)
-				if gs < -0.20:
+				var foam_h := maxf(island.lounger_seat_half.y * 2.0, 0.06)
+				var board := seat_pos - seat_n * foam_h
+				var gs := _signed_gap(s, board, seat_n)
+				if gs < -0.25:
 					continue
 				hit = true
 				deepest = minf(deepest, gs)

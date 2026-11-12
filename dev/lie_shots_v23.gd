@@ -29,7 +29,7 @@ func g() -> void:
 		m.rest_t = 1.0
 		m.set_meta("lie_snapped", false)
 		# Extra snap passes for hammock lateral recentering.
-		var passes := 28 if kind == "sleep" else 24
+		var passes := 35 if kind == "sleep" else 55
 		for _p in passes:
 			var pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
 			var swing := Transform3D.IDENTITY

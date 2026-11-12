@@ -353,8 +353,17 @@ func _split_baked_hat() -> void:
 				wh += float(weights_a[i * 4 + j])
 		var local: Vector3 = head_inv * verts[i]
 		var r := Vector2(local.x, local.z).length()
-		# Outer brim + crown shell only — leave scalp/hair for the body (+ scalp cover).
-		mark[i] = 1 if (wh > 0.6 and ((local.y > 0.13 and r > 0.125) or (local.y > 0.24 and r > 0.05))) else 0
+		# Cut the whole straw hat (brim + crown + band). Leave only close scalp/hair for the
+		# body mesh — otherwise a second baked hat stays on the head when the split hat detaches.
+		var hat_vert := false
+		if wh > 0.40:
+			if local.y > 0.08 and r > 0.10:
+				hat_vert = true
+			elif local.y > 0.16 and r > 0.06:
+				hat_vert = true
+			elif local.y > 0.22:
+				hat_vert = true
+		mark[i] = 1 if hat_vert else 0
 	var body_idx := PackedInt32Array()
 	var hat_idx := PackedInt32Array()
 	for t in range(0, indices.size(), 3):
@@ -371,10 +380,17 @@ func _split_baked_hat() -> void:
 			body_idx.append(ic)
 	if hat_idx.size() < 30:
 		return
+	# Keep the Tripo PBR material — rebuilding ArrayMesh drops surface materials otherwise
+	# and the boy renders as a flat grey clay (night albedo / emission then also no-op).
+	var src_mat: Material = mi.get_active_material(0)
+	if src_mat == null and mesh.get_surface_count() > 0:
+		src_mat = mesh.surface_get_material(0)
 	var body_arr := arr.duplicate()
 	body_arr[Mesh.ARRAY_INDEX] = body_idx
 	var body_mesh := ArrayMesh.new()
 	body_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, body_arr)
+	if src_mat:
+		body_mesh.surface_set_material(0, src_mat)
 	mi.mesh = body_mesh
 	var remap := {}
 	var hv := PackedVector3Array()
@@ -401,9 +417,10 @@ func _split_baked_hat() -> void:
 	hat_arr[Mesh.ARRAY_INDEX] = hi
 	var hat_mesh := ArrayMesh.new()
 	hat_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, hat_arr)
+	if src_mat:
+		hat_mesh.surface_set_material(0, src_mat)
 	hat.mesh = hat_mesh
 	hat.visible = true
-	var src_mat: Material = mi.get_active_material(0)
 	if src_mat:
 		hat.material_override = src_mat.duplicate()
 	var head_xf: Transform3D = skel.get_bone_global_rest(head_i)
@@ -598,11 +615,14 @@ func _tune_boy_material() -> void:
 			continue
 		var mi := c as MeshInstance3D
 		var src: Material = mi.get_active_material(0)
-		if src == null:
-			continue
-		var mat := src.duplicate() as StandardMaterial3D
+		if src == null and mi.mesh != null and mi.mesh.get_surface_count() > 0:
+			src = mi.mesh.surface_get_material(0)
+		var mat: StandardMaterial3D = null
+		if src != null:
+			mat = src.duplicate() as StandardMaterial3D
 		if mat == null:
-			continue
+			# Fallback so night albedo dimming still has a handle if the split mesh lost mats.
+			mat = StandardMaterial3D.new()
 		mat.metallic = 0.0
 		mat.metallic_specular = 0.2
 		mat.roughness = 0.78
@@ -618,6 +638,8 @@ func _tune_boy_material() -> void:
 		# the brim while the vest still lights. Match the old boy.gdshader (cull_disabled).
 		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		mi.material_override = mat
+		if mi.mesh != null and mi.mesh.get_surface_count() > 0:
+			mi.mesh.surface_set_material(0, mat)
 		_boy_mat = mat
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mi.transparency = 0
@@ -626,6 +648,8 @@ func _tune_boy_material() -> void:
 		if hat and is_instance_valid(hat) and hat.mesh != null:
 			hat.material_override = mat.duplicate()
 			hat.layers = 1 | 2
+			if hat.mesh.get_surface_count() > 0:
+				hat.mesh.surface_set_material(0, hat.material_override)
 		break
 
 
@@ -855,20 +879,20 @@ func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
 
 ## Lounger: hips on the seat, spine curves onto the ~45° pad, head on the cushion.
 func _apply_lounger_pose(w: float, breath: float) -> void:
-	# Hip crease bend; hollow mid-back so the Tripo torso clears the pad while the head rests.
-	_pose_abs("mixamorig_Hips", Vector3(0.50, 0.0, 0.0), w * 0.7)
-	_pose_abs("mixamorig_Spine", Vector3(-0.12 + breath * 0.08, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(-0.14 + breath * 0.1, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(-0.06 + breath * 0.08, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Neck", Vector3(-0.06, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.04 + breath * 0.03, 0.0, 0.0), w)
-	# Keep idle leg seed; nudge thighs onto the seat away from the hinge.
-	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.35, 0.06, 0.1), w * 0.7)
-	_pose_add("mixamorig_RightUpLeg", Vector3(-0.35, -0.06, -0.1), w * 0.7)
-	_pose_add("mixamorig_LeftLeg", Vector3(0.18, 0.0, 0.0), w * 0.45)
-	_pose_add("mixamorig_RightLeg", Vector3(0.18, 0.0, 0.0), w * 0.45)
-	_pose_add("mixamorig_LeftFoot", Vector3(0.05, 0.0, 0.22), w * 0.45)
-	_pose_add("mixamorig_RightFoot", Vector3(0.05, 0.0, -0.22), w * 0.45)
+	# Hip crease bend; mild hollow so shoulders/head rest on the pad while the butt sits.
+	_pose_abs("mixamorig_Hips", Vector3(0.48, 0.0, 0.0), w * 0.7)
+	_pose_abs("mixamorig_Spine", Vector3(-0.08 + breath * 0.08, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(-0.10 + breath * 0.1, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(-0.04 + breath * 0.08, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Neck", Vector3(-0.05, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.03 + breath * 0.03, 0.0, 0.0), w)
+	# Thighs onto the deep foam seat; feet clear of the armrests.
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.38, 0.05, 0.06), w * 0.7)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-0.38, -0.05, -0.06), w * 0.7)
+	_pose_add("mixamorig_LeftLeg", Vector3(0.22, 0.0, 0.0), w * 0.5)
+	_pose_add("mixamorig_RightLeg", Vector3(0.22, 0.0, 0.0), w * 0.5)
+	_pose_add("mixamorig_LeftFoot", Vector3(0.05, 0.0, 0.06), w * 0.45)
+	_pose_add("mixamorig_RightFoot", Vector3(0.05, 0.0, -0.06), w * 0.45)
 	# Hands on the belly (sky side) — euler alone puts them through the pad when reclined.
 	_rest_hands_on_belly(w)
 
@@ -913,17 +937,24 @@ func _rest_hands_on_belly(w: float) -> void:
 
 
 
-## Plant both feet onto a world-space seat plane (keeps heels on the lounger after a hips pitch).
-func plant_feet_on_plane(plane_point: Vector3, plane_normal: Vector3, gap := 0.012) -> void:
+## Plant feet / knees / mid-thighs onto a world-space seat plane so legs don't punch through.
+func plant_feet_on_plane(plane_point: Vector3, plane_normal: Vector3, gap := 0.012, include_knees := true) -> void:
 	if skel == null:
 		return
 	plane_normal = plane_normal.normalized()
-	for bone_name in [B_FOOT[0], B_FOOT[1]]:
+	# Feet + knees only. Overriding UpLeg stretches Tripo thigh skin through the pad.
+	var bones: Array[String] = [B_FOOT[0], B_FOOT[1]]
+	if include_knees:
+		bones.append_array(["mixamorig_LeftLeg", "mixamorig_RightLeg"])
+	for bone_name in bones:
 		var bi := skel.find_bone(bone_name)
 		if bi < 0:
 			continue
 		var xf: Transform3D = skel.global_transform * skel.get_bone_global_pose(bi)
 		var g := (xf.origin - plane_point).dot(plane_normal)
+		# Only lift out of the pad — never pull a floating limb down through cloth.
+		if g >= gap:
+			continue
 		var planted := Transform3D(xf.basis, xf.origin - plane_normal * (g - gap))
 		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
 		skel.set_bone_global_pose_override(bi, local_xf, 1.0, true)
