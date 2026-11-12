@@ -53,7 +53,7 @@ float vnoise(vec2 p) {
 vec3 face(vec3 c, vec2 p, out float lip) {
 	vec2 t = vec2((p.x - face_rect.x) / face_rect.z, 1.0 - (p.y - face_rect.y) / face_rect.w);
 	vec4 m = texture(face_tex, t);
-	c = mix(c, c * vec3(1.28, 0.55, 0.62), m.a * blush);
+	c = mix(c, c * vec3(1.06, 0.88, 0.90), m.a * blush * 0.45);
 	c = mix(c, lip_col, m.g * 0.75);
 	c = mix(c, brow_col, m.r * 0.85);
 	c = mix(c, vec3(0.12, 0.07, 0.06), m.b * 0.9);

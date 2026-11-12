@@ -279,9 +279,9 @@ func _cloth_mat(col: Color, p: Dictionary) -> ShaderMaterial:
 func _setup_materials() -> void:
 	# albedo per Blender material name; kinds: 0 skin, 1 cloth, 2 hair, 3 straw, 4 props
 	var look := {
-		"skin": [Color(1.0, 0.76, 0.55), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
+		"skin": [Color(1.0, 0.78, 0.60), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
 		"vest": [Color(0.80, 0.27, 0.22), 1], "shorts": [Color(0.96, 0.80, 0.36), 1],
-		"hair": [Color(0.30, 0.20, 0.14), 2], "sandal": [Color(0.36, 0.60, 0.64), 1],
+		"hair": [Color(0.42, 0.28, 0.18), 2], "sandal": [Color(0.36, 0.60, 0.64), 1],
 		"strap": [Color(0.95, 0.93, 0.88), 1], "hat": [Color(0.92, 0.80, 0.55), 3],
 		"band": [Color(0.78, 0.25, 0.20), 1], "lens": [Color(0.08, 0.09, 0.11), 4],
 		"stone": [Color(0.55, 0.56, 0.58), 4], "cord": [Color(0.93, 0.91, 0.85), 1],
@@ -315,7 +315,7 @@ func _setup_materials() -> void:
 				continue
 			if n == "hair" and String(mi.name) == "BoyHead":
 				# cartoon helmet: flat warm mass (lock shader's strand lighting reads as a waffle grid)
-				var hm := _mat(Color(0.58, 0.40, 0.24), 1)
+				var hm := _mat(Color(0.42, 0.28, 0.18), 1)
 				mi.set_surface_override_material(i, hm)
 				continue
 			var m := _mat(look[n][0], look[n][1])

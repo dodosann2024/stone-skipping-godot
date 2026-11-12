@@ -31,9 +31,12 @@ def _weight(obj, v, group):
 
 
 def cut_body_head(rig, body):
-    """remove the MakeHuman head / face; keep only a slim neck stump under the head joint"""
+    """remove MakeHuman head AND old neck; bury a tiny stump deep in the chest so nothing
+    pokes through the cartoon neck / collar."""
     hb = rig.data.bones["head"]
     piv = Vector(hb.head_local)
+    # bury stump well below the shoulder line (spine_03 / clavicle height)
+    bury_z = piv.z - 0.12
     hg = body.vertex_groups["head"].index if "head" in body.vertex_groups else None
     ng = body.vertex_groups["neck_01"].index if "neck_01" in body.vertex_groups else None
     bm = bmesh.new()
@@ -42,54 +45,98 @@ def cut_body_head(rig, body):
     dl = bm.verts.layers.deform.active
     def hw(v):
         if dl is None or hg is None:
-            return 1.0 if v.co.z > piv.z else 0.0
-        return v[dl].get(hg, 0.0) + 0.35 * (v[dl].get(ng, 0.0) if ng is not None else 0.0)
-    # delete faces that are mostly head
-    kill = [f for f in bm.faces if sum(hw(v) for v in f.verts) / len(f.verts) > 0.35 and f.calc_center_median().z > piv.z - 0.04]
+            return 1.0 if v.co.z > piv.z - 0.08 else 0.0
+        return v[dl].get(hg, 0.0) + 0.85 * (v[dl].get(ng, 0.0) if ng is not None else 0.0)
+    # delete head + old neck faces (anything mostly head/neck above the chest)
+    kill = [f for f in bm.faces
+            if sum(hw(v) for v in f.verts) / len(f.verts) > 0.25
+            and f.calc_center_median().z > bury_z + 0.02]
     bmesh.ops.delete(bm, geom=kill, context="FACES")
-    # leftover high head verts → slim neck disc (match cartoon slim neck)
-    for v in list(bm.verts):
-        w = hw(v)
-        if w > 0.12 and v.co.z > piv.z - 0.05:
-            v.co.z = min(v.co.z, piv.z - 0.035)
-            v.co.x = piv.x + (v.co.x - piv.x) * 0.32
-            v.co.y = piv.y + (v.co.y - piv.y) * 0.32
-    # drop any remaining wide "collar shelf" faces above the shoulders
+    # also delete any leftover shelf around the collarbone (wide faces near the neck axis)
     bm.faces.ensure_lookup_table()
     kill2 = []
     for f in bm.faces:
         c = f.calc_center_median()
-        if c.z > piv.z - 0.02:
+        if c.z > bury_z + 0.04 and math.hypot(c.x - piv.x, c.y - piv.y) < 0.10:
             kill2.append(f)
-            continue
-        if c.z > piv.z - 0.06:
-            rad = math.hypot(c.x - piv.x, c.y - piv.y)
-            if rad > 0.045:
-                kill2.append(f)
+        elif c.z > piv.z - 0.08:
+            kill2.append(f)
     if kill2:
         bmesh.ops.delete(bm, geom=kill2, context="FACES")
+    # crush remaining high verts into a tiny buried plug (hidden inside the vest)
     bm.verts.ensure_lookup_table()
-    edges = [e for e in bm.edges if e.is_boundary and all(v.co.z > piv.z - 0.08 for v in e.verts)]
+    for v in list(bm.verts):
+        if v.co.z > bury_z:
+            rad = math.hypot(v.co.x - piv.x, v.co.y - piv.y)
+            v.co.z = bury_z
+            if rad > 0.015:
+                s = 0.015 / rad
+                v.co.x = piv.x + (v.co.x - piv.x) * s
+                v.co.y = piv.y + (v.co.y - piv.y) * s
+    bm.verts.ensure_lookup_table()
+    edges = [e for e in bm.edges if e.is_boundary and all(v.co.z > bury_z - 0.03 for v in e.verts)]
     if edges:
         try:
             bmesh.ops.holes_fill(bm, edges=edges, sides=0)
         except Exception:
             pass
-    # crush any filled neck cap into a slim plug the cartoon neck will cover
     bm.verts.ensure_lookup_table()
     for v in bm.verts:
-        if v.co.z > piv.z - 0.07:
+        if v.co.z > bury_z - 0.01:
             rad = math.hypot(v.co.x - piv.x, v.co.y - piv.y)
-            if rad > 0.022:
-                s = 0.022 / rad
+            if rad > 0.012:
+                s = 0.012 / rad
                 v.co.x = piv.x + (v.co.x - piv.x) * s
                 v.co.y = piv.y + (v.co.y - piv.y) * s
-            if v.co.z > piv.z - 0.05:
-                v.co.z = piv.z - 0.05
+            v.co.z = min(v.co.z, bury_z)
     bm.to_mesh(body.data)
     bm.free()
     body.data.update()
-    print("CARTOON cut MH head, stump at z %.1f cm" % ((piv.z - 0.05) * 100))
+    print("CARTOON cut MH head+neck, stump buried at z %.1f cm" % (bury_z * 100))
+
+
+def clean_collar(rig, objs):
+    """delete the crumpled neck-hole crater on tank/vest/body, then push remaining
+    neckline verts down/out so the short cartoon neck covers the opening cleanly."""
+    piv = Vector(rig.data.bones["head"].head_local)
+    # stump was buried near piv.z-0.12; clothes inherit that crater — clear a wide cone
+    cut_z = piv.z - 0.02
+    for ob in objs:
+        if ob is None or ob.type != "MESH":
+            continue
+        bm = bmesh.new()
+        bm.from_mesh(ob.data)
+        bm.faces.ensure_lookup_table()
+        kill = []
+        for f in bm.faces:
+            c = f.calc_center_median()
+            rad = math.hypot(c.x - piv.x, c.y - piv.y)
+            # open a clean circular neck hole; drop anything that would poke past the flare
+            if c.z > piv.z - 0.14 and rad < 0.095:
+                kill.append(f)
+            elif c.z > piv.z - 0.10 and rad < 0.12:
+                kill.append(f)
+        if kill:
+            bmesh.ops.delete(bm, geom=kill, context="FACES")
+        bm.verts.ensure_lookup_table()
+        n = 0
+        for v in bm.verts:
+            if v.co.z < piv.z - 0.16:
+                continue
+            rad = math.hypot(v.co.x - piv.x, v.co.y - piv.y)
+            if rad > 0.14:
+                continue
+            # push collar down and slightly out under the cartoon neck flare
+            v.co.z = min(v.co.z, cut_z - 0.055 - max(0.0, 0.08 - rad) * 0.5)
+            if rad < 0.10 and rad > 1e-6:
+                s = min(0.11 / rad, 1.55)
+                v.co.x = piv.x + (v.co.x - piv.x) * s
+                v.co.y = piv.y + (v.co.y - piv.y) * s
+            n += 1
+        bm.to_mesh(ob.data)
+        bm.free()
+        ob.data.update()
+        print("CARTOON clean_collar", ob.name, "killed", len(kill) if kill else 0, "verts", n)
 
 
 def _sphere(bm, c, r, cuts=3, mat=0):
@@ -170,57 +217,61 @@ def build_mesh(rig, R, mat_skin, mat_hair):
             if d.x * s < 0:
                 v.co.x = ec.x - 0.02 * R * s
 
-    # neck must fill the clothes collar hole (MH neck was ~4–5 cm radius); capped solid plug
-    neck_top = C + Vector((0.0, 0.02 * R, -0.75 * R))
-    neck_bot = Vector((hb.x, hb.y + 0.01, hb.z - 0.18))
+    # short, slightly thick child neck that blends into the shoulders (not a long pale stick).
+    # reaches well into the vest so there is no floating gap / stump seam.
+    neck_top = C + Vector((0.0, 0.02 * R, -0.68 * R))
+    neck_bot = Vector((hb.x, hb.y + 0.02, hb.z - 0.095))
     rings = []
-    for p, rr in ((neck_top, 0.32 * R),
-                  (neck_top.lerp(neck_bot, 0.25), 0.34 * R),
-                  (neck_top.lerp(neck_bot, 0.55), 0.38 * R),
-                  (neck_bot, 0.42 * R)):
-        ring = [bm.verts.new(p + Vector((math.cos(a) * rr, math.sin(a) * rr * 0.9, 0.0)))
-                for a in (2 * math.pi * j / 16 for j in range(16))]
+    for p, rr in ((neck_top, 0.44 * R),
+                  (neck_top.lerp(neck_bot, 0.35), 0.50 * R),
+                  (neck_top.lerp(neck_bot, 0.70), 0.60 * R),
+                  (neck_bot, 0.72 * R)):  # wide flare into shoulders / vest
+        ring = [bm.verts.new(p + Vector((math.cos(a) * rr, math.sin(a) * rr * 0.88, 0.0)))
+                for a in (2 * math.pi * j / 20 for j in range(20))]
         rings.append(ring)
     for i in range(len(rings) - 1):
-        for j in range(16):
-            bm.faces.new((rings[i][j], rings[i][(j + 1) % 16], rings[i + 1][(j + 1) % 16], rings[i + 1][j]))
-    cap = bm.verts.new(neck_bot)
-    for j in range(16):
-        bm.faces.new((rings[-1][j], rings[-1][(j + 1) % 16], cap))
-    # soft taper of the skull pole into the neck (keep the round chin — only the very bottom)
+        for j in range(20):
+            bm.faces.new((rings[i][j], rings[i][(j + 1) % 20], rings[i + 1][(j + 1) % 20], rings[i + 1][j]))
+    # open bottom (no end-cap) so it sits over the vest like a soft turtleneck flare
+    # soft taper of the skull pole into the thick short neck (keeps round chin, no step)
     for v in _skull_verts():
         d = v.co - C
-        if d.z >= -0.70 * R:
+        if d.z >= -0.50 * R:
             continue
-        t = min(1.0, (-0.70 * R - d.z) / (0.30 * R))
+        t = min(1.0, (-0.50 * R - d.z) / (0.35 * R))
         t = t * t * (3.0 - 2.0 * t)
         rad = math.hypot(d.x, d.y)
-        want = mix(rad, 0.26 * R, t * 0.85)
+        want = mix(rad, 0.46 * R, t * 0.95)
         if rad > 1e-8:
             v.co.x = C.x + d.x / rad * want
-            v.co.y = C.y + d.y / rad * want * 0.9
+            v.co.y = C.y + d.y / rad * want * 0.90
+            # pull the chin/neck join forward a touch so the step disappears in side view
+            v.co.y -= 0.02 * R * t
+            v.co.z = mix(v.co.z, neck_top.z + 0.02 * R, t * 0.35)
 
     bm.normal_update()
-    # ---- hair: separate outer shell (all hair faces) so the hairline is geometry, not a jagged material split
+    # ---- hair: thick soft rounded mass (sides/back have volume under the hat); soft bangs, no paper edge
     hair_mark = bm.verts.layers.float.new("hr")
-    H = C + Vector((0.0, 0.01 * R, 0.02 * R))
-    hel = bmesh.ops.create_icosphere(bm, subdivisions=5, radius=R * 1.06,
+    H = C + Vector((0.0, 0.02 * R, 0.0))
+    hel = bmesh.ops.create_icosphere(bm, subdivisions=5, radius=R * 1.18,
                                      matrix=Matrix.Translation(H))
     for v in hel["verts"]:
         v[hair_mark] = 1.0
-    bang_cs = [H + Vector((bx * R, -0.72 * R, 0.14 * R + bz * R))
-               for bx, bz in ((-0.34, 0.01), (-0.12, -0.02), (0.12, -0.02), (0.34, 0.01))]
+    bang_cs = [H + Vector((bx * R, -0.72 * R, 0.08 * R + bz * R))
+               for bx, bz in ((-0.30, 0.03), (-0.10, 0.0), (0.10, 0.0), (0.30, 0.03))]
     bm.faces.ensure_lookup_table()
     hdel = []
     for f in list(bm.faces):
         if not all(v[hair_mark] > 0.5 for v in f.verts):
             continue
         q = f.calc_center_median() - H
-        if q.y < 0.08 * R:
-            ang = math.atan2(q.x, max(1e-4, -q.y + 0.02 * R))
-            lobe = (0.5 * (1.0 + math.cos(ang * 4.0))) ** 2
-            line = 0.08 * R + 0.18 * R * lobe
-            if q.z < line:
+        # only open the face half; keep sides and back as a full rounded mass (not bald under the hat)
+        if q.y < -0.20 * R:
+            ang = math.atan2(q.x, max(1e-4, -q.y))
+            # single soft lobe — no high-frequency cos(4θ) sawtooth
+            lobe = (0.5 * (1.0 + math.cos(ang * 2.0))) ** 1.5
+            line = 0.06 * R + 0.14 * R * lobe
+            if q.z < line - 0.04 * R and abs(q.x) < 0.68 * R:
                 hdel.append(f)
     if hdel:
         bmesh.ops.delete(bm, geom=hdel, context="FACES")
@@ -232,30 +283,58 @@ def build_mesh(rig, R, mat_skin, mat_hair):
         if q.length < 1e-6:
             continue
         n = q.normalized()
-        v.co += n * (0.006 * R + 0.018 * R * max(0.0, n.z))
-        if q.y < 0.1 * R:
+        # plump crown + sides + nape (reads as a soft mass in side/back view)
+        side = max(0.0, abs(n.x) - 0.10)
+        back = max(0.0, n.y)
+        v.co += n * (0.018 * R + 0.035 * R * max(0.0, n.z) + 0.040 * R * side + 0.035 * R * back)
+        # drop the back/side hairline lower so the nape isn't paper-thin / bald
+        if q.y > -0.15 * R and q.z < 0.10 * R:
+            v.co.z -= 0.06 * R * _ss(-0.15 * R, 0.45 * R, q.y)
+            v.co += n * 0.02 * R * back
+        if q.y < 0.05 * R:
             ang = math.atan2(q.x, max(1e-4, -q.y + 0.02 * R))
-            lobe = (0.5 * (1.0 + math.cos(ang * 4.0))) ** 2
-            line = 0.08 * R + 0.18 * R * lobe
-            if abs(q.z - line) < 0.12 * R:
-                v.co.z = mix(v.co.z, H.z + line, 0.55)
-                v.co.y = min(v.co.y, H.y - 0.20 * R - 0.08 * R * lobe)
+            lobe = (0.5 * (1.0 + math.cos(ang * 2.0))) ** 1.5
+            line = 0.06 * R + 0.14 * R * lobe
+            if abs(q.z - line) < 0.16 * R and q.y < -0.15 * R:
+                # smooth rounded hairline (no sawtooth / paper cut)
+                v.co.z = mix(v.co.z, H.z + line, 0.75)
+                v.co.y = min(v.co.y, H.y - 0.18 * R - 0.08 * R * lobe)
         for bc in bang_cs:
             d = v.co - bc
-            g = max(0.0, 1.0 - (d.x * d.x / (0.17 * R) ** 2 + d.y * d.y / (0.14 * R) ** 2 + d.z * d.z / (0.20 * R) ** 2))
+            g = max(0.0, 1.0 - (d.x * d.x / (0.22 * R) ** 2 + d.y * d.y / (0.18 * R) ** 2 + d.z * d.z / (0.22 * R) ** 2))
             g = g * g * (3.0 - 2.0 * g)
-            v.co += Vector((0.0, -0.07 * R * g, -0.055 * R * g))
-    bm.edges.ensure_lookup_table()
-    rim = [e for e in bm.edges if e.is_boundary and all(v[hair_mark] > 0.5 for v in e.verts)]
-    if rim:
+            v.co += Vector((0.0, -0.045 * R * g, -0.035 * R * g))
+    # soft bevel on the open hairline (two passes for a rounded rim, not a paper edge)
+    for _pass in range(2):
+        bm.edges.ensure_lookup_table()
+        rim = [e for e in bm.edges if e.is_boundary and all(v[hair_mark] > 0.5 for v in e.verts)]
+        if not rim:
+            break
         ret = bmesh.ops.extrude_edge_only(bm, edges=rim)
         for v in ret["geom"]:
             if isinstance(v, bmesh.types.BMVert):
                 v[hair_mark] = 1.0
                 q = v.co - H
                 if q.length > 1e-6:
-                    v.co += q.normalized() * 0.012 * R
-                    v.co += Vector((0.0, 0.008 * R, -0.006 * R))
+                    v.co += q.normalized() * (0.014 * R if _pass == 0 else 0.008 * R)
+                    v.co += Vector((0.0, 0.010 * R, -0.012 * R))
+    # laplace-ish smooth on hair rim verts so bangs read soft, not faceted
+    bm.verts.ensure_lookup_table()
+    bm.edges.ensure_lookup_table()
+    for _ in range(2):
+        moves = []
+        for v in bm.verts:
+            if not v.is_valid or v[hair_mark] < 0.5:
+                continue
+            if not v.is_boundary:
+                continue
+            nbrs = [e.other_vert(v).co for e in v.link_edges if e.other_vert(v) is not None]
+            if not nbrs:
+                continue
+            avg = sum(nbrs, Vector()) / len(nbrs)
+            moves.append((v, v.co.lerp(avg, 0.45)))
+        for v, co in moves:
+            v.co = co
 
     bm.verts.ensure_lookup_table()
     bm.faces.ensure_lookup_table()
@@ -392,12 +471,19 @@ def add_shape_keys(ob, info):
 
 def build_eyes(rig, eyes, eye_r, mat):
     """two UV-sphere eyeballs, bone-parented to head. Iris/pupil/sclera baked into vertex COLOR
-    (survives glTF axis flip); shader adds catchlights on top."""
+    (survives glTF axis flip); shader adds catchlights on top.
+
+    Sphere is rotated so a pole faces -Y (front): dense latitude rings keep the pupil round
+    instead of a square hole from sparse Z-pole topology on the face disc.
+    """
     bm = bmesh.new()
     centres = {}
+    # -90° about X: Blender UV-sphere +Z pole → -Y (face forward)
+    face_rot = Matrix.Rotation(math.radians(-90.0), 4, "X")
     for s, c in eyes.items():
-        bmesh.ops.create_uvsphere(bm, u_segments=28, v_segments=18, radius=eye_r * 0.92,
-                                  matrix=Matrix.Translation(c))
+        bmesh.ops.create_uvsphere(
+            bm, u_segments=48, v_segments=24, radius=eye_r * 0.92,
+            matrix=Matrix.Translation(c) @ face_rot)
         centres[s] = c
     me = bpy.data.meshes.new("Eyes")
     bm.to_mesh(me)
@@ -407,15 +493,17 @@ def build_eyes(rig, eyes, eye_r, mat):
         p.use_smooth = True
     uv = me.uv_layers.new(name="UVMap")
     col = me.color_attributes.new("Col", "FLOAT_COLOR", "POINT")
-    iris_r, pupil_r = 0.90, 0.30
-    sclera = (1.0, 0.99, 0.96, 1.0)
+    # iris ~65% of eye height so a clear white sclera ring remains; round dark pupil
+    iris_r, pupil_r = 0.66, 0.24
+    sclera = (1.0, 0.995, 0.97, 1.0)
+    # bake one big + one small round catchlight into COLOR so they stay circular at low res
     for p in me.polygons:
         for li, vi in zip(p.loop_indices, p.vertices):
             co = me.vertices[vi].co
             s = 1 if co.x >= 0 else -1
             c = centres[s]
             loc = co - c
-            # Blender face front is -Y
+            # face front is -Y; disc in XZ
             front = max(0.0, -loc.y / (eye_r * 0.92))
             rr = math.hypot(loc.x, loc.z) / (eye_r * 0.92)
             lx = loc.x / (eye_r * 1.1)
@@ -424,29 +512,48 @@ def build_eyes(rig, eyes, eye_r, mat):
                 uv.data[li].uv = (0.707 + lx * 0.22, 0.297 + lz * 0.22)
             else:
                 uv.data[li].uv = (0.293 + lx * 0.22, 0.707 + lz * 0.22)
-            if front < 0.12:
+            if front < 0.05:
                 rgb = sclera
-            elif rr < pupil_r * 0.95:
-                rgb = (0.05, 0.035, 0.03, 1.0)
-            elif rr < iris_r * 1.05:
-
+            elif rr < pupil_r:
+                # soft edge into iris so the pupil never reads as a square texel hole
+                t = rr / max(pupil_r, 1e-4)
+                edge = _ss(0.82, 1.0, t)
+                pr, pg, pb = 0.05, 0.035, 0.03
+                ir, ig, ib = 0.78, 0.48, 0.20
+                rgb = (pr * (1 - edge) + ir * edge, pg * (1 - edge) + ig * edge,
+                       pb * (1 - edge) + ib * edge, 1.0)
+            elif rr < iris_r:
                 t = (rr - pupil_r) / max(iris_r - pupil_r, 1e-4)
-                # hazel: warm in → darker limbal out
-                r = 0.92 - 0.50 * t
-                g = 0.58 - 0.34 * t
-                b = 0.22 - 0.14 * t
-                if t > 0.72:
-                    k = (t - 0.72) / 0.28
-                    r, g, b = r * (1 - 0.5 * k) + 0.14 * k, g * (1 - 0.5 * k) + 0.08 * k, b * (1 - 0.5 * k) + 0.04 * k
+                r = 0.78 - 0.28 * t
+                g = 0.48 - 0.22 * t
+                b = 0.20 - 0.08 * t
+                if t > 0.78:
+                    k = (t - 0.78) / 0.22
+                    # dark limbus ring, then blend toward sclera at the very edge
+                    r, g, b = r * (1 - 0.55 * k) + 0.12 * k, g * (1 - 0.55 * k) + 0.08 * k, b * (1 - 0.55 * k) + 0.05 * k
+                    if t > 0.92:
+                        k2 = (t - 0.92) / 0.08
+                        r = r * (1 - k2) + sclera[0] * k2
+                        g = g * (1 - k2) + sclera[1] * k2
+                        b = b * (1 - k2) + sclera[2] * k2
                 rgb = (r, g, b, 1.0)
             else:
-                # thin warm-white sclera ring
                 rgb = sclera
-            # soften onto back of ball
-            if front < 0.45:
-                k = front / 0.45
+            # only fade toward sclera on the back/side of the ball — never wash out the front iris
+            if front < 0.15 and rr > iris_r * 0.5:
+                k = front / 0.15
                 rgb = (rgb[0] * k + sclera[0] * (1 - k), rgb[1] * k + sclera[1] * (1 - k),
                        rgb[2] * k + sclera[2] * (1 - k), 1.0)
+            # baked catchlights (upper-left big, lower-right small) — stay round at game res
+            if front > 0.55:
+                cl1 = math.hypot(loc.x / (eye_r * 0.92) + 0.18 * s, loc.z / (eye_r * 0.92) - 0.22)
+                cl2 = math.hypot(loc.x / (eye_r * 0.92) - 0.12 * s, loc.z / (eye_r * 0.92) + 0.10)
+                if cl1 < 0.11:
+                    w = 1.0 - _ss(0.06, 0.11, cl1)
+                    rgb = (mix(rgb[0], 1.0, w), mix(rgb[1], 1.0, w), mix(rgb[2], 0.98, w), 1.0)
+                if cl2 < 0.055:
+                    w = 1.0 - _ss(0.025, 0.055, cl2)
+                    rgb = (mix(rgb[0], 1.0, w * 0.9), mix(rgb[1], 1.0, w * 0.9), mix(rgb[2], 0.98, w * 0.9), 1.0)
             col.data[vi].color = rgb
     ob = bpy.data.objects.new("Eyes", me)
     bpy.context.scene.collection.objects.link(ob)
@@ -495,9 +602,9 @@ def paint_face(ob, info, path):
         cx = s * eye_x if "eye_x" in dir() else s * 0.32 * R
         cx = s * 0.32 * R
         cy = eye_z - hb.z
-        # thick curved upper lid line (darken + brow channels so it reads at game camera)
-        xs = np.linspace(cx - eye_r * 1.15, cx + eye_r * 1.15, 48)
-        ys = cy + eye_r * 0.62 * np.sqrt(np.clip(1 - ((xs - cx) / (eye_r * 1.15)) ** 2, 0, 1))
+        # thinner upper lid line (separate from the brow)
+        xs = np.linspace(cx - eye_r * 1.05, cx + eye_r * 1.05, 40)
+        ys = cy + eye_r * 0.55 * np.sqrt(np.clip(1 - ((xs - cx) / (eye_r * 1.05)) ** 2, 0, 1))
         for i in range(len(xs) - 1):
             x0s, y0s = xs[i], ys[i]
             x1s, y1s = xs[i + 1], ys[i + 1]
@@ -505,14 +612,22 @@ def paint_face(ob, info, path):
             L2 = vx * vx + vy * vy + 1e-12
             t = np.clip(((PX - x0s) * vx + (PY - y0s) * vy) / L2, 0, 1)
             dist = np.hypot(PX - (x0s + t * vx), PY - (y0s + t * vy))
-            lid = 1.0 - ss(0.0012, 0.0038, dist)
-            Bch = np.maximum(Bch, lid * 1.0)
-            Rch = np.maximum(Rch, lid * 0.85)
-        # soft brow
-        by = cy + eye_r * 1.4
-        Rch = np.maximum(Rch, gauss(cx, by, eye_r * 0.95, eye_r * 0.24) * 0.6)
-        # saturated peach-pink blush
-        Ach = np.maximum(Ach, gauss(cx + s * 0.018 * R, cy - 0.40 * R, 0.036, 0.024) * 1.0)
+            lid = 1.0 - ss(0.0004, 0.0012, dist)
+            Bch = np.maximum(Bch, lid * 0.75)
+        # thinner arches placed higher above the lid
+        by = cy + eye_r * 1.85
+        xs = np.linspace(cx - eye_r * 0.80, cx + eye_r * 0.80, 32)
+        ys = by + eye_r * 0.10 * np.sqrt(np.clip(1 - ((xs - cx) / (eye_r * 0.80)) ** 2, 0, 1))
+        for i in range(len(xs) - 1):
+            x0s, y0s = xs[i], ys[i]
+            x1s, y1s = xs[i + 1], ys[i + 1]
+            vx, vy = x1s - x0s, y1s - y0s
+            L2 = vx * vx + vy * vy + 1e-12
+            t = np.clip(((PX - x0s) * vx + (PY - y0s) * vy) / L2, 0, 1)
+            dist = np.hypot(PX - (x0s + t * vx), PY - (y0s + t * vy))
+            Rch = np.maximum(Rch, (1.0 - ss(0.00035, 0.0011, dist)) * 0.55)
+        # soft light-pink blush (very gentle — not red patches)
+        Ach = np.maximum(Ach, gauss(cx + s * 0.015 * R, cy - 0.36 * R, 0.034, 0.022) * 0.22)
 
     # closed U smile
     mx, my = 0.0, tip[2] - hb.z - 0.08 * R

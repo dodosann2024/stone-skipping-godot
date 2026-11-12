@@ -617,24 +617,25 @@ def hat(rig, body, hair, head_top, cartoon=None):
         rx0 = max(abs(p.x) for p in ring0) + 0.004
         ry0 = (max(p.y for p in ring0) - min(p.y for p in ring0)) * 0.5 + 0.004
     # worn, not perched: the band goes round the cartoon skull / hair volume
-    HAIR, TILT, FRONT = 0.008, 20.0, 0.07
+    # tip the brim back further so eyes+smile read at the default game camera
+    HAIR, TILT, FRONT = 0.010, 30.0, 0.10
     hc = Vector(rig.data.bones["head"].head_local)
     if cartoon:
         # synthetic smooth skull for a stable kid-sized hat (mesh ears/bangs must not drive the band).
         # Cap band radius near the pre-chibi size so the brim stays reachable for hat IK.
-        C, R = Vector(cartoon["C"]), float(cartoon["R"]) * 0.88
+        C, R = Vector(cartoon["C"]), float(cartoon["R"]) * 0.90
+        # slightly longer front-back so a tipped band still gets a stable oval ring
         skull = []
         for i in range(48):
             for j in range(24):
                 th = 2 * math.pi * i / 48
                 ph = math.pi * j / 24
-                # upper 70% of a sphere
-                if math.cos(ph) < -0.2:
+                if math.cos(ph) < -0.15:
                     continue
                 skull.append(C + Vector((math.sin(ph) * math.cos(th) * R,
-                                         math.sin(ph) * math.sin(th) * R * 0.95,
-                                         math.cos(ph) * R)))
-        head_top = C.z + R + 0.01
+                                         math.sin(ph) * math.sin(th) * R * 1.05,
+                                         math.cos(ph) * R * 0.98)))
+        head_top = C.z + R * 0.98 + 0.008
     else:
         hair_mi = {i for i, m in enumerate(hair.data.materials) if m and m.name == "hair"}
         skin_v = {vi for p in hair.data.polygons if p.material_index not in hair_mi for vi in p.vertices}
@@ -666,13 +667,18 @@ def hat(rig, body, hair, head_top, cartoon=None):
                 return s0 + (s1 - s0) * (t - t0) / (t1 - t0)
         return 0.0
 
-    # crown just tall enough that the skull and its flattened hair stay inside the tapering wall
+    # crown just tall enough that the skull and its flattened hair stay inside the tapering wall.
+    # clamp so a tipped skull never blows the crown into a tall cylinder.
     ch = max(p.z for p in loc) - base_z + HAIR + 0.004
+    ch = min(max(ch, 0.055), 0.095)
     for _ in range(40):
         if not any(math.hypot(p.x / (rx - HAIR * 0.4), (p.y - cy) / (ry - HAIR * 0.4)) > crown_s((p.z - base_z + HAIR) / ch)
-                   for p in loc if p.z - base_z + HAIR > 0.3 * ch):
+                   for p in loc if 0.0 < (p.z - base_z + HAIR) < ch):
             break
         ch += 0.002
+        if ch > 0.11:
+            break
+    ch = min(ch, 0.10)
     bs = (rx0 + ry0) / (rx + ry)
     prof = [  # (radius scale, z) from the crown top down to the brim edge
         (0.0, ch), (0.5, ch * 0.97), (0.82, ch * 0.86), (0.97, ch * 0.62), (1.0, ch * 0.3), (1.01, 0.0),
@@ -836,6 +842,11 @@ def main():
     shoulder.add_helpers(rig)
     shoulder.reweight(rig, body)
     parts = build(rig, body, arm, cartoon=cinfo)
+    # bury leftover MH neck / crumpled tank+vest collar under the cartoon neck flare
+    for name in ("Body", "Tank", "Vest"):
+        ob = bpy.data.objects.get(name)
+        if ob:
+            cartoon_head.clean_collar(rig, [ob])
     print("TRIS", {o.name: sum(len(p.vertices) - 2 for p in o.data.polygons) for o in bpy.data.objects if o.type == "MESH"})
     save = arg("--save")
     if save:
