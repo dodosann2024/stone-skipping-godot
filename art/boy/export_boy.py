@@ -5,7 +5,7 @@ from mathutils import Vector
 
 FPS = 30
 LOOPS = {"idle", "stroll", "walk", "run", "hammock_sleep", "sun_rest", "seat_rest", "seat_nap"}
-RIGID = ("Hat", "Glasses", "Stone", "Eyes")      # bone-parented props (BoneAttachment3D in Godot)
+RIGID = ("Hat", "Glasses", "Stone", "Eyes", "BoyHead")  # mitts are skinned into BoyMesh
 OWN_UV2 = ("hair", "tank", "vest", "shorts")
 
 
@@ -141,6 +141,34 @@ def bake_clips(rig_obj, meta):
     return acts
 
 
+def _cartoon_face_mask(head, rig):
+    """AO red already baked; green = 1 on skin faces so boy.gdshader draws the face map.
+    Hair AO is forced flat — baked AO on the dense helmet reads as a waffle grid."""
+    me = head.data
+    col = me.color_attributes.get("AO") or me.color_attributes.new("AO", "BYTE_COLOR", "POINT")
+    skin_mi = [i for i, m in enumerate(me.materials) if m and m.name == "skin"]
+    hair_mi = [i for i, m in enumerate(me.materials) if m and m.name == "hair"]
+    skin_v = {v for p in me.polygons if p.material_index in skin_mi for v in p.vertices}
+    hair_v = {v for p in me.polygons if p.material_index in hair_mi for v in p.vertices}
+    cb = me.attributes.get("cb")
+    for i, d in enumerate(col.data):
+        c = d.color
+        b = cb.data[i].value if cb else 0.0
+        ao = 1.0 if i in hair_v else c[0]
+        d.color = (ao, 1.0 if i in skin_v else 0.0, b, 1.0)
+    hz = rig.data.bones["head"].head_local.z
+    uv2 = me.uv_layers.get("Face") or me.uv_layers.new(name="Face")
+    hair_l = set()
+    for p in me.polygons:
+        if p.material_index in hair_mi:
+            hair_l.update(p.loop_indices)
+    for l in me.loops:
+        if l.index in hair_l:
+            continue
+        co = me.vertices[l.vertex_index].co
+        uv2.data[l.index].uv = (co.x, co.z - hz)
+
+
 def export(rig_obj, out_dir):
     meta = {"fps": FPS, "ground": posekit.GROUND}
     # torso outline for the arm / body clearance check in dev/selftest.gd (measured before the join)
@@ -148,7 +176,10 @@ def export(rig_obj, out_dir):
     body = join_parts(rig_obj)
     hat = bpy.data.objects["Hat"]
     props = [bpy.data.objects[n] for n in RIGID]
-    bake_ao([body, hat])
+    head0 = bpy.data.objects.get("BoyHead")
+    bake_ao([body, hat] + ([head0] if head0 else []))
+    if head0:
+        _cartoon_face_mask(head0, rig_obj)
     face_mask(body, rig_obj)
     acts = bake_clips(rig_obj, meta)
     # stone offset from the hand bone (palm centre), in the hand bone's rest frame
@@ -157,7 +188,7 @@ def export(rig_obj, out_dir):
     palm = (Vector(hb.head_local) * 0.4 + Vector(mid.head_local) * 0.6)
     meta["stone_local"] = list(hb.matrix_local.inverted() @ palm)
     meta["eyes"] = [list(e) for e in body["eyes_uv"]]
-    meta["face_rect"] = list(face.RECT)
+    meta["face_rect"] = list(face.RECT)  # may be overwritten by BoyHead
     meta["height"] = max(v.co.z for v in body.data.vertices) - posekit.GROUND
     for b in ("pelvis", "head", "hand_r"):
         meta.setdefault("rest", {})[b] = list(rig_obj.data.bones[b].head_local)
@@ -167,8 +198,17 @@ def export(rig_obj, out_dir):
     for pb in rig_obj.pose.bones:
         pb.rotation_quaternion = (1, 0, 0, 0)
         pb.location = (0, 0, 0)
-    head = face.split_head(body)
+    head = bpy.data.objects.get("BoyHead")
+    if head is None:
+        head = face.split_head(body)
+    else:
+        # ensure armature points at the joined-rig body's armature object
+        for m in head.modifiers:
+            if m.type == "ARMATURE":
+                m.object = rig_obj
     meta["morphs"] = [k.name for k in head.data.shape_keys.key_blocks[1:]]
+    if "face_rect" in head:
+        meta["face_rect"] = list(head["face_rect"])
     for o in [body, head] + props:
         mods = [m.type for m in o.modifiers if m.type != "ARMATURE"]
         assert not mods, (o.name, mods)     # shape keys only survive export_apply=False

@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode cull_back;
+render_mode cull_disabled; // avoid striped/dithered vest from flipped solidify normals
 // v17 clothes: woven / knitted fabric instead of flat painted colour.
 //   UV        body UV (about 1.4 m per unit), tiles the fabric texture
 //   UV2.x     hem sway weight (0 where the garment is held by the body), UV2.y like COLOR.a, a second seam
@@ -10,6 +10,8 @@ render_mode cull_back;
 uniform vec3 albedo : source_color = vec3(0.9);
 uniform int fabric = 0;
 uniform sampler2D fabric_tex : filter_linear_mipmap, repeat_enable;
+uniform sampler2D pattern_tex : source_color, filter_linear_mipmap, repeat_enable;
+uniform float pattern_mix = 0.0; // 1 = multiply albedo by pattern_tex (flower shorts)
 uniform float weave = 35.0;            // texture tiles per UV unit (4 cm)
 uniform float bump = 0.00018;          // weave relief, metres
 uniform vec3 thread : source_color = vec3(0.9);
@@ -130,6 +132,10 @@ void fragment() {
 		bind = wmask * (1.0 - smoothstep(0.0035, 0.0085, edge));
 	}
 	vec3 c = albedo;
+	if (pattern_mix > 0.001) {
+		vec3 pat = texture(pattern_tex, UV * 2.2).rgb;
+		c = mix(c, c * pat, pattern_mix);
+	}
 	c *= 1.0 + (vnoise(lpos * 9.0) - 0.5) * 0.10 + (vnoise(lpos * 31.0) - 0.5) * 0.05;
 	c *= mix(1.0, mix(0.90, 1.06, h) * mix(0.97, 1.03, t.a), 0.5 + 0.5 * near);
 	float up = smoothstep(0.1, 0.9, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);

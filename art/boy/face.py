@@ -1,6 +1,7 @@
-"""v21 face: MakeHuman modelling targets for the look, real eyeballs, expression morphs baked from the
-MakeHuman expression units, a mouth interior, and a painted detail map (brows, lash line, lips, blush) in
-the head's front projection (UV2).
+"""v22 face: a young child's head (MakeHuman's own age model) on the body, MakeHuman modelling targets and a
+few smooth lenses for a cute, stylised look (big round eyes, button nose, small mouth), real eyeballs,
+expression morphs baked from the MakeHuman expression units, a mouth interior, and a painted detail map
+(brows, lash line, lips, blush) in the head's front projection (UV2).
 
 Expression offsets ride through the build as per-vertex FLOAT_VECTOR attributes ("ex_<name>") on Body; at
 export the face region is split off into a small skinned mesh (BoyHead) that carries them as shape keys,
@@ -15,21 +16,280 @@ from bl_ext.user_default.mpfb.entities.clothes.mhclo import Mhclo
 
 TG = os.path.expanduser("~/.config/blender/4.5/extensions/user_default/mpfb/data/targets/")
 RACE = {"asian": 0.5, "caucasian": 0.4, "african": 0.1}
-SUB = {"eye": "eyes", "cheek": "cheek", "ear": "ears"}
+SUB = {"eye": "eyes", "cheek": "cheek", "ear": "ears", "measure": "neck"}
 
-# modelling targets ("LR-" = both sides): an oval face with a defined chin and cheekbones, a straight
-# narrow nose with a proper bridge, open eyes set a little closer, full lips with lifted corners, flat ears
+# the head is a young child's (MakeHuman's own age model, ~6 years) on the body, see child_head(); on top
+# ("LR-" = both sides): big open eyes a little apart, a short button nose with a lifted tip, a small
+# smiling mouth, full cheeks, a small chin, rounded ears
+CHILD_AGE, CHILD_SCALE = 0.05, 1.28
 SHAPE = {
-    "head-oval": 0.5, "chin-prominent-incr": 0.3, "chin-bones-incr": 0.25, "chin-height-decr": 0.45, "mouth-trans-up": 0.3,
-    "mouth-scale-horiz-decr": 0.15,
-    "LR-cheek-bones-incr": 0.6, "LR-cheek-volume-decr": 0.45,
-    "nose-hump-decr": 0.3, "nose-point-width-decr": 0.35, "nose-scale-vert-incr": 0.2, "nose-greek-incr": 0.3,
-    "nose-nostrils-width-decr": 0.2, "nose-flaring-decr": 0.25, "nose-scale-depth-incr": 0.3,
-    "LR-eye-scale-incr": 1.0, "LR-eye-height2-incr": 0.3, "LR-eye-trans-in": 0.9, "LR-eye-corner1-up": 0.2,
-    "eyebrows-trans-down": 0.2, "eyebrows-trans-forward": 0.3,
-    "mouth-upperlip-volume-incr": 0.25, "mouth-lowerlip-volume-incr": 0.3, "mouth-cupidsbow-incr": 0.4,
-    "mouth-angles-up": 0.35, "LR-ear-flap-decr": 0.3,
+    "LR-eye-scale-incr": 1.4, "LR-eye-height2-incr": 0.7, "LR-eye-height1-incr": 0.25, "LR-eye-trans-out": 0.3,
+    "nose-scale-vert-decr": 0.5, "nose-scale-horiz-decr": 0.5, "nose-point-up": 1.0, "nose-hump-decr": 0.7,
+    "nose-scale-depth-decr": 0.3,
+    "mouth-scale-horiz-decr": 0.32, "mouth-angles-up": 0.45, "mouth-lowerlip-volume-incr": 0.3,
+    "chin-height-decr": 0.3,
+    "LR-ear-shape-round": 0.6,
+    "measure-neck-height-decr": 0.6, "neck-scale-horiz-decr": 0.3,
 }
+
+
+def _mix(ob):
+    """shape-key mix of the base mesh (all vertices, helpers included)"""
+    kb = ob.data.shape_keys.key_blocks
+    n = len(ob.data.vertices)
+    b = np.zeros(n * 3)
+    kb["Basis"].data.foreach_get("co", b)
+    out, t = b.copy(), np.zeros(n * 3)
+    for k in kb[1:]:
+        if k.value != 0.0 and not k.mute:
+            k.data.foreach_get("co", t)
+            out += k.value * (t - b)
+    return b.reshape(-1, 3), out.reshape(-1, 3)
+
+
+def _centroid(ob, co, g):
+    gi = ob.vertex_groups[g].index
+    return co[[v.index for v in ob.data.vertices if any(e.group == gi for e in v.groups)]].mean(0)
+
+
+def child_head(base, macro):
+    """swap the head for a young child's (same base mesh made at CHILD_AGE, scaled CHILD_SCALE about the
+    head joint), blended into the body by the rig's head / neck skin weights"""
+    from bl_ext.user_default.mpfb.services.humanservice import HumanService
+    m = dict(macro)
+    m["age"] = CHILD_AGE
+    ch = HumanService.create_human(macro_detail_dict=m, scale=0.1)
+    _, C = _mix(ch)
+    jc = _centroid(ch, C, "joint-head")
+    for o in [c for c in bpy.data.objects if c.parent == ch] + [ch]:
+        bpy.data.objects.remove(o)
+    groups = {g.name for g in base.vertex_groups}
+    rig = HumanService.add_builtin_rig(base, "game_engine")
+    B, T = _mix(base)
+    jt = _centroid(base, T, "joint-head")
+    hg, ng = base.vertex_groups["head"].index, base.vertex_groups["neck_01"].index
+    w = np.zeros(len(T))
+    for v in base.data.vertices:
+        for e in v.groups:
+            if e.group == hg:
+                w[v.index] += e.weight
+            elif e.group == ng:
+                w[v.index] += 0.5 * e.weight
+    w = np.clip(w, 0.0, 1.0)
+    mw = base.matrix_world.copy()
+    base.parent = None
+    base.matrix_world = mw
+    for o in [c for c in bpy.data.objects if c.parent == rig] + [rig]:
+        bpy.data.objects.remove(o)
+    for g in list(base.vertex_groups):
+        if g.name not in groups:
+            base.vertex_groups.remove(g)
+    for md in list(base.modifiers):
+        if md.type == "ARMATURE":
+            base.modifiers.remove(md)
+    D = (jt + CHILD_SCALE * (C - jc) - T) * w[:, None]
+    k = base.shape_key_add(name="child_head", from_mix=False)
+    k.data.foreach_set("co", (B + D).ravel())
+    k.value = 1.0
+    print("CHILD HEAD age %.2f scale %.2f, moved %d vertices, max %.1f mm" % (CHILD_AGE, CHILD_SCALE, int((w > 0).sum()), np.linalg.norm(D, axis=1).max() * 1000))
+
+
+# stylisation on top of the targets: (strength, radius m) of a smooth radial lens; > 0 magnifies about the
+# centre (the eyes: the eyeballs sit on the helper vertices, so they grow with their sockets), < 0 shrinks.
+# Monotonic (no fold) for -1 < a < 1.25.
+# The eye lens opens the lids more vertically (third value: z factor) so the eyes go round; the eyeballs
+# (helper vertices) scale evenly and stay spheres, and the eye region sinks back by a fraction (fourth
+# value) of what the balls grew, so the bigger eyes don't bulge. The nose shrinks about a point behind its
+# tip (so the upper lip doesn't follow it forward) and is smoothed into a button; the mouth region sits
+# back (muzzle: metres, radius). Below the cheekbones the face narrows towards a small chin (taper:
+# fraction of the width at the chin, how far the lower cheeks sit back in m), the chin shrinks (lens), the
+# lower face is shorter (lift: fraction) and the neck slims (fraction). Rings round the eyes (clear of the lid rims) are smoothed: no creases or bags.
+CUTE = {"eye": (0.35, 0.036, 1.55, 0.25), "nose": (-0.45, 0.017), "mouth": (-0.12, 0.02), "muzzle": (0.004, 0.03),
+        "taper": (0.18, 0.006), "chin": (-0.22, 0.018), "neck": 0.32, "lift": 0.1, "under": (0.004, 0.022),
+        "smooth": 16}
+
+
+def _ss_np(a, b, x):
+    t = np.clip((x - a) / (b - a), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _bump(r):
+    return np.where(r < 1.0, (1.0 - np.minimum(r, 1.0) ** 2) ** 2, 0.0)
+
+
+def _lens(T, c, a, R, sz=1.0):
+    d = T - c
+    g = _bump(np.linalg.norm(d, axis=1) / R)
+    return d * (a * g)[:, None] * np.array([1.0, 1.0, sz])
+
+
+def _skin_mask(base):
+    if "body" in base.vertex_groups:
+        gi = base.vertex_groups["body"].index
+        m = np.zeros(len(base.data.vertices), bool)
+        m[[v.index for v in base.data.vertices if any(e.group == gi for e in v.groups)]] = True
+        return m
+    hg = {g.index for g in base.vertex_groups if g.name.startswith(("helper-", "joint-"))}
+    return np.array([not any(e.group in hg for e in v.groups) for v in base.data.vertices])
+
+
+def _taubin(P, ed, mov, n, lam=0.6, mu=-0.63):
+    deg = np.bincount(ed.ravel(), minlength=len(P)).astype(float)
+    m = (mov & (deg > 0))[:, None]
+    for i in range(2 * n):
+        acc = np.zeros_like(P)
+        np.add.at(acc, ed[:, 0], P[ed[:, 1]])
+        np.add.at(acc, ed[:, 1], P[ed[:, 0]])
+        avg = acc / np.maximum(deg, 1.0)[:, None]
+        P = P + (lam if i % 2 == 0 else mu) * (avg - P) * m
+    return P
+
+
+def _form(base, T, P, ball, eyes, ez, tip, mc, nk, ed, f):
+    """project the head toward a soft Pixar/chibi silhouette while keeping eye/mouth topology"""
+    skin = _skin_mask(base)
+    ax = nk[1]
+    head = skin & (P[:, 2] > nk[2] - 0.04) & (np.hypot(P[:, 0], P[:, 1] - ax) < 0.17)
+    # target half-width (m) vs height relative to the eyes: round forehead, soft cheeks, small chin
+    # (dz_mm, half_width_m)
+    prof = np.array([
+        [70, 0.068], [50, 0.072], [30, 0.074], [10, 0.076], [0, 0.078],
+        [-15, 0.074], [-30, 0.066], [-45, 0.054], [-60, 0.042], [-75, 0.030], [-90, 0.022],
+    ], float)
+    dz = (P[:, 2] - ez) * 1000.0
+    tw = np.interp(dz, prof[::-1, 0], prof[::-1, 1])
+    rxy = np.hypot(P[:, 0], P[:, 1] - ax)
+    # keep eyes/lips, reshape the rest of the face shell
+    keep = ball.copy()
+    for c in eyes:
+        keep |= np.linalg.norm(P - c, axis=1) < 0.018
+    keep |= np.linalg.norm(P - mc, axis=1) < 0.016
+    # below the forehead only — the cranium stays put so the hat still seats
+    faceband = _ss_np(ez + 0.025, ez + 0.005, P[:, 2])
+    amt = f.get("amt", 0.55) * head * (~keep) * _ss_np(0.02, 0.05, rxy) * faceband
+    # lateral narrow toward target half-width (never widen)
+    hx = np.maximum(np.abs(P[:, 0]), 1e-6)
+    scale = np.minimum(1.0, tw / hx)
+    P2 = P.copy()
+    P2[:, 0] = P[:, 0] * (1.0 - amt + amt * scale)
+    # soft cheeks: pull the forward mid-face a little back below the eyes (less swollen)
+    cheek = amt * _ss_np(ez + 0.005, ez - 0.01, P[:, 2]) * _ss_np(ez - 0.07, ez - 0.055, P[:, 2])
+    cheek *= _ss_np(0.02, 0.055, np.abs(P[:, 0])) * _ss_np(ax - 0.02, ax - 0.07, P[:, 1])
+    P2[:, 1] += 0.006 * cheek
+    # button nose tip: small forward+up bulge after the shrink
+    tip2 = tip + np.array([0.0, -0.0015, 0.0015])
+    g = _bump(np.linalg.norm(P - tip2, axis=1) / 0.009)
+    P2 += np.array([0.0, -0.0018, 0.0012])[None, :] * (g * (~ball))[:, None]
+    # slim neck again after reshape
+    zn = _ss_np(nk[2] - 0.04, nk[2] + 0.0, P2[:, 2]) * _ss_np(mc[2] - 0.01, mc[2] - 0.03, P2[:, 2])
+    r2 = np.hypot(P2[:, 0], P2[:, 1] - ax)
+    wn = f.get("neck", 0.2) * zn * _ss_np(0.08, 0.055, r2) * head
+    P2[:, 0] -= P2[:, 0] * wn
+    P2[:, 1] -= (P2[:, 1] - ax) * wn
+    e2 = ed[head[ed[:, 0]] & head[ed[:, 1]]]
+    mov = head & (~ball) & (np.linalg.norm(P - tip, axis=1) > 0.01)
+    P2 = _taubin(P2, e2, mov, f.get("iters", 40))
+    if os.environ.get("CUTE_DEBUG"):
+        for dzz in range(-80, 70, 10):
+            z = ez + dzz / 1000.0
+            b = head & (np.abs(P2[:, 2] - z) < 0.003)
+            if b.sum():
+                print("FORM z %+4d halfw %.1f" % (dzz, np.abs(P2[b, 0]).max() * 1000))
+    return P2
+
+
+def cute(base, cfg=None):
+    cfg = cfg or CUTE
+    B, T = _mix(base)
+    D = np.zeros_like(T)
+    eyes = [_centroid(base, T, "joint-%s-eye" % s) for s in "lr"]
+    ball = np.zeros(len(T), bool)
+    for s in "lr":
+        gi = base.vertex_groups["helper-%s-eye" % s].index
+        ball[[v.index for v in base.data.vertices if any(e.group == gi for e in v.groups)]] = True
+    a, R, sz, back = cfg["eye"]
+    for c in eyes:
+        D += np.where(ball[:, None], _lens(T, c, a, R), _lens(T, c, a, R, sz))
+        rb = np.linalg.norm(T[ball] - c, axis=1)
+        rb = np.median(rb[rb < R])
+        D[:, 1] += back * a * rb * _bump(np.linalg.norm(T - c, axis=1) / R)
+        # fill under the eye: the cheek top comes forward so the bigger socket leaves no hollow below it
+        fu, ru = cfg["under"]
+        cu = c + np.array([0.0, 0.0, -0.75 * R])
+        D[:, 1] -= fu * _bump(np.linalg.norm((T - cu) * np.array([0.8, 1.0, 1.4]), axis=1) / ru) * ~ball \
+            * _ss_np(c[2] - 0.4 * R, c[2] - 0.65 * R, T[:, 2])
+    ez = sum(c[2] for c in eyes) / 2
+    cand = np.where((np.abs(T[:, 0]) < 0.004) & (T[:, 2] < ez - 0.012) & (T[:, 2] > ez - 0.06))[0]
+    tip = T[cand[np.argmin(T[cand, 1])]]
+    D += _lens(T, tip + np.array([0.0, 0.008, 0.004]), *cfg["nose"])
+    # small soft button tip (forward + slightly up) so the nose isn't a shadow blob
+    tip2 = tip + np.array([0.0, -0.002, 0.001])
+    D += _lens(T, tip2, 0.22, 0.008)
+    D[:, 2] += 0.0012 * _bump(np.linalg.norm(T - tip2, axis=1) / 0.01) * ~ball
+    mc = _centroid(base, T, "joint-mouth")
+    D += _lens(T, mc, *cfg["mouth"])
+    # the mouth and the chin sit back a little: a flat lower face
+    sb, rm = cfg["muzzle"]
+    r = np.linalg.norm((T - mc) * np.array([1.0, 0.5, 1.0]), axis=1) / rm
+    D[:, 1] += sb * _bump(r) * (T[:, 1] < mc[1] + 0.01)
+    # heart-shaped lower face: narrower from the cheekbones down to a small chin, the lower cheeks a little
+    # back; then a slimmer neck. Each level scales evenly about the head's axis, so nothing folds.
+    nk = _centroid(base, T, "joint-neck")
+    zc, zchin = ez - 0.015, mc[2] - 0.03
+    rxy = np.hypot(T[:, 0], T[:, 1] - nk[1])
+    near = _ss_np(0.13, 0.1, rxy)
+    kt, kb = cfg["taper"]
+    tz = _ss_np(zc, zchin, T[:, 2]) * _ss_np(zchin - 0.03, zchin - 0.008, T[:, 2])
+    D[:, 0] -= T[:, 0] * kt * tz * near
+    front = _ss_np(nk[1] - 0.02, nk[1] - 0.06, T[:, 1])
+    D[:, 1] += kb * tz * front * _ss_np(0.012, 0.04, np.abs(T[:, 0])) * near
+    zn = _ss_np(nk[2] - 0.035, nk[2] + 0.0, T[:, 2]) * _ss_np(zchin - 0.0, zchin - 0.02, T[:, 2])
+    wn = cfg["neck"] * zn * _ss_np(0.085, 0.06, rxy)
+    D[:, 0] -= T[:, 0] * wn
+    D[:, 1] -= (T[:, 1] - nk[1]) * wn
+    # a short lower face (eyes nearer the middle of the head): below the eyes everything rises toward
+    # them, by a fraction of the distance, down to the chin; the neck takes up the difference
+    kz = cfg["lift"]
+    zf = ez - 0.006
+    lz = np.where(T[:, 2] >= zchin, kz * np.maximum(zf - T[:, 2], 0.0) * _ss_np(zf, zf - 0.012, T[:, 2]),
+                  kz * (zf - zchin) * _ss_np(nk[2], zchin, T[:, 2]))
+    D[:, 2] += lz * near
+    cz = T[np.where((np.abs(T[:, 0]) < 0.004) & (np.abs(T[:, 2] - zchin) < 0.006) & ~ball)[0]]
+    chin = np.array([0.0, cz[:, 1].min() + 0.012, zchin + 0.004])
+    D += _lens(T, chin, *cfg["chin"])
+    P = T + D
+    wt = np.zeros(len(T))
+    for c in eyes:
+        r = np.linalg.norm(T - c, axis=1) / R
+        wt = np.maximum(wt, _ss_np(0.5, 0.65, r) * (1.0 - _ss_np(0.95, 1.2, r)))
+    wt = np.maximum(wt, 0.7 * _ss_np(0.02, 0.012, np.linalg.norm(T - tip, axis=1)))
+    wt[ball] = 0.0
+    ed = np.zeros(len(base.data.edges) * 2, int)
+    base.data.edges.foreach_get("vertices", ed)
+    ed = ed.reshape(-1, 2)
+    deg = np.bincount(ed.ravel(), minlength=len(T)).astype(float)
+    for _ in range(cfg.get("smooth", 0)):
+        acc = np.zeros_like(P)
+        np.add.at(acc, ed[:, 0], P[ed[:, 1]])
+        np.add.at(acc, ed[:, 1], P[ed[:, 0]])
+        avg = acc / np.maximum(deg, 1.0)[:, None]
+        P += 0.5 * wt[:, None] * (avg - P) * (deg > 0)[:, None]
+    D = P - T
+    if cfg.get("form") is not None:
+        P = _form(base, T, P, ball, eyes, ez, tip, mc, nk, ed, cfg["form"])
+        D = P - T
+    if os.environ.get("CUTE_DEBUG"):
+        for nm, c in (("eye", eyes[0]), ("tip", tip), ("mouth", mc), ("chin", chin), ("neck", nk)):
+            i = np.argmin(np.linalg.norm(T - c, axis=1))
+            print("DBG %s z %.1f -> %.1f  y %.1f -> %.1f" % (nm, T[i, 2] * 1000, P[i, 2] * 1000, T[i, 1] * 1000, P[i, 1] * 1000))
+        m = (np.abs(T[:, 0]) < 0.003) & (T[:, 1] < nk[1] - 0.03) & ~ball
+        print("DBG lowest front midline z %.1f -> %.1f" % (T[m, 2].min() * 1000, P[m, 2].min() * 1000))
+    k = base.shape_key_add(name="cute", from_mix=False)
+    k.data.foreach_set("co", (B + D).ravel())
+    k.value = 1.0
+    print("CUTE", cfg, "max %.1f mm" % (np.linalg.norm(D, axis=1).max() * 1000))
+
 
 # morph -> expression units ("blink" is made by blink(): the units' lid closure barely moves this proxy's rims)
 EXPR = {
@@ -312,32 +572,42 @@ def paint(body, rig, path):
         marks[s] = {"inner": ic, "outer": oc, "top": top, "cx": cx, "cy": (top + min(p[1] for p in pts)) * 0.5}
         # upper lash line: thin at the inner corner, fuller outward, a short lifted wing
         d, t = _seg_dist(PX, PY, up)
-        w = 0.00035 + 0.00055 * _ss(0.0, 0.75, t)
-        B = np.maximum(B, (1.0 - _ss(w * 0.55, w, d)) * 0.92)
-        wing = [oc, (oc[0] + s * 0.0024, oc[1] + 0.0010)]
+        w = 0.0011 + 0.0012 * _ss(0.0, 0.6, t)
+        B = np.maximum(B, (1.0 - _ss(w * 0.55, w, d)) * 0.75)
+        wing = [oc, (oc[0] + s * 0.0032, oc[1] + 0.0016)]
         d2, t2 = _seg_dist(PX, PY, wing)
-        B = np.maximum(B, (1.0 - _ss(0.0001, 0.00065 * (1.0 - t2) + 0.0001, d2)) * 0.75)
+        B = np.maximum(B, (1.0 - _ss(0.0001, 0.0011 * (1.0 - t2) + 0.0001, d2)) * 0.85)
+        # soft upper lashes (short strokes lifting off the lid)
+        for _ in range(28):
+            tt = rnd.random() ** 0.7
+            c0 = (ic[0] + (oc[0] - ic[0]) * tt, ic[1] + (oc[1] - ic[1]) * tt
+                  + 0.0012 + 0.0010 * math.sin(math.pi * tt))
+            ang = math.radians(55.0 + 40.0 * tt + rnd.gauss(0, 8))
+            ln = rnd.uniform(0.0016, 0.0028)
+            c1 = (c0[0] + s * math.cos(ang) * ln * 0.35, c0[1] + math.sin(ang) * ln)
+            ds, ts = _seg_dist(PX, PY, [c0, c1])
+            B = np.maximum(B, (1.0 - _ss(0.00005, 0.00022, ds)) * (0.55 + 0.25 * np.sin(np.pi * ts)) * (0.55 + 0.35 * tt))
         # lid crease, a soft shadow above the lid
-        cr = [(p[0], p[1] + 0.0032 + 0.0006 * math.sin(math.pi * min(1.0, (abs(p[0]) - abs(ic[0])) / (abs(oc[0]) - abs(ic[0]))))) for p in up]
+        cr = [(p[0], p[1] + 0.0036 + 0.0008 * math.sin(math.pi * min(1.0, (abs(p[0]) - abs(ic[0])) / (abs(oc[0]) - abs(ic[0]))))) for p in up]
         d3, t3 = _seg_dist(PX, PY, cr)
-        B = np.maximum(B, np.exp(-(d3 / 0.0007) ** 2) * 0.22 * _ss(0.05, 0.3, t3) * (1.0 - _ss(0.85, 1.0, t3)))
+        B = np.maximum(B, np.exp(-(d3 / 0.0007) ** 2) * 0.12 * _ss(0.05, 0.3, t3) * (1.0 - _ss(0.85, 1.0, t3)))
         # lower lid: a faint line and a little shadow
         d4, t4 = _seg_dist(PX, PY, lo)
-        B = np.maximum(B, (1.0 - _ss(0.0001, 0.0003, d4)) * 0.25 * _ss(0.1, 0.5, t4))
-        # brow: centreline from the inner corner past the outer one, arched at ~2/3
-        xin, xout = abs(ic[0]) - 0.0022, abs(oc[0]) + 0.0045
+        B = np.maximum(B, (1.0 - _ss(0.0001, 0.0003, d4)) * 0.02 * _ss(0.15, 0.5, t4) * (1.0 - _ss(0.7, 0.95, t4)))
+        # brow: a soft, short, rounded arch well above the eye (a child's brows are light and gentle)
+        xin, xout = abs(ic[0]) - 0.0005, abs(oc[0]) + 0.0025
         def brow(t):
-            b = math.sin(min(t / 0.66, 1.0) * math.pi * 0.5) if t < 0.66 else 1.0 - 0.75 * ((t - 0.66) / 0.34) ** 1.5
-            return (s * (xin + (xout - xin) * t), top + 0.0078 + 0.0040 * b)
+            b = math.sin(min(max(t * 0.9 + 0.08, 0.0), 1.0) * math.pi) ** 0.8
+            return (s * (xin + (xout - xin) * t), top + 0.0085 + 0.0035 * b)
         cl = [brow(i / 40.0) for i in range(41)]
         db, tb = _seg_dist(PX, PY, cl)
-        hw = 0.0021 * (1.0 - tb) ** 0.8 + 0.0006 * tb
-        fill = (1.0 - _ss(hw * 0.55, hw * 1.15, db)) * (0.55 - 0.25 * tb)
+        hw = 0.0022 * (1.0 - tb) ** 0.7 + 0.0008 * tb
+        fill = (1.0 - _ss(hw * 0.4, hw * 1.2, db)) * (0.6 - 0.25 * tb) * _ss(0.0, 0.12, tb)
         R = np.maximum(R, fill)
-        for _ in range(420):
+        for _ in range(260):
             t = rnd.random() ** 0.85
             c = brow(t)
-            h = 0.0021 * (1.0 - t) ** 0.8 + 0.0006 * t
+            h = 0.0016 * (1.0 - t) ** 0.7 + 0.0006 * t
             v = rnd.uniform(-1.0, 1.0) * h * 0.95
             c0 = (c[0], c[1] + v)
             # hairs point up at the brow head, then lie outward along the brow, the tail droops
@@ -351,9 +621,9 @@ def paint(body, rig, path):
             sx, sy = PX[j0:j1, i0:i1], PY[j0:j1, i0:i1]
             ds, ts = _seg_dist(sx, sy, [c0, c1])
             k = (1.0 - _ss(0.00008, 0.00024, ds)) * (0.55 + 0.45 * np.sin(np.pi * ts))
-            R[j0:j1, i0:i1] = np.minimum(1.0, R[j0:j1, i0:i1] + k * 0.45)
+            R[j0:j1, i0:i1] = np.minimum(1.0, R[j0:j1, i0:i1] + k * 0.3)
         # cheek warmth
-        A = np.maximum(A, _gauss(PX, PY, (cx + s * 0.007, marks[s]["cy"] - 0.024), (0.0135, 0.0085)) * 0.8)
+        A = np.maximum(A, _gauss(PX, PY, (cx + s * 0.012, marks[s]["cy"] - 0.038), (0.02, 0.014)) * 0.4)
     # mouth: the inner lip line from the cap; lips drawn around it
     chains = lip_chains(list(body["mouth_idx"]), lambda i: me.vertices[i].co)
     edge = [[uv(me.vertices[i].co) for i in c] for c in chains]
@@ -375,20 +645,18 @@ def paint(body, rig, path):
     lips *= 1.0 - _ss(0.82, 1.02, np.abs(xn))
     G = np.maximum(G, lips)
     crease = (1.0 - _ss(0.00015, 0.0005, np.abs(PY - yl))) * (1.0 - _ss(0.9, 1.05, np.abs(xn)))
-    B = np.maximum(B, crease * 0.5)
-    for s in (1, -1):
-        B = np.maximum(B, _gauss(PX, PY, (mx + s * (w - 0.0008), np.interp(mx + s * (w - 0.0012), [p[0] for p in line], [p[1] for p in line])), (0.0012, 0.0009)) * 0.35)
+    B = np.maximum(B, crease * 0.12)
     A = np.maximum(A, _gauss(PX, PY, (mx, line[len(line) // 2][1]), (0.016, 0.011)) * 0.25)
     # nose: the tip (most forward point near the middle) and the nostrils (underside, facing down)
     nose = [v for v in me.vertices if abs(v.co.x) < 0.004 and hz + 0.0 < v.co.z < marks[1]["cy"] + hz]
     tip = min(nose, key=lambda v: v.co.y).co
-    A = np.maximum(A, _gauss(PX, PY, uv(tip), (0.0065, 0.0065)) * 0.6)
+    A = np.maximum(A, _gauss(PX, PY, uv(tip), (0.0055, 0.0050)) * 0.28)
     A = np.maximum(A, _gauss(PX, PY, (0.0, (uv(tip)[1] + marks[1]["cy"]) * 0.5), (0.004, 0.012)) * 0.22)
     for s in (1, -1):
         ns = [v.co for v in me.vertices if 0.0015 < v.co.x * s < 0.014 and tip.z - 0.016 < v.co.z < tip.z and v.normal.z < -0.45 and v.co.y < tip.y + 0.016]
         if ns:
             c = sum(ns, Vector()) / len(ns)
-            B = np.maximum(B, _gauss(PX, PY, uv(c), (0.0024, 0.0012)) * 0.55)
+            B = np.maximum(B, _gauss(PX, PY, uv(c), (0.0026, 0.0014)) * 0.12)
             marks.setdefault("nostrils", []).append(uv(c))
     marks["tip"] = uv(tip)
     marks["mouth"] = (mx, line[len(line) // 2][1], w)

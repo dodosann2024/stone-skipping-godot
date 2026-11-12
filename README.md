@@ -1,7 +1,36 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v21 更帅、更有神的脸
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v22 可爱的小男孩
 
 低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩由 Blender 脚本（`art/boy/`）建模、绑定骨骼、制作动画后导出 glTF；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+## v22 改动
+只改一条反馈：“太丑了，请重新设计，这应该是一个可爱的小男孩形象”。第二稿仍偏 MakeHuman 写实后，改为**独立卡通头**（Pixar / Animal Crossing 式小孩）：大圆颅、软圆下巴、小纽扣鼻、低位大眼、细颈；接到原身体与骨骼，形变 / 眨眼保留。衣服、步态、物理、声音不变。在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（`game_v22.*`）。截图与视频见 `screenshots/v22/`。
+
+### 1. 卡通头（`art/boy/cartoon_head.py`；`build_boy.py` / `export_boy.py`）
+- 切掉 MakeHuman 头，新建 `BoyHead`（皮肤 + 盔形头发）与独立眼球；100% 权重到头骨；约 1.15× 幼童头半径。
+- 形变：blink / smile / open / frown / press / squint / brows；脸部贴图：厚上睑线、闭合 U 笑、饱和腮红。
+- 头发：平滑盔形发壳 + 4 个软刘海鼓包（非手指状碎发）。
+
+### 2. 眼睛和皮肤（`shaders/eye.gdshader`、`shaders/boy.gdshader`）
+- 眼球顶点色烘焙：暖白眼白、大 hazel 虹膜、深瞳孔；着色器加一大一小高光与帽檐下补光。
+- 皮肤：蜜桃肤色 + 粉腮红；帽檐下补光抬高，减少发灰。
+
+### 3. 帽子和默认视角
+- 按卡通颅骨合成帽圈（约 23 × 22 cm，冠 ~11 cm，后翘 20°）；默认机位眼睛与笑脸在帽檐下可读。
+- 晒太阳帽子右移 4.5 cm；帽沿抓握点限制在可达半径内（吊床 / 晒太阳起身 selftest 通过）。
+
+### 4. 表情
+- 默认闭合 U 甜笑；欢呼 / 哎呀 / 睡觉 / 眨眼保留。
+
+### 5. 检查
+- `--selftest --fixed-fps 30`：PASS（含帽子全状态）。
+- `--sim`：通过（无脚本错误；帽相对头骨误差 ≤ 0.02 mm）。
+- Web：`docs/game_v22`；390×844 机位截图见 `screenshots/v22/`。
+- 对比图 / 视频：正面·3/4·侧面、近景、表情、游戏机位日夜、`v21_vs_v22_face.mp4` < 15 MB。
+
+### 6. 已知限制
+- 颈与衣服领口衔接仍有轻微台阶；刘海边缘在部分角度仍偏硬。
+- 默认俯视机位下虹膜细节不如近景清晰（帽檐阴影）。
 
 ## v21 改动
 只改一条反馈：“脸做的不帅，请优化完善”。年龄、身份、衣服、帽子、步态都不变，没有新功能。在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（导出文件改名为 `game_v21.*`，iOS 声音解锁和安全区的 head_include 保留，单线程 Web 导出）。截图与视频见 `screenshots/v21/`。

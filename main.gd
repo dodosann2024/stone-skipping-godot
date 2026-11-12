@@ -89,9 +89,9 @@ var dragging := false
 var demo_cam := false
 var demo_nocut := false   # showcase stills of a prop: no see-through cut-out towards the boy
 var ex_yaw := 0.0
-# high, slightly telephoto follow camera (the reference looks down at ~55-60 degrees)
-var ex_pitch := 0.98
-var ex_dist := 6.2
+# slightly telephoto follow camera, pitched down enough to see eyes + smile under the hat brim
+var ex_pitch := 0.26
+var ex_dist := 4.5
 var last_drag := -10.0
 
 # explore
@@ -245,7 +245,8 @@ func _ready() -> void:
 		night_on = true
 		night_k = 1.0
 		_update_night(0.0, true)
-	_snap_explore_cam()
+	# First paint: face the Tripo boy (3/4-front). Later _place()/walk snaps back to follow-behind.
+	_snap_explore_cam(true)
 	if is_web and _opt("hatprobe") == "1":
 		RenderingServer.frame_pre_draw.connect(_hat_probe_tick)
 		_hat_probe_place.call_deferred(_opt("at"))
@@ -300,13 +301,17 @@ func _build_player() -> void:
 	boy = Boy.new()
 	player = boy
 	add_child(boy)
-	# start on the beach at the foot of the dock, looking along it
-	var sp := Vector3(0.6, 0, island.dock_start_z + 3.2)
+	# start on the beach near the dock, facing the pier — camera sits on the open-sand side
+	var sp := Vector3(1.35, 0, island.dock_start_z + 4.0)
 	sp.y = _surface(sp.x, sp.z)
 	boy.position = sp
-	face_yaw = 0.15
+	face_yaw = -0.35
 	boy.rotation.y = face_yaw
 	ground_y = sp.y
+	# Default view: 3/4-front so the Tripo face is readable (drag still orbits 360°)
+	ex_yaw = face_yaw + PI + 0.45
+	ex_pitch = 0.22
+	ex_dist = 4.0
 	boy.released.connect(_launch)
 	boy.footstep.connect(_on_footstep)
 	boy.foot_flat.connect(_stamp_footprint)
@@ -337,15 +342,16 @@ func _build_environment() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.75
+	# Keep ambient modest so the boy keeps concept_A saturation (vest red, peach skin).
+	env.ambient_light_energy = 0.55
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 1.0
+	env.tonemap_exposure = 0.95
 	env.tonemap_white = 3.2
-	# muted, slightly lifted pastel grade
+	# Full saturation — the old pastel grade (sat 0.85) washed vest/skin/hat into chalky pinks.
 	env.adjustment_enabled = true
-	env.adjustment_saturation = 0.85
-	env.adjustment_contrast = 0.92
-	env.adjustment_brightness = 1.0
+	env.adjustment_saturation = 1.05
+	env.adjustment_contrast = 1.02
+	env.adjustment_brightness = 0.98
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.80, 0.86, 0.88)
 	env.fog_density = 0.0045
@@ -359,6 +365,8 @@ func _build_environment() -> void:
 	sun.light_color = Color(1.0, 0.93, 0.82)
 	sun.shadow_enabled = true
 	sun.shadow_blur = 2.5
+	# slight sun disk — soft enough for the brim, not so wide that the boy goes flat/pastel
+	sun.light_angular_distance = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
 	if is_web:
@@ -1245,9 +1253,11 @@ func _begin_rest(kind: String) -> void:
 		rest_side = side
 		rest_seat = bed + side * 0.27 + Vector3(0, 0.11, 0)
 		rest_seat.y = maxf(rest_seat.y, Island.ground_h(rest_seat.x, rest_seat.z) + 0.3)
-		rest_lie = bed + Vector3(0, 0.12, 0) - along * 0.05
+		# keep the head near the sag centre (wide brim sticks through the rising ends/sides)
+		rest_lie = bed + Vector3(0, 0.36, 0) + along * 0.08
 		rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
-		rest_lie_b = _lie_basis(along)
+		# slight roll so one shoulder dips and the brim rides above one side wall
+		rest_lie_b = _lie_basis(along) * Basis(Vector3.FORWARD, 0.18)
 		rest_approach = rest_seat + side * 0.26
 	elif kind == "seat":
 		var st: Dictionary = island.seats[seat_i]
@@ -1271,11 +1281,10 @@ func _begin_rest(kind: String) -> void:
 		var tp := island.towel_pos
 		rest_side = td.cross(Vector3.UP).normalized()
 		rest_seat = tp + td * 0.06 + Vector3(0, 0.1, 0)
-		rest_lie = tp + td * 0.1 + Vector3(0, 0.1, 0)
+		# flat on the towel — world-up so the back rests on the mat with a little brim clearance
+		rest_lie = tp + td * 0.02 + Vector3(0, 0.14, 0)
 		rest_sit_b = Basis(Vector3.UP, atan2(-td.x, -td.z))
-		var gh := Island.ground_h(tp.x - td.x * 0.8, tp.z - td.z * 0.8)
-		var gf := Island.ground_h(tp.x + td.x * 0.8, tp.z + td.z * 0.8)
-		rest_lie_b = _lie_basis(-td + Vector3(0, (gh - gf) / 1.6, 0))
+		rest_lie_b = _lie_basis(-td)
 		rest_approach = rest_seat + td * 0.36
 	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
 	var pl := boy.activity(kind, 1.0, 0.0, 0.0)
@@ -1303,9 +1312,10 @@ func _lie_down() -> void:
 func _act_kind() -> String:
 	return "seatlie" if rest_kind == "seat" and seat_lying else rest_kind
 
-## lying on the back: local +Y (head) along head_dir, local -Z (chest) facing the sky
+## lying on the back: local +Y (head) along head_dir, local -Z (chest) facing the sky.
+## Tiny up-bias only — a large bias propped the Tripo boy into a sit-up on the towel/hammock.
 func _lie_basis(head_dir: Vector3) -> Basis:
-	var y := (head_dir.normalized() + Vector3(0, 0.12, 0)).normalized()
+	var y := (head_dir.normalized() + Vector3(0, 0.03, 0)).normalized()
 	var z := Vector3.DOWN - y * Vector3.DOWN.dot(y)
 	z = z.normalized()
 	return Basis(y.cross(z), y, z)
@@ -2254,7 +2264,7 @@ func _update_night(delta: float, force := false) -> void:
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.5 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
 	env.ambient_light_color = Color(0.22, 0.30, 0.50)
 	env.ambient_light_sky_contribution = 1.0 - k
-	env.ambient_light_energy = lerpf(0.75, 0.42, k)
+	env.ambient_light_energy = lerpf(0.55, 0.42, k)
 	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.07, 0.11, 0.19), k)
 	env.tonemap_exposure = lerpf(1.0, 1.2, k)
 	env.adjustment_saturation = lerpf(0.85, 0.95, k)
@@ -2554,7 +2564,9 @@ func _update_throw_pad() -> void:
 
 func _explore_cam() -> Array:
 	var tall := _tall()
-	var t := player.global_position + Vector3(0, 0.55, 0)
+	# Tripo: aim a little higher so the baked face stays readable under the brim
+	var hy := 0.68 if boy.meta.get("tripo", false) else 0.55
+	var t := player.global_position + Vector3(0, hy, 0)
 	return [t, ex_yaw, ex_pitch, ex_dist * (1.1 if tall else 1.0)]
 
 func _rest_cam() -> Array:
@@ -2609,8 +2621,9 @@ func _seg_hits_trunk(a: Vector3, b: Vector3, pts: Array) -> bool:
 			return true
 	return false
 
-func _snap_explore_cam() -> void:
-	ex_yaw = face_yaw
+func _snap_explore_cam(front := false) -> void:
+	# follow-behind while exploring; optional 3/4-front for start / face checks
+	ex_yaw = face_yaw + PI + 0.45 if front else face_yaw
 	var c := _explore_cam()
 	cam_target = c[0]; cam_yaw = c[1]; cam_pitch = c[2]; cam_dist = c[3]
 
@@ -2843,6 +2856,10 @@ func _run_sim_report() -> void:
 ## gait kinematics at the walking and running speeds (dev/walk_metrics.gd)
 func _walk_metrics_report() -> void:
 	if not ResourceLoader.exists("res://dev/walk_metrics.gd"):
+		return
+	# Tripo Mixamo bone names don't match the procedural game_engine profile walk_metrics expects
+	if boy.meta.get("tripo", false):
+		print("SIM gait metrics skipped — Tripo Mixamo (no game_engine bone map)")
 		return
 	for sp: Array in [["stroll", 0.55], ["walk 0.85", 0.85], ["walk", 1.15], ["run", 2.7]]:
 		var r: Array = load("res://dev/walk_metrics.gd").measure(self, float(sp[1]))
@@ -3853,7 +3870,7 @@ func _v20_sequence(pre: String, part: String) -> void:
 			["oops", "oops", 1.0, float(_opt("oops_t", "0.8")), PI - 0.3, 0.05, 0.6],
 		]
 		for s: Array in shots:
-			if not String(s[0]).begins_with(_opt("only")):
+			if not Array(_opt("only").split(",")).any(func(o: String) -> bool: return String(s[0]).begins_with(o)):
 				continue
 			player.rotation.y = y0
 			boy.debug_pose(s[1], s[2], s[3])
@@ -3868,8 +3885,9 @@ func _v20_sequence(pre: String, part: String) -> void:
 
 ## v21 face: close-ups (front / three-quarter / side), the expressions, the sleeping face (hat hidden: it lies
 ## over his face then), the game camera with him turned toward it; then at night by a torch
-func _v21_sequence(pre: String) -> void:
+func _v21_sequence(pre: String, ver := "v21", dk := 1.0) -> void:
 	demo_nocut = true
+	var ex0 := [ex_dist, ex_pitch]
 	for night: bool in [false, true]:
 		var tag := "night" if night else "day"
 		var p := Vector3(0.0, 0, island.dock_end_z + 1.6)
@@ -3892,8 +3910,10 @@ func _v21_sequence(pre: String) -> void:
 			shots += [["focus", "charge", 1.0, 0.3, PI - 0.6, -0.25, 0.45], ["cheer", "cheer", 1.0, 1.0, PI - 0.3, 0.04, 0.5],
 				["oops", "oops", 1.0, 0.8, PI - 0.25, -0.3, 0.45], ["sleep", "sleep", 1.0, 0.3, PI - 0.4, 0.04, 0.42],
 				["closed", "idle", 1.0, 0.3, PI - 0.4, 0.04, 0.42]]
+		if ver != "v21":
+			shots += [["body", "idle", 1.0, 0.3, PI - 0.3, 0.08, 1.6 / dk], ["bodyside", "idle", 1.0, 0.3, PI * 0.5, 0.08, 1.6 / dk]]
 		for s: Array in shots:
-			if not String(s[0]).begins_with(_opt("only")):
+			if not Array(_opt("only").split(",")).any(func(o: String) -> bool: return String(s[0]).begins_with(o)):
 				continue
 			player.rotation.y = y0
 			boy.debug_pose(s[1], s[2], s[3])
@@ -3904,9 +3924,12 @@ func _v21_sequence(pre: String) -> void:
 			if s[0] == "sleep":
 				boy.glasses.visible = false
 			await get_tree().process_frame
-			_fixed_cam(_bone_pos("head", 0.03), y0 + float(s[4]), s[5], s[6])
+			var tgt := _bone_pos("head", 0.03)
+			if String(s[0]).begins_with("body"):
+				tgt = _bone_pos("pelvis", 0.0) + Vector3(0, 0.12, 0)
+			_fixed_cam(tgt, y0 + float(s[4]), s[5], float(s[6]) * dk)
 			await _wait(0.3)
-			_shot(pre + "v21_%s_%s" % [tag, s[0]])
+			_shot(pre + "%s_%s_%s" % [ver, tag, s[0]])
 			boy.hat.visible = true
 		boy.frozen = false
 		# the game camera, him turned toward it
@@ -3917,16 +3940,16 @@ func _v21_sequence(pre: String) -> void:
 		var ec := _explore_cam()
 		cam_target = ec[0]; cam_yaw = ec[1]; cam_pitch = ec[2]; cam_dist = ec[3]
 		await _wait(1.2)
-		_shot(pre + "v21_%s_game" % tag)
+		_shot(pre + "%s_%s_game" % [ver, tag])
 		# pinched in and dragged lower, as a player does to look at him
 		ex_dist = 3.0
 		ex_pitch = 0.55
 		ec = _explore_cam()
 		cam_target = ec[0]; cam_yaw = ec[1]; cam_pitch = ec[2]; cam_dist = ec[3]
 		await _wait(0.8)
-		_shot(pre + "v21_%s_game_zoom" % tag)
-		ex_dist = 6.2
-		ex_pitch = 0.98
+		_shot(pre + "%s_%s_game_zoom" % [ver, tag])
+		ex_dist = ex0[0]
+		ex_pitch = ex0[1]
 		if night:
 			_toggle_night()
 			await _wait(2.9)
@@ -4037,6 +4060,8 @@ func _run_demo4() -> void:
 				await _v20_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what == "v21":
 				await _v21_sequence(pre)
+			elif what == "v22":
+				await _v21_sequence(pre, "v22", 1.2)
 			elif what.begins_with("v12"):
 				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
 			elif what.begins_with("v11"):

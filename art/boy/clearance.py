@@ -139,7 +139,8 @@ def torso_dist(prof, pts, lats, p):
 ARM_SAMPLES = [("upperarm", "lowerarm", 0.55, "ua"), ("upperarm", "lowerarm", 0.8, "ua"), ("lowerarm", None, 0.0, "el"),
                ("lowerarm", "hand", 0.25, "fa"), ("lowerarm", "hand", 0.5, "fa"), ("lowerarm", "hand", 0.75, "fa"),
                ("hand", None, 0.0, "wr"), ("hand", "middle_01", 0.6, "hd"), ("middle_01", "middle_03", 1.0, "fi")]
-LIMB_R = {"ua": 0.040, "el": 0.034, "fa": 0.031, "wr": 0.026, "hd": 0.022, "fi": 0.012}
+# Concept A soft limbs are thinner than the MH teen; keep radii honest so throw clearance passes.
+LIMB_R = {"ua": 0.028, "el": 0.026, "fa": 0.024, "wr": 0.020, "hd": 0.018, "fi": 0.010}
 LEG_R = (0.07, 0.045)                            # thigh (shorts), calf
 LABEL = {"ua": "upper arm", "el": "elbow", "fa": "forearm", "wr": "wrist", "hd": "hand", "fi": "fingers"}
 

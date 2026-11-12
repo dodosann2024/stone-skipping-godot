@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bg7lavtnt7fj8"
-path="res://.godot/imported/hair_strands.png-596af7aee64829190ca04169b9374e65.ctex"
+uid="uid://dlsi0kxthtqwq"
+path="res://.godot/imported/shorts_flowers.png-1736eb8a8d758b81012cd2de22e40f3a.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://textures/hair_strands.png"
-dest_files=["res://.godot/imported/hair_strands.png-596af7aee64829190ca04169b9374e65.ctex"]
+source_file="res://textures/shorts_flowers.png"
+dest_files=["res://.godot/imported/shorts_flowers.png-1736eb8a8d758b81012cd2de22e40f3a.ctex"]
 
 [params]
 
@@ -23,7 +23,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=true
+mipmaps/generate=false
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""

@@ -30,6 +30,8 @@ def bump(x, c, w):
 # locomotion cycles (period s, stride, duty): the game blends stroll -> walk -> run by ground speed, so the
 # stride (and cadence) follows the speed and the planted feet never slide. Game speeds (x 0.85): stroll
 # 0.55 m/s at 116 steps/min, walk 1.15 m/s at 148 steps/min, run 2.7 m/s
+# Keep stride/speed near the original game contract (gait_probe / explore speeds 1.15 & 2.7 m/s).
+# Short chibi legs over-reach a little in the clip bake (WARN) but planted feet stay locked in-game.
 STROLL = (1.04, 0.67, 0.66)
 WALK = (0.81, 1.1, 0.62)
 RUN = (0.68, 2.04, 0.36)
@@ -60,7 +62,7 @@ class Gait:
         """flat-ankle position, pitch for one foot at cycle phase ph"""
         u = (ph - (0.0 if s == "l" else 0.5)) % 1.0
         a0 = self.rig.stand_ankle(s)
-        x = (0.085 if s == "l" else -0.085) * (0.85 if self.run else 1.0)
+        x = (0.065 if s == "l" else -0.065) * (0.85 if self.run else 1.0)
         D = self.duty
         if u < D:
             k = u / D
@@ -438,10 +440,12 @@ def hammock_poses(rig):
                fl=V(0.10, -0.30, 0.10), fr=V(-0.10, -0.29, 0.11), yl=0.1, yr=-0.1, pl=-0.35, pr=-0.3,
                kl=V(0, -1, 0.3), kr=V(0, -1, 0.3),
                hl=V(0.24, 0.05, 0.52), hr=V(-0.24, 0.05, 0.52), hlw=1.0, hrw=1.0, el=V(0.5, 1, 0), er=V(-0.5, 1, 0), gl=0.5, gr=0.5)
+    # free hands rest on the belly — hat IK pulls the gripping hand to the brim; keeps the other
+    # hand ≥ 1.2 cm off the hat (selftest HAND_MIN) on the shorter Concept A arms
     lying = P(i, pel=V(0, 0, 0), prot=(-0.12, 0, 0), sp=(0.06, 0, 0), neck=(0.1, 0, 0), head=(0.22, 0.0, 0.08),
               fl=V(0.06, -0.16, 0.12), fr=V(-0.03, -0.14, 0.15), yl=0.25, yr=-0.25, pl=-0.6, pr=-0.6,
               kl=V(0, -1, 0), kr=V(0, -1, 0),
-              hl=V(0.05, -0.16, 0.88), hr=V(-0.05, -0.15, 0.92), el=V(1, 0.3, -0.3), er=V(-1, 0.3, -0.3), gl=0.4, gr=0.4)
+              hl=V(0.20, 0.02, 0.52), hr=V(-0.20, 0.02, 0.52), el=V(0.6, 0.8, -0.2), er=V(-0.6, 0.8, -0.2), gl=0.4, gr=0.4)
     return i, seated, lying
 
 
@@ -481,7 +485,7 @@ def towel_poses(rig):
     lying = P(i, pel=V(0, 0, 0), prot=(0.0, 0, 0), sp=(0.0, 0, 0), neck=(0.05, 0, 0), head=(0.12, 0, 0),
               fl=V(0.09, 0.0, 0.055), fr=V(-0.10, 0.03, 0.33), yl=0.35, yr=-0.1, pl=-1.0, pr=-1.45,
               kl=V(0, -1, 0), kr=V(0.2, -1, 0),
-              hl=V(0.07, 0.08, 1.40), hr=V(-0.07, 0.08, 1.40), el=V(1, -0.3, 0.3), er=V(-1, -0.3, 0.3), gl=0.3, gr=0.3)
+              hl=V(0.18, 0.02, 0.55), hr=V(-0.18, 0.02, 0.55), el=V(0.6, 0.7, -0.2), er=V(-0.6, 0.7, -0.2), gl=0.3, gr=0.3)
     return i, seated, lying
 
 
@@ -529,8 +533,8 @@ def seat_poses(rig):
     seated = P(i, pel=SEAT_PEL, prot=(-0.08, 0, 0), sp=(0.14, 0, 0), neck=(0.02, 0, 0), head=(0.06, 0, 0),
                fl=V(0.12, -0.20, 0.055), fr=V(-0.12, -0.19, 0.055), yl=0.15, yr=-0.15, pl=0.0, pr=0.0,
                kl=V(0.1, -1, 0), kr=V(-0.1, -1, 0),
-               hl=V(0.15, -0.20, 0.47), hr=V(-0.15, -0.19, 0.47), hlw=1.0, hrw=1.0,
-               el=V(0.6, 0.6, -0.4), er=V(-0.6, 0.6, -0.4), gl=0.4, gr=0.4)
+               hl=V(0.18, -0.12, 0.42), hr=V(-0.18, -0.11, 0.42), hlw=1.0, hrw=1.0,
+               el=V(0.5, 0.8, -0.3), er=V(-0.5, 0.8, -0.3), gl=0.4, gr=0.4)
     return i, seated
 
 
@@ -545,8 +549,9 @@ def seat_lying(rig):
     return P(i, pel=V(0, 0, 0), prot=(0.0, 0, 0), sp=(0.03, 0, 0), neck=(0.06, 0, 0), head=(0.08, 0.0, 0.0),
              fr=V(-0.10, 0.03, 0.33), yr=-0.1, pr=-1.45, kr=V(0.2, -1, 0),
              fl=KNEE_R + V(0.0, -0.075, 0.015), yl=0.5, pl=0.0, kl=V(1.0, -0.8, 0.3),
-             hl=V(0.07, 0.08, 1.40), hr=V(-0.07, 0.08, 1.40), hlw=0.0, hrw=0.0,
-             el=V(1, -0.3, 0.3), er=V(-1, -0.3, 0.3), gl=0.3, gr=0.3)
+             # hands on chest (not behind the head) so the free hand stays off the hat; IK grips the brim
+             hl=V(0.18, 0.02, 0.55), hr=V(-0.18, 0.02, 0.55), hlw=0.0, hrw=0.0,
+             el=V(0.6, 0.7, -0.2), er=V(-0.6, 0.7, -0.2), gl=0.3, gr=0.3)
 
 
 def seat_clips(rig):
@@ -580,10 +585,10 @@ def seat_clips(rig):
     # feet back under the seat, lean over them, push up off the knees
     tuck = P(seated, pel=SEAT_PEL + V(0, -0.03, 0.01), prot=(0.45, 0, 0), sp=(0.15, 0, 0), head=(-0.15, 0, 0),
              fl=V(0.11, -0.08, 0.055), fr=V(-0.11, -0.07, 0.055), pl=0.0, pr=0.0,
-             hl=V(0.14, -0.22, 0.50), hr=V(-0.14, -0.21, 0.50), el=V(0.7, 0.4, -0.2), er=V(-0.7, 0.4, -0.2))
+             hl=V(0.20, -0.10, 0.40), hr=V(-0.20, -0.09, 0.40), el=V(0.5, 0.8, -0.2), er=V(-0.5, 0.8, -0.2))
     push = P(i, pel=V(0.0, -0.02, -0.14), prot=(0.40, 0, 0), sp=(0.1, 0, 0), head=(-0.1, 0, 0),
              fl=V(0.11, -0.08, 0.055), fr=V(-0.11, -0.07, 0.055),
-             hl=V(0.16, -0.24, 0.58), hr=V(-0.16, -0.23, 0.58), hlw=1.0, hrw=1.0, el=V(0.7, 0.4, -0.2), er=V(-0.7, 0.4, -0.2))
+             hl=V(0.22, -0.08, 0.45), hr=V(-0.22, -0.07, 0.45), hlw=1.0, hrw=1.0, el=V(0.5, 0.8, -0.2), er=V(-0.5, 0.8, -0.2))
     stand = keyed([(0.0, seated), (0.3, tuck), (0.62, push), (1.0, i)])
     # lie down (time 0..1 follows main.gd's tip of the body frame): lean onto the right hand on the seat,
     # swing the legs up, settle the right foot, cross the left ankle over the knee, hands behind the head
@@ -592,9 +597,9 @@ def seat_clips(rig):
              hl=V(0.12, -0.22, 0.48), hlw=1.0, fl=V(0.12, -0.24, 0.10), fr=V(-0.12, -0.22, 0.08))
     swing = P(prop, pel=V(0.0, 0.06, -0.15), prot=(-0.04, 0.0, 0.04), sp=(0.06, 0.03, 0.05), head=(0.05, 0.0, 0.1),
               fl=V(0.11, -0.34, 0.30), fr=V(-0.11, -0.30, 0.26), pl=0.2, pr=0.1, kl=V(0.2, -1, 0.2), kr=V(-0.1, -1, 0.2),
-              hr=V(-0.20, 0.10, 0.80), hrw=0.0, er=V(-1.0, 0.0, 0.0), hl=V(0.14, -0.06, 0.95), hlw=0.0, el=V(1.0, 0.2, 0.0))
+              hr=V(-0.20, 0.05, 0.55), hrw=0.0, er=V(-0.7, 0.5, -0.2), hl=V(0.18, -0.04, 0.55), hlw=0.0, el=V(0.7, 0.5, -0.2))
     settle = P(lying, fl=V(0.10, -0.20, 0.30), pl=0.1, yl=0.2, kl=V(0.4, -1, 0.2),
-               hl=V(0.12, 0.0, 1.25), hr=V(-0.12, 0.0, 1.25), el=V(1, 0.2, 0.0), er=V(-1, 0.2, 0.0))
+               hl=V(0.18, 0.02, 0.55), hr=V(-0.18, 0.02, 0.55), el=V(0.6, 0.7, -0.2), er=V(-0.6, 0.7, -0.2))
     lie = keyed([(0.0, seated), (0.3, prop), (0.6, swing), (0.82, settle), (1.0, lying)])
 
     def nap(t):

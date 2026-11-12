@@ -55,7 +55,8 @@ class Rig:
     def stand_ankle(self, s):
         """flat-foot ankle position for the natural stance (feet a bit closer than the A-pose)"""
         a = self.ankle0[s].copy()
-        a.x = 0.095 if s == "l" else -0.095
+        # Concept A short stance: feet under the narrower hips
+        a.x = 0.07 if s == "l" else -0.07
         a.y = 0.0
         return a
 
@@ -102,9 +103,9 @@ DEFAULT = {
     "pel": V(0, 0, 0), "prot": (0.0, 0.0, 0.0),
     "sp": (0.0, 0.0, 0.0), "neck": (0.0, 0.0, 0.0), "head": (0.0, 0.0, 0.0),
     "clav_l": (0.0, 0.0, 0.0), "clav_r": (0.0, 0.0, 0.0),
-    # hands in rest armature space, carried by the chest
-    "hl": V(0.20, 0.005, 0.70), "hr": V(-0.20, 0.005, 0.70),
-    "el": V(0.4, 1.0, 0.0), "er": V(-0.4, 1.0, 0.0), "hlw": 0.0, "hrw": 0.0,
+    # hands in rest armature space (Concept A ~4-heads: shoulders ~0.73, hands hang near hips)
+    "hl": V(0.20, 0.03, 0.50), "hr": V(-0.20, 0.03, 0.50),
+    "el": V(0.35, 1.0, 0.0), "er": V(-0.35, 1.0, 0.0), "hlw": 0.0, "hrw": 0.0,
     "wl": (0.0, 0.0, 0.0), "wr": (0.0, 0.0, 0.0),
     "gl": 0.25, "gr": 0.25,
     # feet: flat ankle position (root space), yaw, pitch (+ toes up, heel pivot / - heel up, ball pivot)
