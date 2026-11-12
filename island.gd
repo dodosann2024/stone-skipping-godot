@@ -17,6 +17,17 @@ const WALL_CELL := 3.0
 var hammock_a := Vector3.ZERO
 var hammock_b := Vector3.ZERO
 var hammock_node: Node3D
+## Deformable hammock grid (local to hammock_node). Empty sag is light; occupied sag deepens under the body.
+var hammock_mi: MeshInstance3D
+var hammock_nt := 14
+var hammock_nu := 11
+var hammock_empty_sag := 0.22
+var hammock_occ_sag := 0.55
+var hammock_half_w := 0.55
+var hammock_occupied := false
+var hammock_body_pts: Array[Vector3] = []  # world points that weigh the fabric
+var _ham_rest_y: PackedFloat32Array = PackedFloat32Array()  # centreline rest Y offset per t
+var _ham_cur_y: PackedFloat32Array = PackedFloat32Array()
 var towel_pos := Vector3.ZERO
 var towel_dir := Vector3.FORWARD   # towel long axis, pointing out to sea (feet end)
 ## Deck-chair lounger (晒太阳): root transform, seat/backrest sizes, and hinge in local Z.
@@ -1740,72 +1751,108 @@ func _build_palms() -> void:
 			continue
 		var crown = palm(FB, p, s[1], s[2], s[3], s[4], rng.randf_range(0.85, 1.1))
 		palm_spots.append(crown)
-	# hammock between the hut pair: its own node so it can swing about the a-b axis
-	var a = h1 + Vector3(0, 1.05, 0)   # low enough that the (taller) kid sits with his feet near the sand
+	# hammock between the hut pair: deformable grid that sags under the boy
+	var a = h1 + Vector3(0, 1.05, 0)
 	var b = h2 + Vector3(0, 1.05, 0)
 	hammock_a = a
 	hammock_b = b
 	var mid = (a + b) * 0.5
-	var HB = MeshBuilder.new()
-	var ab = b - a
-	# Extra-wide trough so the Tripo straw hat (~0.6 m brim) sits clearly inside the bed.
-	var side = ab.cross(Vector3.UP).normalized() * 1.15
-	for s in 10:
-		var t0 = s / 10.0
-		var t1 = (s + 1) / 10.0
-		var p0 = a + ab * t0 + Vector3(0, -0.6 * sin(PI * t0), 0) - mid
-		var p1 = a + ab * t1 + Vector3(0, -0.6 * sin(PI * t1), 0) - mid
-		var w0 = side * sin(PI * clamp(t0 * 1.15 - 0.075, 0.0, 1.0)) + side * 0.06
-		var w1 = side * sin(PI * clamp(t1 * 1.15 - 0.075, 0.0, 1.0)) + side * 0.06
-		# Wide centre bed (red) + thin blue rim so the boy reads inside the fabric, not on the edge.
-		for st in 2:
-			var u0: float = -1.0 if st == 0 else 0.72
-			var u1: float = -0.72 if st == 0 else 1.0
-			# st0: left rim (blue), then centre bed filled below; st1: right rim.
-			# Centre bed drawn as its own pair of faces spanning -0.72..0.72.
-			var col = Color(0.3, 0.6, 0.8)
-			# Moderate U walls: deep enough to cradle, shallow enough that the brim stays under the rim.
-			var A = p0 + w0 * u0 + Vector3(0, -0.28 * (1.0 - u0 * u0), 0)
-			var B = p0 + w0 * u1 + Vector3(0, -0.28 * (1.0 - u1 * u1), 0)
-			var C = p1 + w1 * u1 + Vector3(0, -0.28 * (1.0 - u1 * u1), 0)
-			var D = p1 + w1 * u0 + Vector3(0, -0.28 * (1.0 - u0 * u0), 0)
-			HB.face(A, B, C, col, col, col, Vector3.UP)
-			HB.face(A, C, D, col, col, col, Vector3.UP)
-			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
-			HB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
-		# Centre bed (terracotta / yellow) — the actual sleeping surface.
-		for st in 2:
-			var u0: float = -0.72 if st == 0 else 0.0
-			var u1: float = 0.0 if st == 0 else 0.72
-			var col = Color(0.95, 0.4, 0.3) if st == 0 else Color(0.98, 0.88, 0.5)
-			var A = p0 + w0 * u0 + Vector3(0, -0.28 * (1.0 - u0 * u0), 0)
-			var B = p0 + w0 * u1 + Vector3(0, -0.28 * (1.0 - u1 * u1), 0)
-			var C = p1 + w1 * u1 + Vector3(0, -0.28 * (1.0 - u1 * u1), 0)
-			var D = p1 + w1 * u0 + Vector3(0, -0.28 * (1.0 - u0 * u0), 0)
-			HB.face(A, B, C, col, col, col, Vector3.UP)
-			HB.face(A, C, D, col, col, col, Vector3.UP)
-			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
-			HB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
-	# end ropes to the trunks
-	for e in [a, b]:
-		var q = e.lerp(mid, 0.08) + Vector3(0, -0.06, 0)
-		tube(HB, e - mid, q - mid, 0.02, 0.02, 4, Color(0.85, 0.75, 0.55))
+	hammock_node = Node3D.new()
+	hammock_node.position = mid
+	add_child(hammock_node)
+	_ham_rest_y.resize(hammock_nt + 1)
+	_ham_cur_y.resize(hammock_nt + 1)
+	for i in hammock_nt + 1:
+		var t := float(i) / float(hammock_nt)
+		_ham_rest_y[i] = -hammock_empty_sag * sin(PI * t)
+		_ham_cur_y[i] = _ham_rest_y[i]
 	var hsm = StandardMaterial3D.new()
 	hsm.vertex_color_use_as_albedo = true
 	hsm.vertex_color_is_srgb = true
 	hsm.roughness = 0.9
 	hsm.cull_mode = BaseMaterial3D.CULL_DISABLED
-	hammock_node = Node3D.new()
-	hammock_node.position = mid
-	add_child(hammock_node)
-	var hmi = MeshInstance3D.new()
-	hmi.mesh = HB.commit()
-	hmi.material_override = hsm
-	hammock_node.add_child(hmi)
-	# the hanging bed blocks walking
+	hammock_mi = MeshInstance3D.new()
+	hammock_mi.material_override = hsm
+	hammock_node.add_child(hammock_mi)
+	# end ropes (static)
+	var RB = MeshBuilder.new()
+	for e in [a, b]:
+		var q = e.lerp(mid, 0.08) + Vector3(0, -0.06, 0)
+		tube(RB, e - mid, q - mid, 0.02, 0.02, 4, Color(0.85, 0.75, 0.55))
+	var rope_mi = MeshInstance3D.new()
+	rope_mi.mesh = RB.commit()
+	rope_mi.material_override = hsm
+	hammock_node.add_child(rope_mi)
+	_rebuild_hammock_mesh()
 	var qa: Vector3 = a.lerp(b, 0.2)
 	var qb: Vector3 = a.lerp(b, 0.8)
 	wall_s(Vector2(qa.x, qa.z), Vector2(qb.x, qb.z), 0.32, hammock_bed().y - 1.0, hammock_bed().y + 0.4, "吊床")
+
+
+## Drive fabric sag from world-space body samples (hips, shoulders, heels). Empty when pts empty.
+func set_hammock_load(pts: Array[Vector3]) -> void:
+	hammock_body_pts = pts
+	hammock_occupied = pts.size() > 0
+	var ab := hammock_b - hammock_a
+	var ham_len := maxf(ab.length(), 0.01)
+	var along := ab / ham_len
+	var mid := (hammock_a + hammock_b) * 0.5
+	for i in hammock_nt + 1:
+		var t := float(i) / float(hammock_nt)
+		var y := _ham_rest_y[i]
+		if hammock_occupied:
+			var deepen := 0.0
+			for p in pts:
+				var tp := clampf(0.5 + (p - mid).dot(along) / ham_len, 0.0, 1.0)
+				var d := absf(tp - t)
+				deepen = maxf(deepen, exp(-d * d * 18.0))
+			y = -lerpf(hammock_empty_sag, hammock_occ_sag, deepen) * sin(PI * t)
+		_ham_cur_y[i] = y
+	_rebuild_hammock_mesh()
+
+
+func _rebuild_hammock_mesh() -> void:
+	if hammock_mi == null:
+		return
+	var mid := (hammock_a + hammock_b) * 0.5
+	var ab := hammock_b - hammock_a
+	var side_u := ab.cross(Vector3.UP).normalized()
+	if side_u.length_squared() < 1e-6:
+		side_u = Vector3.RIGHT
+	var HB = MeshBuilder.new()
+	for s in hammock_nt:
+		var t0 := float(s) / float(hammock_nt)
+		var t1 := float(s + 1) / float(hammock_nt)
+		var y0 := _ham_cur_y[s]
+		var y1 := _ham_cur_y[s + 1]
+		var taper0 := sin(PI * clampf(t0 * 1.12 - 0.06, 0.0, 1.0))
+		var taper1 := sin(PI * clampf(t1 * 1.12 - 0.06, 0.0, 1.0))
+		var w0 := hammock_half_w * (0.15 + 0.85 * taper0)
+		var w1 := hammock_half_w * (0.15 + 0.85 * taper1)
+		var p0 := hammock_a + ab * t0 + Vector3(0, y0, 0) - mid
+		var p1 := hammock_a + ab * t1 + Vector3(0, y1, 0) - mid
+		# wrap depth rises at the sides so the fabric cradles the body
+		var wrap := 0.22 if hammock_occupied else 0.12
+		for st in hammock_nu - 1:
+			var u0 := lerpf(-1.0, 1.0, float(st) / float(hammock_nu - 1))
+			var u1 := lerpf(-1.0, 1.0, float(st + 1) / float(hammock_nu - 1))
+			var col: Color
+			if absf(u0) > 0.72 and absf(u1) > 0.72:
+				col = Color(0.3, 0.6, 0.8)
+			elif u0 < 0.0:
+				col = Color(0.95, 0.4, 0.3)
+			else:
+				col = Color(0.98, 0.88, 0.5)
+			var A = p0 + side_u * (w0 * u0) + Vector3(0, -wrap * (1.0 - u0 * u0), 0)
+			var B = p0 + side_u * (w0 * u1) + Vector3(0, -wrap * (1.0 - u1 * u1), 0)
+			var C = p1 + side_u * (w1 * u1) + Vector3(0, -wrap * (1.0 - u1 * u1), 0)
+			var D = p1 + side_u * (w1 * u0) + Vector3(0, -wrap * (1.0 - u0 * u0), 0)
+			HB.face(A, B, C, col, col, col, Vector3.UP)
+			HB.face(A, C, D, col, col, col, Vector3.UP)
+			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
+			HB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
+	hammock_mi.mesh = HB.commit()
+
 
 ## lowest point of the hammock bed (world, at rest)
 func hammock_bed() -> Vector3:
@@ -1815,8 +1862,16 @@ func hammock_bed() -> Vector3:
 func hammock_point(t: float) -> Vector3:
 	t = clampf(t, 0.0, 1.0)
 	var p := hammock_a.lerp(hammock_b, t)
-	# mesh: y = lerp(a,b) - 0.6*sin(πt) - 0.28*(1-u²) with u=0 on the centreline
-	p.y = lerpf(hammock_a.y, hammock_b.y, t) - 0.6 * sin(PI * t) - 0.28
+	# Interpolate current centreline sag (empty or occupied).
+	var ft := t * float(hammock_nt)
+	var i0 := clampi(int(ft), 0, hammock_nt - 1)
+	var i1 := mini(i0 + 1, hammock_nt)
+	var f := ft - float(i0)
+	var y_off := lerpf(_ham_cur_y[i0] if _ham_cur_y.size() > i0 else -hammock_empty_sag * sin(PI * t),
+		_ham_cur_y[i1] if _ham_cur_y.size() > i1 else -hammock_empty_sag * sin(PI * t), f)
+	# Centre wrap depth (u=0).
+	var wrap := 0.22 if hammock_occupied else 0.12
+	p.y = lerpf(hammock_a.y, hammock_b.y, t) + y_off - wrap
 	return p
 
 ## Unit tangent along the hammock fabric (a→b), and the upward normal of the sag.

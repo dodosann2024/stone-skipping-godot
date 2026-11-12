@@ -1720,6 +1720,8 @@ func _wake() -> void:
 	if mode == Mode.REST and rest_phase == 4:
 		rest_phase = 6 if rest_kind == "seat" and not seat_lying else 5
 		rest_t = 0.0
+		if rest_kind == "sleep":
+			island.set_hammock_load([] as Array[Vector3])
 		_update_ui()
 
 func _rest_tick(delta: float) -> void:
@@ -1825,6 +1827,8 @@ func _rest_tick(delta: float) -> void:
 					pl3 = boy.activity(_act_kind(), 1.0, 1.0, gt)
 					boy.global_transform = swing * Transform3D(rest_lie_b, rest_lie - rest_lie_b * pl3)
 				set_meta("lie_snapped", true)
+			if sleep:
+				_update_hammock_load()
 			_plant_lie_feet()
 	# floating Zzz above the sleeping head
 	zzz.visible = sleep and rest_phase == 4
@@ -1840,6 +1844,23 @@ func _idle_hammock(delta: float) -> void:
 		return
 	swing_amp = lerpf(swing_amp, 0.015, 1.0 - exp(-delta * 1.0))
 	island.swing_hammock(swing_amp * sin(gt * 1.1))
+	# Empty hammock: light resting sag.
+	if island.hammock_occupied:
+		island.set_hammock_load([] as Array[Vector3])
+
+
+## Push hip / shoulder / heel samples into the deformable hammock so the fabric takes his weight.
+func _update_hammock_load() -> void:
+	var pts: Array[Vector3] = []
+	pts.append(boy.lie_bone_world("mixamorig_Hips"))
+	pts.append(boy.lie_bone_world("mixamorig_Spine1"))
+	pts.append(boy.lie_bone_world("mixamorig_Spine2"))
+	pts.append(boy.lie_bone_world("mixamorig_Head"))
+	pts.append(boy.lie_bone_world("mixamorig_LeftFoot"))
+	pts.append(boy.lie_bone_world("mixamorig_RightFoot"))
+	island.set_hammock_load(pts)
+
+
 # ------------------------------------------------------------------ input
 
 func _unhandled_input(event: InputEvent) -> void:

@@ -36,12 +36,18 @@ func g() -> void:
 			if kind == "sleep":
 				swing = m.island.swing_hammock(0.0)
 			m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
+			# Fabric takes weight first, then the body snaps onto the occupied surface.
+			if kind == "sleep":
+				m._update_hammock_load()
 			m._snap_lie_contact()
 			pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
 			m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
 			m._plant_lie_feet()
 			await process_frame
 		m.set_meta("lie_snapped", true)
+		if kind == "sleep":
+			m._update_hammock_load()
+			m._snap_lie_contact()
 		m.boy.set_process(false)  # don't let _process reseed/clear the foot plant
 		for _i in 10:
 			var pl2 = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
