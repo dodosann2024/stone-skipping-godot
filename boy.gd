@@ -2,7 +2,8 @@ class_name Boy
 extends Node3D
 ## v22 Tripo boy: AI-generated Mixamo-rigged kid (boy/boy.glb from art/boy/tripo/).
 ## Same public API as the old procedural Boy so main.gd / selftest / sim keep working.
-## Hat is baked into the mesh (no hat physics). Face is baked (no expression morphs).
+## Straw hat is split out of the baked mesh at load so it can detach when lying.
+## Face is baked (no expression morphs).
 
 signal released
 signal footstep(side: int, running: bool)
@@ -66,6 +67,11 @@ var hat_side := "r"
 var hat_band_c := Vector3(0, 0.02, 0)
 var hat_head_xf := Transform3D.IDENTITY
 var hat_face_xf := Transform3D.IDENTITY
+## "head" | "face" | "chest" | "beside" — detached modes reparent the split hat mesh.
+var hat_mode := "head"
+var _hat_body_mi: MeshInstance3D
+var _hat_on_head_xf := Transform3D.IDENTITY
+var _chest_attach: BoneAttachment3D
 
 var t := 0.0
 var t_idle := 0.0
@@ -158,6 +164,7 @@ func _ready() -> void:
 	_build_blob()
 	_build_stone()
 	_build_hat_proxy()
+	_split_baked_hat()
 	_build_glasses_stub()
 	_build_face_fill()
 	_tune_boy_material()
@@ -288,21 +295,153 @@ func _build_stone() -> void:
 
 
 func _build_hat_proxy() -> void:
-	# Tiny invisible mesh so HatProbe can sample verts; hat is baked into the body.
 	_hat_attach = BoneAttachment3D.new()
 	_hat_attach.name = "HatAttach"
 	_hat_attach.bone_name = B_HEAD
 	skel.add_child(_hat_attach)
+	_chest_attach = BoneAttachment3D.new()
+	_chest_attach.name = "ChestAttach"
+	_chest_attach.bone_name = "mixamorig_Spine2"
+	skel.add_child(_chest_attach)
 	hat = MeshInstance3D.new()
 	hat.name = "Hat"
-	var bm := SphereMesh.new()
-	bm.radius = 0.04
-	bm.height = 0.06
-	hat.mesh = bm
 	hat.visible = false
-	hat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	hat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	_hat_attach.add_child(hat)
 	hat.position = Vector3(0, 0.08, 0)
+
+
+## Cut straw-hat faces out of the Tripo body mesh so the hat can leave the head when lying.
+func _split_baked_hat() -> void:
+	if skel == null:
+		return
+	var mi: MeshInstance3D = null
+	for c in skel.get_children():
+		if c is MeshInstance3D and (c as MeshInstance3D).mesh != null:
+			mi = c as MeshInstance3D
+			break
+	if mi == null:
+		return
+	_hat_body_mi = mi
+	var mesh := mi.mesh as ArrayMesh
+	if mesh == null or mesh.get_surface_count() < 1:
+		return
+	var arr: Array = mesh.surface_get_arrays(0)
+	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var norms = arr[Mesh.ARRAY_NORMAL]
+	var uvs = arr[Mesh.ARRAY_TEX_UV]
+	var bones_a = arr[Mesh.ARRAY_BONES]
+	var weights_a = arr[Mesh.ARRAY_WEIGHTS]
+	var indices: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+	if verts.is_empty() or indices.is_empty() or bones_a == null:
+		return
+	var head_i := skel.find_bone(B_HEAD)
+	if head_i < 0:
+		return
+	var head_rest: Transform3D = skel.get_bone_global_rest(head_i)
+	var head_inv := head_rest.affine_inverse()
+	var mark := PackedByteArray()
+	mark.resize(verts.size())
+	for i in verts.size():
+		var wh := 0.0
+		for j in 4:
+			if int(bones_a[i * 4 + j]) == head_i:
+				wh += float(weights_a[i * 4 + j])
+		var local: Vector3 = head_inv * verts[i]
+		var r := Vector2(local.x, local.z).length()
+		# Keep scalp/hair on the body; only the outer brim + crown shell.
+		mark[i] = 1 if (wh > 0.55 and ((local.y > 0.12 and r > 0.115) or (local.y > 0.22 and r > 0.04))) else 0
+	var body_idx := PackedInt32Array()
+	var hat_idx := PackedInt32Array()
+	for t in range(0, indices.size(), 3):
+		var ia := indices[t]
+		var ib := indices[t + 1]
+		var ic := indices[t + 2]
+		if mark[ia] and mark[ib] and mark[ic]:
+			hat_idx.append(ia)
+			hat_idx.append(ib)
+			hat_idx.append(ic)
+		else:
+			body_idx.append(ia)
+			body_idx.append(ib)
+			body_idx.append(ic)
+	if hat_idx.size() < 30:
+		return
+	var body_arr := arr.duplicate()
+	body_arr[Mesh.ARRAY_INDEX] = body_idx
+	var body_mesh := ArrayMesh.new()
+	body_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, body_arr)
+	mi.mesh = body_mesh
+	var remap := {}
+	var hv := PackedVector3Array()
+	var hn := PackedVector3Array()
+	var hu := PackedVector2Array()
+	var hi := PackedInt32Array()
+	for k in hat_idx.size():
+		var old_i: int = hat_idx[k]
+		if not remap.has(old_i):
+			remap[old_i] = hv.size()
+			hv.append(verts[old_i])
+			if norms != null:
+				hn.append(norms[old_i])
+			if uvs != null:
+				hu.append(uvs[old_i])
+		hi.append(int(remap[old_i]))
+	var hat_arr: Array = []
+	hat_arr.resize(Mesh.ARRAY_MAX)
+	hat_arr[Mesh.ARRAY_VERTEX] = hv
+	if hn.size() == hv.size():
+		hat_arr[Mesh.ARRAY_NORMAL] = hn
+	if hu.size() == hv.size():
+		hat_arr[Mesh.ARRAY_TEX_UV] = hu
+	hat_arr[Mesh.ARRAY_INDEX] = hi
+	var hat_mesh := ArrayMesh.new()
+	hat_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, hat_arr)
+	hat.mesh = hat_mesh
+	hat.visible = true
+	var src_mat: Material = mi.get_active_material(0)
+	if src_mat:
+		hat.material_override = src_mat.duplicate()
+	var head_xf: Transform3D = skel.get_bone_global_rest(head_i)
+	hat.transform = head_xf.affine_inverse()
+	_hat_on_head_xf = hat.transform
+	_skin_ready = false
+	hat_mode = "head"
+
+
+## Move the split hat: on head, tipped over the face, on the chest, or beside the body.
+func set_hat_mode(mode: String, beside_world: Vector3 = Vector3.ZERO) -> void:
+	if hat == null or not is_instance_valid(hat):
+		return
+	hat_mode = mode
+	hat.visible = true
+	if mode == "head":
+		if hat.get_parent() != _hat_attach:
+			if hat.get_parent():
+				hat.get_parent().remove_child(hat)
+			_hat_attach.add_child(hat)
+		hat.transform = _hat_on_head_xf
+	elif mode == "face" or mode == "chest":
+		var parent_att := _chest_attach if mode == "chest" else _hat_attach
+		if hat.get_parent() != parent_att:
+			if hat.get_parent():
+				hat.get_parent().remove_child(hat)
+			parent_att.add_child(hat)
+		if mode == "face":
+			# Tip brim over the eyes; keep crown above the face.
+			hat.transform = Transform3D(Basis.from_euler(Vector3(-0.95, 0.0, 0.0)), Vector3(0.0, 0.04, -0.06)) * _hat_on_head_xf
+		else:
+			# Flat on the chest so it stays visible from gameplay cameras.
+			hat.transform = Transform3D(Basis.from_euler(Vector3(1.2, 0.35, 0.2)), Vector3(0.02, 0.12, 0.14))
+	elif mode == "beside":
+		if hat.get_parent() != self:
+			if hat.get_parent():
+				hat.get_parent().remove_child(hat)
+			add_child(hat)
+		var p := beside_world
+		if p == Vector3.ZERO:
+			p = global_position + Vector3(0.35, 0.05, 0.1)
+		hat.global_transform = Transform3D(Basis.from_euler(Vector3(0.15, 0.6, 0.4)), p)
 
 
 func _build_glasses_stub() -> void:
@@ -412,6 +551,9 @@ func _tune_boy_material() -> void:
 		mi.transparency = 0
 		# layer 1 (world) + layer 2 (face fill only) — still lit by the sun on layer 1
 		mi.layers = 1 | 2
+		if hat and is_instance_valid(hat) and hat.mesh != null:
+			hat.material_override = mat.duplicate()
+			hat.layers = 1 | 2
 		break
 
 
@@ -557,7 +699,17 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	if full_lie:
 		_seed_lie_from_sit()
 		_apply_lie_pose(kind, lie_k, tt)
+		# Real kids take the hat off: over the face in the hammock, on the chest/sand for sun.
+		if lie_k > 0.7:
+			if kind == "sleep":
+				set_hat_mode("face")
+			else:
+				set_hat_mode("chest")
+		elif hat_mode != "head":
+			set_hat_mode("head")
 	else:
+		if hat_mode != "head":
+			set_hat_mode("head")
 		if ap and not ap.active:
 			ap.active = true
 		if tree and not tree.active:
@@ -572,6 +724,7 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 func end_activity() -> void:
 	hat_s = 0.0
 	hat_hold = 0.0
+	set_hat_mode("head")
 	glasses.visible = false
 	blob.visible = true
 	model.rotation.x = 0.0
