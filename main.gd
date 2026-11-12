@@ -342,15 +342,16 @@ func _build_environment() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.75
+	# Keep ambient modest so the boy keeps concept_A saturation (vest red, peach skin).
+	env.ambient_light_energy = 0.55
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 1.0
+	env.tonemap_exposure = 0.95
 	env.tonemap_white = 3.2
-	# muted, slightly lifted pastel grade
+	# Full saturation — the old pastel grade (sat 0.85) washed vest/skin/hat into chalky pinks.
 	env.adjustment_enabled = true
-	env.adjustment_saturation = 0.85
-	env.adjustment_contrast = 0.92
-	env.adjustment_brightness = 1.0
+	env.adjustment_saturation = 1.05
+	env.adjustment_contrast = 1.02
+	env.adjustment_brightness = 0.98
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.80, 0.86, 0.88)
 	env.fog_density = 0.0045
@@ -364,8 +365,8 @@ func _build_environment() -> void:
 	sun.light_color = Color(1.0, 0.93, 0.82)
 	sun.shadow_enabled = true
 	sun.shadow_blur = 2.5
-	# wider sun disk → softer brim penumbra on the face without washing the beach
-	sun.light_angular_distance = 4.0
+	# slight sun disk — soft enough for the brim, not so wide that the boy goes flat/pastel
+	sun.light_angular_distance = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
 	if is_web:
@@ -2263,7 +2264,7 @@ func _update_night(delta: float, force := false) -> void:
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.5 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
 	env.ambient_light_color = Color(0.22, 0.30, 0.50)
 	env.ambient_light_sky_contribution = 1.0 - k
-	env.ambient_light_energy = lerpf(0.75, 0.42, k)
+	env.ambient_light_energy = lerpf(0.55, 0.42, k)
 	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.07, 0.11, 0.19), k)
 	env.tonemap_exposure = lerpf(1.0, 1.2, k)
 	env.adjustment_saturation = lerpf(0.85, 0.95, k)

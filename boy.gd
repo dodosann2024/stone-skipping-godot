@@ -305,23 +305,23 @@ func _build_glasses_stub() -> void:
 
 
 func _build_face_fill() -> void:
-	# Strong under-brim fill, but ONLY on the boy mesh (layer 2) so it can't bloom the towel/hammock.
+	# Gentle under-brim fill only on the boy mesh (layer 2). No emission — keep concept_A saturation.
 	face_fill = OmniLight3D.new()
 	face_fill.name = "FaceFill"
-	face_fill.light_color = Color(1.0, 0.95, 0.88)
-	face_fill.light_energy = 6.0
-	face_fill.omni_range = 0.6
-	face_fill.omni_attenuation = 0.85
+	face_fill.light_color = Color(1.0, 0.92, 0.78)
+	face_fill.light_energy = 0.35
+	face_fill.omni_range = 0.4
+	face_fill.omni_attenuation = 1.4
 	face_fill.shadow_enabled = false
 	face_fill.light_specular = 0.0
 	face_fill.light_cull_mask = 2  # boy mesh only (see _tune_boy_material)
 	parts["head"].add_child(face_fill)
-	face_fill.position = Vector3(0.0, -0.015, -0.1)
+	face_fill.position = Vector3(0.0, -0.02, -0.1)
 
 
 func _tune_boy_material() -> void:
-	# Tripo embeds metallic=1 which blacks out the face under the brim. Drop metal, add a soft
-	# emission lift, and skip receive-shadows so the brim can't self-shadow the face.
+	# Tripo embeds metallic=1 which blacks out the face under the brim. Drop metal only —
+	# no emission (that washed the vest/skin/hat into pastels). Stay fully opaque.
 	if skel == null:
 		return
 	for c in skel.get_children():
@@ -335,14 +335,20 @@ func _tune_boy_material() -> void:
 		if mat == null:
 			continue
 		mat.metallic = 0.0
-		mat.roughness = 0.68
-		mat.emission_enabled = true
-		mat.emission = Color(0.68, 0.52, 0.42)
-		mat.emission_energy_multiplier = 0.85
-		mat.emission_operator = BaseMaterial3D.EMISSION_OP_ADD
-		mat.disable_receive_shadows = true
+		mat.metallic_specular = 0.2
+		mat.roughness = 0.78
+		mat.emission_enabled = false
+		mat.emission_energy_multiplier = 0.0
+		mat.emission = Color(0, 0, 0, 1)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+		# warm multiply toward concept_A (saturated red / peach / straw) without adding light
+		mat.albedo_color = Color(1.08, 0.98, 0.92, 1.0)
+		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
+		mat.disable_receive_shadows = false
+		mat.cull_mode = BaseMaterial3D.CULL_BACK
 		mi.material_override = mat
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		mi.transparency = 0
 		# layer 1 (world) + layer 2 (face fill only) — still lit by the sun on layer 1
 		mi.layers = 1 | 2
 		break
@@ -541,35 +547,39 @@ func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
 	if w <= 0.001 or skel == null:
 		return
 	var breath := sin(tt * 1.35) * 0.025 * w
-	# keep the head near bind — large nods drive the baked brim into the bed
-	_pose_abs("mixamorig_Neck", Vector3(0.08, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(0.1 + breath * 0.3, 0.0, 0.0), w)
 	if kind == "sleep":
 		# soft hammock sag through the spine (local +X arches the back into the fabric)
 		_pose_abs("mixamorig_Spine", Vector3(0.18 + breath * 0.5, 0.0, 0.0), w)
 		_pose_abs("mixamorig_Spine1", Vector3(0.22 + breath, 0.0, 0.0), w)
 		_pose_abs("mixamorig_Spine2", Vector3(0.12 + breath * 0.6, 0.0, 0.0), w)
-		# chin-down puts the wide brim over the face (clears side walls + fabric behind the head)
-		_pose_abs("mixamorig_Neck", Vector3(0.55, 0.0, 0.0), w)
-		_pose_abs("mixamorig_Head", Vector3(0.95 + breath * 0.3, 0.15, 0.0), w)
-		# one arm hanging off the hammock, the other soft on the belly
-		_pose_abs("mixamorig_LeftShoulder", Vector3(0.05, 0.12, 0.3), w)
-		_pose_abs("mixamorig_RightShoulder", Vector3(0.08, -0.1, -0.15), w)
-		_pose_abs("mixamorig_LeftArm", Vector3(0.45, 0.12, 1.45), w)
-		_pose_abs("mixamorig_RightArm", Vector3(-0.15, -0.08, -0.45), w)
-		_pose_abs("mixamorig_LeftForeArm", Vector3(0.1, 0.0, 0.35), w)
-		_pose_abs("mixamorig_RightForeArm", Vector3(0.25, 0.05, -0.55), w)
+		# chin slightly up (negative local X) tips the front brim over the face while supine;
+		# chin-down would press the rear brim into the fabric like a pillow behind the head
+		_pose_abs("mixamorig_Neck", Vector3(-0.25, 0.0, 0.0), w)
+		_pose_abs("mixamorig_Head", Vector3(-0.55 + breath * 0.2, 0.05, 0.0), w)
+		# both arms at the sides — any large local Z lifts a limb skyward under rest_lie_b
+		_pose_abs("mixamorig_LeftShoulder", Vector3(0.02, 0.03, 0.04), w)
+		_pose_abs("mixamorig_RightShoulder", Vector3(0.02, -0.03, -0.04), w)
+		_pose_abs("mixamorig_LeftArm", Vector3(0.05, 0.02, 0.05), w)
+		_pose_abs("mixamorig_RightArm", Vector3(0.05, -0.02, -0.05), w)
+		_pose_abs("mixamorig_LeftForeArm", Vector3(0.04, 0.0, 0.03), w)
+		_pose_abs("mixamorig_RightForeArm", Vector3(0.04, 0.0, -0.03), w)
+		_pose_abs("mixamorig_LeftHand", Vector3(0.0, 0.0, 0.0), w)
+		_pose_abs("mixamorig_RightHand", Vector3(0.0, 0.0, 0.0), w)
 	else:
+		# sun / seatlie: flat spine, hat seated on the head, arms at the sides near bind/rest
 		_pose_abs("mixamorig_Spine", Vector3(breath * 0.6, 0.0, 0.0), w)
 		_pose_abs("mixamorig_Spine1", Vector3(breath * 1.1, 0.0, 0.0), w)
 		_pose_abs("mixamorig_Spine2", Vector3(breath * 0.8, 0.0, 0.0), w)
-		# arms relaxed along the sides (sun / seatlie)
-		_pose_abs("mixamorig_LeftShoulder", Vector3(0.05, 0.05, 0.2), w)
-		_pose_abs("mixamorig_RightShoulder", Vector3(0.05, -0.05, -0.2), w)
-		_pose_abs("mixamorig_LeftArm", Vector3(0.15, 0.1, 1.15), w)
-		_pose_abs("mixamorig_RightArm", Vector3(0.15, -0.1, -1.15), w)
-		_pose_abs("mixamorig_LeftForeArm", Vector3(0.05, 0.0, 0.25), w)
-		_pose_abs("mixamorig_RightForeArm", Vector3(0.05, 0.0, -0.25), w)
+		_pose_abs("mixamorig_Neck", Vector3(0.12, 0.0, 0.0), w)
+		_pose_abs("mixamorig_Head", Vector3(0.18 + breath * 0.3, 0.0, 0.0), w)
+		_pose_abs("mixamorig_LeftShoulder", Vector3(0.02, 0.02, 0.04), w)
+		_pose_abs("mixamorig_RightShoulder", Vector3(0.02, -0.02, -0.04), w)
+		_pose_abs("mixamorig_LeftArm", Vector3(0.04, 0.02, 0.06), w)
+		_pose_abs("mixamorig_RightArm", Vector3(0.04, -0.02, -0.06), w)
+		_pose_abs("mixamorig_LeftForeArm", Vector3(0.02, 0.0, 0.04), w)
+		_pose_abs("mixamorig_RightForeArm", Vector3(0.02, 0.0, -0.04), w)
+		_pose_abs("mixamorig_LeftHand", Vector3(0.0, 0.0, 0.0), w)
+		_pose_abs("mixamorig_RightHand", Vector3(0.0, 0.0, 0.0), w)
 	skel.force_update_transform()
 
 
