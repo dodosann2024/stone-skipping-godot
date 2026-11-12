@@ -80,9 +80,10 @@ def retarget_chibi(rig):
                  (sx * (sh_x + 0.11), 0.02, sh_z - 0.155), "clavicle_" + s)
         set_bone("lowerarm_" + s, (sx * (sh_x + 0.11), 0.02, sh_z - 0.155),
                  (sx * (sh_x + 0.135), 0.03, sh_z - 0.29), "upperarm_" + s)
+        # hand bone length kept for hat IK grip reach; mesh is a mitt pinned to hand_*
         set_bone("hand_" + s, (sx * (sh_x + 0.135), 0.03, sh_z - 0.29),
                  (sx * (sh_x + 0.145), 0.04, sh_z - 0.35), "lowerarm_" + s)
-        # simple finger stubs (kept for hat grip / boy.gd)
+        # finger bones exist for hat grip / boy.gd IK — no finger *mesh* (mitt only)
         hand = eb["hand_" + s]
         hx, hy, hz = hand.tail
         for i, fname in enumerate(("thumb", "index", "middle", "ring", "pinky")):
@@ -199,21 +200,19 @@ def build_mesh(rig, mat_skin):
         la = H["lowerarm_" + side]
         hd = H["hand_" + side]
         ht = T["hand_" + side]
-        for v in _add_capsule(bm, ua, la, 0.036, 0.032, seg=10, rings=5):
+        # thicker soft limbs (chibi) — previous radii collapsed to needles under idle bend
+        for v in _add_capsule(bm, ua, la, 0.048, 0.044, seg=12, rings=6):
             v[part] = pcode
-        for v in _add_capsule(bm, la, hd, 0.030, 0.026, seg=10, rings=5):
+        for v in _add_capsule(bm, la, hd, 0.042, 0.038, seg=12, rings=6):
             v[part] = pcode
-        # chubby hand (soft mitt + stubby fingers)
-        for v in _add_sphere(bm, hd.lerp(ht, 0.45), 0.038, cuts=2, mat=0,
-                             scale=(0.85, 1.15, 0.7)):
+        # chubby mitt hand only (no separate finger tips — those skinned into "icicles")
+        palm = hd.lerp(ht, 0.30)
+        for v in _add_sphere(bm, palm, 0.048, cuts=2, mat=0,
+                             scale=(1.0, 1.0, 0.85)):
             v[part] = pcode
-        for i in range(4):
-            fc = ht + Vector((sx * (0.008 * i - 0.012), 0.012, -0.01))
-            for v in _add_sphere(bm, fc, 0.012, cuts=1, mat=0, scale=(0.7, 1.2, 0.7)):
-                v[part] = pcode
-        # thumb
-        tc = hd + Vector((sx * 0.02, 0.015, 0.005))
-        for v in _add_sphere(bm, tc, 0.013, cuts=1, mat=0, scale=(0.8, 1.1, 0.7)):
+        # soft thumb bump kept close to the mitt so weights stay on hand_*
+        tc = palm + Vector((sx * 0.024, 0.012, 0.01))
+        for v in _add_sphere(bm, tc, 0.018, cuts=1, mat=0, scale=(0.9, 1.0, 0.8)):
             v[part] = pcode
 
     # ---- legs
@@ -222,9 +221,9 @@ def build_mesh(rig, mat_skin):
         kf = H["calf_" + side]
         ft = H["foot_" + side]
         bl = H["ball_" + side]
-        for v in _add_capsule(bm, th, kf, 0.055, 0.045, seg=10, rings=5):
+        for v in _add_capsule(bm, th, kf, 0.062, 0.052, seg=12, rings=6):
             v[part] = pcode
-        for v in _add_capsule(bm, kf, ft, 0.040, 0.032, seg=10, rings=5):
+        for v in _add_capsule(bm, kf, ft, 0.046, 0.038, seg=12, rings=6):
             v[part] = pcode
         # small soft foot (slightly longer so gait heel/toe pads match probe offsets)
         foot_c = Vector((ft.x, (ft.y + bl.y) * 0.5 - 0.01, 0.02))
@@ -296,9 +295,19 @@ def _auto_weight(body, rig, part_codes):
         return (a + ab * t - co).length
 
     for i, v in enumerate(me.vertices):
-        names = [n for n in bones_for(part_codes[i] if i < len(part_codes) else 0) if n in body.vertex_groups]
+        code = part_codes[i] if i < len(part_codes) else 0
+        names = [n for n in bones_for(code) if n in body.vertex_groups]
         if not names:
             names = ["pelvis"]
+        # mitt hands: pin 100% to hand_* so finger/idle poses cannot stretch spikes
+        if code in (1, 2):
+            hand = "hand_l" if code == 1 else "hand_r"
+            d_hand = dist_bone(v.co, hand) if hand in H else 1.0
+            if d_hand < 0.075:
+                for n in names:
+                    body.vertex_groups[n].add([i], 0.0, "REPLACE")
+                body.vertex_groups[hand].add([i], 1.0, "REPLACE")
+                continue
         dists = [(n, dist_bone(v.co, n)) for n in names]
         # softmin weights
         soft = [(n, math.exp(-d * 28.0)) for n, d in dists]
@@ -306,7 +315,7 @@ def _auto_weight(body, rig, part_codes):
         for n, w in soft:
             body.vertex_groups[n].add([i], w / s, "REPLACE")
         # always a little pelvis on torso
-        if (part_codes[i] if i < len(part_codes) else 0) == 0:
+        if code == 0:
             body.vertex_groups["pelvis"].add([i], 0.15, "ADD")
 
 
@@ -320,21 +329,22 @@ def build_clothes(rig, body, mats):
     knee_z = H["calf_l"].z
 
     # ---- vest: Concept A red V-neck with gold buttons (no white tank bib)
+    # hang lower over the waistband so the back seam does not flash skin
     vest = _cloth_torso(rig, body, "Vest", mats["vest"],
-                        z0=pel_z + 0.05, z1=neck_z - 0.015,
-                        rx=0.118, ry=0.098, open_front=0.018, v_neck=0.045,
-                        solid=0.0045)
+                        z0=pel_z - 0.01, z1=neck_z - 0.015,
+                        rx=0.122, ry=0.102, open_front=0.014, v_neck=0.045,
+                        solid=0.0055)
     _gold_buttons(vest, mats.get("gold") or mats["vest"],
-                  [Vector((0.0, -0.100, sh_z - 0.045 - 0.032 * i)) for i in range(3)])
+                  [Vector((0.0, -0.104, sh_z - 0.045 - 0.032 * i)) for i in range(3)])
 
-    # thin white undershirt only at the sides / under arms (not a front bib)
+    # thin undershirt only at the sides / under arms (not a front bib)
     tank = _cloth_torso(rig, body, "Tank", mats["tank"],
-                        z0=pel_z + 0.04, z1=sh_z - 0.02,
-                        rx=0.112, ry=0.092, open_front=0.06, v_neck=0.0,
+                        z0=pel_z + 0.02, z1=sh_z - 0.02,
+                        rx=0.114, ry=0.094, open_front=0.07, v_neck=0.0,
                         solid=0.0015)
 
-    # ---- shorts
-    shorts = _shorts(rig, body, mats["shorts"], hem_z=knee_z + 0.06, waist_z=pel_z + 0.08)
+    # ---- shorts: raise waist under the vest hem
+    shorts = _shorts(rig, body, mats["shorts"], hem_z=knee_z + 0.06, waist_z=pel_z + 0.12)
 
     # ---- sandals
     sandals = []
