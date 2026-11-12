@@ -10,9 +10,9 @@ render_mode cull_back;
 // Per vertex: COLOR.r baked AO, COLOR.b under the hat crown; UV2.x sway weight (0 root .. 1 tip, 0 on the
 // mass), 1 - UV2.y = 1 on the mass.
 
-uniform vec3 root_col : source_color = vec3(0.30, 0.18, 0.10);
-uniform vec3 mid_col : source_color = vec3(0.45, 0.29, 0.16);
-uniform vec3 tip_col : source_color = vec3(0.58, 0.40, 0.24);
+uniform vec3 root_col : source_color = vec3(0.42, 0.28, 0.15);
+uniform vec3 mid_col : source_color = vec3(0.60, 0.40, 0.22);
+uniform vec3 tip_col : source_color = vec3(0.72, 0.52, 0.32);
 uniform float ao_strength = 0.6;
 uniform float fill_sky = 0.13;
 uniform float fill_bounce = 0.2;
@@ -67,7 +67,7 @@ void fragment() {
 	ALBEDO = c * mix(1.0, ao, ao_strength * soft) * mix(vec3(1.0), night_warm, night_k);
 	strand = normalize(BINORMAL);
 	tipv = v * (1.0 - mass);
-	ROUGHNESS = 0.75;
+	ROUGHNESS = 0.62;
 	SPECULAR = 0.2;
 }
 
@@ -97,7 +97,7 @@ void light() {
 	vec3 t2 = normalize(strand + NORMAL * -0.1);
 	float vis = smoothstep(-0.15, 0.3, ndl) * (LIGHT_IS_DIRECTIONAL ? ATTENUATION : sh);
 	vec3 tint = ALBEDO / max(max(ALBEDO.r, max(ALBEDO.g, ALBEDO.b)), 0.02);
-	SPECULAR_LIGHT += lc * vis * (kk(strand, h, 90.0) * 0.03 + kk(t2, h, 18.0) * 0.07 * tint);
+	SPECULAR_LIGHT += lc * vis * (kk(strand, h, 90.0) * 0.05 + kk(t2, h, 18.0) * 0.11 * tint);
 	if (LIGHT_IS_DIRECTIONAL) {
 		vec3 upv = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
 		float up = dot(NORMAL, upv);

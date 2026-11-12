@@ -15,7 +15,7 @@ from bl_ext.user_default.mpfb.services.targetservice import TargetService
 
 ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 DATA = os.path.expanduser("~/.config/blender/4.5/mpfb/data/")
-HEAD_SCALE = 1.3
+HEAD_SCALE = 1.38
 
 # albedo (linear-ish sRGB values; Godot overrides the materials but keeps these as the base colors)
 COLORS = {
@@ -640,7 +640,7 @@ def hat(rig, body, hair, head_top):
     # worn, not perched: the band goes round the skull (plus the hair it presses flat) through the forehead
     # ~4.5 cm below the top of the head, above the ears and round the back of the head, tipped back 15 deg
     # with a modest brim, so his eyes show under it from the game camera
-    HAIR, TILT, FRONT = 0.009, 15.0, 0.045
+    HAIR, TILT, FRONT = 0.009, 16.0, 0.05
     hc = rig.data.bones["head"].head_local
     skull = [v.co.copy() for v in body.data.vertices if v.co.z > hc.z + 0.05]
     tilt = Matrix.Rotation(math.radians(-TILT), 4, "X")
@@ -666,8 +666,10 @@ def hat(rig, body, hair, head_top):
 
     # crown just tall enough that the skull and its flattened hair stay inside the tapering wall
     ch = max(p.z for p in loc) - base_z + HAIR + 0.004
-    while any(math.hypot(p.x / (rx - HAIR * 0.4), (p.y - cy) / (ry - HAIR * 0.4)) > crown_s((p.z - base_z + HAIR) / ch)
-              for p in loc if p.z - base_z + HAIR > 0.3 * ch):
+    for _ in range(40):
+        if not any(math.hypot(p.x / (rx - HAIR * 0.4), (p.y - cy) / (ry - HAIR * 0.4)) > crown_s((p.z - base_z + HAIR) / ch)
+                   for p in loc if p.z - base_z + HAIR > 0.3 * ch):
+            break
         ch += 0.002
     bs = (rx0 + ry0) / (rx + ry)
     prof = [  # (radius scale, z) from the crown top down to the brim edge

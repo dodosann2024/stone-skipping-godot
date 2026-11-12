@@ -73,7 +73,7 @@ const HAT_LIE := {"": [0.0, 0.16, 0.5, 0.72, 0.92], "seatlie": [0.3, 0.55, 0.9, 
 const HAT_LIFT := 0.07   # the hat's arc away from his face (skeleton m)
 const HAT_TIP := {"sleep": -0.6, "seatlie": -0.55}   # rad, left side of the brim up over his face
 # hat-local shift over his face: getting up from the towel his left thumb sweeps past the crown
-const HAT_SHIFT := {"sun": Vector3(-0.028, 0.0, 0.0)}
+const HAT_SHIFT := {"sun": Vector3(-0.032, 0.0, 0.0)}
 var hat_tip := 0.0
 var hat_shift := Vector3.ZERO
 
@@ -279,7 +279,7 @@ func _cloth_mat(col: Color, p: Dictionary) -> ShaderMaterial:
 func _setup_materials() -> void:
 	# albedo per Blender material name; kinds: 0 skin, 1 cloth, 2 hair, 3 straw, 4 props
 	var look := {
-		"skin": [Color(0.96, 0.67, 0.50), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
+		"skin": [Color(1.0, 0.82, 0.64), 0], "mouth": [Color(0.3, 0.1, 0.09), 5], "tank": [Color(0.95, 0.94, 0.90), 1],
 		"vest": [Color(0.80, 0.27, 0.22), 1], "shorts": [Color(0.96, 0.80, 0.36), 1],
 		"hair": [Color(0.30, 0.20, 0.14), 2], "sandal": [Color(0.36, 0.60, 0.64), 1],
 		"strap": [Color(0.95, 0.93, 0.88), 1], "hat": [Color(0.92, 0.80, 0.55), 3],
@@ -1584,7 +1584,7 @@ func hat_grip_gap() -> float:
 
 # expression -> morph weights (MakeHuman expression units baked in Blender, see art/boy/face.py)
 const EXPR := {
-	"smile": {"smile": 0.5, "squint": 0.22, "blink": 0.1},
+	"smile": {"smile": 0.5, "open": 0.0, "blink": 0.02},
 	"laugh": {"smile": 1.0, "open": 0.42, "squint": 0.55, "brow_up": 0.35},
 	"run": {"smile": 0.75, "open": 0.14, "squint": 0.2},
 	"oops": {"brow_in": 0.9, "frown": 0.3, "open": 0.2, "brow_up": 0.25},

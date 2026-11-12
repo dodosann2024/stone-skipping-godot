@@ -2,10 +2,9 @@
 
 - mass: a shell of the scalp with a smoothed hairline, thicker away from it; on its own it is the short,
   neat sides and back;
-- locks: broad, flat, softly pointed clumps grown along a groom field (whorl at the crown): a few long
+- locks: soft rounded clumps with tapered tips grown along a groom field (whorl at the crown): a few long
   bangs rooted well back from the forehead that fall over it, swept a little to his right, and the locks
-  over the crown (seen when the hat is off). Normals lean on the head's volume, so the hair lights as one
-  soft shape with the locks reading on it;
+  over the crown (seen when the hat is off). Normals mix section roundness with the head's volume;
 - everything fits under the straw hat and stays off the skin and ears. The regions are drawn for the v21
   head and scale with the head (K).
 
@@ -59,7 +58,7 @@ def _grow_ok(q):
 class Hat:
     """the straw hat's crown and brim in its own (untilted) frame, from build_boy.hat()"""
 
-    def __init__(self, info, margin=0.004):
+    def __init__(self, info, margin=0.006):
         self.piv = Vector(info["piv"])
         self.rot = Matrix.Rotation(math.radians(info["tilt"]), 3, "X")
         self.inv = self.rot.transposed()
@@ -210,7 +209,7 @@ def build(rig, body, hat_info, mat):
                     nxt.append(o)
         front = nxt
     bm.normal_update()
-    cap_off = lambda d: (0.0006 + 0.0034 * _ss(0.0, 0.014 * K, d)) * K
+    cap_off = lambda d: (0.0008 + 0.0036 * _ss(0.0, 0.014 * K, d)) * K
     for v in bm.verts:
         v.co = hat.fit(v.co + v.normal * cap_off(dist[v]))
     bm.normal_update()
@@ -275,17 +274,18 @@ def build(rig, body, hat_info, mat):
     # rooted well back from the forehead hairline - and over the crown
     def lock_zone(p, dd):
         q = rel(p)
-        if q.y < -0.05:
-            return dd > 0.012 * K
-        return q.z > 0.1 or (q.y < -0.03 and q.z > 0.085)
-    rest = poisson(0.019 * K, [c for c in cand if c[1] >= 0.004 * K and lock_zone(*c)], [])
+        # soft fringe bangs only (crown stays a smooth mass under the hat)
+        if q.y < -0.04:
+            return dd > 0.01 * K and abs(q.x) < 0.045
+        return False
+    rest = poisson(0.012 * K, [c for c in cand if c[1] >= 0.0035 * K and lock_zone(*c)], [])
     roots = [p for p, _ in rest]
 
     # ---------------------------------------------------------------- locks
     nverts = len(bm.verts)
     hatk = {}
     nlocks = 0
-    RING = 8
+    RING = 10
     centre = hc + Vector((0.0, 0.005, 0.075)) * K
     vol_n = {}
 
@@ -308,18 +308,18 @@ def build(rig, body, hat_info, mat):
         low = 1.0 - _ss(0.02, 0.07, q.z)
         ear = _ss(0.05, 0.07, abs(q.x)) * (1.0 - _ss(0.06, 0.09, q.z)) * (1.0 - back)
         nz = noise.noise(q * 50.0) * 0.5 + 0.5
-        L = 0.02 + 0.016 * top
-        L = L + (0.05 - L) * frontk
+        L = 0.028 + 0.01 * top
+        L = L + (0.042 - L) * frontk
         L *= 1.0 - 0.3 * ear - 0.25 * low * back
         L *= (0.85 + 0.3 * nz) * rnd.uniform(0.88, 1.12)
         L *= K
-        w0 = (0.022 + 0.006 * rnd.random()) * K * (0.75 + 0.25 * _ss(0.01, 0.03, L / K))
-        w0 *= 1.0 + 0.3 * frontk
-        t0 = 0.003 * K * (0.8 + 0.2 * top)
+        w0 = (0.012 + 0.003 * rnd.random()) * K
+        w0 *= 1.0 + 0.45 * frontk
+        t0 = w0 * 0.95  # round soft sausages
         lift = (0.0005 + 0.0012 * top) * K * rnd.uniform(0.7, 1.3)
         yaw = rnd.uniform(-0.28, 0.28) * (1.0 - 0.6 * frontk)
         curl = rnd.uniform(-0.35, 0.35) * (1.0 - 0.5 * frontk)
-        nseg = 5
+        nseg = 6
         pts, nrm = [], []
         cur = loc
         d = None
@@ -353,17 +353,30 @@ def build(rig, body, hat_info, mat):
             sn = nrm[i]
             side = sn.cross(dirv).normalized()
             up = dirv.cross(side).normalized()
-            hw = 0.5 * w0 * max(0.0, 1.0 - t ** 1.6) ** 0.7 * (0.8 + 0.2 * _ss(0.0, 0.3, t))
-            ht = 0.5 * t0 * max(0.0, 1.0 - t ** 1.6) ** 0.6
+            hw = 0.5 * w0 * max(0.0, 1.0 - t ** 1.35) ** 0.85 * (0.85 + 0.15 * _ss(0.0, 0.25, t))
+            ht = 0.5 * t0 * max(0.0, 1.0 - t ** 1.35) ** 0.8
             ring = []
             for j in range(RING):
                 a = 2.0 * math.pi * j / RING
                 # flatter underneath (lies on the head), rounder on top
-                off = side * math.cos(a) * hw + up * math.sin(a) * ht * (1.0 if math.sin(a) > 0 else 0.5)
+                off = side * math.cos(a) * hw + up * math.sin(a) * ht * (1.0 if math.sin(a) > 0 else 0.7)
                 rn = (side * math.cos(a) / max(hw, 1e-5) + up * math.sin(a) / max(ht, 1e-5)).normalized()
                 ring.append((lock_vert(pts[i] + off, rn, pts[i]), j / RING, t))
             rings.append(ring)
-        tip = lock_vert(pts[m], (pts[m] - pts[m - 1]).normalized(), pts[m])
+        # soft rounded tip (small end ring, not a sharp cardboard point)
+        dirv = (pts[m] - pts[m - 1]).normalized()
+        sn = nrm[m]
+        side = sn.cross(dirv).normalized()
+        up = dirv.cross(side).normalized()
+        tip_r = 0.35 * w0
+        tip_ring = []
+        for j in range(RING):
+            a = 2.0 * math.pi * j / RING
+            off = side * math.cos(a) * tip_r + up * math.sin(a) * tip_r * 0.7
+            rn = (side * math.cos(a) + up * math.sin(a)).normalized()
+            tip_ring.append((lock_vert(pts[m] + off * 0.35 + dirv * (0.002 * K), rn, pts[m]), j / RING, 1.0))
+        tip = lock_vert(pts[m] + dirv * (0.004 * K), dirv, pts[m])
+        rings.append(tip_ring)
         for i in range(len(rings) - 1):
             for j in range(RING):
                 a, ua, ta = rings[i][j]
@@ -421,7 +434,7 @@ def build(rig, body, hat_info, mat):
             nb.append(v.normal.copy())
         else:
             radial = (v.co - centre).normalized()
-            nb.append((vol_n[v.index] * 0.2 + radial * 0.8).normalized())
+            nb.append((vol_n[v.index] * 0.08 + radial * 0.92).normalized())
     me.normals_split_custom_set_from_vertices(nb)
     print("HAIR mass verts", nverts, "locks", nlocks, "tris", sum(len(p.vertices) - 2 for p in me.polygons), "K %.3f" % K)
     return ob

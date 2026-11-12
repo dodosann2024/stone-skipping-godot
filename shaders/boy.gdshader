@@ -15,7 +15,7 @@ uniform float blush = 1.0;
 uniform sampler2D face_tex : hint_default_black, filter_linear_mipmap, repeat_disable;
 uniform vec4 face_rect = vec4(-0.075, -0.085, 0.15, 0.18);
 uniform vec3 brow_col : source_color = vec3(0.30, 0.19, 0.12);
-uniform vec3 lip_col : source_color = vec3(0.86, 0.52, 0.48);
+uniform vec3 lip_col : source_color = vec3(0.94, 0.58, 0.58);
 #include "res://shaders/underwater.gdshaderinc"
 #include "res://shaders/refl_clip.gdshaderinc"
 
@@ -53,10 +53,10 @@ float vnoise(vec2 p) {
 vec3 face(vec3 c, vec2 p, out float lip) {
 	vec2 t = vec2((p.x - face_rect.x) / face_rect.z, 1.0 - (p.y - face_rect.y) / face_rect.w);
 	vec4 m = texture(face_tex, t);
-	c = mix(c, c * vec3(1.02, 0.78, 0.80), m.a * blush);
-	c = mix(c, lip_col, m.g * 0.5);
+	c = mix(c, c * vec3(1.10, 0.70, 0.72), m.a * blush);
+	c = mix(c, lip_col, m.g * 0.6);
 	c = mix(c, brow_col, m.r * 0.85);
-	c = mix(c, vec3(0.085, 0.06, 0.05), m.b * 0.95);
+	c = mix(c, vec3(0.18, 0.12, 0.10), m.b * 0.55);
 	lip = m.g;
 	return c;
 }
@@ -66,13 +66,13 @@ vec3 face(vec3 c, vec2 p, out float lip) {
 vec3 mouth_inside(vec2 uv) {
 	float up = 1.0 - uv.y;
 	float side = min(uv.x, 1.0 - uv.x);
-	vec3 c = vec3(0.20, 0.06, 0.06);
-	c = mix(c, vec3(0.55, 0.25, 0.25), smoothstep(0.42, 0.1, up) * smoothstep(0.08, 0.3, side));
+	vec3 c = vec3(0.40, 0.13, 0.13);
+	c = mix(c, vec3(0.78, 0.40, 0.40), smoothstep(0.42, 0.1, up) * smoothstep(0.08, 0.3, side));
 	float gaps = smoothstep(0.0, 0.08, abs(fract(uv.x * 7.0 + 0.5) - 0.5));
 	float teeth = smoothstep(0.66, 0.78, up) * smoothstep(0.06, 0.2, side);
 	c = mix(c, vec3(0.86, 0.83, 0.76) * mix(0.75, 1.0, gaps), teeth);
 	c = mix(c, vec3(0.70, 0.66, 0.60), smoothstep(0.16, 0.04, up) * smoothstep(0.12, 0.3, side) * 0.6);
-	return c * mix(0.35, 1.0, smoothstep(0.0, 0.25, side));
+	return c * mix(0.5, 1.0, smoothstep(0.0, 0.25, side));
 }
 
 void fragment() {
@@ -83,7 +83,8 @@ void fragment() {
 	float lip = 0.0;
 	float aos = ao_strength;
 	if (kind == 0) {
-		c = mix(c, c * vec3(1.02, 0.80, 0.80), warm * 0.55);
+		c = mix(c, c * vec3(1.04, 0.82, 0.78), warm * 0.55);
+		c *= vec3(1.02, 0.98, 0.94);
 		if (fmask > 0.01) {
 			float fl;
 			c = mix(c, face(c, fuv, fl), fmask);
@@ -117,9 +118,9 @@ void fragment() {
 	EMISSION = c * f * rim * (1.0 - sub) * (1.0 - 0.75 * night_k);
 	if (kind == 0) {
 		// light scattered under the skin keeps the shaded side warm instead of taking the sky's grey-blue
-		EMISSION += c * vec3(0.11, 0.045, 0.03) * (1.0 - sub) * (1.0 - 0.6 * night_k);
+		EMISSION += c * vec3(0.18, 0.08, 0.04) * (1.0 - sub) * (1.0 - 0.5 * night_k);
 		// soft fill from the camera, so the face never sinks into grey shade (eye sockets, under the brim)
-		EMISSION += c * vec3(0.10, 0.085, 0.075) * clamp(dot(NORMAL, VIEW), 0.0, 1.0) * (1.0 - 0.7 * night_k);
+		EMISSION += c * vec3(0.24, 0.16, 0.11) * clamp(dot(NORMAL, VIEW), 0.0, 1.0) * (1.0 - 0.5 * night_k);
 	}
 }
 
@@ -130,7 +131,7 @@ void light() {
 	d = d * d * (3.0 - 2.0 * d);
 	// sun / moon: lifted shadows. Torches / fire: ATTENUATION carries the distance falloff, so no floor,
 	// and a soft knee keeps a face right next to the flame from burning out
-	float sh = mix(kind == 0 ? 0.42 : 0.25, 1.0, ATTENUATION);
+	float sh = mix(kind == 0 ? 0.58 : 0.25, 1.0, ATTENUATION);
 	if (!LIGHT_IS_DIRECTIONAL) {
 		float e = ATTENUATION * max(LIGHT_COLOR.r, max(LIGHT_COLOR.g, LIGHT_COLOR.b));
 		sh = ATTENUATION / (1.0 + e * 0.45);

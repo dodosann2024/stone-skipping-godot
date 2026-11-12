@@ -90,8 +90,8 @@ var demo_cam := false
 var demo_nocut := false   # showcase stills of a prop: no see-through cut-out towards the boy
 var ex_yaw := 0.0
 # slightly telephoto follow camera, ~35 degrees down: low enough to see his face under the hat brim
-var ex_pitch := 0.62
-var ex_dist := 5.0
+var ex_pitch := 0.58
+var ex_dist := 4.8
 var last_drag := -10.0
 
 # explore
@@ -3853,7 +3853,7 @@ func _v20_sequence(pre: String, part: String) -> void:
 			["oops", "oops", 1.0, float(_opt("oops_t", "0.8")), PI - 0.3, 0.05, 0.6],
 		]
 		for s: Array in shots:
-			if not String(s[0]).begins_with(_opt("only")):
+			if not Array(_opt("only").split(",")).any(func(o: String) -> bool: return String(s[0]).begins_with(o)):
 				continue
 			player.rotation.y = y0
 			boy.debug_pose(s[1], s[2], s[3])
@@ -3896,7 +3896,7 @@ func _v21_sequence(pre: String, ver := "v21", dk := 1.0) -> void:
 		if ver != "v21":
 			shots += [["body", "idle", 1.0, 0.3, PI - 0.3, 0.08, 1.6 / dk], ["bodyside", "idle", 1.0, 0.3, PI * 0.5, 0.08, 1.6 / dk]]
 		for s: Array in shots:
-			if not String(s[0]).begins_with(_opt("only")):
+			if not Array(_opt("only").split(",")).any(func(o: String) -> bool: return String(s[0]).begins_with(o)):
 				continue
 			player.rotation.y = y0
 			boy.debug_pose(s[1], s[2], s[3])
