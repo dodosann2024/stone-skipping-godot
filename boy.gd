@@ -853,37 +853,63 @@ func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
 	skel.force_update_transform()
 
 
+## Lounger: hips on the seat, spine curves onto the ~45° pad, head on the cushion.
+func _apply_lounger_pose(w: float, breath: float) -> void:
+	# Hip crease bend: thighs along the seat, torso tips onto the backrest.
+	_pose_abs("mixamorig_Hips", Vector3(0.45, 0.0, 0.0), w * 0.65)
+	_pose_abs("mixamorig_Spine", Vector3(0.34 + breath * 0.12, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.26 + breath * 0.15, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.14 + breath * 0.1, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Neck", Vector3(-0.10, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.08 + breath * 0.04, 0.0, 0.0), w)
+	# Keep idle leg seed; nudge thighs onto the seat away from the hinge.
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.35, 0.06, 0.1), w * 0.7)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-0.35, -0.06, -0.1), w * 0.7)
+	_pose_add("mixamorig_LeftLeg", Vector3(0.18, 0.0, 0.0), w * 0.45)
+	_pose_add("mixamorig_RightLeg", Vector3(0.18, 0.0, 0.0), w * 0.45)
+	_pose_add("mixamorig_LeftFoot", Vector3(0.05, 0.0, 0.22), w * 0.45)
+	_pose_add("mixamorig_RightFoot", Vector3(0.05, 0.0, -0.22), w * 0.45)
+	# Hands on the belly (sky side) — euler alone puts them through the pad when reclined.
+	_rest_hands_on_belly(w)
+
 ## Hammock: curl into the occupied cradle. Hat is detached (on face/chest) — head rests on fabric.
 func _apply_hammock_pose(w: float, breath: float) -> void:
 	_pose_abs("mixamorig_Spine", Vector3(0.14 + breath * 0.1, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine1", Vector3(0.18 + breath * 0.12, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine2", Vector3(0.12 + breath * 0.08, 0.0, 0.0), w)
-	# Soft chin; back of head on the fabric (hat is off).
 	_pose_abs("mixamorig_Neck", Vector3(-0.12, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Head", Vector3(-0.10 + breath * 0.03, 0.0, 0.0), w)
-	# Arms rest on belly — no hover.
-	_pose_add("mixamorig_LeftArm", Vector3(0.15, 0.25, 0.35), w * 0.6)
-	_pose_add("mixamorig_RightArm", Vector3(0.15, -0.25, -0.35), w * 0.6)
-	_pose_add("mixamorig_LeftForeArm", Vector3(0.4, 0.0, 0.0), w * 0.5)
-	_pose_add("mixamorig_RightForeArm", Vector3(0.4, 0.0, 0.0), w * 0.5)
+	_rest_hands_on_belly(w * 0.9)
 
 
-## Lounger: spine along the ~45° pad; head on the cushion; arms on belly. No hat-on-head tip.
-func _apply_lounger_pose(w: float, breath: float) -> void:
-	_pose_abs("mixamorig_Spine", Vector3(0.04 + breath * 0.12, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(0.05 + breath * 0.15, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(0.04 + breath * 0.1, 0.0, 0.0), w)
-	# Face to the sky / slightly down the body; back of head on the pad.
-	_pose_abs("mixamorig_Neck", Vector3(-0.08, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.06 + breath * 0.04, 0.0, 0.0), w)
-	# Hands rest on belly/sides (gravity), not hovering.
-	_pose_add("mixamorig_LeftArm", Vector3(0.2, 0.3, 0.4), w * 0.65)
-	_pose_add("mixamorig_RightArm", Vector3(0.2, -0.3, -0.4), w * 0.65)
-	_pose_add("mixamorig_LeftForeArm", Vector3(0.55, 0.1, 0.0), w * 0.55)
-	_pose_add("mixamorig_RightForeArm", Vector3(0.55, -0.1, 0.0), w * 0.55)
-	# Relaxed feet: toes slightly out.
-	_pose_add("mixamorig_LeftFoot", Vector3(0.05, 0.0, 0.2), w * 0.4)
-	_pose_add("mixamorig_RightFoot", Vector3(0.05, 0.0, -0.2), w * 0.4)
+## Place both hands on the belly (chest-sky side) so they never tunnel through the support.
+func _rest_hands_on_belly(w: float) -> void:
+	if skel == null or w < 0.05:
+		return
+	skel.force_update_transform()
+	# Boy chest/face = −into when supine (model +Z with y=PI).
+	var face: Vector3 = -global_transform.basis.z.normalized()
+	if model != null and is_instance_valid(model):
+		face = model.global_transform.basis.z.normalized()
+	var along: Vector3 = global_transform.basis.y.normalized()
+	var side: Vector3 = face.cross(along).normalized()
+	if side.length_squared() < 1e-6:
+		side = global_transform.basis.x.normalized()
+	var belly: Vector3 = lie_bone_world("mixamorig_Spine2") + face * 0.11 - along * 0.04
+	var targets := {
+		"mixamorig_LeftHand": belly + side * 0.09,
+		"mixamorig_RightHand": belly - side * 0.09,
+	}
+	for bone_name in targets.keys():
+		var bi := skel.find_bone(bone_name)
+		if bi < 0:
+			continue
+		var xf: Transform3D = skel.global_transform * skel.get_bone_global_pose(bi)
+		var goal: Vector3 = xf.origin.lerp(targets[bone_name] as Vector3, clampf(w, 0.0, 1.0))
+		var planted := Transform3D(xf.basis, goal)
+		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
+		skel.set_bone_global_pose_override(bi, local_xf, w, true)
+	skel.force_update_transform()
 
 
 

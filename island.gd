@@ -22,7 +22,7 @@ var hammock_mi: MeshInstance3D
 var hammock_nt := 14
 var hammock_nu := 11
 var hammock_empty_sag := 0.22
-var hammock_occ_sag := 0.55
+var hammock_occ_sag := 0.48
 var hammock_half_w := 0.55
 var hammock_occupied := false
 var hammock_body_pts: Array[Vector3] = []  # world points that weigh the fabric
@@ -35,9 +35,9 @@ var lounger_xf := Transform3D.IDENTITY
 var lounger_seat_half := Vector3(0.32, 0.035, 0.55)  # half-extents of the seat cushion
 var lounger_back_half := Vector3(0.32, 0.04, 0.58)   # long backrest: full torso + head
 var lounger_seat_tilt := 0.08                        # rad about local +X (slight foot-down)
-var lounger_back_tilt := -0.79                       # ~45° chaise recline
+var lounger_back_tilt := 0.79                         # ~45° chaise: head rises away from seat
 var lounger_seat_local := Vector3(0, 0.34, 0.08)      # seat centre in lounger_xf
-# Hinge at the seat rear; pad long enough for spine + head.
+# Hinge at the seat rear (−local Z); +tilt raises the −Z (head) end.
 var lounger_back_local := Vector3(0, 0.78, -0.72)
 var umbrella_pos := Vector3.ZERO
 var hut_pos := Vector3.ZERO
@@ -1503,7 +1503,7 @@ func _build_beach_life() -> void:
 	var cxf = Transform3D(Basis(Vector3.UP, tyaw), cp)
 	lounger_xf = cxf
 	lounger_seat_tilt = 0.08
-	lounger_back_tilt = -0.79  # ~45°
+	lounger_back_tilt = 0.79  # ~45°; head rises away from the seat (−local Z)
 	lounger_seat_local = Vector3(0, 0.34, 0.08)
 	# Hinge at the seat rear; long pad supports spine + head.
 	lounger_back_local = Vector3(0, 0.78, -0.72)
@@ -1845,7 +1845,7 @@ func _rebuild_hammock_mesh() -> void:
 		var p0 := hammock_a + ab * t0 + Vector3(0, y0, 0) - mid
 		var p1 := hammock_a + ab * t1 + Vector3(0, y1, 0) - mid
 		# wrap depth rises at the sides so the fabric cradles the body
-		var wrap := 0.22 if hammock_occupied else 0.12
+		var wrap := 0.18 if hammock_occupied else 0.12
 		for st in hammock_nu - 1:
 			var u0 := lerpf(-1.0, 1.0, float(st) / float(hammock_nu - 1))
 			var u1 := lerpf(-1.0, 1.0, float(st + 1) / float(hammock_nu - 1))
@@ -1883,7 +1883,7 @@ func hammock_point(t: float) -> Vector3:
 	var y_off := lerpf(_ham_cur_y[i0] if _ham_cur_y.size() > i0 else -hammock_empty_sag * sin(PI * t),
 		_ham_cur_y[i1] if _ham_cur_y.size() > i1 else -hammock_empty_sag * sin(PI * t), f)
 	# Centre wrap depth (u=0).
-	var wrap := 0.22 if hammock_occupied else 0.12
+	var wrap := 0.18 if hammock_occupied else 0.12
 	p.y = lerpf(hammock_a.y, hammock_b.y, t) + y_off - wrap
 	return p
 
@@ -1918,12 +1918,12 @@ func lounger_seat_point(u: float) -> Dictionary:
 ## v=1 at the raised head end. Normal points out of the cushion (sky + toward the open seat).
 func lounger_back_point(v: float) -> Dictionary:
 	v = clampf(v, 0.0, 1.0)
-	# v=0 at −Z (toward seat / lower), v=1 at +Z (head / higher after tilt)
-	var z := lerpf(-lounger_back_half.z, lounger_back_half.z, v)
+	# +tilt raises −local Z. v=0 at +Z (hinge / lower), v=1 at −Z (head / higher).
+	var z := lerpf(lounger_back_half.z, -lounger_back_half.z, v)
 	var b := Basis(Vector3.RIGHT, lounger_back_tilt)
 	# Centre of the board slab, then step to the cushion face.
 	var centre := lounger_xf * (lounger_back_local + b * Vector3(0.0, 0.0, z))
-	var along := (lounger_xf.basis * (b * Vector3(0, 0, 1))).normalized()  # toward head end
+	var along := (lounger_xf.basis * (b * Vector3(0, 0, -1))).normalized()  # toward head end
 	var side := (lounger_xf.basis * Vector3.RIGHT).normalized()
 	# Outward cushion normal = along × side, flipped to the skyward / seat-open side.
 	var n := along.cross(side).normalized()
