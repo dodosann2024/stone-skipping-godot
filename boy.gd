@@ -69,9 +69,13 @@ var hat_head_xf := Transform3D.IDENTITY
 var hat_face_xf := Transform3D.IDENTITY
 ## "head" | "face" | "chest" | "beside" — detached modes reparent the split hat mesh.
 var hat_mode := "head"
+## World spot for "beside" (sand next to the lounger). Set by main.
+var hat_beside_world := Vector3.ZERO
 var _hat_body_mi: MeshInstance3D
 var _hat_on_head_xf := Transform3D.IDENTITY
 var _chest_attach: BoneAttachment3D
+var _scalp_cover: MeshInstance3D
+var _hat_blend := 0.0  # 0 = on head, 1 = fully detached
 
 var t := 0.0
 var t_idle := 0.0
@@ -349,8 +353,8 @@ func _split_baked_hat() -> void:
 				wh += float(weights_a[i * 4 + j])
 		var local: Vector3 = head_inv * verts[i]
 		var r := Vector2(local.x, local.z).length()
-		# Keep scalp/hair on the body; only the outer brim + crown shell.
-		mark[i] = 1 if (wh > 0.55 and ((local.y > 0.12 and r > 0.115) or (local.y > 0.22 and r > 0.04))) else 0
+		# Outer brim + crown shell only — leave scalp/hair for the body (+ scalp cover).
+		mark[i] = 1 if (wh > 0.6 and ((local.y > 0.13 and r > 0.125) or (local.y > 0.24 and r > 0.05))) else 0
 	var body_idx := PackedInt32Array()
 	var hat_idx := PackedInt32Array()
 	for t in range(0, indices.size(), 3):
@@ -407,41 +411,109 @@ func _split_baked_hat() -> void:
 	_hat_on_head_xf = hat.transform
 	_skin_ready = false
 	hat_mode = "head"
+	# Skin-colored scalp dome covers the cut when the hat is off the head.
+	_scalp_cover = MeshInstance3D.new()
+	_scalp_cover.name = "ScalpCover"
+	var sm := SphereMesh.new()
+	sm.radius = 0.09
+	sm.height = 0.11
+	sm.radial_segments = 12
+	sm.rings = 6
+	_scalp_cover.mesh = sm
+	var scalp_mat := StandardMaterial3D.new()
+	scalp_mat.albedo_color = Color(0.92, 0.72, 0.55)
+	scalp_mat.roughness = 0.85
+	_scalp_cover.material_override = scalp_mat
+	_scalp_cover.position = Vector3(0.0, 0.07, 0.0)
+	_scalp_cover.visible = false
+	_hat_attach.add_child(_scalp_cover)
 
 
-## Move the split hat: on head, tipped over the face, on the chest, or beside the body.
+## Detached chest/belly local pose — rests ON the torso, follows Spine2 breath.
+func _hat_chest_local(face_tip: bool) -> Transform3D:
+	if face_tip:
+		# Brim toward the face, crown on the sternum (never through fabric/backrest).
+		return Transform3D(Basis.from_euler(Vector3(0.35, 0.2, 0.1)), Vector3(0.0, 0.06, 0.14))
+	# Flat on the belly.
+	return Transform3D(Basis.from_euler(Vector3(1.15, 0.4, 0.25)), Vector3(0.0, 0.10, 0.12))
+
+
+func _hat_beside_xf(beside_world: Vector3) -> Transform3D:
+	var p := beside_world
+	if p == Vector3.ZERO:
+		p = hat_beside_world
+	if p == Vector3.ZERO:
+		p = global_position + Vector3(0.45, 0.04, 0.12)
+	return Transform3D(Basis.from_euler(Vector3(0.15, 0.9, 0.4)), p)
+
+
+## Snap hat to a named seat (no blend). Prefer sync_hat_lie for sit↔lie.
 func set_hat_mode(mode: String, beside_world: Vector3 = Vector3.ZERO) -> void:
 	if hat == null or not is_instance_valid(hat):
 		return
 	hat_mode = mode
 	hat.visible = true
+	if _scalp_cover:
+		_scalp_cover.visible = mode != "head"
 	if mode == "head":
 		if hat.get_parent() != _hat_attach:
 			if hat.get_parent():
 				hat.get_parent().remove_child(hat)
 			_hat_attach.add_child(hat)
 		hat.transform = _hat_on_head_xf
+		_hat_blend = 0.0
 	elif mode == "face" or mode == "chest":
-		var parent_att := _chest_attach if mode == "chest" else _hat_attach
-		if hat.get_parent() != parent_att:
+		# Always on the chest bone so the brim rests ON the body (not through fabric).
+		if hat.get_parent() != _chest_attach:
 			if hat.get_parent():
 				hat.get_parent().remove_child(hat)
-			parent_att.add_child(hat)
-		if mode == "face":
-			# Tip brim over the eyes; keep crown above the face.
-			hat.transform = Transform3D(Basis.from_euler(Vector3(-0.95, 0.0, 0.0)), Vector3(0.0, 0.04, -0.06)) * _hat_on_head_xf
-		else:
-			# Flat on the chest so it stays visible from gameplay cameras.
-			hat.transform = Transform3D(Basis.from_euler(Vector3(1.2, 0.35, 0.2)), Vector3(0.02, 0.12, 0.14))
+			_chest_attach.add_child(hat)
+		hat.transform = _hat_chest_local(mode == "face")
+		_hat_blend = 1.0
 	elif mode == "beside":
 		if hat.get_parent() != self:
 			if hat.get_parent():
 				hat.get_parent().remove_child(hat)
 			add_child(hat)
-		var p := beside_world
-		if p == Vector3.ZERO:
-			p = global_position + Vector3(0.35, 0.05, 0.1)
-		hat.global_transform = Transform3D(Basis.from_euler(Vector3(0.15, 0.6, 0.4)), p)
+		hat.global_transform = _hat_beside_xf(beside_world)
+		_hat_blend = 1.0
+
+
+## Blend hat on/off the head over the sit↔lie window (same 0.6 s as LIE_BLEND_DUR).
+## Hammock → chest/face on belly; lounger → sand beside (or chest if no sand spot).
+func sync_hat_lie(kind: String, lie_k: float) -> void:
+	if hat == null or not is_instance_valid(hat) or _hat_attach == null:
+		return
+	var b := smoothstep(0.12, 0.92, lie_k)
+	_hat_blend = b
+	hat.visible = true
+	if _scalp_cover:
+		_scalp_cover.visible = b > 0.25
+	if b <= 0.001:
+		set_hat_mode("head")
+		return
+	var head_xf: Transform3D = _hat_attach.global_transform * _hat_on_head_xf
+	var det_xf: Transform3D
+	var mode := "chest"
+	if kind == "sun" and (hat_beside_world != Vector3.ZERO):
+		mode = "beside"
+		det_xf = _hat_beside_xf(hat_beside_world)
+	elif kind == "sleep":
+		mode = "face"
+		det_xf = _chest_attach.global_transform * _hat_chest_local(true)
+	else:
+		mode = "chest"
+		det_xf = _chest_attach.global_transform * _hat_chest_local(false)
+	if b >= 0.999:
+		set_hat_mode(mode, hat_beside_world)
+		return
+	# Free parent while blending so we can lerp world transforms.
+	if hat.get_parent() != self:
+		if hat.get_parent():
+			hat.get_parent().remove_child(hat)
+		add_child(hat)
+	hat.global_transform = head_xf.interpolate_with(det_xf, b)
+	hat_mode = mode if b > 0.5 else "head"
 
 
 func _build_glasses_stub() -> void:
@@ -699,17 +771,11 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	if full_lie:
 		_seed_lie_from_sit()
 		_apply_lie_pose(kind, lie_k, tt)
-		# Real kids take the hat off: over the face in the hammock, on the chest/sand for sun.
-		if lie_k > 0.7:
-			if kind == "sleep":
-				set_hat_mode("face")
-			else:
-				set_hat_mode("chest")
-		elif hat_mode != "head":
-			set_hat_mode("head")
+		# Real kids take the hat off when lying — blend over the same sit↔lie window.
+		sync_hat_lie(kind, lie_k)
 	else:
-		if hat_mode != "head":
-			set_hat_mode("head")
+		if hat_mode != "head" or _hat_blend > 0.0:
+			sync_hat_lie(kind, 0.0)
 		if ap and not ap.active:
 			ap.active = true
 		if tree and not tree.active:
@@ -787,27 +853,37 @@ func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
 	skel.force_update_transform()
 
 
-## Hammock: mild curl into the U. Roll the head so the baked brim rests beside the
-## cheek in the trough (hat-beside-head nap) instead of hanging over the near rim.
+## Hammock: curl into the occupied cradle. Hat is detached (on face/chest) — head rests on fabric.
 func _apply_hammock_pose(w: float, breath: float) -> void:
-	_pose_abs("mixamorig_Spine", Vector3(0.12 + breath * 0.1, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(0.16 + breath * 0.12, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(0.10 + breath * 0.08, 0.0, 0.0), w)
-	# Chin/face tip only (no roll) — rolls drove the wide brim past the near rim.
-	_pose_abs("mixamorig_Neck", Vector3(-0.32, 0.16, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.48 + breath * 0.03, 0.28, 0.0), w)
+	_pose_abs("mixamorig_Spine", Vector3(0.14 + breath * 0.1, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.18 + breath * 0.12, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.12 + breath * 0.08, 0.0, 0.0), w)
+	# Soft chin; back of head on the fabric (hat is off).
+	_pose_abs("mixamorig_Neck", Vector3(-0.12, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.10 + breath * 0.03, 0.0, 0.0), w)
+	# Arms rest on belly — no hover.
+	_pose_add("mixamorig_LeftArm", Vector3(0.15, 0.25, 0.35), w * 0.6)
+	_pose_add("mixamorig_RightArm", Vector3(0.15, -0.25, -0.35), w * 0.6)
+	_pose_add("mixamorig_LeftForeArm", Vector3(0.4, 0.0, 0.0), w * 0.5)
+	_pose_add("mixamorig_RightForeArm", Vector3(0.4, 0.0, 0.0), w * 0.5)
 
 
-## Lounger: flat root + hips pitch tips the torso onto the ~38° backrest. Skip absolute arm/UpLeg
-## eulers (those stretch the Tripo shorts into a yellow spike). Chin tips hat onto the pad.
+## Lounger: spine along the ~45° pad; head on the cushion; arms on belly. No hat-on-head tip.
 func _apply_lounger_pose(w: float, breath: float) -> void:
-	# Root already aims hips→head along the chaise; no big hip eulers (those spike the shorts).
-	_pose_abs("mixamorig_Spine", Vector3(0.02 + breath * 0.15, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(0.03 + breath * 0.2, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(0.02 + breath * 0.1, 0.0, 0.0), w)
-	# Mild chin tip so the baked straw hat rests on the pad face.
-	_pose_abs("mixamorig_Neck", Vector3(-0.14, 0.02, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.18 + breath * 0.06, 0.03, 0.0), w)
+	_pose_abs("mixamorig_Spine", Vector3(0.04 + breath * 0.12, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.05 + breath * 0.15, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.04 + breath * 0.1, 0.0, 0.0), w)
+	# Face to the sky / slightly down the body; back of head on the pad.
+	_pose_abs("mixamorig_Neck", Vector3(-0.08, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.06 + breath * 0.04, 0.0, 0.0), w)
+	# Hands rest on belly/sides (gravity), not hovering.
+	_pose_add("mixamorig_LeftArm", Vector3(0.2, 0.3, 0.4), w * 0.65)
+	_pose_add("mixamorig_RightArm", Vector3(0.2, -0.3, -0.4), w * 0.65)
+	_pose_add("mixamorig_LeftForeArm", Vector3(0.55, 0.1, 0.0), w * 0.55)
+	_pose_add("mixamorig_RightForeArm", Vector3(0.55, -0.1, 0.0), w * 0.55)
+	# Relaxed feet: toes slightly out.
+	_pose_add("mixamorig_LeftFoot", Vector3(0.05, 0.0, 0.2), w * 0.4)
+	_pose_add("mixamorig_RightFoot", Vector3(0.05, 0.0, -0.2), w * 0.4)
 
 
 
@@ -934,8 +1010,8 @@ func _ensure_skin_cache() -> void:
 		break
 
 
-## Sample skinned mesh vertices in world space (stride so ~max_samples points). Includes the
-## baked Tripo hat/body. Used by lie mesh-penetration selftest and contact snap.
+## Sample skinned mesh vertices in world space (stride so ~max_samples points). Body only —
+## the split hat is sampled separately via hat_sample_world.
 func skinned_sample_world(max_samples := 500) -> Array[Vector3]:
 	_ensure_skin_cache()
 	var out: Array[Vector3] = []
@@ -963,6 +1039,24 @@ func skinned_sample_world(max_samples := 500) -> Array[Vector3]:
 		if wsum < 0.01:
 			continue
 		out.append(skinned / wsum)
+	return out
+
+
+## Sample the detachable hat mesh in world space (for penetration / containment).
+func hat_sample_world(max_samples := 160) -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	if hat == null or not is_instance_valid(hat) or hat.mesh == null or not hat.visible:
+		return out
+	var arr: Array = hat.mesh.surface_get_arrays(0)
+	if arr.is_empty() or arr[Mesh.ARRAY_VERTEX] == null:
+		return out
+	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	if verts.is_empty():
+		return out
+	var step: int = maxi(1, verts.size() / maxi(max_samples, 1))
+	var xf: Transform3D = hat.global_transform
+	for i in range(0, verts.size(), step):
+		out.append(xf * verts[i])
 	return out
 
 

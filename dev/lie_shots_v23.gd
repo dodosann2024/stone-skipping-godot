@@ -95,13 +95,14 @@ func g() -> void:
 		var ham_side: Vector3 = m.rest_side
 		if ham_side.length_squared() < 1e-6:
 			ham_side = side
-		# Look from the occupied side of the trough (boy is biased −rest_side) so the
-		# brim reads inside the near wall instead of silhouetting across empty fabric.
-		var look_side: Vector3 = -ham_side if kind == "sleep" else ham_side
+		var look_side: Vector3 = ham_side
+		var look_along: Vector3 = along
 		var shots: Array = [
-			["side", atan2(look_side.x, look_side.z), 0.48, 2.9, hips.lerp(head, 0.4)],
-			["34", atan2(look_side.x, look_side.z) + 0.55, 0.40, 2.9, hips.lerp(head, 0.4)],
-			["top", atan2(look_side.x, look_side.z), 1.25, 3.4, hips.lerp(head, 0.45)],
+			["side", atan2(look_side.x, look_side.z), 0.42, 3.0, hips.lerp(head, 0.4)],
+			["34", atan2(look_side.x, look_side.z) + 0.55, 0.38, 3.0, hips.lerp(head, 0.4)],
+			["top", atan2(look_side.x, look_side.z), 1.28, 3.5, hips.lerp(head, 0.45)],
+			# Front: looking along the body toward the head.
+			["front", atan2(-look_along.x, -look_along.z), 0.22, 3.2, hips.lerp(head, 0.35)],
 		]
 		# Default gameplay rest camera
 		m.rest_cam_yaw = INF

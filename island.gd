@@ -32,13 +32,13 @@ var towel_pos := Vector3.ZERO
 var towel_dir := Vector3.FORWARD   # towel long axis, pointing out to sea (feet end)
 ## Deck-chair lounger (晒太阳): root transform, seat/backrest sizes, and hinge in local Z.
 var lounger_xf := Transform3D.IDENTITY
-var lounger_seat_half := Vector3(0.3, 0.025, 0.5)   # half-extents of the flat seat cushion
-var lounger_back_half := Vector3(0.3, 0.025, 0.35)  # half-extents of the tilted backrest
-var lounger_seat_tilt := 0.1                         # rad about local +X (slight foot-down)
-var lounger_back_tilt := -0.66                       # rad about local +X (~38° from flat — chaise recline)
-var lounger_seat_local := Vector3(0, 0.3, 0)          # seat centre in lounger_xf
-# Backrest sits well behind the hinge so a supine boy on the seat never intersects the board.
-var lounger_back_local := Vector3(0, 0.62, -0.85)
+var lounger_seat_half := Vector3(0.32, 0.035, 0.55)  # half-extents of the seat cushion
+var lounger_back_half := Vector3(0.32, 0.04, 0.58)   # long backrest: full torso + head
+var lounger_seat_tilt := 0.08                        # rad about local +X (slight foot-down)
+var lounger_back_tilt := -0.79                       # ~45° chaise recline
+var lounger_seat_local := Vector3(0, 0.34, 0.08)      # seat centre in lounger_xf
+# Hinge at the seat rear; pad long enough for spine + head.
+var lounger_back_local := Vector3(0, 0.78, -0.72)
 var umbrella_pos := Vector3.ZERO
 var hut_pos := Vector3.ZERO
 var lighthouse_pos := Vector3.ZERO
@@ -1496,28 +1496,41 @@ func _build_beach_life() -> void:
 		var g1 = ground_h(sc.x + out.x * 0.18, sc.z + out.z * 0.18)
 		var tilt = atan2(g0 - g1, 0.36)
 		boxb(SB, Vector3(0.9, 0.03, 0.37), Transform3D(Basis(Vector3.UP, tyaw) * Basis(Vector3.RIGHT, tilt), Vector3(sc.x, (g0 + g1) * 0.5 + 0.03, sc.z)), col)
-	var cp = tw + out.cross(Vector3.UP).normalized() * 1.15 + out * 0.1
+	# Beach chaise: clear of the towel, facing the sea/sun, legs on the sand.
+	var side_beach: Vector3 = out.cross(Vector3.UP).normalized()
+	var cp = tw + side_beach * 1.35 + out * 0.15
 	cp.y = ground_h(cp.x, cp.z)
 	var cxf = Transform3D(Basis(Vector3.UP, tyaw), cp)
 	lounger_xf = cxf
-	lounger_seat_tilt = 0.1
-	lounger_back_tilt = -0.66
-	lounger_seat_local = Vector3(0, 0.3, 0)
-	# Board behind the hinge; far enough that the hat rests on the front face when reclined.
-	lounger_back_local = Vector3(0, 0.66, -0.98)
-	lounger_seat_half = Vector3(0.3, 0.03, 0.5)
-	lounger_back_half = Vector3(0.3, 0.045, 0.34)
-	var lc: Vector3 = cxf * Vector3(0, 0, -0.08)
-	wall_b(Vector2(lc.x, lc.z), Vector2(0.33, 0.62), tyaw, cp.y - 0.3, cp.y + 0.9, "躺椅")
+	lounger_seat_tilt = 0.08
+	lounger_back_tilt = -0.79  # ~45°
+	lounger_seat_local = Vector3(0, 0.34, 0.08)
+	# Hinge at the seat rear; long pad supports spine + head.
+	lounger_back_local = Vector3(0, 0.78, -0.72)
+	lounger_seat_half = Vector3(0.32, 0.035, 0.55)
+	lounger_back_half = Vector3(0.32, 0.04, 0.58)
+	var lc: Vector3 = cxf * Vector3(0, 0, -0.05)
+	wall_b(Vector2(lc.x, lc.z), Vector2(0.36, 0.75), tyaw, cp.y - 0.3, cp.y + 1.1, "躺椅")
 	var lface: Vector3 = cxf.basis * Vector3(1, 0, 0)
 	if lface.dot(towel_pos - cp) > 0.0:
-		lface = -lface   # sit on the edge away from the towel, looking along the beach
-	_add_seat("躺椅", cp + lface * 0.1 + Vector3(0, 0.325, 0) + cxf.basis * Vector3(0, 0, 0.12), lface, 0.55, "蓝色躺椅：点「坐下」歇一会儿")
-	boxb(SB, Vector3(0.6, 0.05, 1.0), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local), Color(0.3, 0.55, 0.85))
-	boxb(SB, Vector3(0.6, 0.05, 0.7), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local), Color(0.3, 0.55, 0.85))
+		lface = -lface
+	_add_seat("躺椅", cp + lface * 0.12 + Vector3(0, 0.36, 0) + cxf.basis * Vector3(0, 0, 0.15), lface, 0.55, "蓝色躺椅：点「坐下」歇一会儿")
+	var wood := Color(0.72, 0.55, 0.32)
+	var cush := Color(0.28, 0.52, 0.82)
+	# Four legs down to the sand.
 	for lx in [-0.28, 0.28]:
-		for lz in [-0.4, 0.4]:
-			boxb(SB, Vector3(0.04, 0.3, 0.04), cxf * Transform3D(Basis.IDENTITY, Vector3(lx, 0.15, lz)), Color(0.9, 0.9, 0.9))
+		for lz in [-0.42, 0.48]:
+			var leg_h: float = 0.34
+			boxb(SB, Vector3(0.045, leg_h, 0.045), cxf * Transform3D(Basis.IDENTITY, Vector3(lx, leg_h * 0.5, lz)), wood)
+	# Seat frame + cushion.
+	boxb(SB, Vector3(0.68, 0.04, 1.12), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local + Vector3(0, -0.04, 0)), wood)
+	boxb(SB, Vector3(0.64, 0.07, 1.08), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local), cush)
+	# Backrest frame + long cushion (~45°).
+	boxb(SB, Vector3(0.68, 0.04, 1.18), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local + Vector3(0, -0.04, 0)), wood)
+	boxb(SB, Vector3(0.64, 0.08, 1.14), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local), cush)
+	# Armrests.
+	for lx2 in [-0.34, 0.34]:
+		boxb(SB, Vector3(0.05, 0.04, 0.7), cxf * Transform3D(Basis.IDENTITY, Vector3(lx2, 0.48, 0.05)), wood)
 	# surfboard stuck in the sand
 	var sp = shore_pt(0.55, 3.5)
 	wall_c(Vector2(sp.x, sp.z), 0.17, sp.y - 0.2, sp.y + 2.0, "冲浪板")

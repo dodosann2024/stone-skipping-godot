@@ -236,15 +236,14 @@ func _lie_contact_check(kind: String) -> void:
 		print("SELFTEST %-28s FAIL  (no gaps)" % ("lie contact " + kind))
 		return
 	var bad: Array = []
+	# Contact within 2 cm of the support (sky-side positive after shell offset).
+	const CONTACT_MAX := 0.02
+	const PENET_MIN := -0.01
 	for key in ["hips", "spine", "head"]:
 		if not gaps.has(key):
 			continue
 		var g: float = float(gaps[key])
-		# Lounger: bone gaps sit above the pad by body/hat thickness once the skinned mesh is flush.
-		# Lounger bones sit above the pad by body/hat thickness after mesh clearance.
-		var tol := 0.28 if key == "hips" else (0.42 if key == "spine" else (0.42 if kind == "sun" else 0.18))
-		# allow a little sink into fabric (−1 cm hard limit) and up to tol float
-		if g < -0.01 or g > tol:
+		if g < PENET_MIN or g > CONTACT_MAX:
 			bad.append("%s=%.1fcm" % [key, g * 100.0])
 
 	var face_n: Vector3 = m.boy.lie_face_normal()
@@ -256,17 +255,21 @@ func _lie_contact_check(kind: String) -> void:
 	for key2 in ["hips", "spine", "head"]:
 		if gaps.has(key2):
 			penet = minf(penet, float(gaps[key2]))
-	if penet < -0.01:
+	if penet < PENET_MIN:
 		bad.append("penetrate=%.1fcm" % (penet * 100.0))
+	# Mesh penet includes the detachable hat when it is on the body / head.
 	var mesh_penet: float = m.lie_mesh_penetration_depth()
-	if mesh_penet < -0.01:
+	if mesh_penet < PENET_MIN:
 		bad.append("mesh_penet=%.1fcm" % (mesh_penet * 100.0))
+	var hat_n: int = m.boy.hat_sample_world(40).size() if m.boy.hat_mode != "beside" else 0
 	var parts: PackedStringArray = PackedStringArray()
 	for k in gaps.keys():
 		parts.append("%s=%.1fcm" % [k, float(gaps[k]) * 100.0])
 	parts.append("face_up=%.2f" % face_dot)
 	parts.append("penetrate=%.1fcm" % (penet * 100.0))
 	parts.append("mesh_penet=%.1fcm" % (mesh_penet * 100.0))
+	parts.append("hat_mode=%s" % m.boy.hat_mode)
+	parts.append("hat_samples=%d" % hat_n)
 	var ok := bad.is_empty()
 	print("SELFTEST %-28s %s  (%s)" % ["lie contact " + kind, "ok" if ok else "FAIL", ", ".join(parts)])
 	if not ok:
