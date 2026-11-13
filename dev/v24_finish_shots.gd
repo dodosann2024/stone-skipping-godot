@@ -134,18 +134,18 @@ func g() -> void:
 		m.boy._update_face(0.1)
 		await process_frame
 	m.boy.bake_pose_mesh()
-	m.boy._set_eyes_closed(true)
 	hips = m.boy.lie_bone_world("mixamorig_Hips")
 	var head_b: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
 	var hold_look: Vector3 = hips.lerp(head_b, 0.45)
+	var face_up: Vector3 = m.boy.model.global_transform.basis.z.normalized()
+	# Prefer the turned-away side so the nap forearm + head yaw hide the open eyes.
 	await _cam_shot(m, vp, "hammock_hold", hold_look,
-		hold_look + side * 3.0 + Vector3(0, 1.1, 0))
+		hold_look + side * (-2.8) + Vector3(0, 1.15, 0) + face_up * 0.35)
 	m.boy.restore_pose_mesh()
 
 	# EXIT: sit on edge again (not walking through fabric)
 	m.rest_phase = 6
 	m.boy.set_face_expr("smile")
-	m.boy._set_eyes_closed(false)
 	for _p in 16:
 		m.boy.activity("sleep", 0.85, 0.0, m.gt)
 		m.boy.global_transform = Transform3D(m.rest_sit_b, m.rest_root_sit)
@@ -166,45 +166,26 @@ func g() -> void:
 	m._wake()
 	m.mode = m.Mode.EXPLORE
 	m.boy.end_activity()
-	m.boy._set_eyes_closed(false)
 
-	# ---- face_sleep: standing frontal close-up so closed-eye albedo is verifiable ----
+	# ---- face_sleep alias: open-eye smile plate (nap sleep close-ups are in v24_nap_face_shots) ----
 	m.rest_frozen = false
 	m._wake()
 	m.mode = m.Mode.EXPLORE
 	m.boy.end_activity()
-	m._place(Vector3(2.0, 0.0, -6.0), 0.0)
-	m.face_yaw = 0.0
-	m.boy.rotation = Vector3.ZERO
+	m._place(Vector3(2.0, 0.0, -6.0), PI)
 	m.boy.set_idle()
-	# Reload closed-eye albedo (PNG may have been updated since boot).
-	m.boy._boy_albedo_tex_sleep = null
-	m.boy._eyes_closed_tex = false
-	m.boy.set_face_expr("sleep")
-	m.boy.act_kind = "sleep"
-	m.boy.act_lie_k = 1.0
-	for _i in 24:
+	m.boy.set_face_expr("smile")
+	for _i in 12:
 		m.boy._update_face(0.1)
-		m.boy._set_eyes_closed(true)
 		await process_frame
 	m.boy.bake_pose_mesh()
-	m.boy._set_eyes_closed(true)
 	m.island.visible = false
-	var sk: Skeleton3D = m.boy.skel
-	var bi: int = sk.find_bone("mixamorig_Head")
-	sk.force_update_transform()
-	var hx: Transform3D = sk.global_transform * sk.get_bone_global_pose(bi)
-	var head: Vector3 = hx.origin
-	# yaw=0 → character faces world −Z; pull back so both eyes read.
-	if m.boy.face_fill:
-		m.boy.face_fill.light_energy = 0.25
-	var look_f: Vector3 = head + Vector3(0.0, -0.02, 0.0)
-	var cam_f: Vector3 = look_f + Vector3(0.03, 0.01, -0.58)
-	await _cam_shot(m, vp, "face_sleep", look_f, cam_f)
+	var head: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
+	var fwd: Vector3 = -m.boy.global_transform.basis.z.normalized()
+	await _cam_shot(m, vp, "face_sleep", head, head + fwd * 0.62 + Vector3(0, 0.03, 0))
 	m.island.visible = true
 	m.boy.restore_pose_mesh()
 	m.boy.set_face_expr("smile")
-	m.boy._set_eyes_closed(false)
 	m.boy.end_activity()
 
 	# ---- Walk / run filmstrips ----

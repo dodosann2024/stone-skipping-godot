@@ -32,7 +32,8 @@ func _run() -> void:
 	# Force reload sleep albedo from disk
 	m.boy._boy_albedo_tex_sleep = null
 	m.boy._ensure_sleep_eye_albedo()
-	print("sleep_tex", m.boy._boy_albedo_tex_sleep != null)
+	m.boy._ensure_eyes_closed_morph()
+	print("sleep_tex", m.boy._boy_albedo_tex_sleep != null, "morph_bs", m.boy._eyes_closed_bs)
 
 	var head: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
 	# face_yaw + PI looks at the face
@@ -50,7 +51,7 @@ func _run() -> void:
 	await _face(m, vp, "face_sleep_front", head, front_yaw, 0.06, 0.62)
 	await _face(m, vp, "face_sleep_34", head, yaw_34, 0.10, 0.68)
 
-	# ---- BLINK (closed albedo + lid discs mid-blink) ----
+	# ---- BLINK (morph mid-close + sleep albedo) ----
 	m.boy.set_face_expr("neutral")
 	m.boy.act_kind = "idle"
 	m.boy.act_lie_k = 0.0
@@ -60,6 +61,8 @@ func _run() -> void:
 		m.boy.blink_t = 0.05
 		m.boy._update_face(0.02)
 		m.boy.blink_t = 0.05
+		m.boy._set_eyes_closed_morph(1.0)
+		m.boy._set_eyes_closed(true)
 		await process_frame
 	head = m.boy.lie_bone_world("mixamorig_Head")
 	await _face(m, vp, "face_blink_front", head, front_yaw, 0.06, 0.62)
@@ -68,6 +71,7 @@ func _run() -> void:
 	# ---- OPEN reference ----
 	m.boy.blink_t = -1.0
 	m.boy._set_eyes_closed(false)
+	m.boy._set_eyes_closed_morph(0.0)
 	for _i in 6:
 		m.boy._update_face(0.05)
 		await process_frame
@@ -90,16 +94,28 @@ func _face(m, vp: Viewport, name: String, head: Vector3, yaw: float, pitch: floa
 				m.boy.set_face_expr("sleep")
 				m.boy.act_kind = "sleep"
 				m.boy.act_lie_k = 1.0
+				m.boy._set_eyes_closed_morph(1.0)
+				m.boy._set_eyes_closed(true)
 			else:
 				m.boy.blink_t = 0.05
+				m.boy._set_eyes_closed_morph(1.0)
+				m.boy._set_eyes_closed(true)
 			m.boy._update_face(0.02)
 			if name.begins_with("face_blink"):
 				m.boy.blink_t = 0.05
+				m.boy._set_eyes_closed_morph(1.0)
+				m.boy._set_eyes_closed(true)
 		else:
 			m.boy.blink_t = -1.0
 			m.boy.set_face_expr("neutral")
+			m.boy._set_eyes_closed_morph(0.0)
 			m.boy._update_face(0.05)
 		m._apply_camera()
 		await process_frame
+	# CPU bake so llvmpipe stills include the eyes_closed morph deltas.
+	m.boy.bake_pose_mesh()
+	await process_frame
+	await process_frame
 	vp.get_texture().get_image().save_png("%s/%s.png" % [OUT, name])
-	print("SHOT", name)
+	m.boy.restore_pose_mesh()
+	print("SHOT", name, "morph_w", m.boy._eyes_closed_w)

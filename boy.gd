@@ -4,7 +4,8 @@ extends Node3D
 ## Same public API as the old procedural Boy so main.gd / selftest / sim keep working.
 ## Straw hat is baked into the Tripo mesh (never split). An invisible HatProbe proxy
 ## sits on the Head bone. Lying poses tip the head so the brim rests on the support.
-## Face is baked (no expression morphs).
+## Face is baked (open eyes). Sleep uses a forearm-over-eyes nap pose — no blink,
+## no closed-eye albedo (Tripo eye shells can't read as lids without a new model).
 
 signal released
 signal footstep(side: int, running: bool)
@@ -142,7 +143,7 @@ var _boy_mat: StandardMaterial3D
 var _boy_albedo_day := Color(1.08, 0.98, 0.92, 1.0)
 var _boy_albedo_tex_day: Texture2D
 var _boy_albedo_tex_sleep: Texture2D
-var _eyes_closed_tex := false
+var _eyes_closed_tex := false  # always false — closed albedo abandoned for Tripo shells
 var _eyelid_l: MeshInstance3D
 var _eyelid_r: MeshInstance3D
 var _mouth: MeshInstance3D
@@ -499,7 +500,6 @@ func _tune_boy_material() -> void:
 		mi.material_override = mat
 		_boy_mat = mat
 		_boy_albedo_tex_day = mat.albedo_texture
-		_ensure_sleep_eye_albedo()
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mi.transparency = 0
 		# layer 1 (world) + layer 2 (face fill only) — still lit by the sun on layer 1
@@ -507,89 +507,14 @@ func _tune_boy_material() -> void:
 		break
 
 
-## Tripo eyes are painted into the albedo (no lid blendshapes). Sleep swaps a
-## closed-eye albedo that covers those UV islands with skin + a lash line.
-## Does not split/recolor the baked hat — only the two eye UV boxes.
-func _ensure_sleep_eye_albedo() -> void:
-	if _boy_albedo_tex_sleep != null or _boy_albedo_tex_day == null:
-		return
-	# Prefer the pre-authored closed-eye albedo (painted offline from the Tripo baseColor).
-	var path := "res://art/boy/tripo/boy_tripo_sleep_eyes.png"
-	var abs_path := "/workspace/art/boy/tripo/boy_tripo_sleep_eyes.png"
-	var img: Image = null
-	if FileAccess.file_exists(path):
-		img = Image.load_from_file(ProjectSettings.globalize_path(path))
-	if img == null and FileAccess.file_exists(abs_path):
-		img = Image.load_from_file(abs_path)
-	if img == null:
-		# Runtime paint from the day albedo using authored UV boxes.
-		img = _boy_albedo_tex_day.get_image()
-		if img == null:
-			return
-		img = img.duplicate()
-		_paint_closed_eyes(img)
-	_boy_albedo_tex_sleep = ImageTexture.create_from_image(img)
-
-
-func _paint_closed_eyes(img: Image) -> void:
-	# UV boxes authored from head mesh eye triangles (white+dark islands).
-	var boxes: Array = []
-	var box_path := "/workspace/art/boy/tripo/sleep_eye_boxes.txt"
-	if FileAccess.file_exists(box_path):
-		var f := FileAccess.open(box_path, FileAccess.READ)
-		while f != null and not f.eof_reached():
-			var line := f.get_line().strip_edges()
-			if line.is_empty():
-				continue
-			var parts := line.split(" ")
-			if parts.size() >= 4:
-				boxes.append([float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])])
-	if boxes.is_empty():
-		boxes = [
-			[0.288, 0.340, 0.615, 0.675],
-			[0.834, 0.886, 0.538, 0.596],
-		]
-	var lash := Color(0.18, 0.11, 0.08)
-	var iw := img.get_width()
-	var ih := img.get_height()
-	for box in boxes:
-		var x0 := int(float(box[0]) * iw)
-		var x1 := int(float(box[1]) * iw)
-		var y0 := int(float(box[2]) * ih)
-		var y1 := int(float(box[3]) * ih)
-		var skin := img.get_pixel(clampi(x0 - 2, 0, iw - 1), clampi(y0 - 2, 0, ih - 1))
-		skin = skin.lerp(img.get_pixel(clampi(x1 + 2, 0, iw - 1), clampi(y1 + 2, 0, ih - 1)), 0.5)
-		skin = skin.lerp(Color(0.91, 0.73, 0.61), 0.15)
-		var cx := (x0 + x1) * 0.5
-		var cy := (y0 + y1) * 0.5
-		var rx := maxf((x1 - x0) * 0.55, 1.0)
-		var ry := maxf((y1 - y0) * 0.52, 1.0)
-		for y in range(y0, y1 + 1):
-			for x in range(x0, x1 + 1):
-				var nx := (float(x) - cx) / rx
-				var ny := (float(y) - cy) / ry
-				var almond := nx * nx + (ny * ny) * (1.0 + 0.55 * nx * nx)
-				if almond > 1.05:
-					continue
-				var col := skin
-				if ny < -0.05 and ny > -0.72 and absf(nx) < 0.92:
-					var crease := smoothstep(-0.05, -0.35, ny) * (1.0 - absf(nx) * 0.35)
-					col = skin.lerp(lash, clampf(crease * 1.4, 0.0, 0.95))
-				elif ny < -0.72 and absf(nx) < 0.75:
-					col = lash.lerp(skin, 0.25)
-				img.set_pixel(x, y, col)
-
-
-func _set_eyes_closed(closed: bool) -> void:
+## Closed-eye albedo / morph abandoned for Tripo shells — always keep day albedo.
+func _set_eyes_closed(_closed: bool) -> void:
 	if _boy_mat == null:
 		return
-	_ensure_sleep_eye_albedo()
-	_eyes_closed_tex = closed
-	var tex: Texture2D = _boy_albedo_tex_sleep if closed and _boy_albedo_tex_sleep else _boy_albedo_tex_day
-	if tex == null:
+	_eyes_closed_tex = false
+	if _boy_albedo_tex_day == null:
 		return
-	_boy_mat.albedo_texture = tex
-	# Keep override + surface material in sync (bake_pose_mesh may expose the surface slot).
+	_boy_mat.albedo_texture = _boy_albedo_tex_day
 	if _body_mi:
 		_body_mi.material_override = _boy_mat
 		if _body_mi.mesh and _body_mi.mesh.get_surface_count() > 0:
@@ -838,8 +763,8 @@ func _apply_lie_pose(kind: String, lie_k: float, tt: float) -> void:
 	skel.force_update_transform()
 
 
-## Lounger: hips in the crease, back flat on the ~40° pad. Chin tips toward chest (~15°)
-## so the rear brim rests on the backrest (hat stays on; tips slightly over the eyes).
+## Lounger: hips in the crease, back flat on the ~40° pad. Head turns away from the
+## approach side; forearm rests over the eyes (classic nap — eyes stay open).
 func _apply_lounger_pose(w: float, breath: float) -> void:
 	# Root basis follows the ~40° backrest. Do NOT pitch Hips — that tilts the whole
 	# torso off the pad (#45 upright hunch). Bend UpLegs instead so thighs lie on the seat.
@@ -847,9 +772,9 @@ func _apply_lounger_pose(w: float, breath: float) -> void:
 	_pose_abs("mixamorig_Spine", Vector3(-0.02 + breath * 0.04, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine1", Vector3(-0.02 + breath * 0.05, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine2", Vector3(-0.01 + breath * 0.03, 0.0, 0.0), w)
-	# ~10–14° chin-to-chest so the backrest presses the rear brim forward (napping tip).
-	_pose_abs("mixamorig_Neck", Vector3(-0.11, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.16 + breath * 0.02, 0.0, 0.0), w)
+	# Yaw away from the approach side + chin tip; keep mild so the brim doesn't dig the pad.
+	_pose_abs("mixamorig_Neck", Vector3(-0.10, 0.22, 0.05), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.14 + breath * 0.02, 0.38, 0.06), w)
 	# ~40° crease: thighs along the seat toward the foot end (keeps Mixamo UpLeg π twist).
 	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.75, 0.06, 0.10), w)
 	_pose_add("mixamorig_RightUpLeg", Vector3(-0.75, -0.06, -0.10), w)
@@ -857,17 +782,76 @@ func _apply_lounger_pose(w: float, breath: float) -> void:
 	_pose_add("mixamorig_RightLeg", Vector3(0.22, 0.0, 0.0), w * 0.7)
 	_pose_add("mixamorig_LeftFoot", Vector3(0.05, 0.0, 0.16), w * 0.55)
 	_pose_add("mixamorig_RightFoot", Vector3(0.05, 0.0, -0.16), w * 0.55)
-	_rest_hands_on_belly(w)
+	_nap_forearm_over_eyes(w, "sun")
 
-## Hammock: curl into the occupied cradle. Hat stays on — slight forward + side tip so the
-## brim rests on the fabric instead of poking through.
+## Hammock: curl into the occupied cradle. Head turns away; forearm covers the eyes.
+## Hat stays on — slight forward tip so the brim rests on the fabric.
 func _apply_hammock_pose(w: float, breath: float) -> void:
 	_pose_abs("mixamorig_Spine", Vector3(0.14 + breath * 0.1, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine1", Vector3(0.18 + breath * 0.12, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine2", Vector3(0.12 + breath * 0.08, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Neck", Vector3(-0.18, 0.10, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.24 + breath * 0.03, 0.16, 0.0), w)
-	_rest_hands_on_belly(w * 0.9)
+	_pose_abs("mixamorig_Neck", Vector3(-0.18, 0.38, 0.08), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.22 + breath * 0.03, 0.58, 0.12), w)
+	_nap_forearm_over_eyes(w, "sleep")
+
+
+## Classic nap: left hand on belly, right forearm draped across the eyes (in front of
+## the face, never through the skull or hat crown). Eyes stay open underneath.
+## Only plant the RightHand — ForeArm/Arm overrides stretch Tripo skin through the head.
+func _nap_forearm_over_eyes(w: float, kind: String = "sleep") -> void:
+	if skel == null or w < 0.05:
+		return
+	skel.force_update_transform()
+	var face: Vector3 = model.global_transform.basis.z.normalized() if model else (-global_transform.basis.z).normalized()
+	var hips_p: Vector3 = lie_bone_world(B_HIPS)
+	var head_p: Vector3 = lie_bone_world(B_HEAD)
+	var head_dir: Vector3 = (head_p - hips_p).normalized()
+	var side: Vector3 = face.cross(head_dir).normalized()
+	if side.length_squared() < 1e-6:
+		side = global_transform.basis.x.normalized()
+	# Hammock (flat supine): absolute fold from arm scan. Lounger (~40° recline): soft
+	# additive only — absolute Mixamo eulers rubber-hose the arm through the neck there.
+	if kind == "sun":
+		_pose_add("mixamorig_RightArm", Vector3(-0.45, -0.70, 0.35), w * 0.7)
+		_pose_add("mixamorig_RightForeArm", Vector3(-0.85, 0.10, 0.15), w * 0.75)
+		_pose_add("mixamorig_LeftArm", Vector3(0.20, 0.30, -0.35), w * 0.5)
+		_pose_add("mixamorig_LeftForeArm", Vector3(-0.45, 0.15, 0.0), w * 0.5)
+	else:
+		_pose_abs("mixamorig_RightArm", Vector3(-0.95, -1.45, 0.55), w)
+		_pose_abs("mixamorig_RightForeArm", Vector3(-1.55, 0.05, 0.25), w)
+		_pose_abs("mixamorig_RightHand", Vector3(0.10, 0.15, 0.40), w * 0.6)
+		_pose_abs("mixamorig_LeftArm", Vector3(0.30, 0.45, -0.50), w * 0.65)
+		_pose_abs("mixamorig_LeftForeArm", Vector3(-0.60, 0.20, 0.0), w * 0.65)
+	skel.force_update_transform()
+	head_p = lie_bone_world(B_HEAD)
+	# Wrist over the eyes. Lounger: a bit further out so we don't tunnel the cheek.
+	var out := 0.13 if kind == "sun" else 0.11
+	var wrist: Vector3 = head_p + face * out - head_dir * 0.005 - side * 0.05
+	var belly: Vector3 = lie_bone_world("mixamorig_Spine2") + face * 0.12 - head_dir * 0.02 + side * 0.07
+	var top_bi := skel.find_bone("mixamorig_HeadTop_End")
+	if top_bi >= 0:
+		var top_p: Vector3 = (skel.global_transform * skel.get_bone_global_pose(top_bi)).origin
+		var crown_n := (top_p - head_p).normalized()
+		var up_amt := (wrist - head_p).dot(crown_n)
+		var max_up := (top_p - head_p).dot(crown_n) * 0.20
+		if up_amt > max_up:
+			wrist -= crown_n * (up_amt - max_up)
+	var into := (wrist - head_p).dot(face)
+	var min_into := 0.10 if kind == "sun" else 0.09
+	if into < min_into:
+		wrist += face * (min_into - into)
+	# Plant hand only (ForeArm override rubber-hoses Tripo skin through the skull).
+	for bone_name in ["mixamorig_RightHand", "mixamorig_LeftHand"]:
+		var bi := skel.find_bone(bone_name)
+		if bi < 0:
+			continue
+		var goal: Vector3 = wrist if bone_name == "mixamorig_RightHand" else belly
+		var xf: Transform3D = skel.global_transform * skel.get_bone_global_pose(bi)
+		goal = xf.origin.lerp(goal, clampf(w, 0.0, 1.0))
+		var planted := Transform3D(xf.basis, goal)
+		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
+		skel.set_bone_global_pose_override(bi, local_xf, w, true)
+	skel.force_update_transform()
 
 
 ## Place both hands on the belly (chest-sky side) so they never tunnel through the support.
@@ -1623,56 +1607,39 @@ func _make_eyelid(nm: String) -> MeshInstance3D:
 
 
 ## expr: "smile" | "sleep" | "cheer" | "neutral"
+## Sleep keeps eyes open (forearm covers them in the lie pose). No blink.
 func set_face_expr(kind: String) -> void:
 	expr = kind
-	_set_eyes_closed(kind == "sleep")
+	_set_eyes_closed(false)
+	blink_t = -1.0
+	blink_timer = 9999.0
 
 
 func _update_face(delta: float = 0.0) -> void:
 	if _eyelid_l == null or _eyelid_r == null:
 		return
-	var open_h := 0.04
-	var want_close := open_h
-	# Sleep / blink: closed-eye albedo (projection bake) + flat opaque lid discs.
-	# Tripo eyes are protruding shells — albedo alone still reads as glass bulbs;
-	# discs hide the shells while the albedo keeps UV islands from flashing iris.
-	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) or expr == "sleep"
-	var blinking := false
-	if not sleeping:
-		if blink_t >= 0.0:
-			blink_t += delta
-			var u := blink_t / 0.14
-			want_close = 1.0 if u < 0.55 else lerpf(1.0, open_h, (u - 0.55) / 0.45)
-			blinking = u < 0.85
-			if blink_t >= 0.14:
-				blink_t = -1.0
-				blink_timer = rng.randf_range(2.0, 6.0)
-				blinking = false
-		else:
-			blink_timer -= delta
-			if blink_timer <= 0.0:
-				blink_t = 0.0
-	var closed := sleeping or blinking
-	_set_eyes_closed(closed)
-	# Mesh lid discs mis-parent on Tripo Head (float beside the face). Keep hidden;
-	# closed-eye albedo is the only cover until a Tripo regen with flatter eyes/lids.
-	_eyelid_l.scale = Vector3(1.15, open_h, 1.05)
-	_eyelid_r.scale = Vector3(1.15, open_h, 1.05)
+	# No blink, no closed-eye albedo — Tripo shells can't fake lids. Sleep life is
+	# smile + soft gaze + head/breath motion; forearm covers the eyes in the nap pose.
+	_set_eyes_closed(false)
+	blink_t = -1.0
+	blink_timer = 9999.0
 	_eyelid_l.visible = false
 	_eyelid_r.visible = false
-	if sleeping:
-		if _mouth:
-			_mouth.visible = false
+	if _mouth == null:
 		return
-	if _mouth:
-		var smile := 0.6
-		if expr == "cheer" or react_kind == "cheer":
-			smile = 1.0
-		elif expr == "neutral":
-			smile = 0.35
-		_mouth.scale.y = lerpf(_mouth.scale.y, 0.22 + smile * 0.45, 1.0 - exp(-delta * 6.0))
-		_mouth.scale.x = lerpf(_mouth.scale.x, 0.85 + smile * 0.55, 1.0 - exp(-delta * 6.0))
-		_mouth.visible = not closed and smile > 0.4
+	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) or expr == "sleep"
+	# Hide the procedural mouth blob while napping — it floats off the Tripo Head bone.
+	if sleeping:
+		_mouth.visible = false
+		return
+	var smile := 0.55
+	if expr == "cheer" or react_kind == "cheer":
+		smile = 1.0
+	elif expr == "neutral":
+		smile = 0.35
+	_mouth.scale.y = lerpf(_mouth.scale.y, 0.22 + smile * 0.45, 1.0 - exp(-delta * 6.0))
+	_mouth.scale.x = lerpf(_mouth.scale.x, 0.85 + smile * 0.55, 1.0 - exp(-delta * 6.0))
+	_mouth.visible = smile > 0.3
 
 
 func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
