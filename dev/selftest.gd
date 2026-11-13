@@ -202,7 +202,10 @@ func _rest(kind: String, approach: Vector3) -> void:
 	m._place(approach, 0.0)
 	await _frames(5)
 	m._begin_rest(kind)
-	if not await _until(func() -> bool: return m.rest_phase == 4, 12.0):
+	var enter_pen := await _sample_rest_penet(kind, "enter", 12.0, func() -> bool: return m.rest_phase == 4)
+	if enter_pen < -0.011:
+		fails.append("%s enter penet %.1fcm" % [kind, enter_pen * 100.0])
+	if m.rest_phase != 4:
 		fails.append(kind + " never lay down")
 		return
 	await _wait(1.0)
@@ -225,12 +228,80 @@ func _rest(kind: String, approach: Vector3) -> void:
 			await _frames(1)
 		m.set_meta("lie_snapped", true)
 		_lie_contact_check(kind)
+		var hold_pen: float = m.lie_mesh_penetration_depth(true)
+		print("SELFTEST %-28s %s  (hold mesh_penet=%.1fcm)" % [
+			kind + " hold penet", "ok" if hold_pen >= -0.011 else "FAIL", hold_pen * 100.0])
+		if hold_pen < -0.011:
+			fails.append("%s hold penet %.1fcm" % [kind, hold_pen * 100.0])
 	m._wake()
-	if not await _until(func() -> bool: return m.mode == m.Mode.EXPLORE, 6.0):
+	var exit_pen := await _sample_rest_penet(kind, "exit", 6.0, func() -> bool: return m.mode == m.Mode.EXPLORE)
+	if exit_pen < -0.011:
+		fails.append("%s exit penet %.1fcm" % [kind, exit_pen * 100.0])
+	if m.mode != m.Mode.EXPLORE:
 		fails.append(kind + " never got up")
 		return
 	await _frames(3)
 	await _can_walk("after " + kind + " from " + str(approach.snapped(Vector3.ONE * 0.1)))
+
+
+## Sample body+hat mesh penetration while a rest interaction is in flight (enter / exit).
+## Only counts frames where the body is actually on/over the support (late blend / hold),
+## so the walk-up beside the prop does not false-fail. Returns deepest (sky-side positive).
+func _sample_rest_penet(kind: String, stage: String, timeout: float, done: Callable) -> float:
+	var deepest := 0.0
+	var saw := false
+	var n := int(timeout * 30.0)
+	for i in n:
+		if done.call():
+			break
+		var pen := 0.0
+		var count := false
+		if kind in ["sun", "sleep"]:
+			# Hold and late tip-back / early tip-up only — mid sit↔lie is lifted clear by design.
+			if m.rest_phase == 4:
+				pen = m.lie_mesh_penetration_depth(true)
+				count = true
+			elif m.rest_phase in [3, 5] and m.rest_t > 0.45:
+				pen = m.lie_mesh_penetration_depth(true)
+				count = true
+		elif kind == "seat" and m.seat_i >= 0 and m.seat_i < m.island.seats.size():
+			if m.rest_phase == 4 or (m.rest_phase in [2, 6] and m.rest_t > 0.65):
+				var st: Dictionary = m.island.seats[m.seat_i]
+				pen = _sit_mesh_clearance(st["top"], m.seat_face)
+				count = true
+		if count:
+			saw = true
+			deepest = minf(deepest, pen)
+		await m.get_tree().process_frame
+	if not saw:
+		deepest = 0.0
+	var ok := deepest >= -0.011
+	print("SELFTEST %-28s %s  (%s deepest=%.1fcm)" % [
+		kind + " " + stage + " penet", "ok" if ok else "FAIL", stage, deepest * 100.0])
+	return deepest
+
+
+## Deepest sit-contact mesh gap vs seat top plane (sky-side positive). Negative = into the board.
+func _sit_mesh_clearance(top: Vector3, seat_face: Vector3, _unused: Vector3 = Vector3.ZERO) -> float:
+	var face := seat_face.normalized()
+	var side := face.cross(Vector3.UP).normalized()
+	var hips: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
+	var deepest := 1e9
+	var hit := false
+	for s in m.boy.skinned_sample_world(650):
+		if s.distance_to(hips) > 0.30:
+			continue
+		if (s - hips).dot(face) > 0.20:
+			continue
+		if s.y > hips.y + 0.04:
+			continue
+		var lat: float = (s - top).dot(side)
+		var along: float = (s - top).dot(-face)
+		if absf(lat) > 0.55 or along < -0.12 or along > 0.35:
+			continue
+		hit = true
+		deepest = minf(deepest, s.y - top.y)
+	return deepest if hit else 0.0
 
 
 ## Hips / spine near the support (sky-side positive). Face/chest must point skyward (supine).
@@ -448,13 +519,28 @@ func _sit(i: int, from: String, lie: bool) -> void:
 	if from != "end" and m.seat_face.dot(want_face) < 0.9:
 		fails.append("sits the wrong way round on " + tag)
 	m._on_action()
-	if not await _until(func() -> bool: return m.rest_phase == 4, 12.0):
+	var enter_pen := await _sample_rest_penet("seat", "enter@" + tag, 12.0, func() -> bool: return m.rest_phase == 4)
+	if enter_pen < -0.011:
+		fails.append("sit enter penet " + tag + " %.1fcm" % (enter_pen * 100.0))
+	if m.rest_phase != 4:
 		fails.append("never sat on " + tag)
 		return
 	await _wait(0.8)
+	# Extra sit contact passes (enter settle).
+	for _s in 8:
+		m._snap_sit_contact()
+		await _frames(1)
 	var pel: Vector3 = (m.boy.parts["pelvis"] as Node3D).global_position
 	var sit_h := pel.y - top.y
 	var note := "sat (pelvis %.2f m over the seat" % sit_h
+	# Mesh butt/thigh must rest ON the seat (under 1 cm poke-through).
+	var mesh_clear := _sit_mesh_clearance(top, face, (st.get("face", face) as Vector3))
+	note += ", mesh_clear %.1fcm" % (mesh_clear * 100.0)
+	if mesh_clear < -0.01:
+		fails.append("sit mesh penetrates " + tag + " by %.1fcm" % (-mesh_clear * 100.0))
+		print("SELFTEST sit contact %-20s FAIL  (mesh_clear=%.1fcm)" % [tag, mesh_clear * 100.0])
+	else:
+		print("SELFTEST sit contact %-20s ok  (mesh_clear=%.1fcm)" % [tag, mesh_clear * 100.0])
 	if st["two_sided"]:
 		# the logs rest on levelled sand: no slope under the log ends or the feet on either side
 		var base: float = top.y - m.island.SEAT_TOP
@@ -483,7 +569,10 @@ func _sit(i: int, from: String, lie: bool) -> void:
 		if not flat_ok:
 			fails.append("not lying flat on " + tag)
 	m._wake()
-	if not await _until(func() -> bool: return m.mode == m.Mode.EXPLORE, 8.0):
+	var exit_pen := await _sample_rest_penet("seat", "exit@" + tag, 8.0, func() -> bool: return m.mode == m.Mode.EXPLORE)
+	if exit_pen < -0.011:
+		fails.append("sit exit penet " + tag + " %.1fcm" % (exit_pen * 100.0))
+	if m.mode != m.Mode.EXPLORE:
 		fails.append("never got up from " + tag)
 		return
 	await _frames(3)

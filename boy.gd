@@ -139,6 +139,10 @@ var _night_rim: OmniLight3D
 var _face_fill_day_energy := 0.35
 var _boy_mat: StandardMaterial3D
 var _boy_albedo_day := Color(1.08, 0.98, 0.92, 1.0)
+var _eyelid_l: MeshInstance3D
+var _eyelid_r: MeshInstance3D
+var _mouth: MeshInstance3D
+var _walk_bob := 0.0
 ## When set, lounger pose plants heels/knees/thighs on this seat plane after the hips pitch.
 var lie_foot_plant := false
 var lie_foot_plane_point := Vector3.ZERO
@@ -169,7 +173,9 @@ func _ready() -> void:
 	_build_hat_proxy()
 	_build_glasses_stub()
 	_build_face_fill()
+	_build_face_expr()
 	_tune_boy_material()
+	set_face_expr("smile")
 	release_stand = _probe_release("throw_stand")
 	# crouch: clearly lower release so water entry is flatter than standing
 	release_crouch = release_stand + Vector3(0.02, -0.14 * SCALE, 0.04)
@@ -505,12 +511,14 @@ func start_throw(p: float) -> void:
 func react(kind: String) -> void:
 	react_kind = kind
 	if kind == "":
+		set_face_expr("smile")
 		_to_idle()
 		return
 	anim = "react"
 	anim_t = 0.0
 	act_target = 1.0
 	act_rate = 5.0
+	set_face_expr("cheer" if kind == "cheer" else "smile")
 	var clip := "cheer" if kind == "cheer" else ("wave" if clips.has("wave") else "cheer")
 	if kind == "oops" and clips.has("oops"):
 		clip = "oops" if ap.has_animation("oops") else "wave"
@@ -1142,7 +1150,34 @@ func _tick(delta: float) -> void:
 		if tree and not tree.active:
 			tree.active = true
 		_apply_mixer()
+	_polish_gait(delta)
 	_update_blob()
+	_update_face(delta)
+
+
+## Child-like walk polish on top of Mixamo: upright torso, head steady, soft vertical bob.
+func _polish_gait(delta: float) -> void:
+	if skel == null or model == null:
+		return
+	var moving := anim == "move" and move_w > 0.25 and not pivoting
+	var bob_amp := 0.0
+	if moving:
+		bob_amp = lerpf(0.012, 0.022, run_k) * move_w
+		# Contra-lateral feel is in the clip; keep spine upright (kill hunch).
+		var upright := 0.04 + 0.06 * run_k  # slight run lean forward
+		_pose_add("mixamorig_Spine", Vector3(-upright * 0.4, 0.0, 0.0), move_w * 0.55)
+		_pose_add("mixamorig_Spine1", Vector3(-upright * 0.35, 0.0, 0.0), move_w * 0.55)
+		# Head stays level; slight look into the turn (eyes follow walk intent).
+		var look_y := clampf(turn_ahead, -0.35, 0.35) * 0.45
+		_pose_add("mixamorig_Head", Vector3(upright * 0.18, look_y, 0.0), move_w * 0.4)
+		# Soft knee flex at mid-stance so legs are not stiff sticks.
+		var knee := absf(sin(phase * TAU)) * lerpf(0.08, 0.14, run_k) * move_w
+		_pose_add("mixamorig_LeftLeg", Vector3(knee, 0.0, 0.0), 0.55)
+		_pose_add("mixamorig_RightLeg", Vector3(knee, 0.0, 0.0), 0.55)
+		skel.force_update_transform()
+	var want_bob := sin(phase * TAU) * bob_amp if moving else 0.0
+	_walk_bob = lerpf(_walk_bob, want_bob, 1.0 - exp(-delta * 10.0))
+	model.position = model_base + Vector3(0, _walk_bob, 0)
 
 
 func _reset_to_rest_pose() -> void:
@@ -1239,9 +1274,115 @@ func hat_grip_gap() -> float:
 	return 0.0
 
 
-func _update_face(_delta: float = 0.0) -> void:
-	# Tripo face is baked — no morphs / expression swaps.
-	pass
+func _build_face_expr() -> void:
+	# Soft eyelid + mouth overlays on the Head bone (Tripo has no blendshapes).
+	if not parts.has("head") or parts["head"] == null:
+		return
+	var head: Node3D = parts["head"]
+	_eyelid_l = _make_eyelid("EyelidL")
+	_eyelid_r = _make_eyelid("EyelidR")
+	head.add_child(_eyelid_l)
+	head.add_child(_eyelid_r)
+	# Mixamo head: local +Y up the skull, −Z roughly face-forward after model.y=PI.
+	# Mixamo head local: +Y up skull, −Z face-forward after model.y=PI.
+	# Quiet when open (thin); grow in Y to cover irises for blink/sleep.
+	_eyelid_l.position = Vector3(0.022, 0.058, -0.092)
+	_eyelid_r.position = Vector3(-0.022, 0.058, -0.092)
+	_eyelid_l.scale = Vector3(1.05, 0.03, 0.6)
+	_eyelid_r.scale = Vector3(1.05, 0.03, 0.6)
+	_mouth = MeshInstance3D.new()
+	_mouth.name = "MouthExpr"
+	var mm := SphereMesh.new()
+	mm.radius = 0.016
+	mm.height = 0.01
+	mm.radial_segments = 10
+	mm.rings = 6
+	_mouth.mesh = mm
+	var mout := StandardMaterial3D.new()
+	mout.albedo_color = Color(0.78, 0.32, 0.34)
+	mout.roughness = 0.65
+	mout.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_mouth.material_override = mout
+	_mouth.position = Vector3(0.0, 0.002, -0.102)
+	_mouth.rotation_degrees = Vector3(10, 0, 0)
+	_mouth.scale = Vector3(1.15, 0.4, 0.5)
+	head.add_child(_mouth)
+	blink_timer = rng.randf_range(2.0, 5.0)
+
+
+func _make_eyelid(nm: String) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.name = nm
+	var sm := SphereMesh.new()
+	sm.radius = 0.03
+	sm.height = 0.022
+	sm.radial_segments = 12
+	sm.rings = 6
+	mi.mesh = sm
+	var mat := StandardMaterial3D.new()
+	# Skin-tone lid that covers the painted eye when scale.y grows.
+	mat.albedo_color = Color(0.90, 0.72, 0.60)
+	mat.roughness = 0.88
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
+## expr: "smile" | "sleep" | "cheer" | "neutral"
+func set_face_expr(kind: String) -> void:
+	expr = kind
+
+
+func _update_face(delta: float = 0.0) -> void:
+	if _eyelid_l == null or _eyelid_r == null:
+		return
+	var open_h := 0.04
+	var want_close := open_h
+	# Sleep / nap: eyes shut.
+	if act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55:
+		want_close = 1.35
+	elif expr == "sleep":
+		want_close = 1.35
+	else:
+		# Random blink every 2–6 s.
+		if blink_t >= 0.0:
+			blink_t += delta
+			var u := blink_t / 0.14
+			want_close = 1.35 if u < 0.55 else lerpf(1.35, open_h, (u - 0.55) / 0.45)
+			if blink_t >= 0.14:
+				blink_t = -1.0
+				blink_timer = rng.randf_range(2.0, 6.0)
+		else:
+			blink_timer -= delta
+			if blink_timer <= 0.0:
+				blink_t = 0.0
+	var cur := _eyelid_l.scale.y
+	var next := move_toward(cur, want_close, delta * 16.0)
+	_eyelid_l.scale.y = next
+	_eyelid_r.scale.y = next
+	# Hide thin open lids so they do not float as cheek artifacts.
+	var lids_on := next > 0.2
+	_eyelid_l.visible = lids_on
+	_eyelid_r.visible = lids_on
+	# Subtle gaze: shift lids with turn intent (no blendshapes).
+	if skel and anim == "move" and want_close < 0.5:
+		var look := clampf(turn_ahead, -0.4, 0.4)
+		_eyelid_l.position.x = 0.022 + look * 0.004
+		_eyelid_r.position.x = -0.022 + look * 0.004
+	if _mouth:
+		# Subtle smile by default; cheer widens; sleep softens.
+		var smile := 0.6
+		if expr == "cheer" or react_kind == "cheer":
+			smile = 1.0
+		elif expr == "sleep" or (act_lie_k > 0.55 and act_kind in ["sun", "sleep"]):
+			smile = 0.2
+		elif expr == "neutral":
+			smile = 0.35
+		_mouth.scale.y = lerpf(_mouth.scale.y, 0.22 + smile * 0.45, 1.0 - exp(-delta * 6.0))
+		_mouth.scale.x = lerpf(_mouth.scale.x, 0.85 + smile * 0.55, 1.0 - exp(-delta * 6.0))
+		# Painted mouth is enough when lids are shut; show overlay smile/cheer otherwise.
+		_mouth.visible = want_close < 0.85 and smile > 0.4
 
 
 func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:
