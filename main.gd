@@ -93,6 +93,15 @@ var ex_yaw := 0.0
 var ex_pitch := 0.26
 var ex_dist := 4.5
 var last_drag := -10.0
+## Fixed camera: stays put; user orbits / zooms manually. Follow = current behaviour.
+var cam_fixed := false
+var fix_yaw := 0.4
+var fix_pitch := 0.35
+var fix_dist := 6.0
+var fix_target := Vector3.ZERO
+var cam_mode_btn: Button
+var zoom_in_btn: Button
+var zoom_out_btn: Button
 
 # explore
 var player: Node3D
@@ -111,6 +120,8 @@ var keys_run := false
 # rest (hammock / towel)
 var rest_kind := ""
 var rest_phase := 0
+## When true, _rest_tick holds pose (shot scripts pose manually without advancing phases).
+var rest_frozen := false
 var rest_t := 0.0
 var rest_approach := Vector3.ZERO
 var rest_seat := Vector3.ZERO
@@ -216,6 +227,7 @@ func _ready() -> void:
 	_build_birds()
 	_build_audio()
 	_build_ui()
+	_load_cam_fixed()
 	_build_reflection()
 	ripple_buf.resize(8)
 	print_buf.resize(PRINTS)
@@ -552,6 +564,22 @@ func _build_ui() -> void:
 	view_btn.custom_minimum_size = Vector2(162, 62)
 	view_btn.pressed.connect(_toggle_view)
 	right_box.add_child(view_btn)
+	cam_mode_btn = _btn("固定视角", 22)
+	cam_mode_btn.custom_minimum_size = Vector2(162, 50)
+	cam_mode_btn.pressed.connect(_toggle_cam_fixed)
+	right_box.add_child(cam_mode_btn)
+	var zoom_row := HBoxContainer.new()
+	zoom_row.add_theme_constant_override("separation", 8)
+	zoom_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right_box.add_child(zoom_row)
+	zoom_out_btn = _btn("−", 28)
+	zoom_out_btn.custom_minimum_size = Vector2(74, 48)
+	zoom_out_btn.pressed.connect(func() -> void: _nudge_zoom(1.0 / 0.85))
+	zoom_row.add_child(zoom_out_btn)
+	zoom_in_btn = _btn("+", 28)
+	zoom_in_btn.custom_minimum_size = Vector2(74, 48)
+	zoom_in_btn.pressed.connect(func() -> void: _nudge_zoom(0.85))
+	zoom_row.add_child(zoom_in_btn)
 	sound_btn = _btn("声音：开", 22)
 	sound_btn.custom_minimum_size = Vector2(162, 50)
 	sound_btn.pressed.connect(_toggle_sound)
@@ -794,6 +822,13 @@ func _update_ui() -> void:
 	lbl_best.text = "最高纪录：弹跳 %d 次 · 最远 %.1f 米" % [best_skips, best_dist]
 	view_btn.text = "返回" if mode == Mode.VIEW else "观景"
 	view_btn.visible = (mode == Mode.EXPLORE) or mode == Mode.VIEW or (throw_mode and state == State.READY)
+	if cam_mode_btn:
+		# Label is the mode you switch TO (same pattern as 白天/夜晚).
+		cam_mode_btn.text = "跟随视角" if cam_fixed else "固定视角"
+		cam_mode_btn.visible = mode == Mode.EXPLORE or mode == Mode.REST or mode == Mode.VIEW
+	if zoom_in_btn and zoom_out_btn:
+		var show_zoom := cam_fixed and (mode == Mode.EXPLORE or mode == Mode.REST or mode == Mode.VIEW)
+		zoom_in_btn.get_parent().visible = show_zoom
 	sound_btn.text = "声音：关" if muted else "声音：开"
 	night_btn.text = "白天" if night_on else "夜晚"
 	stance_btn.visible = throw_mode and state == State.READY
@@ -1257,11 +1292,16 @@ func _begin_rest(kind: String) -> void:
 		seat_lying = false
 		rest_side = face.cross(Vector3.UP).normalized()
 		rest_sit_b = Basis(Vector3.UP, atan2(-face.x, -face.z))
+		# Approach from the front, turn to face away from the seat, then sit.
 		rest_approach = seat_ap
 		var pl0 := boy.activity("seat", 1.0, 0.0, 0.0)
-		# the clips sit on a SEAT_TOP high seat: put the pelvis over the seat point at that height
 		var top: Vector3 = st["top"]
+		# Seed from live sit-hip height; mesh snap raises the butt onto the seat top.
 		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
+		# On logs, sit slightly toward the fire-side rim so knees/feet clear past the
+		# cylinder (thighs along +face) instead of perching mid-log.
+		if st["name"] == "坐木":
+			rest_seat += face.normalized() * 0.06
 		# lying back: head towards his right, pelvis a little towards the foot end, back on the seat
 		rest_lie = top + Vector3(0, LIE_BACK, 0) - rest_side * 0.1
 		if st["name"] == "长椅":
@@ -1274,9 +1314,18 @@ func _begin_rest(kind: String) -> void:
 	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
 	var pl := boy.activity(kind, 1.0, 0.0, 0.0)
 	rest_root_sit = rest_seat - rest_sit_b * pl
-	if kind == "seat":
-		rest_root_sit.y = (island.seats[seat_i]["top"] as Vector3).y - Island.SEAT_TOP
+	# Do NOT hard-pin root.y to SEAT_TOP — Tripo butt flesh hangs below the hip bone.
+	# Snap after the sit pose so ischia rest ON the seat (see _snap_sit_contact).
+	if kind == "seat" or kind == "sleep":
+		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+		for _s in 12:
+			_snap_sit_contact()
+			pl = boy.activity(kind, 1.0, 0.0, 0.0)
+			rest_root_sit = rest_seat - rest_sit_b * pl
+			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 	boy.end_activity()
+	if kind == "sleep":
+		island.set_hammock_load([] as Array[Vector3])
 	boy.rotation = Vector3(0, face_yaw, 0)
 	_update_ui()
 
@@ -1295,8 +1344,6 @@ func _setup_hammock_rest() -> void:
 	var side: Vector3 = hs[2]
 	rest_side = side
 	var bed: Vector3 = island.hammock_point(0.5)
-	rest_seat = bed + side * 0.27 + Vector3(0, 0.11, 0)
-	rest_seat.y = maxf(rest_seat.y, Island.ground_h(rest_seat.x, rest_seat.z) + 0.3)
 	# Head toward one end, heels toward the other — cradle mid-pocket.
 	var head_t := 0.68
 	var hip_t := 0.48
@@ -1326,9 +1373,22 @@ func _setup_hammock_rest() -> void:
 	# Centre of the cradle (hat is detached — no brim bias).
 	var hip_pos: Vector3 = hip_f["pos"] as Vector3
 	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.12
+	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground.
+	# Basis(UP, atan2(x,z)) aims local −Z at (x,z); use −side so −Z == +side (outward).
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
-	rest_approach = rest_seat + side * 0.26
-	boy.hat_beside_world = Vector3.ZERO  # hammock: hat on face/chest, not sand
+	# Sit on the NEAR edge (toward approach): butt on fabric lip, thighs hang outside.
+	# Mid-cradle sit buries the torso in the rails and reads as "standing in fabric".
+	var sit_frame: Dictionary = island.hammock_frame(0.50)
+	var sit_n: Vector3 = (sit_frame["normal"] as Vector3).normalized()
+	var sit_side: Vector3 = (sit_frame["side"] as Vector3).normalized()
+	if sit_side.dot(side) < 0.0:
+		sit_side = -sit_side
+	# Outer lip (~0.92 * half_w): butt on fabric, torso clear of opposite rail.
+	rest_seat = (sit_frame["pos"] as Vector3) + sit_side * (island.hammock_half_w * 0.92) + sit_n * 0.10
+	# Clear of fabric + wall (half_w≈0.55, wall +0.06) — stand beside, not inside.
+	rest_approach = bed + side * (island.hammock_half_w + 0.72)
+	rest_approach.y = Island.ground_h(rest_approach.x, rest_approach.z)
+	boy.hat_beside_world = Vector3.ZERO
 	set_meta("lie_head_t", head_t)
 	set_meta("lie_hip_t", hip_t)
 	set_meta("lie_foot_t", foot_t)
@@ -1447,6 +1507,109 @@ func _lie_swing() -> Transform3D:
 	return Transform3D.IDENTITY
 
 
+## Raise/lower the sit root so butt + thigh mesh rests ON the seat top (sky-side positive).
+## Uses skinned verts near the hips over the seat footprint — not the hip bone alone.
+## Seat top Y comes from the prop entry (mesh AABB / authored surface), never a hardcoded offset alone.
+func _snap_sit_contact() -> void:
+	if seat_lying:
+		return
+	if rest_kind == "sleep":
+		_snap_hammock_sit_contact()
+		return
+	if rest_kind != "seat" or seat_i < 0 or seat_i >= island.seats.size():
+		return
+	var st: Dictionary = island.seats[seat_i]
+	var top: Vector3 = st["top"]
+	var face: Vector3 = seat_face.normalized()
+	# Iterate in-place so one call settles even when process is ticking.
+	# Logs (坐木) need a wider contact cloud + more passes: short Tripo butt can
+	# miss a tight hip sphere, leaving a 3–4 cm hover or a 2 cm dig from the back.
+	var is_log := String(st.get("name", "")) == "坐木"
+	var passes := 12 if is_log else 8
+	for _iter in passes:
+		boy.activity("seat", 1.0, 0.0, gt)
+		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+		var hips: Vector3 = boy.lie_bone_world("mixamorig_Hips")
+		var samples: Array[Vector3] = boy.skinned_sample_world(1000)
+		var deepest := 1e9
+		var hit := false
+		var hip_r := 0.38 if is_log else 0.32
+		var lat_max := 0.70 if is_log else 0.55
+		for s in samples:
+			# Contact cloud: butt + proximal thighs above the board.
+			if s.distance_to(hips) > hip_r:
+				continue
+			if (s - hips).dot(face) > 0.28:
+				continue
+			if s.y > hips.y + 0.06:
+				continue
+			var lat: float = (s - top).dot(rest_side)
+			var along: float = (s - top).dot(-face)
+			# Allow a little behind the top for round logs (back/end approaches).
+			if absf(lat) > lat_max or along < (-0.22 if is_log else -0.12) or along > 0.45:
+				continue
+			hit = true
+			deepest = minf(deepest, s.y - top.y)
+		if not hit:
+			# Tripo ischia hang ~12–14 cm below the hip bone.
+			deepest = (hips.y - 0.13) - top.y
+		# Kiss the board (~0.3 cm). Stay inside selftest −1 cm … 3 cm window.
+		var target := 0.003
+		var err := target - deepest
+		if absf(err) < 0.002:
+			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+			return
+		var step := clampf(err, -0.07, 0.07)
+		rest_root_sit.y += step
+		rest_seat.y += step
+	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+
+
+## Settle butt onto the near-edge hammock fabric while seated (legs hang outside).
+func _snap_hammock_sit_contact() -> void:
+	if rest_kind != "sleep":
+		return
+	for _iter in 8:
+		boy.activity("sleep", 1.0, 0.0, gt)
+		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+		_update_hammock_load()
+		var sit_frame: Dictionary = island.hammock_frame(0.50)
+		var n: Vector3 = (sit_frame["normal"] as Vector3).normalized()
+		if n.y < 0.2:
+			n = Vector3.UP
+		var sit_side: Vector3 = (sit_frame["side"] as Vector3).normalized()
+		if sit_side.dot(rest_side) < 0.0:
+			sit_side = -sit_side
+		# Contact target = near-edge lip (matches rest_seat), not cradle centre.
+		var top: Vector3 = (sit_frame["pos"] as Vector3) + sit_side * (island.hammock_half_w * 0.92)
+		var hips: Vector3 = boy.lie_bone_world("mixamorig_Hips")
+		var samples: Array[Vector3] = boy.skinned_sample_world(700)
+		var deepest := 1e9
+		var hit := false
+		for s in samples:
+			if s.distance_to(hips) > 0.28:
+				continue
+			if s.y > hips.y + 0.05:
+				continue
+			# Near-edge samples only (ignore hanging thighs outside the fabric).
+			if (s - top).length() > 0.42:
+				continue
+			hit = true
+			deepest = minf(deepest, (s - top).dot(n))
+		if not hit:
+			deepest = (hips - top).dot(n) - 0.10
+		var target := 0.02
+		var err := target - deepest
+		if absf(err) < 0.004:
+			_update_hammock_load()
+			return
+		var step := clampf(err, -0.05, 0.05)
+		rest_root_sit += n * step
+		rest_seat += n * step
+	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+	_update_hammock_load()
+
+
 ## After the lie pose is applied, nudge rest_lie so the skinned mesh sits on the support
 ## (no poke-through deeper than ~0, no large float). Includes baked hat verts.
 func _snap_lie_contact() -> void:
@@ -1480,8 +1643,9 @@ func _snap_lie_contact() -> void:
 		# Vertical: lift for poke-through (hat brim included); settle light floats.
 		var hip_gap := _signed_gap(pts["hips"], hip_p, hn0)
 		var head_gap := _signed_gap(pts["head"], head_p0, head_n0)
-		if mesh_d < -0.01:
-			rest_lie += hn0 * minf(-0.004 - mesh_d, 0.04)
+		# Prefer lifting out of fabric over leaving a poke-through (hat/shoulder).
+		if mesh_d < -0.005:
+			rest_lie += hn0 * minf(-0.002 - mesh_d, 0.08)
 		elif hip_gap > 0.02 or head_gap > 0.02:
 			rest_lie -= hn0 * minf(maxf(hip_gap, head_gap) - 0.008, 0.04)
 		elif mesh_d > 0.01:
@@ -1818,11 +1982,22 @@ func _wake() -> void:
 	if mode == Mode.REST and rest_phase == 4:
 		rest_phase = 6 if rest_kind == "seat" and not seat_lying else 5
 		rest_t = 0.0
-		if rest_kind == "sleep":
-			island.set_hammock_load([] as Array[Vector3])
+		# Keep hammock sag under the body until he has sat up (cleared in phase 6 / explore).
 		_update_ui()
 
 func _rest_tick(delta: float) -> void:
+	if rest_frozen:
+		# Shot / selftest hold: keep hammock sag + Zzz, do not advance phases.
+		if rest_kind == "sleep" and rest_phase in [2, 3, 4, 5, 6]:
+			_update_hammock_load()
+			if rest_phase == 4:
+				zzz.visible = true
+				var head_z: Vector3 = (boy.parts["head"] as Node3D).global_position
+				zzz.global_position = head_z + Vector3(0, 0.42, 0) + rest_side * 0.1
+				zzz.modulate.a = 0.85
+			else:
+				zzz.visible = false
+		return
 	rest_t += delta
 	var sleep := rest_kind == "sleep"
 	var swing := Transform3D.IDENTITY
@@ -1867,17 +2042,90 @@ func _rest_tick(delta: float) -> void:
 				k = 1.0 - k
 			var ks := smoothstep(0.0, 1.0, k)
 			var pl := boy.activity(rest_kind, k, 0.0, gt)
-			var root := rest_approach.lerp(rest_root_sit, ks)
-			var _pw := root + rest_sit_b * pl
+			var root: Vector3
+			if sleep:
+				# Side perch → settle onto mid fabric; lift clears the rail.
+				var edge := rest_approach.lerp(rest_root_sit, 0.55)
+				edge.y = maxf(edge.y, rest_root_sit.y + 0.06)
+				root = rest_approach.lerp(edge, clampf(ks * 1.35, 0.0, 1.0)).lerp(rest_root_sit, smoothstep(0.45, 1.0, ks))
+				root.y += 0.14 * sin(PI * ks)
+			else:
+				root = rest_approach.lerp(rest_root_sit, ks)
+				# Clear the seat board mid-lerp; settle by snap near the end.
+				var is_log_exit := rest_kind == "seat" and seat_i >= 0 and seat_i < island.seats.size() \
+					and String(island.seats[seat_i].get("name", "")) == "坐木"
+				root.y += (0.20 if is_log_exit else 0.14) * sin(PI * ks)
+				if rest_phase == 6:
+					# Hold seat-height Y until the sit clip has mostly stood up.
+					var stand_u := smoothstep(0.08, 0.55, 1.0 - ks)
+					var y_pad := 0.14 if is_log_exit else 0.05
+					var y_hold := lerpf(rest_root_sit.y + y_pad, rest_approach.y, stand_u)
+					root.y = maxf(root.y, y_hold)
+					# Slide further off the seat so standing legs don't clip the log volume.
+					var away: Vector3 = rest_approach - rest_seat
+					away.y = 0.0
+					if away.length() > 0.05:
+						root += away.normalized() * ((0.28 if is_log_exit else 0.12) * (1.0 - ks))
 			swing = island.swing_hammock(swing_amp * sin(gt * 1.3)) if sleep else Transform3D.IDENTITY
 			boy.global_transform = swing * Transform3D(rest_sit_b, root)
+			# Seat exit: live mesh clearance against the seat top footprint.
+			if rest_kind == "seat" and rest_phase == 6 and seat_i >= 0 and seat_i < island.seats.size():
+				var st_ex: Dictionary = island.seats[seat_i]
+				var top_ex: Vector3 = st_ex["top"]
+				var face_ex: Vector3 = seat_face.normalized()
+				var side_ex: Vector3 = rest_side.normalized() if rest_side.length() > 0.1 else face_ex.cross(Vector3.UP).normalized()
+				var hips_ex: Vector3 = boy.lie_bone_world("mixamorig_Hips")
+				var dig_ex := 1e9
+				var hit_ex := false
+				for s_ex in boy.skinned_sample_world(500):
+					if s_ex.distance_to(hips_ex) > 0.38:
+						continue
+					if s_ex.y > hips_ex.y + 0.05:
+						continue
+					var lat_ex: float = (s_ex - top_ex).dot(side_ex)
+					var along_ex: float = (s_ex - top_ex).dot(-face_ex)
+					if absf(lat_ex) > 0.70 or along_ex < -0.22 or along_ex > 0.45:
+						continue
+					hit_ex = true
+					dig_ex = minf(dig_ex, s_ex.y - top_ex.y)
+				if hit_ex and dig_ex < -0.008:
+					root.y += minf(-dig_ex + 0.02, 0.16)
+					var away2: Vector3 = rest_approach - rest_seat
+					away2.y = 0.0
+					if away2.length() > 0.05:
+						root += away2.normalized() * minf(-dig_ex, 0.10)
+					boy.global_transform = Transform3D(rest_sit_b, root)
+			if rest_kind == "seat" and rest_phase == 2 and ks > 0.72:
+				_snap_sit_contact()
+				pl = boy.activity("seat", 1.0, 0.0, gt)
+				rest_root_sit = rest_seat - rest_sit_b * pl
+				var settled := rest_approach.lerp(rest_root_sit, ks)
+				settled.y += 0.08 * sin(PI * ks)
+				boy.global_transform = Transform3D(rest_sit_b, settled)
+			if sleep and rest_phase == 2 and ks > 0.70:
+				_snap_sit_contact()
+				pl = boy.activity("sleep", 1.0, 0.0, gt)
+				rest_root_sit = rest_seat - rest_sit_b * pl
+				boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+				_update_hammock_load()
 			if rest_t >= dur:
 				rest_t = 0.0
 				if rest_phase == 2:
+					if rest_kind == "seat":
+						_snap_sit_contact()
+						pl = boy.activity("seat", 1.0, 0.0, gt)
+						rest_root_sit = rest_seat - rest_sit_b * pl
+					elif sleep:
+						_snap_sit_contact()
+						pl = boy.activity("sleep", 1.0, 0.0, gt)
+						rest_root_sit = rest_seat - rest_sit_b * pl
+						_update_hammock_load()
 					rest_phase = 4 if rest_kind == "seat" else 3
 					_update_ui()
 				else:
 					boy.end_activity()
+					if sleep:
+						island.set_hammock_load([] as Array[Vector3])
 					player.position = _blocked_by(rest_approach)
 					player.rotation = Vector3(0, face_yaw, 0)
 					ground_y = _surface(player.position.x, player.position.z)
@@ -1894,23 +2142,50 @@ func _rest_tick(delta: float) -> void:
 			var ks2 := smoothstep(0.0, 1.0, k2)
 			var pl2 := boy.activity(_act_kind(), 1.0, k2, gt)
 			var b := rest_sit_b.slerp(rest_lie_b, ks2)
-			var w := rest_seat.lerp(rest_lie, ks2) + Vector3(0, 0.07 * sin(PI * k2), 0)
+			var w := rest_seat.lerp(rest_lie, ks2) + Vector3(0, 0.10 * sin(PI * k2), 0)
+			if rest_kind == "sun":
+				# Keep butt/back/hat clear of lounger foam during tip-back AND tip-up (exit).
+				# Prior lifts still dug ~11 cm into the pad mid-exit — clear the foam fully.
+				w.y += 0.24 * sin(PI * k2)
+				var back_n: Vector3 = (-rest_lie_b.z).normalized()
+				if back_n.y < 0.15:
+					back_n = Vector3.UP
+				w += back_n * (0.14 * sin(PI * k2))
 			if rest_kind == "seat" and island.seats[seat_i]["name"] == "长椅":
 				# shuffles forward on the seat as he turns to lie back: head (and hat) clear of the backrest
 				w += seat_face * 0.18 * sin(PI * k2)
 			if sleep:
+				# Stay above the fabric while tipping into/out of the cradle; snap settles at phase 4.
+				var ham_n: Vector3 = (island.hammock_frame(0.5)["normal"] as Vector3).normalized()
+				w += ham_n * (0.20 * sin(PI * k2))
 				swing_amp = lerpf(swing_amp, 0.06 * ks2 + 0.01, 1.0 - exp(-delta * 2.0))
 				swing = island.swing_hammock(swing_amp * sin(gt * 1.3))
+				_update_hammock_load()
 			boy.global_transform = swing * Transform3D(b, w - b * pl2)
+			# Lounger tip (enter+exit): if mid-blend still penetrates, lift fully clear.
+			if rest_kind == "sun" and rest_phase in [3, 5] and rest_t > 0.15:
+				var dig: float = lie_mesh_penetration_depth(true)
+				if dig < -0.008:
+					w += Vector3.UP * minf(-dig + 0.01, 0.14)
+					boy.global_transform = Transform3D(b, w - b * pl2)
 			if rest_t >= dur2:
+				if sleep and rest_phase == 5:
+					island.set_hammock_load([] as Array[Vector3])
 				rest_t = 0.0
 				rest_phase = 4 if rest_phase == 3 else 6
 				if rest_phase == 6 and rest_kind == "seat":
 					seat_lying = false
 				_update_ui()
 		4 when rest_kind == "seat" and not seat_lying:
-			boy.activity("seat", 1.0, 1.0, rest_t)
+			# lie_k must stay 0 — lie_k=1 switches the pelvis local offset and digs the butt into the board.
+			boy.activity("seat", 1.0, 0.0, rest_t)
 			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+			# Keep butt on the seat if the sit clip drifts.
+			if fmod(rest_t, 0.35) < delta:
+				_snap_sit_contact()
+				var pl_s := boy.activity("seat", 1.0, 0.0, gt)
+				rest_root_sit = rest_seat - rest_sit_b * pl_s
+				boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 		4:
 			# Drop prior foot overrides before posing — planted knees while hips float
 			# stretch Tripo thighs through the cushion.
@@ -1989,12 +2264,13 @@ func _poke_audio(event: InputEvent) -> void:
 		JavaScriptBridge.eval("window.__unlockAudio && window.__unlockAudio()", true)
 
 func _explore_cam_input(event: InputEvent) -> void:
-	# one finger (outside the joystick) drags the camera around the boy; pinch / wheel zooms
+	# one finger (outside the joystick) drags the camera; pinch / wheel zooms
 	if event is InputEventScreenTouch:
 		if event.pressed:
 			touches[event.index] = event.position
 		else:
 			touches.erase(event.index)
+		dragging = touches.size() > 0
 		if touches.size() == 2:
 			var ps: Array = touches.values()
 			pinch_d = (ps[0] - ps[1]).length()
@@ -2007,25 +2283,35 @@ func _explore_cam_input(event: InputEvent) -> void:
 			var ps: Array = touches.values()
 			var d: float = (ps[0] - ps[1]).length()
 			if pinch_d > 1.0 and d > 1.0:
-				ex_dist = clamp(ex_dist * pinch_d / d, 3.0, 14.0)
+				var factor := pinch_d / d
+				if cam_fixed:
+					fix_dist = clampf(fix_dist * factor, 2.5, 28.0)
+				else:
+					ex_dist = clamp(ex_dist * factor, 3.0, 14.0)
 			pinch_d = d
 	elif event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION:
 		if event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT:
 			mouse_drag = event.pressed
+			dragging = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			ex_dist = clamp(ex_dist * 0.9, 3.0, 14.0)
+			_nudge_zoom(0.9)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			ex_dist = clamp(ex_dist * 1.11, 3.0, 14.0)
+			_nudge_zoom(1.11)
 	elif event is InputEventMouseMotion and event.device != InputEvent.DEVICE_ID_EMULATION and mouse_drag:
 		_explore_orbit(event.relative)
 	elif event is InputEventMagnifyGesture:
-		ex_dist = clamp(ex_dist / event.factor, 3.0, 14.0)
+		_nudge_zoom(1.0 / maxf(event.factor, 0.05))
 
 func _explore_orbit(rel: Vector2) -> void:
 	var vs := get_viewport().get_visible_rect().size
 	var k: float = 5.0 / max(min(vs.x, vs.y), 200.0)
-	ex_yaw -= rel.x * k
-	ex_pitch = clamp(ex_pitch + rel.y * k * 0.6, 0.05, 1.25)
+	if cam_fixed:
+		fix_yaw -= rel.x * k
+		fix_pitch = clampf(fix_pitch + rel.y * k * 0.6, 0.06, 1.35)
+		orbit_vel = Vector2(-rel.x * k * 12.0, rel.y * k * 8.0)
+	else:
+		ex_yaw -= rel.x * k
+		ex_pitch = clamp(ex_pitch + rel.y * k * 0.6, 0.05, 1.25)
 	last_drag = gt
 
 func _view_input(event: InputEvent) -> void:
@@ -3168,6 +3454,46 @@ func _snap_explore_cam(front := false) -> void:
 	var c := _explore_cam()
 	cam_target = c[0]; cam_yaw = c[1]; cam_pitch = c[2]; cam_dist = c[3]
 
+func _toggle_cam_fixed() -> void:
+	cam_fixed = not cam_fixed
+	if cam_fixed:
+		# Freeze at the current follow framing.
+		var c: Array = _explore_cam() if mode != Mode.VIEW else [cam_target, view_yaw, view_pitch, view_dist]
+		fix_target = c[0]
+		fix_yaw = float(c[1])
+		fix_pitch = float(c[2])
+		fix_dist = float(c[3])
+		cam_target = fix_target
+		cam_yaw = fix_yaw
+		cam_pitch = fix_pitch
+		cam_dist = fix_dist
+	_persist_cam_fixed()
+	_update_ui()
+
+
+func _nudge_zoom(factor: float) -> void:
+	if cam_fixed:
+		fix_dist = clampf(fix_dist * factor, 2.5, 28.0)
+		cam_dist = fix_dist
+	elif mode == Mode.VIEW:
+		view_dist = clampf(view_dist * factor, 4.0, 95.0)
+	else:
+		ex_dist = clampf(ex_dist * factor, 3.0, 14.0)
+
+
+func _persist_cam_fixed() -> void:
+	if not OS.has_feature("web"):
+		return
+	JavaScriptBridge.eval("try{localStorage.setItem('ss_cam_fixed',%s)}catch(e){}" % ("'1'" if cam_fixed else "'0'"), true)
+
+
+func _load_cam_fixed() -> void:
+	if not OS.has_feature("web"):
+		return
+	var v = JavaScriptBridge.eval("try{localStorage.getItem('ss_cam_fixed')}catch(e){null}", true)
+	cam_fixed = str(v) == "1"
+
+
 func _update_camera(delta: float) -> void:
 	if demo_cam:
 		if demo_track.size() > 0:
@@ -3176,6 +3502,18 @@ func _update_camera(delta: float) -> void:
 			cam_yaw = (float(tr[0]) if tr.size() > 4 else face_yaw + float(tr[0]))
 			cam_pitch = tr[1]
 			cam_dist = tr[2]
+		_apply_camera()
+		return
+	# Fixed mode: never auto-follow the character; only manual orbit/zoom.
+	if cam_fixed and mode != Mode.THROW:
+		if not dragging:
+			orbit_vel *= exp(-delta * 3.5)
+			fix_yaw += orbit_vel.x * delta
+			fix_pitch = clampf(fix_pitch + orbit_vel.y * delta, 0.06, 1.35)
+		cam_target = fix_target
+		cam_yaw = fix_yaw
+		cam_pitch = fix_pitch
+		cam_dist = fix_dist
 		_apply_camera()
 		return
 	var want: Array

@@ -1253,6 +1253,7 @@ func _build_lighthouse() -> void:
 	bp.y = ground_h(bp.x, bp.z)
 	var bxf = Transform3D(Basis(Vector3.UP, 0.7), bp)
 	var seat_y := SEAT_TOP - 0.035
+	# Board half-height 0.035 → visual top at seat_y+0.035 = SEAT_TOP (local).
 	boxb(SB, Vector3(1.4, 0.07, 0.4), bxf * Transform3D(Basis.IDENTITY, Vector3(0, seat_y, 0)), _wood())
 	boxb(SB, Vector3(1.4, 0.3, 0.06), bxf * Transform3D(Basis(Vector3.RIGHT, -0.2), Vector3(0, seat_y + 0.3, 0.2)), _wood())
 	for bx in [-0.6, 0.6]:
@@ -1260,7 +1261,9 @@ func _build_lighthouse() -> void:
 	var bc: Vector3 = bxf * Vector3(0, 0, 0.03)
 	wall_b(Vector2(bc.x, bc.z), Vector2(0.72, 0.24), 0.7, bp.y - 0.3, bp.y + 0.75, "长椅")
 	var bface: Vector3 = bxf.basis * Vector3(0, 0, -1)
-	_add_seat("长椅", bxf * Vector3(0, SEAT_TOP, 0.03), bface, 0.5, "灯塔边的长椅：点「坐下」看看海，坐下后还能躺下", false, true)
+	# Snap target = mesh AABB top of the seat board (not a hardcoded constant).
+	var bench_top: Vector3 = bxf * Vector3(0, seat_y + 0.035, 0.03)
+	_add_seat("长椅", bench_top, bface, 0.5, "灯塔边的长椅：点「坐下」看看海，坐下后还能躺下", false, true)
 
 func _build_campfire() -> void:
 	var c = campfire_pos
@@ -1289,12 +1292,15 @@ func _build_campfire() -> void:
 		var a = 0.6 + i * 2.1
 		var lp = c + Vector3(cos(a) * 1.7, 0, sin(a) * 1.7)
 		lp.y = ground_h(lp.x, lp.z)
-		var la: Vector3 = lp + Vector3(-sin(a) * 0.7, SEAT_TOP - 0.17, cos(a) * 0.7)
-		var lb: Vector3 = lp + Vector3(sin(a) * 0.7, SEAT_TOP - 0.17, -cos(a) * 0.7)
-		tube(SB, la, lb, 0.17, 0.17, 7, Color(0.5, 0.34, 0.2), 1.0, 1.0, Color(0.6, 0.45, 0.3))
-		wall_s(Vector2(la.x, la.z), Vector2(lb.x, lb.z), 0.18, lp.y - 0.3, lp.y + SEAT_TOP + 0.35, "坐木")
+		var log_r := 0.17
+		var la: Vector3 = lp + Vector3(-sin(a) * 0.7, SEAT_TOP - log_r, cos(a) * 0.7)
+		var lb: Vector3 = lp + Vector3(sin(a) * 0.7, SEAT_TOP - log_r, -cos(a) * 0.7)
+		tube(SB, la, lb, log_r, log_r, 7, Color(0.5, 0.34, 0.2), 1.0, 1.0, Color(0.6, 0.45, 0.3))
+		wall_s(Vector2(la.x, la.z), Vector2(lb.x, lb.z), log_r + 0.01, lp.y - 0.3, lp.y + SEAT_TOP + 0.35, "坐木")
 		var to_fire := Vector3(c.x - lp.x, 0, c.z - lp.z).normalized()
-		_add_seat("坐木", lp + Vector3(0, SEAT_TOP, 0), to_fire, 0.45, "篝火边的木头：点「坐下」烤烤火，坐下后还能躺下", true, true)
+		# Mesh top of the log cylinder = axis_y + radius.
+		var log_top: Vector3 = lp + Vector3(0, SEAT_TOP - log_r + log_r, 0)
+		_add_seat("坐木", log_top, to_fire, 0.45, "篝火边的木头：点「坐下」烤烤火，坐下后还能躺下", true, true)
 	# tiki torches
 	for a in [1.5, -1.6]:
 		var tp = c + Vector3(cos(a) * 2.6, 0, sin(a) * 2.6)
@@ -1800,9 +1806,15 @@ func _build_palms() -> void:
 	rope_mi.material_override = hsm
 	hammock_node.add_child(rope_mi)
 	_rebuild_hammock_mesh()
-	var qa: Vector3 = a.lerp(b, 0.2)
-	var qb: Vector3 = a.lerp(b, 0.8)
-	wall_s(Vector2(qa.x, qa.z), Vector2(qb.x, qb.z), 0.32, hammock_bed().y - 1.0, hammock_bed().y + 0.4, "吊床")
+	# Full fabric footprint so the boy cannot walk through the hammock (was a thin spine wall).
+	var qa: Vector3 = a.lerp(b, 0.12)
+	var qb: Vector3 = a.lerp(b, 0.88)
+	var ham_mid: Vector3 = hammock_bed()
+	var ham_along: Vector3 = (b - a).normalized()
+	var ham_yaw := atan2(ham_along.x, ham_along.z)
+	var ham_len := a.distance_to(b) * 0.76
+	wall_s(Vector2(qa.x, qa.z), Vector2(qb.x, qb.z), hammock_half_w + 0.06, ham_mid.y - 1.1, ham_mid.y + 0.55, "吊床")
+	wall_b(Vector2(ham_mid.x, ham_mid.z), Vector2(hammock_half_w + 0.04, ham_len * 0.5), ham_yaw, ham_mid.y - 1.0, ham_mid.y + 0.5, "吊床")
 
 
 ## Drive fabric sag from world-space body samples (hips, shoulders, heels). Empty when pts empty.
