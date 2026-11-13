@@ -351,21 +351,13 @@ func _sit_seat(m, seat_name: String) -> void:
 	m._play_rest_idle_clip()
 	m.boy.seek_prop_clip(2.5)
 	m.boy._tick(0.0)
-	# Prefer a clear 3/4 behind the sit facing (toward the fire for logs).
-	var face: Vector3 = (st2["face"] as Vector3).normalized()
-	var side: Vector3 = face.cross(Vector3.UP).normalized()
-	var off: Vector3 = (-face * 0.55 + side * 0.85).normalized()
-	if seat_name == "坐木":
-		# Bias toward the campfire so the torch post isn't in the lens.
-		var to_fire: Vector3 = (m.island.campfire_pos - (st2["top"] as Vector3))
-		to_fire.y = 0.0
-		if to_fire.length_squared() > 1e-4:
-			to_fire = to_fire.normalized()
-			off = (to_fire * 0.35 + (-face) * 0.55 + side * 0.55).normalized()
-	m.rest_cam_yaw = atan2(off.x, off.z)
+	# Game picks front 3/4 face framing + LOS (do not override rest_cam_yaw).
+	m.rest_cam_yaw = INF
+	m.rest_cam_ease = 0.0
 	m.demo_cam = false
 	m.cam_fixed = false
 	m._update_ui()
+	# ~0.8 s ease onto the sit framing.
 	for _i in 40:
 		await process_frame
 
