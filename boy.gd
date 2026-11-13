@@ -148,11 +148,12 @@ var _eyelid_l: MeshInstance3D
 var _eyelid_r: MeshInstance3D
 var _mouth: MeshInstance3D
 var _walk_bob := 0.0
+var _settle_left := 0.0
 ## When set, lounger pose plants heels/knees/thighs on this seat plane after the hips pitch.
 var lie_foot_plant := false
 var lie_foot_plane_point := Vector3.ZERO
 var lie_foot_plane_normal := Vector3.UP
-var lie_foot_plant_gap := 0.12
+var lie_foot_plant_gap := 0.015
 
 
 func _ready() -> void:
@@ -391,7 +392,8 @@ func _build_face_fill() -> void:
 	face_fill.omni_attenuation = 1.4
 	face_fill.shadow_enabled = false
 	face_fill.light_specular = 0.0
-	face_fill.light_cull_mask = 0xFFFFF  # include boy (layer 2) and world for night seat/hammock stills
+	# Boy mesh only (layer 2) — lighting the world made a moving hotspot on sand/seats.
+	face_fill.light_cull_mask = 1 << 1
 	parts["head"].add_child(face_fill)
 	face_fill.position = Vector3(0.0, -0.02, -0.1)
 	# Cool moonlight rim — only on at night, opposite the fill so edges read without flattening him.
@@ -403,7 +405,7 @@ func _build_face_fill() -> void:
 	_night_rim.omni_attenuation = 1.2
 	_night_rim.shadow_enabled = false
 	_night_rim.light_specular = 0.08
-	_night_rim.light_cull_mask = 0xFFFFF
+	_night_rim.light_cull_mask = 1 << 1
 	parts["head"].add_child(_night_rim)
 	_night_rim.position = Vector3(0.0, 0.04, 0.12)
 	# Soft torso fill at night so vest/shorts match the moonlit ground (head fill alone leaves the body black).
@@ -415,7 +417,7 @@ func _build_face_fill() -> void:
 	_night_body.omni_attenuation = 0.85
 	_night_body.shadow_enabled = false
 	_night_body.light_specular = 0.0
-	_night_body.light_cull_mask = 0xFFFFF
+	_night_body.light_cull_mask = 1 << 1
 	if parts.has("pelvis"):
 		parts["pelvis"].add_child(_night_body)
 		_night_body.position = Vector3(0.0, 0.12, -0.08)
@@ -677,20 +679,18 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 		sync_hat_lie(kind, lie_k)
 	else:
 		sync_hat_lie(kind, 0.0)
-		var sit_w := smoothstep(0.15, 1.0, sit_k) * (1.0 - lie_k)
-		if sit_w >= 0.95 and kind in ["seat", "sleep", "sun"]:
-			# Freeze tree + additive L-sit on idle seed (preserves Mixamo UpLeg twist so
-			# thighs fold forward, not sideways). bake_pose_mesh() for llvmpipe stills.
+		# Single sit path: idle seed + additive L-sit (no Mixamo sit clip stack — that
+		# rubber-hosed thighs mid-transition in v24).
+		var sit_w := smoothstep(0.05, 1.0, sit_k) * (1.0 - lie_k)
+		if kind in ["seat", "sleep", "sun"] and sit_w > 0.02:
 			_seed_lie_from_sit()
-			_apply_ergonomic_sit(1.0)
+			_apply_ergonomic_sit(sit_w)
 		else:
 			if ap and not ap.active:
 				ap.active = true
 			if tree and not tree.active:
 				tree.active = true
 			_apply_mixer()
-			if sit_w > 0.15 and kind in ["seat", "sleep", "sun"]:
-				_apply_ergonomic_sit(sit_w)
 	var pel := _live_pelvis()
 	if pel.y < 0.05:
 		pel = Vector3(0.0, Island.SEAT_TOP, 0.0)
@@ -787,11 +787,18 @@ func _apply_lounger_pose(w: float, breath: float) -> void:
 ## Hammock: curl into the occupied cradle. Head turns away; forearm covers the eyes.
 ## Hat stays on — slight forward tip so the brim rests on the fabric.
 func _apply_hammock_pose(w: float, breath: float) -> void:
-	_pose_abs("mixamorig_Spine", Vector3(0.14 + breath * 0.1, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(0.18 + breath * 0.12, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(0.12 + breath * 0.08, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Neck", Vector3(-0.18, 0.38, 0.08), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.22 + breath * 0.03, 0.58, 0.12), w)
+	_pose_abs("mixamorig_Spine", Vector3(0.10 + breath * 0.08, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.12 + breath * 0.1, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.08 + breath * 0.06, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Neck", Vector3(-0.16, 0.34, 0.06), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.18 + breath * 0.03, 0.52, 0.1), w)
+	# Soft knee curl so shins follow the cradle instead of a stiff plank.
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.55, 0.12, 0.18), w * 0.85)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-0.55, -0.12, -0.18), w * 0.85)
+	_pose_add("mixamorig_LeftLeg", Vector3(0.95, 0.0, 0.0), w * 0.8)
+	_pose_add("mixamorig_RightLeg", Vector3(0.95, 0.0, 0.0), w * 0.8)
+	_pose_add("mixamorig_LeftFoot", Vector3(0.15, 0.0, 0.12), w * 0.55)
+	_pose_add("mixamorig_RightFoot", Vector3(0.15, 0.0, -0.12), w * 0.55)
 	_nap_forearm_over_eyes(w, "sleep")
 
 
@@ -917,13 +924,21 @@ func clear_foot_plant() -> void:
 	skel.force_update_transform()
 
 
-## Bench / log lie-back: soft flat supine (kept for seatlie).
+## Bench / log lie-back: soft flat supine with bent knees + hands on belly.
 func _apply_seatlie_pose(w: float, breath: float) -> void:
 	_pose_abs("mixamorig_Spine", Vector3(0.04 + breath * 0.4, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine1", Vector3(0.05 + breath * 0.5, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine2", Vector3(0.04 + breath * 0.3, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Neck", Vector3(-0.1, 0.08, 0.0), w)
 	_pose_abs("mixamorig_Head", Vector3(-0.15 + breath * 0.2, 0.1, 0.0), w)
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.45, 0.1, 0.12), w * 0.75)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-0.45, -0.1, -0.12), w * 0.75)
+	_pose_add("mixamorig_LeftLeg", Vector3(0.85, 0.0, 0.0), w * 0.7)
+	_pose_add("mixamorig_RightLeg", Vector3(0.85, 0.0, 0.0), w * 0.7)
+	_pose_add("mixamorig_LeftArm", Vector3(0.25, 0.35, -0.4), w * 0.55)
+	_pose_add("mixamorig_RightArm", Vector3(0.25, -0.35, 0.4), w * 0.55)
+	_pose_add("mixamorig_LeftForeArm", Vector3(-0.55, 0.1, 0.0), w * 0.55)
+	_pose_add("mixamorig_RightForeArm", Vector3(-0.55, -0.1, 0.0), w * 0.55)
 
 
 func _pose_abs(bone: String, euler: Vector3, w: float) -> void:
@@ -948,21 +963,21 @@ func _pose_add(bone: String, euler: Vector3, w: float) -> void:
 func _apply_ergonomic_sit(w: float) -> void:
 	if skel == null or w <= 0.001:
 		return
-	# hy/hz sign flip vs sit_fwd_scan2: thighs along character forward (off the seat front),
-	# not tucked back onto the log. elev≈0°, shin≈−76°, thigh·fwd≈1.0, foot past seat rim.
-	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.70, 0.70, 0.40), w)
-	_pose_add("mixamorig_RightUpLeg", Vector3(-1.70, -0.70, -0.40), w)
-	_pose_add("mixamorig_LeftLeg", Vector3(1.70, 0.0, 0.0), w)
-	_pose_add("mixamorig_RightLeg", Vector3(1.70, 0.0, 0.0), w)
-	_pose_add("mixamorig_LeftFoot", Vector3(0.30, 0.0, 0.05), w * 0.75)
-	_pose_add("mixamorig_RightFoot", Vector3(0.30, 0.0, -0.05), w * 0.75)
-	_pose_add("mixamorig_Spine", Vector3(-0.08, 0.0, 0.0), w * 0.55)
-	_pose_add("mixamorig_Spine1", Vector3(-0.05, 0.0, 0.0), w * 0.45)
+	# Smoothstep blend; keep v24 L-sit magnitudes so butt contact selftests stay green.
+	var k := smoothstep(0.0, 1.0, w)
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.70, 0.70, 0.40), k)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-1.70, -0.70, -0.40), k)
+	_pose_add("mixamorig_LeftLeg", Vector3(1.70, 0.0, 0.0), k)
+	_pose_add("mixamorig_RightLeg", Vector3(1.70, 0.0, 0.0), k)
+	_pose_add("mixamorig_LeftFoot", Vector3(0.30, 0.0, 0.05), k * 0.75)
+	_pose_add("mixamorig_RightFoot", Vector3(0.30, 0.0, -0.05), k * 0.75)
+	_pose_add("mixamorig_Spine", Vector3(-0.08, 0.0, 0.0), k * 0.55)
+	_pose_add("mixamorig_Spine1", Vector3(-0.05, 0.0, 0.0), k * 0.45)
 	# Hands rest on the thighs (not tucked behind the hips — that clipped the shorts).
-	_pose_add("mixamorig_LeftArm", Vector3(0.35, 0.25, -0.25), w * 0.65)
-	_pose_add("mixamorig_RightArm", Vector3(0.35, -0.25, 0.25), w * 0.65)
-	_pose_add("mixamorig_LeftForeArm", Vector3(-0.55, 0.15, 0.0), w * 0.7)
-	_pose_add("mixamorig_RightForeArm", Vector3(-0.55, -0.15, 0.0), w * 0.7)
+	_pose_add("mixamorig_LeftArm", Vector3(0.35, 0.25, -0.25), k * 0.65)
+	_pose_add("mixamorig_RightArm", Vector3(0.35, -0.25, 0.25), k * 0.65)
+	_pose_add("mixamorig_LeftForeArm", Vector3(-0.55, 0.15, 0.0), k * 0.7)
+	_pose_add("mixamorig_RightForeArm", Vector3(-0.55, -0.15, 0.0), k * 0.7)
 	skel.force_update_transform()
 
 
@@ -1331,7 +1346,8 @@ func _tick(delta: float) -> void:
 	if anim == "move":
 		speed_s = move_speed
 		run_k = 0.0 if pivoting else smoothstep(RUN_FROM, RUN_TO, speed_s)
-		walk_k = 1.0
+		# Light stick → stroll (soft), then walk. Keep walk_k for mix amount.
+		walk_k = clampf(smoothstep(0.35, 1.05, speed_s), 0.0, 1.0)
 		move_w = move_toward(move_w, 1.0, delta * 4.0)
 		var dist := 0.0
 		if has_prev:
@@ -1339,6 +1355,7 @@ func _tick(delta: float) -> void:
 		prev_pos = global_position
 		has_prev = true
 		var stride := float(clips["run"]["stride"]) if run_k > 0.5 else float(clips["walk"]["stride"])
+		# Match phase advance to travel so stance feet don't skate on the ground texture.
 		var dphase := dist / maxf(stride, 0.05)
 		if pivoting or dist < 0.001:
 			dphase = delta / maxf(float(clips["walk"]["length"]), 0.2)
@@ -1410,46 +1427,52 @@ func _tick(delta: float) -> void:
 	_update_face(delta)
 
 
-## Child-like walk polish on top of Mixamo: upright torso, visible stride, opposite arms.
-## Tripo's Mixamo walk has tiny limb travel — amplify hip/knee/foot + arms so the filmstrip reads.
+## Soft child gait on Mixamo: light limb boost, hip sway, bob, turn lean.
+## Keep amps small — v24 overdrive made a conveyor/skating read next to AC.
 func _polish_gait(delta: float) -> void:
 	if skel == null or model == null:
 		return
+	if _settle_left > 0.0:
+		_settle_left = maxf(0.0, _settle_left - delta)
 	var moving := anim == "move" and move_w > 0.25 and not pivoting
 	var bob_amp := 0.0
+	var sway := 0.0
 	if moving:
-		var amp := lerpf(1.0, 1.25, run_k) * move_w
-		bob_amp = lerpf(0.014, 0.028, run_k) * move_w
-		# Slight forward lean; kill hunch.
-		var upright := 0.05 + 0.08 * run_k
-		_pose_add("mixamorig_Spine", Vector3(-upright * 0.45, 0.0, 0.0), move_w * 0.6)
-		_pose_add("mixamorig_Spine1", Vector3(-upright * 0.35, 0.0, 0.0), move_w * 0.55)
-		var look_y := clampf(turn_ahead, -0.35, 0.35) * 0.45
-		_pose_add("mixamorig_Head", Vector3(upright * 0.2, look_y, 0.0), move_w * 0.45)
-		# Alternating hip pitch (stride) + swing-leg knee flex + plant-leg stiff.
+		var amp := lerpf(0.55, 0.85, run_k) * move_w
+		bob_amp = lerpf(0.018, 0.032, run_k) * move_w
+		# Soft forward lean + turn lean into corners.
+		var upright := 0.04 + 0.06 * run_k + absf(turn_lean) * 0.08
+		_pose_add("mixamorig_Spine", Vector3(-upright * 0.4, turn_lean * 0.12, turn_lean * 0.18), move_w * 0.55)
+		_pose_add("mixamorig_Spine1", Vector3(-upright * 0.28, turn_lean * 0.08, 0.0), move_w * 0.5)
+		var look_y := clampf(turn_ahead, -0.35, 0.35) * 0.4
+		_pose_add("mixamorig_Head", Vector3(upright * 0.15, look_y, 0.0), move_w * 0.4)
 		var s := sin(phase * TAU)
 		var c := cos(phase * TAU)
-		var hip_amp := lerpf(0.55, 0.85, run_k) * amp
-		var knee_swing := lerpf(0.85, 1.15, run_k) * amp
-		var knee_plant := lerpf(0.12, 0.22, run_k) * amp
-		# Left forward when s>0; right forward when s<0.
-		_pose_add("mixamorig_LeftUpLeg", Vector3(-hip_amp * s, 0.0, 0.0), 0.85)
-		_pose_add("mixamorig_RightUpLeg", Vector3(hip_amp * s, 0.0, 0.0), 0.85)
-		_pose_add("mixamorig_LeftLeg", Vector3(knee_swing * maxf(s, 0.0) + knee_plant * maxf(-s, 0.0), 0.0, 0.0), 0.85)
-		_pose_add("mixamorig_RightLeg", Vector3(knee_swing * maxf(-s, 0.0) + knee_plant * maxf(s, 0.0), 0.0, 0.0), 0.85)
-		# Heel strike / toe-off on the leading foot.
-		_pose_add("mixamorig_LeftFoot", Vector3(0.35 * maxf(s, 0.0) - 0.2 * maxf(-s, 0.0), 0.0, 0.0), 0.7)
-		_pose_add("mixamorig_RightFoot", Vector3(0.35 * maxf(-s, 0.0) - 0.2 * maxf(s, 0.0), 0.0, 0.0), 0.7)
-		# Contra-lateral arm swing (opposite the legs).
-		var swing := s * lerpf(1.05, 1.35, run_k) * amp
-		_pose_add("mixamorig_LeftArm", Vector3(swing * 0.7, -swing * 0.1, -swing * 0.25), 0.9)
-		_pose_add("mixamorig_RightArm", Vector3(-swing * 0.7, swing * 0.1, swing * 0.25), 0.9)
-		_pose_add("mixamorig_LeftForeArm", Vector3(-absf(swing) * 0.5, 0.0, 0.0), 0.75)
-		_pose_add("mixamorig_RightForeArm", Vector3(-absf(swing) * 0.5, 0.0, 0.0), 0.75)
+		# Mild stride amplify (Mixamo already carries most of the motion).
+		var hip_amp := lerpf(0.18, 0.28, run_k) * amp
+		var knee_swing := lerpf(0.28, 0.42, run_k) * amp
+		var knee_plant := lerpf(0.04, 0.08, run_k) * amp
+		_pose_add("mixamorig_LeftUpLeg", Vector3(-hip_amp * s, 0.0, 0.06 * c), 0.7)
+		_pose_add("mixamorig_RightUpLeg", Vector3(hip_amp * s, 0.0, -0.06 * c), 0.7)
+		_pose_add("mixamorig_LeftLeg", Vector3(knee_swing * maxf(s, 0.0) + knee_plant * maxf(-s, 0.0), 0.0, 0.0), 0.7)
+		_pose_add("mixamorig_RightLeg", Vector3(knee_swing * maxf(-s, 0.0) + knee_plant * maxf(s, 0.0), 0.0, 0.0), 0.7)
+		_pose_add("mixamorig_LeftFoot", Vector3(0.18 * maxf(s, 0.0) - 0.1 * maxf(-s, 0.0), 0.0, 0.0), 0.55)
+		_pose_add("mixamorig_RightFoot", Vector3(0.18 * maxf(-s, 0.0) - 0.1 * maxf(s, 0.0), 0.0, 0.0), 0.55)
+		var swing := s * lerpf(0.45, 0.65, run_k) * amp
+		_pose_add("mixamorig_LeftArm", Vector3(swing * 0.55, -swing * 0.08, -swing * 0.18), 0.75)
+		_pose_add("mixamorig_RightArm", Vector3(-swing * 0.55, swing * 0.08, swing * 0.18), 0.75)
+		_pose_add("mixamorig_LeftForeArm", Vector3(-absf(swing) * 0.35, 0.0, 0.0), 0.6)
+		_pose_add("mixamorig_RightForeArm", Vector3(-absf(swing) * 0.35, 0.0, 0.0), 0.6)
+		# Lateral weight shift toward the stance foot (AC-style hip sway).
+		sway = -c * lerpf(0.012, 0.02, run_k) * move_w
+		hip_shift = hip_shift.lerp(Vector3(sway, 0, 0), 1.0 - exp(-delta * 8.0))
 		skel.force_update_transform()
-	var want_bob := sin(phase * TAU) * bob_amp if moving else 0.0
+	else:
+		hip_shift = hip_shift.lerp(Vector3.ZERO, 1.0 - exp(-delta * 6.0))
+	# Double-frequency bob: dip on each footfall, rise on mid-swing.
+	var want_bob := -absf(sin(phase * TAU)) * bob_amp if moving else 0.0
 	_walk_bob = lerpf(_walk_bob, want_bob, 1.0 - exp(-delta * 10.0))
-	model.position = model_base + Vector3(0, _walk_bob, 0)
+	model.position = model_base + Vector3(hip_shift.x, _walk_bob, 0)
 
 
 func _reset_to_rest_pose() -> void:
@@ -1523,11 +1546,17 @@ static func move_turn(face: float, want: float, speed: float, delta: float) -> A
 
 
 func spin_busy() -> bool:
-	return false
+	# Only the post-pivot grace — do NOT include `pivoting` itself (that deadlocks
+	# spot_turning forever: need≈0 but spin_busy stays true while pivoting is still set).
+	return pivot_grace > 0.05 and not pivoting
 
 
 func settling() -> bool:
-	return false
+	return _settle_left > 0.0
+
+
+func begin_settle(seconds := 0.35) -> void:
+	_settle_left = maxf(_settle_left, seconds)
 
 
 func hat_seat(s := -1.0) -> Transform3D:
@@ -1607,39 +1636,66 @@ func _make_eyelid(nm: String) -> MeshInstance3D:
 
 
 ## expr: "smile" | "sleep" | "cheer" | "neutral"
-## Sleep keeps eyes open (forearm covers them in the lie pose). No blink.
+## Sleep keeps open-eye albedo (forearm covers eyes). Soft disc blink only — never closed albedo.
 func set_face_expr(kind: String) -> void:
 	expr = kind
 	_set_eyes_closed(false)
-	blink_t = -1.0
-	blink_timer = 9999.0
+	if kind == "sleep":
+		blink_t = -1.0
+		blink_timer = 9999.0
+	elif blink_timer > 8.0:
+		blink_timer = rng.randf_range(2.2, 4.5)
 
 
 func _update_face(delta: float = 0.0) -> void:
 	if _eyelid_l == null or _eyelid_r == null:
 		return
-	# No blink, no closed-eye albedo — Tripo shells can't fake lids. Sleep life is
-	# smile + soft gaze + head/breath motion; forearm covers the eyes in the nap pose.
 	_set_eyes_closed(false)
-	blink_t = -1.0
-	blink_timer = 9999.0
-	_eyelid_l.visible = false
-	_eyelid_r.visible = false
+	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) or expr == "sleep"
+	# Soft eyelid-disc blink (scale pulse). Never swap to closed-eye albedo — that made glassy bulbs.
+	if sleeping:
+		blink_t = -1.0
+		blink_timer = 9999.0
+		_eyelid_l.visible = false
+		_eyelid_r.visible = false
+	else:
+		if blink_t < 0.0:
+			blink_timer -= delta
+			if blink_timer <= 0.0:
+				blink_t = 0.0
+				blink_timer = rng.randf_range(2.4, 5.2)
+		if blink_t >= 0.0:
+			blink_t += delta
+			var u := blink_t / 0.14  # ~140 ms blink
+			var close := 1.0 - absf(u - 1.0) if u < 2.0 else 0.0
+			close = clampf(close, 0.0, 1.0)
+			_eyelid_l.visible = close > 0.05
+			_eyelid_r.visible = close > 0.05
+			var sy := lerpf(0.08, 1.05, close)
+			_eyelid_l.scale = Vector3(1.05, sy, 1.0)
+			_eyelid_r.scale = Vector3(1.05, sy, 1.0)
+			if u >= 2.0:
+				blink_t = -1.0
+				_eyelid_l.visible = false
+				_eyelid_r.visible = false
+		else:
+			_eyelid_l.visible = false
+			_eyelid_r.visible = false
 	if _mouth == null:
 		return
-	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) or expr == "sleep"
-	# Hide the procedural mouth blob while napping — it floats off the Tripo Head bone.
 	if sleeping:
 		_mouth.visible = false
 		return
 	var smile := 0.55
 	if expr == "cheer" or react_kind == "cheer":
-		smile = 1.0
+		smile = 1.15
+	elif expr == "smile":
+		smile = 0.78
 	elif expr == "neutral":
-		smile = 0.35
-	_mouth.scale.y = lerpf(_mouth.scale.y, 0.22 + smile * 0.45, 1.0 - exp(-delta * 6.0))
-	_mouth.scale.x = lerpf(_mouth.scale.x, 0.85 + smile * 0.55, 1.0 - exp(-delta * 6.0))
-	_mouth.visible = smile > 0.3
+		smile = 0.32
+	_mouth.scale.y = lerpf(_mouth.scale.y, 0.2 + smile * 0.55, 1.0 - exp(-delta * 7.0))
+	_mouth.scale.x = lerpf(_mouth.scale.x, 0.8 + smile * 0.7, 1.0 - exp(-delta * 7.0))
+	_mouth.visible = smile > 0.28
 
 
 func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:

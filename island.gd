@@ -1818,6 +1818,7 @@ func _build_palms() -> void:
 
 
 ## Drive fabric sag from world-space body samples (hips, shoulders, heels). Empty when pts empty.
+## Soft-lerp so enter/exit doesn't pop the cradle in one frame.
 func set_hammock_load(pts: Array[Vector3]) -> void:
 	hammock_body_pts = pts
 	hammock_occupied = pts.size() > 0
@@ -1825,6 +1826,8 @@ func set_hammock_load(pts: Array[Vector3]) -> void:
 	var ham_len := maxf(ab.length(), 0.01)
 	var along := ab / ham_len
 	var mid := (hammock_a + hammock_b) * 0.5
+	# Snap empty immediately (avoids residual deep cradle on re-enter); ease occupied in.
+	var blend := 0.45 if hammock_occupied else 1.0
 	for i in hammock_nt + 1:
 		var t := float(i) / float(hammock_nt)
 		var y := _ham_rest_y[i]
@@ -1835,7 +1838,7 @@ func set_hammock_load(pts: Array[Vector3]) -> void:
 				var d := absf(tp - t)
 				deepen = maxf(deepen, exp(-d * d * 18.0))
 			y = -lerpf(hammock_empty_sag, hammock_occ_sag, deepen) * sin(PI * t)
-		_ham_cur_y[i] = y
+		_ham_cur_y[i] = lerpf(_ham_cur_y[i], y, blend)
 	_rebuild_hammock_mesh()
 
 
@@ -1859,9 +1862,9 @@ func _rebuild_hammock_mesh() -> void:
 		var w1 := hammock_half_w * (0.15 + 0.85 * taper1)
 		var p0 := hammock_a + ab * t0 + Vector3(0, y0, 0) - mid
 		var p1 := hammock_a + ab * t1 + Vector3(0, y1, 0) - mid
-		# Cradle: centre deep (−wrap), side rails rise so fabric wraps the body.
-		var wrap := 0.30 if hammock_occupied else 0.12
-		var rail := 0.14 if hammock_occupied else 0.0
+		# Shallower visual dish than v24 0.30 (less torso bury). Contact uses hammock_point wrap.
+		var wrap := 0.18 if hammock_occupied else 0.12
+		var rail := 0.10 if hammock_occupied else 0.0
 		for st in hammock_nu - 1:
 			var u0 := lerpf(-1.0, 1.0, float(st) / float(hammock_nu - 1))
 			var u1 := lerpf(-1.0, 1.0, float(st + 1) / float(hammock_nu - 1))
@@ -1878,10 +1881,13 @@ func _rebuild_hammock_mesh() -> void:
 			var B = p0 + side_u * (w0 * u1) + Vector3(0, cy1, 0)
 			var C = p1 + side_u * (w1 * u1) + Vector3(0, cy1, 0)
 			var D = p1 + side_u * (w1 * u0) + Vector3(0, cy0, 0)
-			HB.face(A, B, C, col, col, col, Vector3.UP)
-			HB.face(A, C, D, col, col, col, Vector3.UP)
-			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
-			HB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
+			var n0 := ((B - A).cross(D - A)).normalized()
+			if n0.dot(Vector3.UP) < 0.0:
+				n0 = -n0
+			HB.face(A, B, C, col, col, col, n0)
+			HB.face(A, C, D, col, col, col, n0)
+			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), -n0)
+			HB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), -n0)
 	hammock_mi.mesh = HB.commit()
 
 
@@ -1900,7 +1906,7 @@ func hammock_point(t: float) -> Vector3:
 	var f := ft - float(i0)
 	var y_off := lerpf(_ham_cur_y[i0] if _ham_cur_y.size() > i0 else -hammock_empty_sag * sin(PI * t),
 		_ham_cur_y[i1] if _ham_cur_y.size() > i1 else -hammock_empty_sag * sin(PI * t), f)
-	# Centre wrap depth (u=0).
+	# Contact cradle depth (v24). Visual mesh dish can be shallower; shell accounts for skin.
 	var wrap := 0.30 if hammock_occupied else 0.12
 	p.y = lerpf(hammock_a.y, hammock_b.y, t) + y_off - wrap
 	return p

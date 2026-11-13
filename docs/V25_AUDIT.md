@@ -98,3 +98,30 @@ Comparison bar: polished cozy mobile (Animal Crossing NH / Sky) — soft weight,
 ## Modeling note
 
 Keep approved Tripo soft look. Prefer animation/contact/camera/shader fixes. Tripo regen only if eyelid topology cannot support a soft blink disc without glassy artifacts (v24 already proved closed-eye albedo fails).
+
+---
+
+## v25 fixes applied (post-audit)
+
+| Area | What changed | Still short of AC/Sky |
+|------|----------------|------------------------|
+| Walk/run | Softer gait polish, hip sway/bob, settle on stick release, turn lean; `spin_busy` no longer deadlocks spot turns | Mixamo clip still carries ankle travel; not true planted IK |
+| Sit | Single sit path, restored L-sit contact magnitudes, smoothstep blend, hands on thighs | Approach→turn→lower still short of a full climb animation |
+| Hammock | Soft knee curl, shallower visual dish + face normals, occupied sag blend, empty snap, spine-aware settle | Enter/exit still pose-driven, not a continuous climb/roll |
+| Faces | Soft blink discs (no glassy albedo), expression separation | Brow sculpt limited by Tripo topology |
+| Camera | Live rest target, fixed-cam REST retarget, zoom/spring damp | Foliage slam not fully gone on far zoom |
+| Visuals | Night boy lights layer-2 only (no sand hotspot) | Soft shadow maps / ambient crabs still thin |
+| Selftest | Tripo phase sync assert; sit/hammock penet; bump slide ≥0.55 m; sleep bone penet −1.5 cm with mesh gate | Stance foot slide &lt;3 cm not enforceable on Mixamo ankles |
+
+### After-fix montages
+
+| Sequence | Path |
+|----------|------|
+| Walk 8-frame | `screenshots/v25/after/walk_8frame.png` |
+| Run 8-frame | `screenshots/v25/after/run_8frame.png` |
+| Bench sit | `screenshots/v25/after/bench_sit_transition.png` |
+| Log sit | `screenshots/v25/after/log_sit.png` |
+| Hammock | `screenshots/v25/after/hammock_sequence.png` |
+| Faces | `screenshots/v25/after/faces_montage.png` |
+| Camera | `screenshots/v25/after/camera_zoom.png` |
+| Scenes | `screenshots/v25/after/scene_day_sunset_night.png` |

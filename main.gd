@@ -1217,9 +1217,11 @@ func _explore_tick(delta: float) -> void:
 		settle_t = 0.0
 	elif settle_t < 0.6 and not spot_turning:
 		# let go mid-stride: finish the step at a stroll, so the planted foot is not dragged into idle
+		if not boy.settling() and settle_t <= 0.0:
+			boy.begin_settle(0.38)
 		if boy.settling():
 			settle_t += delta
-			target_v = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * 0.5
+			target_v = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * 0.45
 		else:
 			settle_t = 1.0
 	# he walks the way he faces: the heading turns towards the stick as fast as his feet can corner (slowing
@@ -1253,6 +1255,7 @@ func _explore_tick(delta: float) -> void:
 	boy.wading = wading
 	boy.pivoting = spot_turning
 	boy.turn_ahead = wrapf(spot_goal - face_yaw, -PI, PI) if spot_turning else (wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0)
+	boy.turn_lean = lerpf(boy.turn_lean, clampf(boy.turn_ahead, -0.7, 0.7), 1.0 - exp(-delta * 5.0))
 	boy.set_move(cur_speed)
 	if cur_speed < 0.05:
 		boy.set_idle()
@@ -1284,6 +1287,7 @@ func _begin_rest(kind: String) -> void:
 	move_vel = Vector3.ZERO
 	set_meta("lie_snapped", false)
 	set_meta("lie_mesh_nudged", false)
+	set_meta("fix_rest_locked", false)
 	if kind == "sleep":
 		_setup_hammock_rest()
 	elif kind == "seat":
@@ -1642,16 +1646,27 @@ func _snap_lie_contact() -> void:
 			rest_lie -= hip_side * clampf(corr, -0.16, 0.16)
 		# Vertical: lift for poke-through (hat brim included); settle light floats.
 		var hip_gap := _signed_gap(pts["hips"], hip_p, hn0)
+		var spine_gap := _signed_gap(pts["spine"], hip_p, hn0)
 		var head_gap := _signed_gap(pts["head"], head_p0, head_n0)
+		var sink_gap := minf(hip_gap, minf(spine_gap, head_gap))
+		# Only settle down when hips AND spine are both floating — never push a
+		# penetrating hip deeper just because the spine still floats a bit.
+		var both_float := hip_gap > 0.012 and spine_gap > 0.012
+		var float_gap := minf(hip_gap, spine_gap)
 		# Prefer lifting out of fabric over leaving a poke-through (hat/shoulder).
-		if mesh_d < -0.005:
-			rest_lie += hn0 * minf(-0.002 - mesh_d, 0.08)
-		elif hip_gap > 0.02 or head_gap > 0.02:
-			rest_lie -= hn0 * minf(maxf(hip_gap, head_gap) - 0.008, 0.04)
-		elif mesh_d > 0.01:
+		if mesh_d < -0.005 or sink_gap < -0.008:
+			var lift := 0.0
+			if mesh_d < -0.005:
+				lift = maxf(lift, -0.002 - mesh_d)
+			if sink_gap < -0.008:
+				lift = maxf(lift, -sink_gap)
+			rest_lie += hn0 * minf(lift, 0.08)
+		elif both_float:
+			rest_lie -= hn0 * minf(float_gap - 0.005, 0.04)
+		elif mesh_d > 0.012 and head_gap > 0.01:
 			rest_lie -= hn0 * minf(mesh_d - 0.004, 0.025)
-		elif hip_gap < -0.01 or head_gap < -0.01:
-			rest_lie += hn0 * minf(-minf(hip_gap, head_gap), 0.03)
+		elif head_gap > 0.02 and hip_gap > -0.005:
+			rest_lie -= hn0 * minf(head_gap - 0.008, 0.03)
 		return
 	# Lounger: foam sink OK; fail only on wood-board punch. Settle hips/head onto the pads.
 	# Bone snap only — hat tip may kiss foam within 1 cm; over-lifting floats the torso.
@@ -1782,7 +1797,7 @@ func _plant_lie_feet() -> void:
 	boy.lie_foot_plane_normal = foot_plane["normal"]
 	boy.lie_foot_plant = true
 	# Heels + knees above foam top; hips carry the thighs (no UpLeg override).
-	boy.lie_foot_plant_gap = 0.08
+	boy.lie_foot_plant_gap = 0.015
 	boy.plant_feet_on_plane(boy.lie_foot_plane_point, boy.lie_foot_plane_normal, boy.lie_foot_plant_gap, true)
 
 
@@ -3398,8 +3413,26 @@ func _explore_cam() -> Array:
 
 func _rest_cam() -> Array:
 	var tall := _tall()
-	var t := rest_lie + Vector3(0, 0.25, 0)
+	# Aim at the live boy (pelvis/head), not the unused lie pad — v24 stared at empty air
+	# during upright sit and mid sit-down.
+	var t: Vector3
+	if rest_phase <= 1:
+		t = player.global_position.lerp(rest_root_sit, clampf(rest_t * 0.55, 0.0, 1.0)) + Vector3(0, 0.55, 0)
+	elif rest_kind == "seat" and not seat_lying:
+		t = rest_root_sit + Vector3(0, 0.48, 0)
+	elif rest_phase >= 4 and (rest_kind in ["sleep", "sun"] or seat_lying):
+		t = boy.global_position + Vector3(0, 0.42, 0)
+		if boy.skel:
+			var hips := boy.lie_bone_world("mixamorig_Hips")
+			var head := boy.lie_bone_world("mixamorig_Head")
+			t = hips.lerp(head, 0.35)
+	else:
+		t = rest_root_sit + Vector3(0, 0.5, 0)
 	var dist := 3.0 if not tall else 3.6
+	var pitch := 0.38
+	if rest_kind == "seat" and not seat_lying:
+		pitch = 0.32
+		dist = 2.85 if not tall else 3.3
 	if rest_cam_yaw == INF:
 		var off: Vector3
 		if rest_kind == "sleep":
@@ -3407,11 +3440,12 @@ func _rest_cam() -> Array:
 			var along := (island.hammock_b - island.hammock_a).normalized()
 			off = (off + Vector3(along.x, 0, along.z) * 0.45).normalized()
 		elif rest_kind == "seat":
-			off = (seat_face * 0.45 + rest_side * 0.9).normalized()
+			# Prefer a 3/4 behind the sit facing so the backrest doesn't eat the frame.
+			off = (-seat_face * 0.55 + rest_side * 0.85).normalized()
 		else:
 			off = (rest_side * 0.75 + island.towel_dir * 0.75).normalized()
-		rest_cam_yaw = _clear_yaw(t, atan2(off.x, off.z), 0.42, dist)
-	return [t, rest_cam_yaw, 0.42, dist]
+		rest_cam_yaw = _clear_yaw(t, atan2(off.x, off.z), pitch, dist)
+	return [t, rest_cam_yaw, pitch, dist]
 
 ## the yaw closest to `pref` from which no palm trunk stands between the camera and the resting kid
 func _clear_yaw(t: Vector3, pref: float, pitch: float, dist: float) -> float:
@@ -3457,8 +3491,14 @@ func _snap_explore_cam(front := false) -> void:
 func _toggle_cam_fixed() -> void:
 	cam_fixed = not cam_fixed
 	if cam_fixed:
-		# Freeze at the current follow framing.
-		var c: Array = _explore_cam() if mode != Mode.VIEW else [cam_target, view_yaw, view_pitch, view_dist]
+		# Freeze at the current follow framing (retarget if already resting).
+		var c: Array
+		if mode == Mode.REST:
+			c = _rest_cam()
+		elif mode == Mode.VIEW:
+			c = [cam_target, view_yaw, view_pitch, view_dist]
+		else:
+			c = _explore_cam()
 		fix_target = c[0]
 		fix_yaw = float(c[1])
 		fix_pitch = float(c[2])
@@ -3473,12 +3513,12 @@ func _toggle_cam_fixed() -> void:
 
 func _nudge_zoom(factor: float) -> void:
 	if cam_fixed:
-		fix_dist = clampf(fix_dist * factor, 2.5, 28.0)
-		cam_dist = fix_dist
+		fix_dist = clampf(fix_dist * factor, 2.8, 18.0)
+		cam_dist = lerpf(cam_dist, fix_dist, 0.55)
 	elif mode == Mode.VIEW:
 		view_dist = clampf(view_dist * factor, 4.0, 95.0)
 	else:
-		ex_dist = clampf(ex_dist * factor, 3.0, 14.0)
+		ex_dist = clampf(ex_dist * factor, 3.2, 12.0)
 
 
 func _persist_cam_fixed() -> void:
@@ -3504,16 +3544,29 @@ func _update_camera(delta: float) -> void:
 			cam_dist = tr[2]
 		_apply_camera()
 		return
-	# Fixed mode: never auto-follow the character; only manual orbit/zoom.
+	# Fixed mode: never auto-follow while exploring; on REST soft-retarget once so
+	# sit/lie aren't off-frame after toggling 固定视角 in explore.
 	if cam_fixed and mode != Mode.THROW:
+		if mode == Mode.REST and not get_meta("fix_rest_locked", false):
+			var rc: Array = _rest_cam()
+			fix_target = rc[0]
+			fix_yaw = float(rc[1])
+			fix_pitch = float(rc[2])
+			fix_dist = float(rc[3])
+			set_meta("fix_rest_locked", true)
 		if not dragging:
 			orbit_vel *= exp(-delta * 3.5)
 			fix_yaw += orbit_vel.x * delta
-			fix_pitch = clampf(fix_pitch + orbit_vel.y * delta, 0.06, 1.35)
+			fix_pitch = clampf(fix_pitch + orbit_vel.y * delta, 0.06, 1.25)
+			# Soft zoom damping toward the clamped fix_dist.
+			cam_dist = lerpf(cam_dist, fix_dist, 1.0 - exp(-delta * 5.0))
+		else:
+			cam_dist = fix_dist
 		cam_target = fix_target
 		cam_yaw = fix_yaw
 		cam_pitch = fix_pitch
-		cam_dist = fix_dist
+		if dragging:
+			cam_dist = fix_dist
 		_apply_camera()
 		return
 	var want: Array
@@ -3575,15 +3628,20 @@ func _cam_blocked(q: Vector3) -> bool:
 			return true
 	return false
 
+var _cam_arm_k := 1.0
+
 func _apply_camera() -> void:
 	var off := Vector3(sin(cam_yaw) * cos(cam_pitch), sin(cam_pitch), cos(cam_yaw) * cos(cam_pitch)) * cam_dist
-	# small spring arm: pull the camera in front of props / trunks / walls instead of clipping through
+	# Soft spring arm: ease pull-in so palms don't slam the framing in one frame.
+	var want_k := 1.0
 	if cam_dist < 20.0 and (not demo_cam or demo_track.size() > 0):
 		for i in range(4, 25):
 			var q := cam_target + off * (i / 24.0)
 			if _cam_blocked(q):
-				off *= maxf((i - 1) / 24.0, 1.3 / cam_dist)
+				want_k = maxf((i - 1) / 24.0, 1.3 / cam_dist)
 				break
+	_cam_arm_k = lerpf(_cam_arm_k, want_k, 0.28)
+	off *= _cam_arm_k
 	var pos := cam_target + off
 	var floor_y: float = max(Island.ground_h(pos.x, pos.z), 0.0) + 0.35
 	if _on_dock(pos.x, pos.z):

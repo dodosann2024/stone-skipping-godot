@@ -1,7 +1,10 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v24 坐姿贴合 · 固定视角 · 表情 · 步态
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v25 自检抛光（Pages 仍指向 v24）
 
 低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩为 Tripo Mixamo 网格；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+## v25 改动
+对 v24 做了严厉自检（`docs/V25_AUDIT.md` + `screenshots/v25/audit/`），再按区修走跑重量感、坐姿过渡、吊床沉降/接触、表情眨眼、固定相机阻尼、夜晚人物光只照角色。导出在 `docs/game_v25`（保留 `__unlockAudio` / `__safeArea`）；**`docs/index.html` 仍重定向到 v24**，等批准再切 Pages。前后蒙太奇：`screenshots/v25/audit/` → `screenshots/v25/after/`。`--selftest` PASS。
 
 ## v24 改动
 iPhone 夜测反馈：长椅 / 木头 / 吊床穿模、固定视角、表情僵硬、走路姿势。坐姿按座面 mesh 贴合（臀在板上），吊床外侧走近再坐下躺下，固体碰撞防穿行；固定/跟随视角 + 远近缩放（localStorage）；眨眼 / 微笑 / 睡觉 / 欢呼表情；走跑姿态抛光。在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（`game_v24.*`）。截图见 `screenshots/v24/`。`--selftest` PASS；Chrome 390×844 加载正常。
