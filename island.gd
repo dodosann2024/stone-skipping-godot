@@ -1866,9 +1866,10 @@ func _rebuild_hammock_mesh() -> void:
 		var w1 := hammock_half_w * (0.15 + 0.85 * taper1)
 		var p0 := hammock_a + ab * t0 + Vector3(0, y0, 0) - mid
 		var p1 := hammock_a + ab * t1 + Vector3(0, y1, 0) - mid
-		# Shallower visual dish than v24 0.30 (less torso bury). Contact uses hammock_point wrap.
-		var wrap := 0.18 if hammock_occupied else 0.12
-		var rail := 0.10 if hammock_occupied else 0.0
+		# Occupied: shallow dish + tall side rails so fabric edges sit ABOVE the torso
+		# without sinking the contact plane through the mesh.
+		var wrap := 0.14 if hammock_occupied else 0.12
+		var rail := 0.32 if hammock_occupied else 0.0
 		for st in hammock_nu - 1:
 			var u0 := lerpf(-1.0, 1.0, float(st) / float(hammock_nu - 1))
 			var u1 := lerpf(-1.0, 1.0, float(st + 1) / float(hammock_nu - 1))
@@ -1910,9 +1911,9 @@ func hammock_point(t: float) -> Vector3:
 	var f := ft - float(i0)
 	var y_off := lerpf(_ham_cur_y[i0] if _ham_cur_y.size() > i0 else -hammock_empty_sag * sin(PI * t),
 		_ham_cur_y[i1] if _ham_cur_y.size() > i1 else -hammock_empty_sag * sin(PI * t), f)
-	# MUST match visual dish in _rebuild_hammock_mesh (wrap 0.18/0.12) or the body
+	# MUST match visual dish in _rebuild_hammock_mesh (wrap 0.14/0.12) or the body
 	# sits on a deeper contact plane and sinks through the visible fabric.
-	var wrap := 0.18 if hammock_occupied else 0.12
+	var wrap := 0.14 if hammock_occupied else 0.12
 	p.y = lerpf(hammock_a.y, hammock_b.y, t) + y_off - wrap
 	return p
 

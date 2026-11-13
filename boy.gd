@@ -143,10 +143,17 @@ var _boy_mat: StandardMaterial3D
 var _boy_albedo_day := Color(1.08, 0.98, 0.92, 1.0)
 var _boy_albedo_tex_day: Texture2D
 var _boy_albedo_tex_sleep: Texture2D
-var _eyes_closed_tex := false  # always false — closed albedo abandoned for Tripo shells
-var _eyelid_l: MeshInstance3D
-var _eyelid_r: MeshInstance3D
-var _mouth: MeshInstance3D
+var _eyes_closed_tex := false
+## Soft eyelid MeshInstances removed — they read as paper discs. Closed eyes =
+## albedo lid paints + sunk eye-shell verts.
+var _eyelid_l: MeshInstance3D = null
+var _eyelid_r: MeshInstance3D = null
+var _mouth: MeshInstance3D = null
+var _eye_shell_idxs: PackedInt32Array = PackedInt32Array()
+var _eye_shell_orig: PackedVector3Array = PackedVector3Array()
+var _eye_shells_sunk := false
+var _brow_idxs: PackedInt32Array = PackedInt32Array()
+var _brow_orig: PackedVector3Array = PackedVector3Array()
 var _walk_bob := 0.0
 var _settle_left := 0.0
 ## When set, lounger pose plants heels/knees/thighs on this seat plane after the hips pitch.
@@ -182,6 +189,7 @@ func _ready() -> void:
 	_build_face_fill()
 	_build_face_expr()
 	_tune_boy_material()
+	_load_face_albedos()
 	set_face_expr("smile")
 	release_stand = _probe_release("throw_stand")
 	# crouch: clearly lower release so water entry is flatter than standing
@@ -509,18 +517,36 @@ func _tune_boy_material() -> void:
 		break
 
 
-## Closed-eye albedo / morph abandoned for Tripo shells — always keep day albedo.
-func _set_eyes_closed(_closed: bool) -> void:
+## Swap body albedo for expression (mouth/lid paints on the ORIGINAL Tripo UVs).
+func _set_face_albedo(kind: String) -> void:
 	if _boy_mat == null:
 		return
-	_eyes_closed_tex = false
-	if _boy_albedo_tex_day == null:
+	var key := kind
+	if key == "neutral":
+		key = "idle"
+	var tex: Texture2D = _face_alb.get(key, null)
+	if tex == null:
+		tex = _boy_albedo_tex_day
+	if tex == null:
 		return
-	_boy_mat.albedo_texture = _boy_albedo_tex_day
+	var closed := (key == "sleep" or key == "cheer")
+	_eyes_closed_tex = closed
+	_boy_mat.albedo_texture = tex
 	if _body_mi:
 		_body_mi.material_override = _boy_mat
 		if _body_mi.mesh and _body_mi.mesh.get_surface_count() > 0:
 			_body_mi.mesh.surface_set_material(0, _boy_mat)
+	_hard_sink_eye_shells(false)
+
+
+func _set_eyes_closed(closed: bool) -> void:
+	# Kept for call sites; real work is albedo + sunk shells.
+	if closed:
+		_set_face_albedo("sleep")
+	elif expr != "" and expr != "sleep":
+		_set_face_albedo(expr)
+	else:
+		_set_face_albedo("idle")
 
 
 func b2g(v) -> Vector3:
@@ -642,7 +668,8 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	# Sitting uses Tripo sit; full lie freezes the AnimationTree and poses bones to a flat supine
 	var play_clip := "sit"
 	var seek_len := float(clips["sit"]["length"])
-	var full_lie := lie_k > 0.45 and kind in ["sun", "sleep", "seatlie"]
+	# Hammock climb starts earlier so sit→legs-in→lie reads (was stuck in sit until 0.45).
+	var full_lie := (lie_k > 0.18 and kind == "sleep") or (lie_k > 0.45 and kind in ["sun", "seatlie"])
 	if sit_k < 0.05 and lie_k <= 0.0:
 		play_clip = "idle"
 		seek_len = float(clips["idle"]["length"])
@@ -671,7 +698,14 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	model.position = model_base
 	if full_lie:
 		_seed_lie_from_sit()
-		_apply_lie_pose(kind, lie_k, tt)
+		if kind == "sleep" and lie_k < 0.88:
+			# Peak climb mid-way: sit-on-edge → swing legs in → settle lie.
+			var climb_w := sin(clampf(lie_k, 0.0, 1.0) * PI)
+			climb_w *= 1.0 - smoothstep(0.72, 0.92, lie_k)
+			apply_hammock_climb(climb_w)
+			_apply_lie_pose(kind, maxf(lie_k, 0.35), tt)
+		else:
+			_apply_lie_pose(kind, lie_k, tt)
 		# Seek clears pose overrides — keep thighs planted on the lounger cushion.
 		if lie_foot_plant and kind == "sun":
 			plant_feet_on_plane(lie_foot_plane_point, lie_foot_plane_normal, lie_foot_plant_gap, true)
@@ -883,6 +917,35 @@ func _nap_forearm_over_eyes(w: float, kind: String = "sleep") -> void:
 	skel.force_update_transform()
 
 
+## Sit: plant wrists on mid-thighs (between hip and knee) so hands rest, not brace behind.
+func _plant_hands_on_thighs(w: float) -> void:
+	if skel == null or w < 0.05:
+		return
+	skel.force_update_transform()
+	var face: Vector3 = -global_transform.basis.z.normalized()
+	if model != null and is_instance_valid(model):
+		face = model.global_transform.basis.z.normalized()
+	var pairs := [
+		["mixamorig_LeftHand", "mixamorig_LeftUpLeg", "mixamorig_LeftLeg"],
+		["mixamorig_RightHand", "mixamorig_RightUpLeg", "mixamorig_RightLeg"],
+	]
+	for p in pairs:
+		var hbi := skel.find_bone(p[0])
+		var ubi := skel.find_bone(p[1])
+		var kbi := skel.find_bone(p[2])
+		if hbi < 0 or ubi < 0 or kbi < 0:
+			continue
+		var hip: Vector3 = lie_bone_world(p[1])
+		var knee: Vector3 = lie_bone_world(p[2])
+		var thigh_mid: Vector3 = hip.lerp(knee, 0.45) + face * 0.04 + Vector3.UP * 0.02
+		var xf: Transform3D = skel.global_transform * skel.get_bone_global_pose(hbi)
+		var goal: Vector3 = xf.origin.lerp(thigh_mid, clampf(w, 0.0, 1.0))
+		var planted := Transform3D(xf.basis, goal)
+		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
+		skel.set_bone_global_pose_override(hbi, local_xf, w, true)
+	skel.force_update_transform()
+
+
 ## Place both hands on the belly (chest-sky side) so they never tunnel through the support.
 func _rest_hands_on_belly(w: float) -> void:
 	if skel == null or w < 0.05:
@@ -1007,21 +1070,25 @@ func _apply_ergonomic_sit(w: float) -> void:
 	if skel == null or w <= 0.001:
 		return
 	var k := smoothstep(0.0, 1.0, w)
-	# Park-bench L-sit: thighs on the board, shins down toward the ground in front
-	# (less knee tuck than the deep under-seat curl — that perched a foot on the seat).
-	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.15, 0.18, 0.12), k)
-	_pose_add("mixamorig_RightUpLeg", Vector3(-1.15, -0.18, -0.12), k)
-	_pose_add("mixamorig_LeftLeg", Vector3(0.95, 0.0, 0.0), k)
-	_pose_add("mixamorig_RightLeg", Vector3(0.95, 0.0, 0.0), k)
-	_pose_add("mixamorig_LeftFoot", Vector3(0.12, 0.0, 0.04), k * 0.7)
-	_pose_add("mixamorig_RightFoot", Vector3(0.12, 0.0, -0.04), k * 0.7)
-	_pose_add("mixamorig_Spine", Vector3(-0.08, 0.0, 0.0), k * 0.55)
-	_pose_add("mixamorig_Spine1", Vector3(-0.05, 0.0, 0.0), k * 0.45)
-	_pose_add("mixamorig_LeftArm", Vector3(0.30, 0.22, -0.22), k * 0.65)
-	_pose_add("mixamorig_RightArm", Vector3(0.30, -0.22, 0.22), k * 0.65)
-	_pose_add("mixamorig_LeftForeArm", Vector3(-0.50, 0.12, 0.0), k * 0.7)
-	_pose_add("mixamorig_RightForeArm", Vector3(-0.50, -0.12, 0.0), k * 0.7)
+	# Park-bench L-sit: thighs on the board, shins hang/swing naturally toward ground.
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.10, 0.16, 0.10), k)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-1.10, -0.16, -0.10), k)
+	_pose_add("mixamorig_LeftLeg", Vector3(0.85, 0.0, 0.0), k)
+	_pose_add("mixamorig_RightLeg", Vector3(0.85, 0.0, 0.0), k)
+	_pose_add("mixamorig_LeftFoot", Vector3(0.18, 0.0, 0.04), k * 0.65)
+	_pose_add("mixamorig_RightFoot", Vector3(0.18, 0.0, -0.04), k * 0.65)
+	_pose_add("mixamorig_Spine", Vector3(-0.06, 0.0, 0.0), k * 0.5)
+	_pose_add("mixamorig_Spine1", Vector3(-0.04, 0.0, 0.0), k * 0.4)
+	# Hands rest on thighs (absolute so they don't brace behind on the seat).
+	_pose_abs("mixamorig_LeftArm", Vector3(0.85, 0.55, -0.65), k)
+	_pose_abs("mixamorig_RightArm", Vector3(0.85, -0.55, 0.65), k)
+	_pose_abs("mixamorig_LeftForeArm", Vector3(-1.15, 0.25, 0.10), k)
+	_pose_abs("mixamorig_RightForeArm", Vector3(-1.15, -0.25, -0.10), k)
+	_pose_abs("mixamorig_LeftHand", Vector3(0.20, 0.05, 0.25), k * 0.85)
+	_pose_abs("mixamorig_RightHand", Vector3(0.20, -0.05, -0.25), k * 0.85)
 	skel.force_update_transform()
+	# Plant wrists onto mid-thighs so hands read as resting, not floating.
+	_plant_hands_on_thighs(clampf(k * 1.15, 0.0, 1.0))
 
 
 ## Bake the current skeleton pose into a static ArrayMesh so stills show deformation on
@@ -1618,175 +1685,265 @@ func hat_grip_gap() -> float:
 	return 0.0
 
 
-var _face_decal: Node3D
-var _face_mat: StandardMaterial3D
-var _face_tex := {}
+var _face_decal: Node3D = null  # removed — opaque plate rejected
+var _face_mat: StandardMaterial3D = null
+var _face_alb := {}  # kind -> Texture2D (full Tripo albedo with mouth/lid paints)
 
 
 func _build_face_expr() -> void:
-	# AC-style 2D face sticker on the Head bone (Tripo has no blendshapes).
-	# Texture swaps make idle / smile / cheer / sleep readable at arm's length.
-	if not parts.has("head") or parts["head"] == null:
-		return
-	var head: Node3D = parts["head"]
-	_eyelid_l = _make_eyelid("EyelidL")
-	_eyelid_r = _make_eyelid("EyelidR")
-	head.add_child(_eyelid_l)
-	head.add_child(_eyelid_r)
-	# Tripo/Mixamo Head bone (after model.y=PI): +X face-forward, +Y skull-up, +Z character-left.
-	_eyelid_l.position = Vector3(0.155, 0.055, 0.034)
-	_eyelid_r.position = Vector3(0.155, 0.055, -0.034)
-	_eyelid_l.scale = Vector3(1.15, 0.04, 1.05)
-	_eyelid_r.scale = Vector3(1.15, 0.04, 1.05)
-	_eyelid_l.visible = false
-	_eyelid_r.visible = false
-	# Keep a tiny procedural mouth as fallback under the decal.
-	_mouth = MeshInstance3D.new()
-	_mouth.name = "MouthExpr"
-	var mm := SphereMesh.new()
-	mm.radius = 0.014
-	mm.height = 0.008
-	mm.radial_segments = 8
-	mm.rings = 4
-	_mouth.mesh = mm
-	var mout := StandardMaterial3D.new()
-	mout.albedo_color = Color(0.78, 0.32, 0.34)
-	mout.roughness = 0.65
-	mout.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_mouth.material_override = mout
-	_mouth.position = Vector3(0.130, -0.005, 0.0)
-	_mouth.visible = false
-	head.add_child(_mouth)
-	# AC-style face plate: opaque QuadMesh locked to Head bone (no billboard).
-	# Covers Tripo's baked eyes/mouth; texture swap = idle/smile/cheer/sleep.
-	var plate := MeshInstance3D.new()
-	plate.name = "FaceExprDecal"
-	var q := QuadMesh.new()
-	# Large enough to cover Tripo eye shells + mouth once centered on the face.
-	q.size = Vector2(0.15, 0.19)
-	plate.mesh = q
-	_face_mat = StandardMaterial3D.new()
-	_face_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_face_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_face_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_face_mat.no_depth_test = true
-	_face_mat.render_priority = 20
-	_face_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
-	plate.material_override = _face_mat
-	# QuadMesh faces +Z by default; yaw −90° maps that normal onto Head +X (face-out).
-	# Tuned against v25_face_fit2: cover eyes+mouth; slight −Z recenters L/R.
-	plate.position = Vector3(0.095, 0.048, -0.018)
-	plate.rotation = Vector3(0.0, -PI / 2.0, 0.0)
-	plate.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	plate.layers = 1 | 2
-	head.add_child(plate)
-	_face_decal = plate
-	_face_tex = {
-		"neutral": _load_face_tex("res://art/boy/face_expr_idle.png"),
-		"idle": _load_face_tex("res://art/boy/face_expr_idle.png"),
-		"smile": _load_face_tex("res://art/boy/face_expr_smile.png"),
-		"cheer": _load_face_tex("res://art/boy/face_expr_cheer.png"),
-		"sleep": _load_face_tex("res://art/boy/face_expr_sleep.png"),
-	}
-	blink_timer = rng.randf_range(2.0, 5.0)
-	_apply_face_decal("smile")
+	# No opaque face plate, no MeshInstance lid discs (both read as paper masks on Tripo).
+	# Emotion = mouth albedo paints on original UVs. Closed lids need AC-style Tripo regen.
+	_face_decal = null
+	_mouth = null
+	_eyelid_l = null
+	_eyelid_r = null
+	blink_timer = 9999.0
+	blink_t = -1.0
 
 
 func _load_face_tex(path: String) -> Texture2D:
-	# Prefer imported resource; fall back to raw PNG so headless stills work
-	# before Godot has written a .import file.
+	# Always read pixels from disk so rebakes aren't stuck behind .import cache.
+	var abs_path := ProjectSettings.globalize_path(path)
+	if FileAccess.file_exists(abs_path):
+		var img := Image.load_from_file(abs_path)
+		if img != null and not img.is_empty():
+			return ImageTexture.create_from_image(img)
 	if ResourceLoader.exists(path):
-		var t: Texture2D = load(path) as Texture2D
-		if t != null:
-			return t
-	var img := Image.load_from_file(ProjectSettings.globalize_path(path))
-	if img == null or img.is_empty():
-		return null
-	return ImageTexture.create_from_image(img)
+		return load(path) as Texture2D
+	return null
 
 
-func _apply_face_decal(kind: String) -> void:
-	if _face_decal == null:
+func _load_face_albedos() -> void:
+	# Mouth/lid paints on ORIGINAL Tripo UVs. Sleep prefers the Blender projection bake
+	# (covers face-socket + shell islands); cheer/smile from v25 UV paints.
+	_face_alb = {
+		"idle": _load_face_tex("res://art/boy/tripo/face_alb_idle.png"),
+		"neutral": _load_face_tex("res://art/boy/tripo/face_alb_idle.png"),
+		"smile": _load_face_tex("res://art/boy/tripo/face_alb_smile.png"),
+		"cheer": _load_face_tex("res://art/boy/tripo/face_alb_cheer.png"),
+		# Prefer UV lid paints (boy_tripo_sleep_eyes had pale flat ovals = paper mask).
+		"sleep": _load_face_tex("res://art/boy/tripo/face_alb_sleep.png"),
+	}
+	if _face_alb["idle"] == null:
+		_face_alb["idle"] = _boy_albedo_tex_day
+		_face_alb["neutral"] = _boy_albedo_tex_day
+	if _face_alb["smile"] == null:
+		_face_alb["smile"] = _face_alb["idle"]
+	if _face_alb["cheer"] == null:
+		_face_alb["cheer"] = _face_alb["smile"]
+	if _face_alb["sleep"] == null:
+		_face_alb["sleep"] = _face_alb["idle"]
+
+
+## Cache eye-shell / brow verts from sleep_eye_boxes UV islands (first two face-forward picks).
+func _cache_eye_shell_verts() -> void:
+	_ensure_skin_cache()
+	_eye_shell_idxs = PackedInt32Array()
+	_eye_shell_orig = PackedVector3Array()
+	_brow_idxs = PackedInt32Array()
+	_brow_orig = PackedVector3Array()
+	if _body_mi == null or _body_arrays_orig.is_empty():
 		return
-	var key := kind
-	if key == "neutral":
-		key = "idle"
-	var tex: Texture2D = _face_tex.get(key, _face_tex.get("smile", null))
-	if _face_mat != null:
-		_face_mat.albedo_texture = tex
-		_face_mat.albedo_color = Color.WHITE
-	_face_decal.visible = tex != null
+	var uvs = _body_arrays_orig[Mesh.ARRAY_TEX_UV]
+	if uvs == null:
+		return
+	var boxes: Array = []
+	var f := FileAccess.open("res://art/boy/tripo/sleep_eye_boxes.txt", FileAccess.READ)
+	if f:
+		while not f.eof_reached():
+			var line := f.get_line().strip_edges()
+			if line.is_empty():
+				continue
+			var p := line.split(" ")
+			if p.size() < 4:
+				continue
+			boxes.append([float(p[0]), float(p[1]), float(p[2]), float(p[3])])
+	# Same L/R pair the albedo bake uses (boxes 0 and 1 in file — iris islands).
+	if boxes.size() < 2:
+		return
+	var pick: Array = [boxes[0], boxes[1]]
+	var verts: PackedVector3Array = _body_arrays_orig[Mesh.ARRAY_VERTEX]
+	# Only verts whose UVs sit in the eye boxes — do NOT mesh-flood (socket rims
+	# share verts with the whole head and would paint the face pale).
+	for i in verts.size():
+		if i >= uvs.size():
+			break
+		var uv: Vector2 = uvs[i]
+		var in_eye := false
+		var in_brow := false
+		for b in pick:
+			var u0: float = float(b[0]); var u1: float = float(b[1])
+			var v0: float = float(b[2]); var v1: float = float(b[3])
+			# Slight pad so sclera rim texels near the iris island get covered.
+			var pad_u := (u1 - u0) * 0.18
+			var pad_v := (v1 - v0) * 0.18
+			if uv.x >= u0 - pad_u and uv.x <= u1 + pad_u and uv.y >= v0 - pad_v and uv.y <= v1 + pad_v:
+				in_eye = true
+				if uv.y <= v0 + (v1 - v0) * 0.32:
+					in_brow = true
+				break
+		if in_eye:
+			_eye_shell_idxs.append(i)
+			_eye_shell_orig.append(verts[i])
+		if in_brow:
+			_brow_idxs.append(i)
+			_brow_orig.append(verts[i])
 
 
-func _make_eyelid(nm: String) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	mi.name = nm
-	# Flattened disc: covers Tripo's bulbous eye shells without reading as a beige ball.
-	var sm := SphereMesh.new()
-	sm.radius = 0.055
-	sm.height = 0.028
-	sm.radial_segments = 16
-	sm.rings = 8
-	mi.mesh = sm
-	var mat := StandardMaterial3D.new()
-	# Match Tripo peach skin (albedo_color multiply is applied on the body mat).
-	mat.albedo_color = Color(0.96, 0.82, 0.70)
-	mat.roughness = 1.0
-	mat.metallic = 0.0
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.no_depth_test = true  # draw over protruding eye shells
-	mat.render_priority = 12
-	mi.material_override = mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.layers = 1 | 2
-	return mi
+## Flatten each eye shell onto a head-local plane so lids cover the socket holes
+## without reading as bulbous painted spheres (or red voids if collapsed to a point).
+func _hard_sink_eye_shells(closed: bool) -> void:
+	if _eye_shell_idxs.is_empty():
+		_cache_eye_shell_verts()
+	if _eye_shell_idxs.is_empty() or _body_mi == null:
+		return
+	if closed == _eye_shells_sunk:
+		return
+	var verts: PackedVector3Array = _skin_verts
+	if verts.is_empty():
+		verts = (_body_arrays_orig[Mesh.ARRAY_VERTEX] as PackedVector3Array).duplicate()
+	for j in _eye_shell_idxs.size():
+		verts[_eye_shell_idxs[j]] = _eye_shell_orig[j]
+	if closed:
+		var head_i := skel.find_bone(B_HEAD) if skel else -1
+		var head_rest := Transform3D.IDENTITY
+		if head_i >= 0:
+			head_rest = skel.get_bone_global_rest(head_i)
+		var head_inv := head_rest.affine_inverse()
+		var groups: Array = [[], []]  # L/R index lists into _eye_shell_idxs
+		for j in _eye_shell_idxs.size():
+			var local: Vector3 = head_inv * _eye_shell_orig[j]
+			var g := 0 if local.x >= 0.0 else 1
+			groups[g].append(j)
+		if groups[0].is_empty() or groups[1].is_empty():
+			groups = [[], []]
+			var half := _eye_shell_idxs.size() / 2
+			for j in _eye_shell_idxs.size():
+				groups[0 if j < half else 1].append(j)
+		for g in groups:
+			if g.is_empty():
+				continue
+			var cen := Vector3.ZERO
+			var front_z := 1e9
+			for j in g:
+				cen += _eye_shell_orig[j]
+				var lz: float = (head_inv * _eye_shell_orig[j]).z
+				front_z = minf(front_z, lz)
+			cen /= float(g.size())
+			var cen_l: Vector3 = head_inv * cen
+			# Mixamo head: −Z face-forward. Squash the bulb onto its front face so the
+			# lid stays outside the skull (no red interior) but stops reading as a sphere.
+			var plane_z: float = front_z + 0.004
+			for j in g:
+				var loc: Vector3 = head_inv * _eye_shell_orig[j]
+				if loc.z > plane_z:
+					loc.z = lerpf(loc.z, plane_z, 0.92)
+				loc.x = lerpf(loc.x, cen_l.x, 0.12)
+				loc.y = lerpf(loc.y, cen_l.y, 0.12)
+				verts[_eye_shell_idxs[j]] = head_rest * loc
+		_eye_shells_sunk = true
+	else:
+		_eye_shells_sunk = false
+	_skin_verts = verts
+	_write_skin_verts_to_mesh(verts)
+
+
+func _set_eye_shells_closed(closed: bool) -> void:
+	_hard_sink_eye_shells(closed)
+
+
+func _apply_brow_offsets(kind: String) -> void:
+	if _brow_idxs.is_empty():
+		_cache_eye_shell_verts()
+	if _brow_idxs.is_empty() or skel == null:
+		return
+	var head_i := skel.find_bone(B_HEAD)
+	if head_i < 0:
+		return
+	var head_rest := skel.get_bone_global_rest(head_i)
+	var head_inv := head_rest.affine_inverse()
+	var dy := 0.0
+	if kind == "cheer":
+		dy = 0.006  # raise
+	elif kind == "sleep":
+		dy = -0.004  # soften
+	var verts: PackedVector3Array = _skin_verts
+	if verts.is_empty():
+		return
+	for j in _brow_idxs.size():
+		var vi: int = _brow_idxs[j]
+		var base: Vector3 = _brow_orig[j]
+		# If eye shells are sunk, brow verts may also be in eye set — use sunk position as base.
+		if _eye_shells_sunk:
+			base = verts[vi]
+		else:
+			verts[vi] = _brow_orig[j]
+			base = _brow_orig[j]
+		if absf(dy) < 1e-6:
+			continue
+		var loc: Vector3 = head_inv * base
+		loc.y += dy
+		verts[vi] = head_rest * loc
+	_skin_verts = verts
+	_write_skin_verts_to_mesh(verts)
+
+
+func _write_skin_verts_to_mesh(verts: PackedVector3Array) -> void:
+	if _body_mi == null or _pose_baked:
+		# bake_pose_mesh reads _skin_verts — nothing else to do while posed-static.
+		return
+	# Rebuild bind mesh from the immutable array cache so bones/weights stay intact.
+	if _body_arrays_orig.is_empty():
+		return
+	var arrays: Array = _body_arrays_orig.duplicate(true)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	var fmt: int = 0
+	if _body_mesh_orig is ArrayMesh:
+		fmt = (_body_mesh_orig as ArrayMesh).surface_get_format(0)
+	var mat: Material = null
+	if _body_mesh_orig is ArrayMesh:
+		mat = (_body_mesh_orig as ArrayMesh).surface_get_material(0)
+	var rebuilt := ArrayMesh.new()
+	rebuilt.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, fmt)
+	if mat:
+		rebuilt.surface_set_material(0, mat)
+	_body_mi.mesh = rebuilt
+	# Do NOT overwrite _body_mesh_orig — restore_pose_mesh needs the pristine bind mesh.
+
+
+func _apply_lid_discs(kind: String) -> void:
+	if _eyelid_l == null or _eyelid_r == null:
+		return
+	var closed := kind == "sleep" or kind == "cheer"
+	_eyelid_l.visible = closed
+	_eyelid_r.visible = closed
+	if closed:
+		# Flatten on −Z (face). Cheer = slightly thinner squint; sleep = fuller cover.
+		var sz := 0.22 if kind == "cheer" else 0.32
+		var sy := 0.85 if kind == "cheer" else 1.05
+		_eyelid_l.scale = Vector3(1.25, sy, sz)
+		_eyelid_r.scale = Vector3(1.25, sy, sz)
 
 
 ## expr: "smile" | "sleep" | "cheer" | "neutral" | "idle"
-## Face sticker texture swap (AC-style). Soft disc blink on top when awake.
+## Mouth albedo paints on Tripo UVs; cheer/sleep add lit lid discs over eye bulbs.
 func set_face_expr(kind: String) -> void:
 	expr = kind
-	_set_eyes_closed(false)
-	if kind == "sleep":
-		blink_t = -1.0
-		blink_timer = 9999.0
-	elif blink_timer > 8.0:
-		blink_timer = rng.randf_range(2.2, 4.5)
-	_apply_face_decal(kind)
-	# Sleep uses eyelid discs, never the upright AC plate (edge-on = fabric ribbon).
-	if kind == "sleep" and _face_decal:
-		_face_decal.visible = false
+	blink_t = -1.0
+	blink_timer = 9999.0
+	_set_face_albedo(kind)
 
 
-func _update_face(delta: float = 0.0) -> void:
-	if _eyelid_l == null or _eyelid_r == null:
-		return
-	_set_eyes_closed(false)
+func _update_face(_delta: float = 0.0) -> void:
 	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) or expr == "sleep"
 	var want := expr
 	if react_kind == "cheer":
 		want = "cheer"
 	elif sleeping:
 		want = "sleep"
-	_apply_face_decal(want)
+	_set_face_albedo(want)
 	blink_t = -1.0
 	blink_timer = 9999.0
-	if sleeping:
-		# Supine: AC plate reads as a vertical ribbon through the face; soft lids do too
-		# when Head +X points skyward. Hide both — nap forearm covers the eyes instead.
-		if _face_decal:
-			_face_decal.visible = false
-			_face_decal.scale = Vector3.ZERO
-		_eyelid_l.visible = false
-		_eyelid_r.visible = false
-	else:
-		if _face_decal:
-			_face_decal.scale = Vector3.ONE
-		_eyelid_l.visible = false
-		_eyelid_r.visible = false
-	if _mouth:
-		_mouth.visible = false
 
 
 func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:

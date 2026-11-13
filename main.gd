@@ -1380,9 +1380,11 @@ func _setup_hammock_rest() -> void:
 	head_dir = head_dir.lerp(diag, 0.5).normalized()
 	var into: Vector3 = (-Vector3.UP).lerp(-(hip_f["normal"] as Vector3).normalized(), 0.2).normalized()
 	rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Centre of the cradle — stand-off above fabric (skin shell ~0.12 + clearance).
+	# Nest into the cradle: low enough that raised side rails read above the torso,
+	# high enough that the butt doesn't punch through the bed.
 	var hip_pos: Vector3 = hip_f["pos"] as Vector3
-	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.22
+	# Slight lift above contact so fabric rails read above the torso sides.
+	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.10
 	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground.
 	# Basis(UP, atan2(x,z)) aims local −Z at (x,z); use −side so −Z == +side (outward).
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
