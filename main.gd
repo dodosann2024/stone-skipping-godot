@@ -138,6 +138,13 @@ var seat_lying := false   # lying back along the bench / log
 var lie_btn: Button
 var swing_amp := 0.0
 var zzz: Label3D
+## Authored Blender sit/hammock clips (alignment.json) — no procedural pose.
+var rest_align: Dictionary = {}
+var rest_prop_xf := Transform3D.IDENTITY
+var rest_clip_prop := ""  # "bench" | "log" | "hammock"
+var rest_clip_phase := ""  # "enter" | "idle" | "exit"
+var rest_use_clips := false
+var rest_exit_xf := Transform3D.IDENTITY
 
 # nodes
 var fly_t := 0.0
@@ -1278,6 +1285,22 @@ func _on_footstep(_side: int, running: bool) -> void:
 
 # ------------------------------------------------------------------ rest: hammock nap / sunbathing
 
+func _ensure_rest_align() -> void:
+	if not rest_align.is_empty():
+		return
+	var path := "res://props/alignment.json"
+	var abs_path := ProjectSettings.globalize_path(path)
+	if not FileAccess.file_exists(abs_path):
+		return
+	var f := FileAccess.open(abs_path, FileAccess.READ)
+	if f == null:
+		return
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if typeof(parsed) == TYPE_DICTIONARY:
+		rest_align = parsed
+
+
 func _begin_rest(kind: String) -> void:
 	mode = Mode.REST
 	rest_kind = kind
@@ -1285,9 +1308,38 @@ func _begin_rest(kind: String) -> void:
 	rest_t = 0.0
 	rest_cam_yaw = INF
 	move_vel = Vector3.ZERO
+	rest_use_clips = false
+	rest_clip_phase = ""
+	rest_clip_prop = ""
 	set_meta("lie_snapped", false)
 	set_meta("lie_mesh_nudged", false)
 	set_meta("fix_rest_locked", false)
+	_ensure_rest_align()
+	# Prefer authored Blender clips for bench / log / hammock.
+	if kind == "sleep" and boy.ap and boy.ap.has_animation("hammock_enter"):
+		rest_use_clips = true
+		rest_clip_prop = "hammock"
+		_setup_hammock_clip_rest()
+	elif kind == "seat" and seat_i >= 0 and seat_i < island.seats.size():
+		var st0: Dictionary = island.seats[seat_i]
+		var nm := String(st0.get("name", ""))
+		if nm == "长椅" and boy.ap and boy.ap.has_animation("bench_sit_enter"):
+			rest_use_clips = true
+			rest_clip_prop = "bench"
+			_setup_seat_clip_rest(st0)
+		elif nm == "坐木" and boy.ap and boy.ap.has_animation("log_sit_enter"):
+			rest_use_clips = true
+			rest_clip_prop = "log"
+			_setup_seat_clip_rest(st0)
+	if rest_use_clips:
+		boy.end_activity()
+		boy.set_hat_mode("head")
+		if kind == "sleep":
+			island.set_hammock_clip_frame("empty", 0)
+		boy.rotation = Vector3(0, face_yaw, 0)
+		_update_ui()
+		return
+	# Legacy procedural path (lounger / missing clips).
 	if kind == "sleep":
 		_setup_hammock_rest()
 	elif kind == "seat":
@@ -1295,35 +1347,18 @@ func _begin_rest(kind: String) -> void:
 		var face: Vector3 = seat_face.normalized()
 		seat_lying = false
 		rest_side = face.cross(Vector3.UP).normalized()
-		# Face OUT (seaward / fire). Back toward backrest (−face). Sit pose uses
-		# absolute idle-seed eulers (not Mixamo sit clip — that twists chest ~180°).
 		rest_sit_b = Basis(Vector3.UP, atan2(-face.x, -face.z))
-		# Approach from the front, turn back to the backrest, then sit.
 		rest_approach = seat_ap
 		var pl0 := boy.activity("seat", 1.0, 0.0, 0.0)
 		var top: Vector3 = st["top"]
-		# Seed from live sit-hip height; mesh snap raises the butt onto the seat top.
 		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
-		# Bench top is authored ~0.12 m in front of the backrest; keep pelvis there so
-		# thighs stay on the board and shins hang clear of the front edge (no cross/clip).
-		if st["name"] == "长椅":
-			pass
-		# Log: sit centered on the cylinder so shins hang clear of the bark.
-		elif st["name"] == "坐木":
-			pass
-		# lying back: head towards his right, pelvis a little towards the foot end, back on the seat
 		rest_lie = top + Vector3(0, LIE_BACK, 0) - rest_side * 0.1
-		if st["name"] == "长椅":
-			rest_lie += face * 0.08
 		rest_lie_b = _lie_basis(rest_side)
 	else:
-		# 晒太阳 on the deck-chair lounger (tilted backrest + flat seat), not the flat towel
 		_setup_lounger_rest()
 	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
 	var pl := boy.activity(kind, 1.0, 0.0, 0.0)
 	rest_root_sit = rest_seat - rest_sit_b * pl
-	# Do NOT hard-pin root.y to SEAT_TOP — Tripo butt flesh hangs below the hip bone.
-	# Snap after the sit pose so ischia rest ON the seat (see _snap_sit_contact).
 	if kind == "seat" or kind == "sleep":
 		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 		for _s in 12:
@@ -1336,6 +1371,47 @@ func _begin_rest(kind: String) -> void:
 		island.set_hammock_load([] as Array[Vector3])
 	boy.rotation = Vector3(0, face_yaw, 0)
 	_update_ui()
+
+
+func _setup_seat_clip_rest(st: Dictionary) -> void:
+	seat_lying = false
+	var face: Vector3 = seat_face.normalized()
+	rest_side = face.cross(Vector3.UP).normalized()
+	rest_prop_xf = st.get("prop_xf", Transform3D.IDENTITY)
+	if rest_prop_xf == Transform3D.IDENTITY:
+		rest_prop_xf = Transform3D(Basis(Vector3.UP, atan2(-face.x, -face.z) + PI),
+			Vector3(st["top"].x, _surface(st["top"].x, st["top"].z), st["top"].z))
+	rest_approach = st["approach"]
+	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
+	rest_seat = st["top"]
+	rest_sit_b = rest_prop_xf.basis
+	# Clip enter starts at root_pos (0,0,-0.5) yaw 0 in prop frame.
+	var clip_key := "bench_sit_enter" if rest_clip_prop == "bench" else "log_sit_enter"
+	var cinfo: Dictionary = rest_align.get("clips", {}).get(clip_key, {})
+	var rp: Array = cinfo.get("root_pos_prop", [0, 0, -0.5])
+	var local := Vector3(float(rp[0]), float(rp[1]), float(rp[2]))
+	rest_root_sit = rest_prop_xf * local
+	rest_root_sit.y = _surface(rest_root_sit.x, rest_root_sit.z) + float(rp[1])
+
+
+func _setup_hammock_clip_rest() -> void:
+	rest_prop_xf = island.hammock_node.global_transform if island.hammock_node else Transform3D.IDENTITY
+	hammock_prop_side()
+	var cinfo: Dictionary = rest_align.get("clips", {}).get("hammock_enter", {})
+	var rp: Array = cinfo.get("root_pos_prop", [0, -0.96, 0.63])
+	var local := Vector3(float(rp[0]), float(rp[1]), float(rp[2]))
+	rest_root_sit = rest_prop_xf * local
+	# Approach = start of enter (inland side).
+	rest_approach = rest_root_sit
+	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
+	rest_seat = rest_prop_xf * Vector3(0, 0, 0)
+	rest_sit_b = rest_prop_xf.basis
+	rest_side = (rest_prop_xf.basis * Vector3(0, 0, 1)).normalized()
+
+
+func hammock_prop_side() -> void:
+	if island.hammock_node:
+		rest_side = island.hammock_node.global_transform.basis.z.normalized()
 
 const LIE_BACK := 0.085   # pelvis centre above the seat when lying on the back
 const SEAT_LIE_DUR := 1.6
@@ -2061,16 +2137,207 @@ func lie_mesh_penetration_depth(include_hat := true) -> float:
 
 func _wake() -> void:
 	if mode == Mode.REST and rest_phase == 4:
-		rest_phase = 6 if rest_kind == "seat" and not seat_lying else 5
-		rest_t = 0.0
-		# Keep hammock sag under the body until he has sat up (cleared in phase 6 / explore).
+		if rest_use_clips:
+			rest_phase = 6
+			rest_t = 0.0
+			rest_clip_phase = "exit"
+			_play_rest_exit_clip()
+		else:
+			rest_phase = 6 if rest_kind == "seat" and not seat_lying else 5
+			rest_t = 0.0
 		_update_ui()
+
+
+func _clip_name(phase: String) -> String:
+	match rest_clip_prop:
+		"bench":
+			return "bench_sit_%s" % phase
+		"log":
+			return "log_sit_%s" % phase
+		"hammock":
+			if phase == "idle":
+				return "hammock_sleep"
+			return "hammock_%s" % phase
+	return ""
+
+
+func _apply_boy_prop_root(clip_key: String) -> void:
+	var cinfo: Dictionary = rest_align.get("clips", {}).get(clip_key, {})
+	var rp: Array = cinfo.get("root_pos_prop", [0, 0, -0.5])
+	var yaw_deg := float(cinfo.get("root_yaw_deg", 0.0))
+	var local := Vector3(float(rp[0]), float(rp[1]), float(rp[2]))
+	var pos := rest_prop_xf * local
+	# Keep authored y for hammock (terrain baked into root_pos); seats use ground + local y.
+	if rest_clip_prop != "hammock":
+		pos.y = _surface(pos.x, pos.z) + float(rp[1])
+	# alignment.json yaw 0 => faces +Z; boy.gd model.rotation.y = PI flips Mixamo +Z to game −Z,
+	# so add PI when placing the boy node to match authored facing.
+	var yaw := rest_prop_xf.basis.get_euler().y + deg_to_rad(yaw_deg) + PI
+	boy.global_transform = Transform3D(Basis(Vector3.UP, yaw), pos)
+	player.global_position = Vector3(pos.x, _surface(pos.x, pos.z), pos.z)
+	face_yaw = yaw
+	player.rotation.y = yaw
+
+
+func _play_rest_enter_clip() -> void:
+	var clip := _clip_name("enter")
+	rest_clip_phase = "enter"
+	_apply_boy_prop_root(clip)
+	boy.play_prop_clip(clip, false, 0.15)
+	if rest_clip_prop == "hammock":
+		island.set_hammock_clip_frame("hammock_enter", 0)
+		boy.set_face_expr("idle")
+
+
+func _play_rest_idle_clip() -> void:
+	var clip := _clip_name("idle")
+	rest_clip_phase = "idle"
+	_apply_boy_prop_root(_clip_name("enter"))  # same root as enter
+	boy.play_prop_clip(clip, true, 0.12)
+	if rest_clip_prop == "hammock":
+		island.set_hammock_clip_frame("hammock_sleep", 0)
+		boy.set_face_expr("sleep")
+	else:
+		boy.set_face_expr("smile")
+
+
+func _play_rest_exit_clip() -> void:
+	var clip := _clip_name("exit")
+	rest_clip_phase = "exit"
+	_apply_boy_prop_root(_clip_name("enter"))
+	boy.play_prop_clip(clip, false, 0.12)
+	if rest_clip_prop == "hammock":
+		island.set_hammock_clip_frame("hammock_exit", 0)
+		boy.set_face_expr("idle")
+
+
+func _finish_rest_exit() -> void:
+	var clip := _clip_name("exit")
+	var cinfo: Dictionary = rest_align.get("clips", {}).get(clip, {})
+	var after: Dictionary = cinfo.get("after_exit", {})
+	if after.has("new_root_pos_prop"):
+		var np: Array = after["new_root_pos_prop"]
+		var local := Vector3(float(np[0]), float(np[1]), float(np[2]))
+		var pos := rest_prop_xf * local
+		if rest_clip_prop != "hammock":
+			pos.y = _surface(pos.x, pos.z) + float(np[1])
+		else:
+			# Hammock after_exit y is authored in prop frame (terrain).
+			pass
+		var yaw := rest_prop_xf.basis.get_euler().y + deg_to_rad(float(after.get("new_yaw_deg", 180.0))) + PI
+		boy.global_transform = Transform3D(Basis(Vector3.UP, yaw), pos)
+		player.global_position = Vector3(pos.x, _surface(pos.x, pos.z), pos.z)
+		face_yaw = yaw
+		player.rotation.y = yaw
+		rest_approach = player.global_position
+	else:
+		# Fallback: end_root_shift in prop XZ (shift is [x,z]).
+		var sh: Array = cinfo.get("end_root_shift_prop", [0, 0])
+		var yaw_d := deg_to_rad(float(cinfo.get("end_yaw_delta_deg", 180.0)))
+		var enter_key := _clip_name("enter")
+		var einfo: Dictionary = rest_align.get("clips", {}).get(enter_key, {})
+		var rp0: Array = einfo.get("root_pos_prop", [0, 0, -0.5])
+		var local0 := Vector3(float(rp0[0]), float(rp0[1]), float(rp0[2]))
+		var base := rest_prop_xf * local0
+		var shift := rest_prop_xf.basis * Vector3(float(sh[0]), 0.0, float(sh[1]))
+		var pos2 := base + shift
+		pos2.y = _surface(pos2.x, pos2.z)
+		var yaw0 := rest_prop_xf.basis.get_euler().y + deg_to_rad(float(einfo.get("root_yaw_deg", 0.0))) + PI
+		var yaw2 := yaw0 + yaw_d
+		boy.global_transform = Transform3D(Basis(Vector3.UP, yaw2), pos2)
+		player.global_position = pos2
+		face_yaw = yaw2
+		player.rotation.y = yaw2
+	boy.end_prop_clip(0.2)
+	if rest_clip_prop == "hammock":
+		island.set_hammock_clip_frame("empty", 0)
+	island.set_hammock_load([] as Array[Vector3])
+	move_vel = Vector3.ZERO
+	ground_y = _surface(player.position.x, player.position.z)
+	mode = Mode.EXPLORE
+	ex_yaw = face_yaw
+	rest_use_clips = false
+	rest_clip_phase = ""
+	_update_action_kind()
+	_update_ui()
+
+
+func _sync_hammock_cloth_to_boy() -> void:
+	if rest_clip_prop != "hammock":
+		return
+	var clip := boy.prop_clip
+	if clip == "":
+		return
+	island.set_hammock_clip_frame(clip, boy.prop_clip_frame(24.0))
+
+
+func _rest_tick_clips(delta: float) -> void:
+	rest_t += delta
+	match rest_phase:
+		0:
+			# Walk to the prop marker (approach).
+			var d := rest_approach - player.position
+			d.y = 0.0
+			if d.length() < 0.08 or rest_t > 8.0:
+				player.position = Vector3(rest_approach.x, player.position.y, rest_approach.z)
+				move_vel = Vector3.ZERO
+				boy.set_move(0.0)
+				boy.set_idle()
+				rest_phase = 1
+				rest_t = 0.0
+				_play_rest_enter_clip()
+			else:
+				var spd := minf(1.0, d.length() * 3.0 + 0.3)
+				move_vel = move_vel.move_toward(d.normalized() * spd, 8.0 * delta)
+				face_yaw = lerp_angle(face_yaw, atan2(-d.x, -d.z), 1.0 - exp(-delta * 10.0))
+				var to := _try_move(player.position, move_vel * delta)
+				if to.distance_to(player.position) < move_vel.length() * delta * 0.2 and rest_t > 0.5:
+					# Stuck — snap ahead.
+					player.position = Vector3(rest_approach.x, player.position.y, rest_approach.z)
+				else:
+					player.position = to
+				player.position.y = _surface(player.position.x, player.position.z)
+				player.rotation.y = face_yaw
+				boy.global_position = player.global_position
+				boy.rotation.y = face_yaw
+				boy.set_move(move_vel.length())
+		1, 2, 3:
+			# Enter clip playing (root fixed; hips carry root-motion).
+			_sync_hammock_cloth_to_boy()
+			if boy.prop_clip_finished() or rest_t > boy.prop_clip_length() + 0.3:
+				rest_phase = 4
+				rest_t = 0.0
+				_play_rest_idle_clip()
+			zzz.visible = false
+		4:
+			# Idle / sleep loop.
+			_sync_hammock_cloth_to_boy()
+			zzz.visible = rest_kind == "sleep"
+			if zzz.visible:
+				var head: Vector3 = (boy.parts["head"] as Node3D).global_position
+				var cyc := fmod(rest_t * 0.5, 1.0)
+				zzz.text = ["z", "z Z", "z Z z", "z Z z"][int(cyc * 4.0) % 4]
+				zzz.global_position = head + Vector3(0, 0.38 + cyc * 0.12, 0) + rest_side * 0.1
+				zzz.modulate.a = 1.0 - smoothstep(0.75, 1.0, cyc)
+		5, 6:
+			# Exit clip.
+			zzz.visible = false
+			_sync_hammock_cloth_to_boy()
+			if boy.prop_clip_finished() or rest_t > boy.prop_clip_length() + 0.35:
+				_finish_rest_exit()
+		_:
+			pass
+	_update_ui()
+
 
 func _rest_tick(delta: float) -> void:
 	if rest_frozen:
 		# Shot / selftest hold: keep hammock sag + Zzz, do not advance phases.
 		if rest_kind == "sleep" and rest_phase in [2, 3, 4, 5, 6]:
-			_update_hammock_load()
+			if rest_use_clips:
+				_sync_hammock_cloth_to_boy()
+			else:
+				_update_hammock_load()
 			if rest_phase == 4:
 				zzz.visible = true
 				var head_z: Vector3 = (boy.parts["head"] as Node3D).global_position
@@ -2078,6 +2345,9 @@ func _rest_tick(delta: float) -> void:
 				zzz.modulate.a = 0.85
 			else:
 				zzz.visible = false
+		return
+	if rest_use_clips:
+		_rest_tick_clips(delta)
 		return
 	rest_t += delta
 	var sleep := rest_kind == "sleep"

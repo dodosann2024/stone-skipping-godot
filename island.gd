@@ -26,6 +26,18 @@ var hammock_occ_sag := 0.42
 var hammock_half_w := 0.58
 var hammock_occupied := false
 var hammock_body_pts: Array[Vector3] = []  # world points that weigh the fabric
+## Authored hammock_v25 cloth driven by per-frame npz (preferred over morph lerp).
+var hammock_use_v25 := false
+var hammock_cloth_mi: MeshInstance3D
+var hammock_cloth_meta: Dictionary = {}
+var hammock_cloth_bytes: PackedByteArray = PackedByteArray()
+var hammock_cloth_fmt: int = 0
+var hammock_cloth_mat: Material
+var hammock_clip := ""
+var hammock_cloth_bind: PackedVector3Array = PackedVector3Array()
+## Godot import may reorder verts; remap[i] = authoring/npz index for mesh vertex i.
+var hammock_cloth_remap: PackedInt32Array = PackedInt32Array()
+var hammock_prop_xf := Transform3D.IDENTITY
 var _ham_rest_y: PackedFloat32Array = PackedFloat32Array()  # centreline rest Y offset per t
 var _ham_cur_y: PackedFloat32Array = PackedFloat32Array()
 var towel_pos := Vector3.ZERO
@@ -61,7 +73,7 @@ var torch_mat: ShaderMaterial
 var sign_board: MeshInstance3D
 ## places to sit: {name, top (seat surface under the pelvis), face (where the sitter looks), approach, hint}
 var seats: Array[Dictionary] = []
-const SEAT_TOP := 0.35   # seat height the boy's sitting clips are authored for
+const SEAT_TOP := 0.22   # authored v25 sit clips (thighs reach ground; was 0.35)
 var obstacles: Array = []   # [Vector2 centre, radius, top_y, name]
 var dock_boat: MeshInstance3D
 var boat_mat: ShaderMaterial
@@ -759,14 +771,23 @@ func _build_dock() -> void:
 	wall_c(Vector2(sp.x, sp.z), 0.08, sp.y - 0.3, sp.y + 1.8, "路牌")
 
 ## two_sided: a log can be sat on from either side (facing away from the fire too); can_lie: long enough to
-## lie back along it
-func _add_seat(name: String, top: Vector3, face: Vector3, front: float, hint: String, two_sided := false, can_lie := false) -> void:
-	var ap := top + face * front
-	ap.y = ground_h(ap.x, ap.z)
+## lie back along it. prop_xf = authored clip prop frame (origin at seat centre on ground).
+func _add_seat(name: String, top: Vector3, face: Vector3, front: float, hint: String, two_sided := false, can_lie := false, prop_xf := Transform3D.IDENTITY, approach_override := Vector3.INF) -> void:
+	var ap: Vector3
+	if approach_override != Vector3.INF:
+		ap = approach_override
+	else:
+		ap = top + face * front
+		ap.y = ground_h(ap.x, ap.z)
 	var back := top - face * front
 	back.y = ground_h(back.x, back.z)
+	var pxf := prop_xf
+	if pxf == Transform3D.IDENTITY:
+		# Derive a prop frame: origin under seat centre, −Z = face (boy yaw 0 faces +Z = −face).
+		var yaw := atan2(-face.x, -face.z) + PI
+		pxf = Transform3D(Basis(Vector3.UP, yaw), Vector3(top.x, ground_h(top.x, top.z), top.z))
 	seats.append({"name": name, "top": top, "face": face, "approach": ap, "back_approach": back, "front": front,
-		"hint": hint, "two_sided": two_sided, "can_lie": can_lie})
+		"hint": hint, "two_sided": two_sided, "can_lie": can_lie, "prop_xf": pxf, "clip_prop": name})
 
 ## the weathered sign board: a slab with a chipped corner and a ragged broken end, doodle texture on both faces
 func _sign_board(c: Vector3, yaw: float) -> void:
@@ -1248,26 +1269,27 @@ func _build_lighthouse() -> void:
 	box(SB, Vector3(0.55, 1.0, 0.06), p + Vector3(0.0, 0.95, 0.96), Vector3.ZERO, Color(0.35, 0.5, 0.62))
 	add_obstacle(Vector2(p.x, p.z), 1.3, p.y + h + 1.7, "灯塔", -99.0, false)
 	wall_c(Vector2(p.x, p.z), 1.38, p.y - 1.0, p.y + h + 1.7, "灯塔")
-	# bench looking out to sea.
-	# Local layout: seat board spans Z ±0.40; backrest on the REAR edge (+Z);
-	# face = −Z (seaward). Sitter approaches from −Z, turns back to +Z backrest,
-	# sits on the front half of the board with feet toward the sea.
+	# Bench looking out to sea — geometry matches props/bench_v25.glb / alignment.json:
+	# seat top 0.22, depth 0.26 centred on z=0, width 1.40, backrest on +Z.
 	var bp = p + Vector3(-2.2, 0, -2.0)
 	bp.y = ground_h(bp.x, bp.z)
 	var bxf = Transform3D(Basis(Vector3.UP, 0.7), bp)
-	var seat_y := SEAT_TOP - 0.035
-	# Board half-height 0.035 → visual top at seat_y+0.035 = SEAT_TOP (local).
-	boxb(SB, Vector3(1.4, 0.07, 0.40), bxf * Transform3D(Basis.IDENTITY, Vector3(0, seat_y, 0)), _wood())
-	# Backrest clearly at the REAR lip (+Z); darker so sit contact is readable in stills.
-	boxb(SB, Vector3(1.35, 0.20, 0.04), bxf * Transform3D(Basis(Vector3.RIGHT, -0.10), Vector3(0, seat_y + 0.26, 0.40)), Color(0.55, 0.38, 0.24))
-	for bx in [-0.6, 0.6]:
-		boxb(SB, Vector3(0.07, seat_y, 0.32), bxf * Transform3D(Basis.IDENTITY, Vector3(bx, seat_y * 0.5, -0.04)), Color(0.42, 0.29, 0.18))
-	var bc: Vector3 = bxf * Vector3(0, 0, -0.05)
-	wall_b(Vector2(bc.x, bc.z), Vector2(0.72, 0.24), 0.7, bp.y - 0.3, bp.y + 0.75, "长椅")
+	_spawn_prop_glb("res://props/bench_v25.glb", bxf)
+	# Fallback procedural match if GLB missing (same dims).
+	if not ResourceLoader.exists("res://props/bench_v25.glb"):
+		var seat_y := SEAT_TOP - 0.025
+		boxb(SB, Vector3(1.40, 0.05, 0.26), bxf * Transform3D(Basis.IDENTITY, Vector3(0, seat_y, 0)), _wood())
+		boxb(SB, Vector3(1.35, 0.18, 0.035), bxf * Transform3D(Basis(Vector3.RIGHT, deg_to_rad(-6.0)), Vector3(0, SEAT_TOP + 0.10, 0.13)), Color(0.55, 0.38, 0.24))
+		for bx in [-0.6, 0.6]:
+			boxb(SB, Vector3(0.07, SEAT_TOP, 0.22), bxf * Transform3D(Basis.IDENTITY, Vector3(bx, SEAT_TOP * 0.5, 0.0)), Color(0.42, 0.29, 0.18))
+	var bc: Vector3 = bxf * Vector3(0, 0, 0)
+	wall_b(Vector2(bc.x, bc.z), Vector2(0.72, 0.20), 0.7, bp.y - 0.3, bp.y + 0.75, "长椅")
 	var bface: Vector3 = (bxf.basis * Vector3(0, 0, -1)).normalized()
-	# Sit target ~0.12 m in front of the backrest (+Z lip at 0.40) so pelvis is centered.
-	var bench_top: Vector3 = bxf * Vector3(0, seat_y + 0.035, 0.28)
-	_add_seat("长椅", bench_top, bface, 0.7, "灯塔边的长椅：点「坐下」看看海，坐下后还能躺下", false, true)
+	# Prop origin = seat centre on ground; seat top at local y=0.22; boy sits facing −Z.
+	var bench_top: Vector3 = bxf * Vector3(0, SEAT_TOP, 0)
+	var bench_ap: Vector3 = bxf * Vector3(0, 0, -0.50)
+	bench_ap.y = ground_h(bench_ap.x, bench_ap.z)
+	_add_seat("长椅", bench_top, bface, 0.7, "灯塔边的长椅：点「坐下」看看海", false, false, bxf, bench_ap)
 
 func _build_campfire() -> void:
 	var c = campfire_pos
@@ -1296,15 +1318,25 @@ func _build_campfire() -> void:
 		var a = 0.6 + i * 2.1
 		var lp = c + Vector3(cos(a) * 1.7, 0, sin(a) * 1.7)
 		lp.y = ground_h(lp.x, lp.z)
-		var log_r := 0.17
-		var la: Vector3 = lp + Vector3(-sin(a) * 0.7, SEAT_TOP - log_r, cos(a) * 0.7)
-		var lb: Vector3 = lp + Vector3(sin(a) * 0.7, SEAT_TOP - log_r, -cos(a) * 0.7)
-		tube(SB, la, lb, log_r, log_r, 7, Color(0.5, 0.34, 0.2), 1.0, 1.0, Color(0.6, 0.45, 0.3))
-		wall_s(Vector2(la.x, la.z), Vector2(lb.x, lb.z), log_r + 0.01, lp.y - 0.3, lp.y + SEAT_TOP + 0.35, "坐木")
+		# v25 authored log: r=0.12, axis_y=0.10, top=0.22, axis along local +X.
+		var log_r := 0.12
+		var axis_y := 0.10
 		var to_fire := Vector3(c.x - lp.x, 0, c.z - lp.z).normalized()
-		# Mesh top of the log cylinder = axis_y + radius.
-		var log_top: Vector3 = lp + Vector3(0, SEAT_TOP - log_r + log_r, 0)
-		_add_seat("坐木", log_top, to_fire, 0.45, "篝火边的木头：点「坐下」烤烤火，坐下后还能躺下", true, true)
+		# Prop frame: origin at ground under log centre; −Z faces the fire (boy sits facing −Z).
+		var log_yaw := atan2(-to_fire.x, -to_fire.z) + PI
+		var lxf := Transform3D(Basis(Vector3.UP, log_yaw), lp)
+		_spawn_prop_glb("res://props/log_v25.glb", lxf)
+		if not ResourceLoader.exists("res://props/log_v25.glb"):
+			var la: Vector3 = lxf * Vector3(-0.7, axis_y, 0)
+			var lb: Vector3 = lxf * Vector3(0.7, axis_y, 0)
+			tube(SB, la, lb, log_r, log_r, 7, Color(0.5, 0.34, 0.2), 1.0, 1.0, Color(0.6, 0.45, 0.3))
+		wall_s(Vector2((lxf * Vector3(-0.7, 0, 0)).x, (lxf * Vector3(-0.7, 0, 0)).z),
+			Vector2((lxf * Vector3(0.7, 0, 0)).x, (lxf * Vector3(0.7, 0, 0)).z),
+			log_r + 0.01, lp.y - 0.3, lp.y + SEAT_TOP + 0.25, "坐木")
+		var log_top: Vector3 = lxf * Vector3(0, SEAT_TOP, 0)
+		var log_ap: Vector3 = lxf * Vector3(0, 0, -0.50)
+		log_ap.y = ground_h(log_ap.x, log_ap.z)
+		_add_seat("坐木", log_top, to_fire, 0.45, "篝火边的木头：点「坐下」烤烤火", true, false, lxf, log_ap)
 	# tiki torches
 	for a in [1.5, -1.6]:
 		var tp = c + Vector3(cos(a) * 2.6, 0, sin(a) * 2.6)
@@ -1777,15 +1809,230 @@ func _build_palms() -> void:
 			continue
 		var crown = palm(FB, p, s[1], s[2], s[3], s[4], rng.randf_range(0.85, 1.1))
 		palm_spots.append(crown)
-	# hammock between the hut pair: deformable grid that sags under the boy
+	# Hammock between the hut pair — authored hammock_v25 at the game anchors.
+	# Prop frame: origin = midpoint, +X = a→b, +Y up, +Z = ab × up (inland).
 	var a = h1 + Vector3(0, 1.05, 0)
 	var b = h2 + Vector3(0, 1.05, 0)
 	hammock_a = a
 	hammock_b = b
 	var mid = (a + b) * 0.5
+	var along := (b - a).normalized()
+	var up := Vector3.UP
+	var inland := along.cross(up).normalized()
+	if inland.length_squared() < 1e-6:
+		inland = Vector3.FORWARD
 	hammock_node = Node3D.new()
-	hammock_node.position = mid
+	hammock_node.transform = Transform3D(Basis(along, up, inland), mid)
 	add_child(hammock_node)
+	_setup_hammock_v25()
+	# Full fabric footprint so the boy cannot walk through the hammock.
+	var qa: Vector3 = a.lerp(b, 0.12)
+	var qb: Vector3 = a.lerp(b, 0.88)
+	var ham_mid: Vector3 = mid
+	var ham_along: Vector3 = along
+	var ham_yaw := atan2(ham_along.x, ham_along.z)
+	var ham_len := a.distance_to(b) * 0.76
+	hammock_half_w = 0.50
+	wall_s(Vector2(qa.x, qa.z), Vector2(qb.x, qb.z), hammock_half_w + 0.06, ham_mid.y - 1.1, ham_mid.y + 0.55, "吊床")
+	wall_b(Vector2(ham_mid.x, ham_mid.z), Vector2(hammock_half_w + 0.04, ham_len * 0.5), ham_yaw, ham_mid.y - 1.0, ham_mid.y + 0.5, "吊床")
+
+
+func _spawn_prop_glb(path: String, xf: Transform3D) -> Node3D:
+	if not ResourceLoader.exists(path):
+		return null
+	var packed := load(path) as PackedScene
+	if packed == null:
+		return null
+	var n: Node3D = packed.instantiate() as Node3D
+	if n == null:
+		return null
+	n.transform = xf
+	add_child(n)
+	return n
+
+
+func _setup_hammock_v25() -> void:
+	hammock_prop_xf = hammock_node.global_transform
+	hammock_use_v25 = false
+	var path := "res://props/hammock_v25_static.glb"
+	if not ResourceLoader.exists(path):
+		path = "res://props/hammock_v25.glb"
+	if not ResourceLoader.exists(path):
+		push_warning("Island: missing hammock_v25 — falling back to procedural cloth")
+		_setup_hammock_procedural_fallback()
+		return
+	var packed := load(path) as PackedScene
+	var root: Node3D = packed.instantiate() as Node3D
+	hammock_node.add_child(root)
+	# Find cloth MeshInstance (largest surface / named).
+	hammock_cloth_mi = _find_cloth_mi(root)
+	if hammock_cloth_mi == null:
+		push_warning("Island: hammock_v25 has no cloth mesh")
+		_setup_hammock_procedural_fallback()
+		return
+	hammock_mi = hammock_cloth_mi
+	hammock_cloth_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	hammock_cloth_mat = hammock_cloth_mi.get_active_material(0)
+	if hammock_cloth_mi.mesh:
+		hammock_cloth_fmt = 0
+		if hammock_cloth_mi.mesh is ArrayMesh:
+			hammock_cloth_fmt = (hammock_cloth_mi.mesh as ArrayMesh).surface_get_format(0)
+	_load_hammock_cloth_frames()
+	# Cache bind (empty) verts so we can restore after exit.
+	if hammock_cloth_mi and hammock_cloth_mi.mesh is ArrayMesh:
+		var arr0: Array = (hammock_cloth_mi.mesh as ArrayMesh).surface_get_arrays(0)
+		if arr0.size() > Mesh.ARRAY_VERTEX and arr0[Mesh.ARRAY_VERTEX] != null:
+			hammock_cloth_bind = (arr0[Mesh.ARRAY_VERTEX] as PackedVector3Array).duplicate()
+	_build_hammock_cloth_remap()
+	hammock_use_v25 = hammock_cloth_bytes.size() > 0 and hammock_cloth_remap.size() == hammock_cloth_bind.size()
+	set_hammock_clip_frame("empty", 0)
+
+
+func _find_cloth_mi(n: Node) -> MeshInstance3D:
+	if n is MeshInstance3D:
+		var mi := n as MeshInstance3D
+		var nm := String(mi.name).to_lower()
+		if nm.find("cloth") >= 0 or nm.find("hammock") >= 0:
+			return mi
+	for c in n.get_children():
+		var f := _find_cloth_mi(c)
+		if f:
+			return f
+	# Fallback: first MeshInstance3D with many verts.
+	var best: MeshInstance3D = null
+	var best_n := 0
+	for c in n.find_children("*", "MeshInstance3D", true, false):
+		var mi2 := c as MeshInstance3D
+		if mi2.mesh == null:
+			continue
+		var vc := 0
+		if mi2.mesh is ArrayMesh:
+			var arr: Array = (mi2.mesh as ArrayMesh).surface_get_arrays(0)
+			if arr.size() > Mesh.ARRAY_VERTEX and arr[Mesh.ARRAY_VERTEX] != null:
+				vc = (arr[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+		if vc > best_n:
+			best_n = vc
+			best = mi2
+	return best
+
+
+func _load_hammock_cloth_frames() -> void:
+	hammock_cloth_meta = {}
+	hammock_cloth_bytes = PackedByteArray()
+	var meta_path := "res://props/hammock_cloth_meta.json"
+	var bin_path := "res://props/hammock_cloth_frames.bin"
+	if not FileAccess.file_exists(ProjectSettings.globalize_path(meta_path)):
+		return
+	var f := FileAccess.open(ProjectSettings.globalize_path(meta_path), FileAccess.READ)
+	if f == null:
+		return
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return
+	hammock_cloth_meta = parsed
+	var bf := FileAccess.open(ProjectSettings.globalize_path(bin_path), FileAccess.READ)
+	if bf == null:
+		return
+	hammock_cloth_bytes = bf.get_buffer(bf.get_length())
+	bf.close()
+
+
+## Map Godot-imported mesh verts → authoring/npz indices (import may reorder).
+func _build_hammock_cloth_remap() -> void:
+	hammock_cloth_remap = PackedInt32Array()
+	if hammock_cloth_bind.is_empty():
+		return
+	var auth_path := "res://props/hammock_cloth_bind_auth.bin"
+	var abs_path := ProjectSettings.globalize_path(auth_path)
+	if not FileAccess.file_exists(abs_path):
+		push_warning("Island: missing hammock_cloth_bind_auth.bin — cloth remap skipped")
+		return
+	var af := FileAccess.open(abs_path, FileAccess.READ)
+	if af == null:
+		return
+	var raw := af.get_buffer(af.get_length())
+	af.close()
+	var V := hammock_cloth_bind.size()
+	if raw.size() < V * 12:
+		push_warning("Island: hammock bind_auth size mismatch")
+		return
+	var auth := PackedVector3Array()
+	auth.resize(V)
+	for i in V:
+		var b := i * 12
+		auth[i] = Vector3(raw.decode_float(b), raw.decode_float(b + 4), raw.decode_float(b + 8))
+	hammock_cloth_remap.resize(V)
+	var max_d := 0.0
+	for i in V:
+		var p: Vector3 = hammock_cloth_bind[i]
+		var best := 0
+		var best_d := p.distance_squared_to(auth[0])
+		for j in range(1, V):
+			var d := p.distance_squared_to(auth[j])
+			if d < best_d:
+				best_d = d
+				best = j
+		hammock_cloth_remap[i] = best
+		max_d = maxf(max_d, sqrt(best_d))
+	print("Island: hammock cloth remap max dist %.4f m" % max_d)
+	if max_d > 0.05:
+		push_warning("Island: hammock cloth remap max dist %.3f m" % max_d)
+
+
+## Drive cloth vertices from authored npz frames (hammock-local). clip="" / "empty" = bind pose.
+func set_hammock_clip_frame(clip: String, frame: int) -> void:
+	if not hammock_use_v25 or hammock_cloth_mi == null:
+		return
+	if clip == "" or clip == "empty" or not hammock_cloth_meta.has(clip):
+		hammock_clip = ""
+		if hammock_cloth_bind.size() > 0:
+			_apply_hammock_verts(hammock_cloth_bind)
+		return
+	var info: Dictionary = hammock_cloth_meta[clip]
+	var F: int = int(info["frames"])
+	var V: int = int(info["verts"])
+	var off: int = int(info["offset"])
+	frame = clampi(frame, 0, F - 1)
+	var need := V * 3 * 4
+	var start := off + frame * need
+	if start + need > hammock_cloth_bytes.size():
+		return
+	if hammock_cloth_remap.size() != hammock_cloth_bind.size():
+		return
+	var verts := PackedVector3Array()
+	verts.resize(hammock_cloth_bind.size())
+	for i in hammock_cloth_bind.size():
+		var src: int = hammock_cloth_remap[i]
+		var b := start + src * 12
+		verts[i] = Vector3(
+			hammock_cloth_bytes.decode_float(b),
+			hammock_cloth_bytes.decode_float(b + 4),
+			hammock_cloth_bytes.decode_float(b + 8))
+	_apply_hammock_verts(verts)
+	hammock_clip = clip
+
+
+func _apply_hammock_verts(verts: PackedVector3Array) -> void:
+	var mesh := hammock_cloth_mi.mesh
+	if mesh == null or not (mesh is ArrayMesh):
+		return
+	var am := mesh as ArrayMesh
+	var arrays: Array = am.surface_get_arrays(0)
+	if arrays.is_empty():
+		return
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	var rebuilt := ArrayMesh.new()
+	rebuilt.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, hammock_cloth_fmt)
+	if hammock_cloth_mat:
+		rebuilt.surface_set_material(0, hammock_cloth_mat)
+	elif am.get_surface_count() > 0:
+		rebuilt.surface_set_material(0, am.surface_get_material(0))
+	hammock_cloth_mi.mesh = rebuilt
+
+
+func _setup_hammock_procedural_fallback() -> void:
+	hammock_use_v25 = false
 	_ham_rest_y.resize(hammock_nt + 1)
 	_ham_cur_y.resize(hammock_nt + 1)
 	for i in hammock_nt + 1:
@@ -1797,43 +2044,24 @@ func _build_palms() -> void:
 	hsm.vertex_color_is_srgb = true
 	hsm.roughness = 0.92
 	hsm.cull_mode = BaseMaterial3D.CULL_DISABLED
-	# Soften cloth shadows so the dish doesn't crush the body into a black wedge.
 	hsm.metallic = 0.0
 	hammock_mi = MeshInstance3D.new()
 	hammock_mi.material_override = hsm
 	hammock_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	hammock_node.add_child(hammock_mi)
-	# end ropes (static)
-	var RB = MeshBuilder.new()
-	for e in [a, b]:
-		var q = e.lerp(mid, 0.08) + Vector3(0, -0.06, 0)
-		tube(RB, e - mid, q - mid, 0.02, 0.02, 4, Color(0.85, 0.75, 0.55))
-	var rope_mi = MeshInstance3D.new()
-	rope_mi.mesh = RB.commit()
-	rope_mi.material_override = hsm
-	hammock_node.add_child(rope_mi)
 	_rebuild_hammock_mesh()
-	# Full fabric footprint so the boy cannot walk through the hammock (was a thin spine wall).
-	var qa: Vector3 = a.lerp(b, 0.12)
-	var qb: Vector3 = a.lerp(b, 0.88)
-	var ham_mid: Vector3 = hammock_bed()
-	var ham_along: Vector3 = (b - a).normalized()
-	var ham_yaw := atan2(ham_along.x, ham_along.z)
-	var ham_len := a.distance_to(b) * 0.76
-	wall_s(Vector2(qa.x, qa.z), Vector2(qb.x, qb.z), hammock_half_w + 0.06, ham_mid.y - 1.1, ham_mid.y + 0.55, "吊床")
-	wall_b(Vector2(ham_mid.x, ham_mid.z), Vector2(hammock_half_w + 0.04, ham_len * 0.5), ham_yaw, ham_mid.y - 1.0, ham_mid.y + 0.5, "吊床")
 
 
-## Drive fabric sag from world-space body samples (hips, shoulders, heels). Empty when pts empty.
-## Soft-lerp so enter/exit doesn't pop the cradle in one frame.
+## Drive fabric sag from world-space body samples. No-op for authored hammock_v25 cloth.
 func set_hammock_load(pts: Array[Vector3]) -> void:
 	hammock_body_pts = pts
 	hammock_occupied = pts.size() > 0
+	if hammock_use_v25:
+		return
 	var ab := hammock_b - hammock_a
 	var ham_len := maxf(ab.length(), 0.01)
 	var along := ab / ham_len
 	var mid := (hammock_a + hammock_b) * 0.5
-	# Snap empty immediately (avoids residual deep cradle on re-enter); ease occupied in.
 	var blend := 0.45 if hammock_occupied else 1.0
 	for i in hammock_nt + 1:
 		var t := float(i) / float(hammock_nt)
@@ -2014,11 +2242,13 @@ func lounger_body_surface(s: float) -> Dictionary:
 	return lounger_back_point((s - HIP) / (1.0 - HIP))
 
 func swing_hammock(ang: float) -> Transform3D:
+	# Authored hammock stays fixed in its prop frame (no swing overwrite).
+	if hammock_use_v25:
+		return Transform3D.IDENTITY
 	var mid = (hammock_a + hammock_b) * 0.5
 	var axis = (hammock_b - hammock_a).normalized()
 	var xf = Transform3D(Basis(axis, ang), mid)
 	hammock_node.transform = xf
-	# transform from rest-world to swung-world
 	return xf * Transform3D(Basis.IDENTITY, -mid)
 
 # ------------------------------------------------------------------ vegetation

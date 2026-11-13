@@ -10,8 +10,9 @@ signal released
 signal footstep(side: int, running: bool)
 signal foot_flat(side: int)
 
-# ~1.35× so seated Mixamo hips sit near Island.SEAT_TOP (0.35 m) and the kid reads ~4 heads tall
+# ~1.35× chibi; authored sit/hammock clips assume this scale + FLOOR_OFFSET y.
 const SCALE := 1.35
+const FLOOR_OFFSET := 0.00837  # 0.0062 * 1.35 — matches alignment.json
 ## Drop-in Mixamo GLB path. Replace boy/boy.glb (same Mixamo bone names) without code changes.
 ## Optional override: boy/boy_override.glb wins when present (AC-style flat-eye regen, etc.).
 const MODEL_PATH := "res://boy/boy.glb"
@@ -228,7 +229,9 @@ func _register_clip_aliases() -> void:
 	var aliases := {
 		"standing_relax": "idle",
 		"stroll": "walk",
-		"throw_crouch": "throw_stand",
+		# Authoring GLB ships pitch_baseball as the throw clip.
+		"throw_stand": "pitch_baseball",
+		"throw_crouch": "pitch_baseball",
 		"wave": "turn",
 		"oops": "cheer",
 		"jump": "idle",
@@ -250,16 +253,114 @@ func _register_clip_aliases() -> void:
 		if anim_src == null:
 			continue
 		lib.add_animation(alias, anim_src.duplicate())
+	# Ensure prop loop clips drop the duplicated last frame (authoring: first==last of enter).
+	for n in ["bench_sit_idle", "log_sit_idle", "hammock_sleep"]:
+		if not ap.has_animation(n):
+			continue
+		var a: Animation = ap.get_animation(n)
+		if a == null:
+			continue
+		# 193 frames @ 24 fps → trim to 192/24 = 8.0 s.
+		var trimmed := maxf(a.length - (1.0 / 24.0), a.length * 0.99)
+		a.length = trimmed
+		a.loop_mode = Animation.LOOP_LINEAR
 
 
 func _force_loops() -> void:
 	if ap == null:
 		return
-	for n in ["idle", "standing_relax", "walk", "run", "sit", "stroll", "look_around"]:
+	for n in ["idle", "standing_relax", "walk", "run", "sit", "stroll", "look_around",
+			"bench_sit_idle", "log_sit_idle", "hammock_sleep"]:
 		if ap.has_animation(n):
 			var a: Animation = ap.get_animation(n)
 			a.loop_mode = Animation.LOOP_LINEAR
 	# stroll may be missing — AnimationTree uses walk for stroll seek
+
+
+## Direct AnimationPlayer playback for authored prop clips (bypasses AnimationTree pose stack).
+var prop_clip := ""
+var prop_clip_loop := false
+
+
+func play_prop_clip(clip: String, loop := false, fade := 0.0) -> void:
+	if ap == null or not ap.has_animation(clip):
+		push_warning("Boy: missing prop clip " + clip)
+		return
+	anim = "prop_clip"
+	prop_clip = clip
+	prop_clip_loop = loop
+	act_kind = ""
+	act_lie_k = 0.0
+	act_w = 0.0
+	act_target = 0.0
+	react_kind = ""
+	move_w = 0.0
+	_walk_bob = 0.0
+	hip_shift = Vector3.ZERO
+	show_stone(false)
+	if model:
+		model.position = model_base
+	if tree:
+		tree.active = false
+	ap.active = true
+	var a: Animation = ap.get_animation(clip)
+	if a:
+		a.loop_mode = Animation.LOOP_LINEAR if loop else Animation.LOOP_NONE
+	if fade > 0.0 and ap.current_animation != "":
+		ap.play(clip, fade)
+	else:
+		ap.play(clip)
+	ap.seek(0.0, true)
+	ap.advance(0.0)
+	if skel:
+		skel.force_update_transform()
+
+
+func prop_clip_time() -> float:
+	if ap == null or prop_clip == "":
+		return 0.0
+	return ap.current_animation_position
+
+
+func prop_clip_length() -> float:
+	if ap == null or not ap.has_animation(prop_clip):
+		return 0.0
+	return ap.get_animation(prop_clip).length
+
+
+func prop_clip_finished() -> bool:
+	if prop_clip == "" or prop_clip_loop:
+		return false
+	if ap == null or not ap.is_playing():
+		return prop_clip_time() >= prop_clip_length() - 0.02
+	return prop_clip_time() >= prop_clip_length() - 0.02
+
+
+func prop_clip_frame(fps := 24.0) -> int:
+	return int(floor(prop_clip_time() * fps + 1e-4))
+
+
+func seek_prop_clip(seconds: float) -> void:
+	if ap == null or prop_clip == "":
+		return
+	var len := prop_clip_length()
+	var t := clampf(seconds, 0.0, maxf(len - 0.001, 0.0))
+	ap.seek(t, true)
+	ap.advance(0.0)
+	if skel:
+		skel.force_update_transform()
+
+
+func end_prop_clip(fade_to_idle := 0.2) -> void:
+	prop_clip = ""
+	prop_clip_loop = false
+	if ap and fade_to_idle > 0.0 and ap.has_animation("idle"):
+		ap.play("idle", fade_to_idle)
+		ap.seek(0.0, true)
+	set_idle()
+	show_stone(true)
+	if tree:
+		tree.active = true
 
 
 ## Sit gameplay uses idle seed + additive L-sit (_apply_ergonomic_sit). Do NOT rewrite
@@ -1626,6 +1727,8 @@ func throw_stance() -> Array:
 
 
 func _throw_clip() -> String:
+	if ap and ap.has_animation("pitch_baseball"):
+		return "pitch_baseball"
 	return "throw_stand"
 
 
@@ -1651,14 +1754,24 @@ func _resolve_clip(name: String) -> String:
 		return name
 	# aliases — dig/lift_heavy intentionally omitted (not sleep / stone-pick).
 	var map := {
-		"stroll": "walk", "throw_crouch": "throw_stand",
+		"stroll": "walk",
+		"throw_stand": "pitch_baseball", "throw_crouch": "pitch_baseball",
 		"wave": "turn", "oops": "cheer", "standing_relax": "idle", "jump": "idle",
 		"sun_sit": "sit", "sun_lie": "sit", "sun_rest": "sit", "sun_up": "sit", "sun_stand": "idle",
-		"hammock_sit": "sit", "hammock_lie": "sit", "hammock_sleep": "sit", "hammock_up": "sit", "hammock_stand": "idle",
-		"seat_sit": "sit", "seat_rest": "sit", "seat_lie": "sit", "seat_nap": "sit", "seat_up": "sit", "seat_stand": "idle",
+		# Authored hammock/bench/log clips — resolve only when present.
+		"hammock_sit": "hammock_enter", "hammock_lie": "hammock_sleep",
+		"hammock_sleep": "hammock_sleep", "hammock_up": "hammock_exit", "hammock_stand": "idle",
+		"seat_sit": "bench_sit_idle", "seat_rest": "bench_sit_idle",
+		"seat_lie": "bench_sit_idle", "seat_nap": "bench_sit_idle",
+		"seat_up": "bench_sit_exit", "seat_stand": "idle",
 	}
 	var a: String = map.get(name, "idle")
-	return a if ap.has_animation(a) else "idle"
+	if ap.has_animation(a):
+		return a
+	# Fallbacks when a prop clip is missing.
+	if ap.has_animation("sit"):
+		return "sit"
+	return "idle" if ap.has_animation("idle") else name
 
 
 func _set_slot(i: int, clip: String, tseek: float) -> void:
@@ -1808,6 +1921,15 @@ func _tick(delta: float) -> void:
 			else:
 				slot_t[i] = fposmod(slot_t[i] + delta, maxf(L, 0.01)) if clips.get(slot_clip[i], {}).get("loop", false) else minf(slot_t[i] + delta, L)
 
+	if anim == "prop_clip" or prop_clip != "":
+		# Authored bench/log/hammock clips: AnimationPlayer only, no tree/pose stack.
+		if tree:
+			tree.active = false
+		if ap and not ap.active:
+			ap.active = true
+		_update_blob()
+		_update_face(delta)
+		return
 	if anim == "activity" and act_lie_k > 0.45 and act_kind in ["sun", "sleep", "seatlie"]:
 		_seed_lie_from_sit()
 		_apply_lie_pose(act_kind, act_lie_k, act_tt)
