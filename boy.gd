@@ -1,24 +1,29 @@
 class_name Boy
 extends Node3D
-## v22 Tripo boy: AI-generated Mixamo-rigged kid (boy/boy.glb from art/boy/tripo/).
+## v25 flat-eye Tripo boy: Mixamo-rigged kid (boy/boy.glb from art/boy/flateyes/).
 ## Same public API as the old procedural Boy so main.gd / selftest / sim keep working.
-## Straw hat is baked into the Tripo mesh (never split). An invisible HatProbe proxy
-## sits on the Head bone. Lying poses tip the head so the brim rests on the support.
-## Face is baked (open eyes). Sleep uses a forearm-over-eyes nap pose — no blink,
-## no closed-eye albedo (Tripo eye shells can't read as lids without a new model).
+## Straw hat: baked brim stays on the head mesh; a procedural hat reparents to the chest
+## bone in the hammock (baked brim collapsed into the scalp). Face expressions =
+## full-body albedo+normal+MR swaps from boy/tex/ (no runtime painting or masks).
 
 signal released
 signal footstep(side: int, running: bool)
 signal foot_flat(side: int)
 
-# ~1.35× so seated Mixamo hips sit near Island.SEAT_TOP (0.35 m) and the kid reads ~4 heads tall
+# ~1.35× chibi; authored sit/hammock clips assume this scale + FLOOR_OFFSET y.
 const SCALE := 1.35
-const MODEL := preload("res://boy/boy.glb")
+const FLOOR_OFFSET := 0.00837  # 0.0062 * 1.35 — matches alignment.json
+## Drop-in Mixamo GLB path. Replace boy/boy.glb (same Mixamo bone names) without code changes.
+## Optional override: boy/boy_override.glb wins when present (AC-style flat-eye regen, etc.).
+const MODEL_PATH := "res://boy/boy.glb"
+const MODEL_OVERRIDE_PATH := "res://boy/boy_override.glb"
 const META := "res://boy/boy_meta.json"
 const T_RELEASE := 0.55
 const RUN_FROM := 1.35
 const RUN_TO := 2.2
 const SIT_HIPS_Y := 0.248  # unscaled Mixamo sit hips (see process_tripo / smoke)
+## Surface-name hints for a dedicated face material slot (eye/mouth texture swaps).
+const FACE_SLOT_HINTS := ["face", "Face", "head", "Head", "skin_face", "FaceMat", "eye", "Eye"]
 
 # Mixamo bone names (Godot converts ':' -> '_')
 const B_HIPS := "mixamorig_Hips"
@@ -69,12 +74,19 @@ var hat_side := "r"
 var hat_band_c := Vector3(0, 0.02, 0)
 var hat_head_xf := Transform3D.IDENTITY
 var hat_face_xf := Transform3D.IDENTITY
-## Always "head" — baked Tripo hat never detaches. Kept for selftest / main API.
+## "head" | "chest" | "face" | "beside" — hammock lie uses chest so fabric clears the brim.
 var hat_mode := "head"
-## Legacy sand spot (unused; hat stays on the head). Kept so main.gd can still assign it.
+## Sand spot for lounger "beside" mode (optional).
 var hat_beside_world := Vector3.ZERO
-## Bind-pose local verts of the baked straw crown/brim (for lie penetration).
+## Bind-pose local verts of residual crown/brim on the body (usually empty after split).
 var _hat_skin_idxs: PackedInt32Array = PackedInt32Array()
+var _chest_attach: BoneAttachment3D
+var _scalp_cover: MeshInstance3D
+var _hat_on_head_xf := Transform3D.IDENTITY
+var _hat_blend := 0.0
+var _hat_bind_orig: PackedVector3Array = PackedVector3Array()
+## kind -> {albedo, normal, mr} ImageTextures preloaded from boy/tex/
+var face_textures := {}
 
 var t := 0.0
 var t_idle := 0.0
@@ -100,7 +112,7 @@ var prev_sit := 0.0
 var prev_lie := 0.0
 var blink_timer := 2.5
 var blink_t := -1.0
-var expr := "smile"
+var expr := "idle"
 var rng := RandomNumberGenerator.new()
 var frozen := false
 var model_base := Vector3.ZERO
@@ -143,16 +155,18 @@ var _boy_mat: StandardMaterial3D
 var _boy_albedo_day := Color(1.08, 0.98, 0.92, 1.0)
 var _boy_albedo_tex_day: Texture2D
 var _boy_albedo_tex_sleep: Texture2D
-var _eyes_closed_tex := false  # always false — closed albedo abandoned for Tripo shells
-var _eyelid_l: MeshInstance3D
-var _eyelid_r: MeshInstance3D
-var _mouth: MeshInstance3D
+var _eyes_closed_tex := false
+## Soft eyelid MeshInstances / eye-shell morphs removed — flat-eye GLB uses albedo paints only.
+var _eyelid_l: MeshInstance3D = null
+var _eyelid_r: MeshInstance3D = null
+var _mouth: MeshInstance3D = null
 var _walk_bob := 0.0
+var _settle_left := 0.0
 ## When set, lounger pose plants heels/knees/thighs on this seat plane after the hips pitch.
 var lie_foot_plant := false
 var lie_foot_plane_point := Vector3.ZERO
 var lie_foot_plane_normal := Vector3.UP
-var lie_foot_plant_gap := 0.12
+var lie_foot_plant_gap := 0.015
 
 
 func _ready() -> void:
@@ -160,7 +174,7 @@ func _ready() -> void:
 	process_priority = 10
 	meta = JSON.parse_string(FileAccess.get_file_as_string(META))
 	clips = meta["clips"]
-	model = MODEL.instantiate()
+	model = _instantiate_boy_model()
 	# Tripo/Mixamo faces +Z in glTF Y-up; game boy faces -Z like the old model
 	model.rotation.y = PI
 	model.scale = Vector3.ONE * SCALE
@@ -170,6 +184,7 @@ func _ready() -> void:
 	add_child(model)
 	skel = model.find_child("Skeleton3D", true, false) as Skeleton3D
 	ap = model.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	_register_clip_aliases()
 	_force_loops()
 	_patch_ergonomic_sit_anim()
 	_setup_parts()
@@ -181,52 +196,177 @@ func _ready() -> void:
 	_build_face_fill()
 	_build_face_expr()
 	_tune_boy_material()
-	set_face_expr("smile")
+	_build_procedural_hat_fallback()
+	_cache_hat_bind_verts()
+	_load_face_albedos()
+	set_face_expr("idle")
 	release_stand = _probe_release("throw_stand")
 	# crouch: clearly lower release so water entry is flatter than standing
 	release_crouch = release_stand + Vector3(0.02, -0.14 * SCALE, 0.04)
 	_apply_mixer()
 
 
+## Load boy/boy_override.glb when present, else boy/boy.glb. Same Mixamo skeleton expected.
+func _instantiate_boy_model() -> Node3D:
+	var path := MODEL_PATH
+	if ResourceLoader.exists(MODEL_OVERRIDE_PATH) or FileAccess.file_exists(ProjectSettings.globalize_path(MODEL_OVERRIDE_PATH)):
+		path = MODEL_OVERRIDE_PATH
+		print("Boy: using override GLB ", path)
+	elif not ResourceLoader.exists(path):
+		push_error("Boy: missing model at " + path)
+	var packed := load(path) as PackedScene
+	if packed == null:
+		push_error("Boy: failed to load " + path)
+		return Node3D.new()
+	return packed.instantiate() as Node3D
+
+
+## Duplicate gameplay-role aliases onto the AnimationPlayer so old call sites keep working.
+## dig / lift_heavy stay as themselves — never aliased to sleep or stone-pick.
+func _register_clip_aliases() -> void:
+	if ap == null:
+		return
+	var aliases := {
+		"standing_relax": "idle",
+		"stroll": "walk",
+		# Authoring GLB ships pitch_baseball as the throw clip.
+		"throw_stand": "pitch_baseball",
+		"throw_crouch": "pitch_baseball",
+		"wave": "turn",
+		"oops": "cheer",
+		"jump": "idle",
+	}
+	var lib_name := &""
+	var libs: Array = ap.get_animation_library_list()
+	if libs.size() > 0:
+		lib_name = libs[0]
+	var lib: AnimationLibrary = ap.get_animation_library(lib_name)
+	if lib == null:
+		return
+	for alias in aliases.keys():
+		var src: String = aliases[alias]
+		if ap.has_animation(alias):
+			continue
+		if not ap.has_animation(src):
+			continue
+		var anim_src: Animation = ap.get_animation(src)
+		if anim_src == null:
+			continue
+		lib.add_animation(alias, anim_src.duplicate())
+	# Ensure prop loop clips drop the duplicated last frame (authoring: first==last of enter).
+	for n in ["bench_sit_idle", "log_sit_idle", "hammock_sleep"]:
+		if not ap.has_animation(n):
+			continue
+		var a: Animation = ap.get_animation(n)
+		if a == null:
+			continue
+		# 193 frames @ 24 fps → trim to 192/24 = 8.0 s.
+		var trimmed := maxf(a.length - (1.0 / 24.0), a.length * 0.99)
+		a.length = trimmed
+		a.loop_mode = Animation.LOOP_LINEAR
+
+
 func _force_loops() -> void:
 	if ap == null:
 		return
-	for n in ["idle", "standing_relax", "walk", "run", "sit", "stroll"]:
+	for n in ["idle", "standing_relax", "walk", "run", "sit", "stroll", "look_around",
+			"bench_sit_idle", "log_sit_idle", "hammock_sleep"]:
 		if ap.has_animation(n):
 			var a: Animation = ap.get_animation(n)
 			a.loop_mode = Animation.LOOP_LINEAR
 	# stroll may be missing — AnimationTree uses walk for stroll seek
 
 
-## Rewrite Mixamo sit leg keys to an ergonomic L-sit. Compatibility skinning only follows
-## AnimationTree/Player — set_bone_pose_rotation alone leaves the mesh standing.
-func _patch_ergonomic_sit_anim() -> void:
-	if ap == null or not ap.has_animation("sit"):
+## Direct AnimationPlayer playback for authored prop clips (bypasses AnimationTree pose stack).
+var prop_clip := ""
+var prop_clip_loop := false
+
+
+func play_prop_clip(clip: String, loop := false, fade := 0.0) -> void:
+	if ap == null or not ap.has_animation(clip):
+		push_warning("Boy: missing prop clip " + clip)
 		return
-	var sit: Animation = ap.get_animation("sit")
-	var targets := {
-		"mixamorig_LeftUpLeg": Quaternion.from_euler(Vector3(-1.30, 0.05, 0.08)),
-		"mixamorig_RightUpLeg": Quaternion.from_euler(Vector3(-1.30, -0.05, -0.08)),
-		"mixamorig_LeftLeg": Quaternion.from_euler(Vector3(-1.90, 0.0, 0.0)),
-		"mixamorig_RightLeg": Quaternion.from_euler(Vector3(-1.90, 0.0, 0.0)),
-		"mixamorig_LeftFoot": Quaternion.from_euler(Vector3(0.25, 0.0, 0.05)),
-		"mixamorig_RightFoot": Quaternion.from_euler(Vector3(0.25, 0.0, -0.05)),
-		"mixamorig_Spine": Quaternion.from_euler(Vector3(-0.08, 0.0, 0.0)),
-		"mixamorig_Spine1": Quaternion.from_euler(Vector3(-0.05, 0.0, 0.0)),
-		"mixamorig_LeftArm": Quaternion.from_euler(Vector3(0.20, 0.40, -0.60)),
-		"mixamorig_RightArm": Quaternion.from_euler(Vector3(0.20, -0.40, 0.60)),
-		"mixamorig_LeftForeArm": Quaternion.from_euler(Vector3(-0.40, 0.0, 0.0)),
-		"mixamorig_RightForeArm": Quaternion.from_euler(Vector3(-0.40, 0.0, 0.0)),
-	}
-	for t in sit.get_track_count():
-		if sit.track_get_type(t) != Animation.TYPE_ROTATION_3D:
-			continue
-		var p := str(sit.track_get_path(t))
-		for bone in targets.keys():
-			if p.ends_with(":" + bone):
-				for k in sit.track_get_key_count(t):
-					sit.track_set_key_value(t, k, targets[bone])
-				break
+	anim = "prop_clip"
+	prop_clip = clip
+	prop_clip_loop = loop
+	act_kind = ""
+	act_lie_k = 0.0
+	act_w = 0.0
+	act_target = 0.0
+	react_kind = ""
+	move_w = 0.0
+	_walk_bob = 0.0
+	hip_shift = Vector3.ZERO
+	show_stone(false)
+	if model:
+		model.position = model_base
+	if tree:
+		tree.active = false
+	ap.active = true
+	var a: Animation = ap.get_animation(clip)
+	if a:
+		a.loop_mode = Animation.LOOP_LINEAR if loop else Animation.LOOP_NONE
+	if fade > 0.0 and ap.current_animation != "":
+		ap.play(clip, fade)
+	else:
+		ap.play(clip)
+	ap.seek(0.0, true)
+	ap.advance(0.0)
+	if skel:
+		skel.force_update_transform()
+
+
+func prop_clip_time() -> float:
+	if ap == null or prop_clip == "":
+		return 0.0
+	return ap.current_animation_position
+
+
+func prop_clip_length() -> float:
+	if ap == null or not ap.has_animation(prop_clip):
+		return 0.0
+	return ap.get_animation(prop_clip).length
+
+
+func prop_clip_finished() -> bool:
+	if prop_clip == "" or prop_clip_loop:
+		return false
+	if ap == null or not ap.is_playing():
+		return prop_clip_time() >= prop_clip_length() - 0.02
+	return prop_clip_time() >= prop_clip_length() - 0.02
+
+
+func prop_clip_frame(fps := 24.0) -> int:
+	return int(floor(prop_clip_time() * fps + 1e-4))
+
+
+func seek_prop_clip(seconds: float) -> void:
+	if ap == null or prop_clip == "":
+		return
+	var len := prop_clip_length()
+	var t := clampf(seconds, 0.0, maxf(len - 0.001, 0.0))
+	ap.seek(t, true)
+	ap.advance(0.0)
+	if skel:
+		skel.force_update_transform()
+
+
+func end_prop_clip(fade_to_idle := 0.2) -> void:
+	prop_clip = ""
+	prop_clip_loop = false
+	if ap and fade_to_idle > 0.0 and ap.has_animation("idle"):
+		ap.play("idle", fade_to_idle)
+		ap.seek(0.0, true)
+	set_idle()
+	show_stone(true)
+	if tree:
+		tree.active = true
+
+
+## Sit gameplay uses idle seed + additive L-sit (_apply_ergonomic_sit). Do NOT rewrite
+## Mixamo sit clip keys to absolute eulers — that broke thigh_fwd on the flat-eye bind pose.
+func _patch_ergonomic_sit_anim() -> void:
+	pass
 
 
 func _setup_parts() -> void:
@@ -340,38 +480,174 @@ func _build_stone() -> void:
 
 
 func _build_hat_proxy() -> void:
-	# Tiny invisible mesh so HatProbe can sample verts; hat is baked into the body.
 	_hat_attach = BoneAttachment3D.new()
 	_hat_attach.name = "HatAttach"
 	_hat_attach.bone_name = B_HEAD
 	skel.add_child(_hat_attach)
+	_chest_attach = BoneAttachment3D.new()
+	_chest_attach.name = "ChestAttach"
+	_chest_attach.bone_name = "mixamorig_Spine2"
+	skel.add_child(_chest_attach)
 	hat = MeshInstance3D.new()
 	hat.name = "Hat"
-	var bm := SphereMesh.new()
-	bm.radius = 0.04
-	bm.height = 0.06
-	hat.mesh = bm
 	hat.visible = false
-	hat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	hat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	_hat_attach.add_child(hat)
 	hat.position = Vector3(0, 0.08, 0)
 	hat_mode = "head"
 
 
-## API stub: baked hat never leaves the head. Modes other than "head" are ignored.
+## Procedural straw hat used only when the baked brim is collapsed (chest/beside modes).
+func _build_procedural_hat_fallback() -> void:
+	if hat == null:
+		return
+	var HB = MeshBuilder.new()
+	var straw := Color(0.90, 0.74, 0.45)
+	var band := Color(0.55, 0.28, 0.18)
+	for i in 12:
+		var a0 := TAU * float(i) / 12.0
+		var a1 := TAU * float(i + 1) / 12.0
+		var c0 := Vector3(cos(a0) * 0.09, 0.10, sin(a0) * 0.09)
+		var c1 := Vector3(cos(a1) * 0.09, 0.10, sin(a1) * 0.09)
+		var top := Vector3(0, 0.16, 0)
+		HB.face(c0, c1, top, straw, straw, straw, Vector3.UP)
+		var b0 := Vector3(cos(a0) * 0.09, 0.02, sin(a0) * 0.09)
+		var b1 := Vector3(cos(a1) * 0.09, 0.02, sin(a1) * 0.09)
+		HB.face(b0, b1, c1, straw, straw, straw, Vector3(cos(a0), 0, sin(a0)))
+		HB.face(b0, c1, c0, straw, straw, straw, Vector3(cos(a0), 0, sin(a0)))
+		var r0 := Vector3(cos(a0) * 0.20, 0.02, sin(a0) * 0.20)
+		var r1 := Vector3(cos(a1) * 0.20, 0.02, sin(a1) * 0.20)
+		HB.face(b0, b1, r1, straw.darkened(0.05), straw.darkened(0.05), straw.darkened(0.05), Vector3.UP)
+		HB.face(b0, r1, r0, straw.darkened(0.05), straw.darkened(0.05), straw.darkened(0.05), Vector3.UP)
+	for i in 12:
+		var a0 := TAU * float(i) / 12.0
+		var a1 := TAU * float(i + 1) / 12.0
+		var u0 := Vector3(cos(a0) * 0.095, 0.045, sin(a0) * 0.095)
+		var u1 := Vector3(cos(a1) * 0.095, 0.045, sin(a1) * 0.095)
+		var l0 := Vector3(cos(a0) * 0.095, 0.025, sin(a0) * 0.095)
+		var l1 := Vector3(cos(a1) * 0.095, 0.025, sin(a1) * 0.095)
+		HB.face(l0, l1, u1, band, band, band, Vector3(cos(a0), 0, sin(a0)))
+		HB.face(l0, u1, u0, band, band, band, Vector3(cos(a0), 0, sin(a0)))
+	hat.mesh = HB.commit()
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 0.9
+	hat.material_override = mat
+	# Hidden while baked hat is on the head; shown when reparented to chest.
+	hat.visible = false
+	hat.transform = Transform3D(Basis.IDENTITY, Vector3(0, 0.08, 0))
+	_hat_on_head_xf = hat.transform
+	if _scalp_cover == null:
+		_scalp_cover = MeshInstance3D.new()
+		_scalp_cover.name = "ScalpCover"
+		var sm := SphereMesh.new()
+		sm.radius = 0.08
+		sm.height = 0.10
+		_scalp_cover.mesh = sm
+		var scalp_mat := StandardMaterial3D.new()
+		scalp_mat.albedo_color = Color(0.55, 0.38, 0.28)
+		_scalp_cover.material_override = scalp_mat
+		_scalp_cover.position = Vector3(0, 0.06, 0)
+		_scalp_cover.visible = false
+		_hat_attach.add_child(_scalp_cover)
+
+
+## Snapshot baked brim verts so chest mode can collapse them into the scalp.
+func _cache_hat_bind_verts() -> void:
+	_ensure_skin_cache()
+	_hat_bind_orig = PackedVector3Array()
+	_hat_bind_orig.resize(_hat_skin_idxs.size())
+	for k in _hat_skin_idxs.size():
+		_hat_bind_orig[k] = _skin_verts[_hat_skin_idxs[k]]
+
+
+func _set_baked_hat_collapsed(collapsed: bool) -> void:
+	_ensure_skin_cache()
+	if _hat_skin_idxs.is_empty() or _hat_bind_orig.is_empty():
+		return
+	var head_i := skel.find_bone(B_HEAD) if skel else -1
+	var target := Vector3(0, 0.10, 0)
+	if head_i >= 0:
+		target = skel.get_bone_global_rest(head_i).origin + Vector3(0, 0.07, 0)
+	for k in _hat_skin_idxs.size():
+		var i: int = _hat_skin_idxs[k]
+		if collapsed:
+			_skin_verts[i] = _hat_bind_orig[k].lerp(target, 0.94)
+		else:
+			_skin_verts[i] = _hat_bind_orig[k]
+	_write_skin_verts_to_mesh(_skin_verts)
+
+
+func _hat_chest_local(face_tip: bool) -> Transform3D:
+	if face_tip:
+		return Transform3D(Basis.from_euler(Vector3(0.35, 0.2, 0.1)), Vector3(0.0, 0.06, 0.14))
+	return Transform3D(Basis.from_euler(Vector3(1.15, 0.4, 0.25)), Vector3(0.0, 0.10, 0.12))
+
+
+func _hat_beside_xf(beside_world: Vector3) -> Transform3D:
+	var p := beside_world
+	if p == Vector3.ZERO:
+		p = hat_beside_world
+	if p == Vector3.ZERO:
+		p = global_position + Vector3(0.45, 0.04, 0.12)
+	return Transform3D(Basis.from_euler(Vector3(0.15, 0.9, 0.4)), p)
+
+
 func set_hat_mode(mode: String, beside_world: Vector3 = Vector3.ZERO) -> void:
-	hat_mode = "head"
+	if hat == null or not is_instance_valid(hat):
+		return
 	if beside_world != Vector3.ZERO:
 		hat_beside_world = beside_world
-	if hat and is_instance_valid(hat):
+	hat_mode = mode
+	if _scalp_cover:
+		_scalp_cover.visible = mode != "head"
+	if mode == "head":
+		_set_baked_hat_collapsed(false)
 		hat.visible = false
+		if hat.get_parent() != _hat_attach:
+			if hat.get_parent():
+				hat.get_parent().remove_child(hat)
+			_hat_attach.add_child(hat)
+		hat.transform = _hat_on_head_xf
+		_hat_blend = 0.0
+	elif mode == "face" or mode == "chest":
+		if _chest_attach == null:
+			return
+		_set_baked_hat_collapsed(true)
+		hat.visible = true
+		if hat.get_parent() != _chest_attach:
+			if hat.get_parent():
+				hat.get_parent().remove_child(hat)
+			_chest_attach.add_child(hat)
+		hat.transform = _hat_chest_local(mode == "face")
+		_hat_blend = 1.0
+	elif mode == "beside":
+		_set_baked_hat_collapsed(true)
+		hat.visible = true
+		if hat.get_parent() != self:
+			if hat.get_parent():
+				hat.get_parent().remove_child(hat)
+			add_child(hat)
+		hat.global_transform = _hat_beside_xf(beside_world)
+		_hat_blend = 1.0
 
 
-## API stub: keep the baked hat on the Head bone for the whole sit↔lie window.
-func sync_hat_lie(_kind: String, _lie_k: float) -> void:
-	hat_mode = "head"
-	if hat and is_instance_valid(hat):
-		hat.visible = false
+## Hammock lie → procedural hat on chest; baked brim collapsed into scalp.
+func sync_hat_lie(kind: String, lie_k: float) -> void:
+	if hat == null or not is_instance_valid(hat) or _hat_attach == null:
+		return
+	var b := smoothstep(0.18, 0.85, lie_k)
+	_hat_blend = b
+	if b <= 0.001:
+		set_hat_mode("head")
+		return
+	if kind == "sleep":
+		set_hat_mode("chest" if b > 0.35 else "head")
+		return
+	if kind == "sun" and hat_beside_world != Vector3.ZERO and b > 0.5:
+		set_hat_mode("beside", hat_beside_world)
+		return
+	set_hat_mode("head")
 
 
 func _build_glasses_stub() -> void:
@@ -391,7 +667,8 @@ func _build_face_fill() -> void:
 	face_fill.omni_attenuation = 1.4
 	face_fill.shadow_enabled = false
 	face_fill.light_specular = 0.0
-	face_fill.light_cull_mask = 0xFFFFF  # include boy (layer 2) and world for night seat/hammock stills
+	# Boy mesh only (layer 2) — lighting the world made a moving hotspot on sand/seats.
+	face_fill.light_cull_mask = 1 << 1
 	parts["head"].add_child(face_fill)
 	face_fill.position = Vector3(0.0, -0.02, -0.1)
 	# Cool moonlight rim — only on at night, opposite the fill so edges read without flattening him.
@@ -403,7 +680,7 @@ func _build_face_fill() -> void:
 	_night_rim.omni_attenuation = 1.2
 	_night_rim.shadow_enabled = false
 	_night_rim.light_specular = 0.08
-	_night_rim.light_cull_mask = 0xFFFFF
+	_night_rim.light_cull_mask = 1 << 1
 	parts["head"].add_child(_night_rim)
 	_night_rim.position = Vector3(0.0, 0.04, 0.12)
 	# Soft torso fill at night so vest/shorts match the moonlit ground (head fill alone leaves the body black).
@@ -415,7 +692,7 @@ func _build_face_fill() -> void:
 	_night_body.omni_attenuation = 0.85
 	_night_body.shadow_enabled = false
 	_night_body.light_specular = 0.0
-	_night_body.light_cull_mask = 0xFFFFF
+	_night_body.light_cull_mask = 1 << 1
 	if parts.has("pelvis"):
 		parts["pelvis"].add_child(_night_body)
 		_night_body.position = Vector3(0.0, 0.12, -0.08)
@@ -456,69 +733,161 @@ func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 		_night_body.omni_range = lerpf(0.8, 1.8, k)
 		_night_body.light_color = Color(0.70, 0.80, 1.0)
 	# Keep Tripo textures readable against moonlit sand (not a black silhouette).
-	if _boy_mat:
-		_boy_mat.albedo_color = _boy_albedo_day.lerp(Color(1.05, 1.05, 1.1, 1.0), k)
-		_boy_mat.metallic_specular = lerpf(0.2, 0.06, k)
-		_boy_mat.roughness = lerpf(0.78, 0.86, k)
-		_boy_mat.emission_enabled = false
-		_boy_mat.emission_energy_multiplier = 0.0
-		_boy_mat.emission = Color(0, 0, 0, 1)
+	for mat in [_boy_mat, _face_mat]:
+		if mat == null:
+			continue
+		mat.albedo_color = _boy_albedo_day.lerp(Color(1.05, 1.05, 1.1, 1.0), k)
+		mat.metallic_specular = lerpf(0.2, 0.06, k)
+		mat.roughness = lerpf(0.78, 0.86, k)
+		mat.emission_enabled = false
+		mat.emission_energy_multiplier = 0.0
+		mat.emission = Color(0, 0, 0, 1)
 
 
 func _tune_boy_material() -> void:
 	# Tripo embeds metallic=1 which blacks out the face under the brim. Drop metal only —
 	# no emission (that washed the vest/skin/hat into pastels). Stay fully opaque.
-	# Full PBR albedo texture preserved — never split or recolor the baked hat/hair.
+	# Multi-surface GLBs: keep body mats stable; dedicate a face slot for expression swaps.
 	if skel == null:
 		return
+	_face_mat = null
+	_face_surf_i = -1
 	for c in skel.get_children():
 		if not (c is MeshInstance3D):
 			continue
 		var mi := c as MeshInstance3D
-		var src: Material = mi.get_active_material(0)
-		if src == null and mi.mesh != null and mi.mesh.get_surface_count() > 0:
-			src = mi.mesh.surface_get_material(0)
-		if src == null:
+		if mi.mesh == null:
 			continue
-		var mat := src.duplicate() as StandardMaterial3D
-		if mat == null:
+		var nsurf: int = mi.mesh.get_surface_count()
+		if nsurf < 1:
 			continue
-		mat.metallic = 0.0
-		mat.metallic_specular = 0.2
-		mat.roughness = 0.78
-		mat.emission_enabled = false
-		mat.emission_energy_multiplier = 0.0
-		mat.emission = Color(0, 0, 0, 1)
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
-		# warm multiply toward concept_A (saturated red / peach / straw) without adding light
-		mat.albedo_color = _boy_albedo_day
-		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
-		mat.disable_receive_shadows = false
-		# Tripo/Mixamo can flip face/limb normals; back-face cull blacks out the face under
-		# the brim while the vest still lights. Match the old boy.gdshader (cull_disabled).
-		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		mi.material_override = mat
-		_boy_mat = mat
-		_boy_albedo_tex_day = mat.albedo_texture
+		_body_mi = mi
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mi.transparency = 0
-		# layer 1 (world) + layer 2 (face fill only) — still lit by the sun on layer 1
 		mi.layers = 1 | 2
+		# Prefer per-surface materials so a face slot can swap without touching clothes/hat.
+		mi.material_override = null
+		for si in nsurf:
+			var src: Material = mi.get_active_material(si)
+			if src == null:
+				src = mi.mesh.surface_get_material(si)
+			if src == null:
+				continue
+			var mat := src.duplicate() as StandardMaterial3D
+			if mat == null:
+				continue
+			_harden_boy_mat(mat)
+			mi.mesh.surface_set_material(si, mat)
+			var is_face := _surface_looks_like_face(mi.mesh, si, nsurf)
+			if is_face and _face_mat == null:
+				_face_mat = mat
+				_face_surf_i = si
+				_boy_albedo_tex_day = mat.albedo_texture
+			elif _boy_mat == null and not is_face:
+				_boy_mat = mat
+		# Single-surface Tripo: one mat is both body + face (expression paints whole albedo).
+		if _face_mat == null:
+			var only: Material = mi.mesh.surface_get_material(0)
+			_face_mat = only as StandardMaterial3D
+			_face_surf_i = 0
+			if _face_mat:
+				_boy_albedo_tex_day = _face_mat.albedo_texture
+		if _boy_mat == null:
+			_boy_mat = _face_mat
 		break
 
 
-## Closed-eye albedo / morph abandoned for Tripo shells — always keep day albedo.
-func _set_eyes_closed(_closed: bool) -> void:
-	if _boy_mat == null:
+func _harden_boy_mat(mat: StandardMaterial3D) -> void:
+	mat.metallic = 0.0
+	mat.metallic_specular = 0.2
+	mat.roughness = 0.78
+	mat.emission_enabled = false
+	mat.emission_energy_multiplier = 0.0
+	mat.emission = Color(0, 0, 0, 1)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	# Expression normals (boy/tex) replace Tripo eye-bulge normals; scale 1.0.
+	mat.normal_enabled = true
+	mat.normal_scale = 1.0
+	# glTF metallicRoughnessTexture: G=roughness, B=metallic (same ImageTexture).
+	if mat.roughness_texture != null:
+		mat.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+	if mat.metallic_texture != null:
+		mat.metallic_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_BLUE
+	mat.albedo_color = _boy_albedo_day
+	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
+	mat.disable_receive_shadows = false
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+
+## Heuristic: named face/head/eye surface, or surface 0 when multi-slot and name empty.
+func _surface_looks_like_face(mesh: Mesh, si: int, nsurf: int) -> bool:
+	var nm := ""
+	if mesh is ArrayMesh:
+		nm = (mesh as ArrayMesh).surface_get_name(si)
+	for h in FACE_SLOT_HINTS:
+		if nm.findn(h) >= 0:
+			return true
+	# AC-style regen often puts Face as surface 0 with Clothes/Hat after.
+	if nsurf > 1 and si == 0 and nm.is_empty():
+		return true
+	return false
+
+
+## Apply albedo + normal + metallic-roughness for one expression (required together).
+func _set_face_albedo(kind: String) -> void:
+	_apply_face_pack(kind)
+
+
+func _apply_face_pack(kind: String) -> void:
+	# Prefer the dedicated face slot when multi-surface; fall back to body mat.
+	var target: StandardMaterial3D = _face_mat if _face_mat else _boy_mat
+	if target == null:
 		return
-	_eyes_closed_tex = false
-	if _boy_albedo_tex_day == null:
+	var key := kind
+	if key == "neutral" or key == "":
+		key = "idle"
+	var pack = face_textures.get(key, null)
+	if pack == null:
+		pack = face_textures.get("idle", null)
+	if pack == null:
 		return
-	_boy_mat.albedo_texture = _boy_albedo_tex_day
-	if _body_mi:
-		_body_mi.material_override = _boy_mat
-		if _body_mi.mesh and _body_mi.mesh.get_surface_count() > 0:
-			_body_mi.mesh.surface_set_material(0, _boy_mat)
+	_eyes_closed_tex = (key == "sleep" or key == "cheer")
+	var alb: Texture2D = pack.get("albedo", null) if typeof(pack) == TYPE_DICTIONARY else pack
+	var nrm: Texture2D = pack.get("normal", null) if typeof(pack) == TYPE_DICTIONARY else null
+	var mr: Texture2D = pack.get("mr", null) if typeof(pack) == TYPE_DICTIONARY else null
+	if alb != null:
+		target.albedo_texture = alb
+	if nrm != null:
+		target.normal_enabled = true
+		target.normal_texture = nrm
+		target.normal_scale = 1.0
+	if mr != null:
+		# Same glTF channel layout as the embedded RM map.
+		target.roughness_texture = mr
+		target.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+		target.metallic_texture = mr
+		target.metallic_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_BLUE
+	if _face_mat != null and _face_mat != target:
+		_face_mat.albedo_texture = target.albedo_texture
+		_face_mat.normal_texture = target.normal_texture
+		_face_mat.normal_enabled = target.normal_enabled
+		_face_mat.normal_scale = target.normal_scale
+		_face_mat.roughness_texture = target.roughness_texture
+		_face_mat.roughness_texture_channel = target.roughness_texture_channel
+		_face_mat.metallic_texture = target.metallic_texture
+		_face_mat.metallic_texture_channel = target.metallic_texture_channel
+	if _body_mi and _body_mi.mesh and _face_surf_i >= 0 \
+			and _face_surf_i < _body_mi.mesh.get_surface_count():
+		_body_mi.mesh.surface_set_material(_face_surf_i, target)
+
+
+func _set_eyes_closed(closed: bool) -> void:
+	if closed:
+		_apply_face_pack("sleep")
+	elif expr != "" and expr != "sleep":
+		_apply_face_pack(expr)
+	else:
+		_apply_face_pack("idle")
 
 
 func b2g(v) -> Vector3:
@@ -582,13 +951,14 @@ func start_throw(p: float) -> void:
 func react(kind: String) -> void:
 	react_kind = kind
 	if kind == "":
-		set_face_expr("smile")
+		set_face_expr("idle")
 		_to_idle()
 		return
 	anim = "react"
 	anim_t = 0.0
 	act_target = 1.0
 	act_rate = 5.0
+	# Good skip → cheer maps; other reacts keep a soft smile.
 	set_face_expr("cheer" if kind == "cheer" else "smile")
 	var clip := "cheer" if kind == "cheer" else ("wave" if clips.has("wave") else "cheer")
 	if kind == "oops" and clips.has("oops"):
@@ -640,11 +1010,18 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	# Sitting uses Tripo sit; full lie freezes the AnimationTree and poses bones to a flat supine
 	var play_clip := "sit"
 	var seek_len := float(clips["sit"]["length"])
-	var full_lie := lie_k > 0.45 and kind in ["sun", "sleep", "seatlie"]
+	# Hammock climb starts earlier so sit→legs-in→lie reads (was stuck in sit until 0.45).
+	var full_lie := (lie_k > 0.18 and kind == "sleep") or (lie_k > 0.45 and kind in ["sun", "seatlie"])
 	if sit_k < 0.05 and lie_k <= 0.0:
 		play_clip = "idle"
 		seek_len = float(clips["idle"]["length"])
 	elif full_lie:
+		play_clip = "idle"
+		seek_len = float(clips["idle"]["length"])
+		u = 0.0
+	# Seated ergonomic path seeds from idle — don't flash the Mixamo sit clip (crosses legs /
+	# braces hands behind). Full lie also freezes on idle.
+	if (kind in ["seat", "sleep", "sun"] and sit_k > 0.02 and not full_lie) or full_lie:
 		play_clip = "idle"
 		seek_len = float(clips["idle"]["length"])
 		u = 0.0
@@ -669,28 +1046,33 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 	model.position = model_base
 	if full_lie:
 		_seed_lie_from_sit()
-		_apply_lie_pose(kind, lie_k, tt)
+		if kind == "sleep" and lie_k < 0.88:
+			# Peak climb mid-way: sit-on-edge → swing legs in → settle lie.
+			var climb_w := sin(clampf(lie_k, 0.0, 1.0) * PI)
+			climb_w *= 1.0 - smoothstep(0.72, 0.92, lie_k)
+			apply_hammock_climb(climb_w)
+			_apply_lie_pose(kind, maxf(lie_k, 0.35), tt)
+		else:
+			_apply_lie_pose(kind, lie_k, tt)
 		# Seek clears pose overrides — keep thighs planted on the lounger cushion.
 		if lie_foot_plant and kind == "sun":
 			plant_feet_on_plane(lie_foot_plane_point, lie_foot_plane_normal, lie_foot_plant_gap, true)
-		# Hat stays on the head; contact via head tilt in the lie poses.
+		# Hammock: hat moves to chest. Lounger: tip/beside. Sit: hat on head.
 		sync_hat_lie(kind, lie_k)
 	else:
 		sync_hat_lie(kind, 0.0)
-		var sit_w := smoothstep(0.15, 1.0, sit_k) * (1.0 - lie_k)
-		if sit_w >= 0.95 and kind in ["seat", "sleep", "sun"]:
-			# Freeze tree + additive L-sit on idle seed (preserves Mixamo UpLeg twist so
-			# thighs fold forward, not sideways). bake_pose_mesh() for llvmpipe stills.
+		# Single sit path: idle seed + additive L-sit (no Mixamo sit clip stack — that
+		# rubber-hosed thighs mid-transition in v24).
+		var sit_w := smoothstep(0.05, 1.0, sit_k) * (1.0 - lie_k)
+		if kind in ["seat", "sleep", "sun"] and sit_w > 0.02:
 			_seed_lie_from_sit()
-			_apply_ergonomic_sit(1.0)
+			_apply_ergonomic_sit(sit_w)
 		else:
 			if ap and not ap.active:
 				ap.active = true
 			if tree and not tree.active:
 				tree.active = true
 			_apply_mixer()
-			if sit_w > 0.15 and kind in ["seat", "sleep", "sun"]:
-				_apply_ergonomic_sit(sit_w)
 	var pel := _live_pelvis()
 	if pel.y < 0.05:
 		pel = Vector3(0.0, Island.SEAT_TOP, 0.0)
@@ -786,13 +1168,42 @@ func _apply_lounger_pose(w: float, breath: float) -> void:
 
 ## Hammock: curl into the occupied cradle. Head turns away; forearm covers the eyes.
 ## Hat stays on — slight forward tip so the brim rests on the fabric.
+## Mid climb-in: reach for the near lip, one knee up, weight leaning into the fabric.
+func apply_hammock_climb(w: float) -> void:
+	if skel == null or w <= 0.001:
+		return
+	_seed_lie_from_sit()
+	var k := smoothstep(0.0, 1.0, w)
+	# Readable climb: torso lean into fabric, one knee hiked onto the lip, both hands on rails.
+	_pose_add("mixamorig_Spine", Vector3(0.45, 0.0, 0.0), k)
+	_pose_add("mixamorig_Spine1", Vector3(0.25, 0.0, 0.0), k * 0.8)
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.45, 0.45, 0.25), k)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-0.35, -0.10, -0.08), k * 0.6)
+	_pose_add("mixamorig_LeftLeg", Vector3(-0.35, 0.0, 0.0), k)
+	_pose_add("mixamorig_RightLeg", Vector3(0.15, 0.0, 0.0), k * 0.5)
+	_pose_add("mixamorig_LeftArm", Vector3(-1.10, 0.70, -0.45), k)
+	_pose_add("mixamorig_RightArm", Vector3(-0.85, -0.55, 0.35), k)
+	_pose_add("mixamorig_LeftForeArm", Vector3(-1.10, 0.15, 0.0), k)
+	_pose_add("mixamorig_RightForeArm", Vector3(-0.95, -0.12, 0.0), k)
+	skel.force_update_transform()
+
+
 func _apply_hammock_pose(w: float, breath: float) -> void:
-	_pose_abs("mixamorig_Spine", Vector3(0.14 + breath * 0.1, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine1", Vector3(0.18 + breath * 0.12, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Spine2", Vector3(0.12 + breath * 0.08, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Neck", Vector3(-0.18, 0.38, 0.08), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.22 + breath * 0.03, 0.58, 0.12), w)
+	_pose_abs("mixamorig_Spine", Vector3(0.10 + breath * 0.08, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine1", Vector3(0.12 + breath * 0.1, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Spine2", Vector3(0.08 + breath * 0.06, 0.0, 0.0), w)
+	# Tip head/hat BACK toward the pillow end so the brim clears the fabric bed.
+	_pose_abs("mixamorig_Neck", Vector3(0.28, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(0.62 + breath * 0.02, 0.0, 0.0), w)
+	# Soft knee curl so shins follow the cradle instead of a stiff plank.
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.55, 0.12, 0.18), w * 0.85)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-0.55, -0.12, -0.18), w * 0.85)
+	_pose_add("mixamorig_LeftLeg", Vector3(0.95, 0.0, 0.0), w * 0.8)
+	_pose_add("mixamorig_RightLeg", Vector3(0.95, 0.0, 0.0), w * 0.8)
+	_pose_add("mixamorig_LeftFoot", Vector3(0.15, 0.0, 0.12), w * 0.55)
+	_pose_add("mixamorig_RightFoot", Vector3(0.15, 0.0, -0.12), w * 0.55)
 	_nap_forearm_over_eyes(w, "sleep")
+	set_face_expr("sleep")
 
 
 ## Classic nap: left hand on belly, right forearm draped across the eyes (in front of
@@ -854,6 +1265,39 @@ func _nap_forearm_over_eyes(w: float, kind: String = "sleep") -> void:
 	skel.force_update_transform()
 
 
+## Sit: plant wrists on mid-thighs so hands rest, not brace behind. Hands only —
+## forearm overrides rubber-hose Tripo arms into noodles.
+func _plant_hands_on_thighs(w: float) -> void:
+	if skel == null or w < 0.05:
+		return
+	skel.force_update_transform()
+	var face: Vector3 = -global_transform.basis.z.normalized()
+	if model != null and is_instance_valid(model):
+		face = model.global_transform.basis.z.normalized()
+	var pairs := [
+		["mixamorig_LeftHand", "mixamorig_LeftUpLeg", "mixamorig_LeftLeg"],
+		["mixamorig_RightHand", "mixamorig_RightUpLeg", "mixamorig_RightLeg"],
+	]
+	for p in pairs:
+		var hbi := skel.find_bone(p[0])
+		var ubi := skel.find_bone(p[1])
+		var kbi := skel.find_bone(p[2])
+		if hbi < 0 or ubi < 0 or kbi < 0:
+			continue
+		var hip: Vector3 = lie_bone_world(p[1])
+		var knee: Vector3 = lie_bone_world(p[2])
+		# Rest on the top of the thigh — reads as hands-on-laps.
+		var thigh_mid: Vector3 = hip.lerp(knee, 0.48) + face * 0.03 + Vector3.UP * 0.04
+		var xf: Transform3D = skel.global_transform * skel.get_bone_global_pose(hbi)
+		# Blend gently so we don't yank the wrist through the elbow.
+		var blend := clampf(w * 0.75, 0.0, 0.85)
+		var goal: Vector3 = xf.origin.lerp(thigh_mid, blend)
+		var planted := Transform3D(xf.basis, goal)
+		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
+		skel.set_bone_global_pose_override(hbi, local_xf, blend, true)
+	skel.force_update_transform()
+
+
 ## Place both hands on the belly (chest-sky side) so they never tunnel through the support.
 func _rest_hands_on_belly(w: float) -> void:
 	if skel == null or w < 0.05:
@@ -909,6 +1353,34 @@ func plant_feet_on_plane(plane_point: Vector3, plane_normal: Vector3, gap := 0.0
 	skel.force_update_transform()
 
 
+## Snap both feet onto a ground plane (pull down or lift) so a park-bench sit plants soles.
+## Caps the pull so short Tripo shins don't rubber-hose through the seat board.
+func plant_feet_to_ground(plane_point: Vector3, plane_normal: Vector3 = Vector3.UP, gap := 0.02) -> void:
+	plant_feet_soft(plane_point, plane_normal, gap, 0.12)
+
+
+## Soft sole plant: only nudge feet that are already near the plane. Far feet hang/swing.
+func plant_feet_soft(plane_point: Vector3, plane_normal: Vector3 = Vector3.UP, gap := 0.03, max_pull := 0.06) -> void:
+	if skel == null:
+		return
+	plane_normal = plane_normal.normalized()
+	skel.force_update_transform()
+	for bone_name in [B_FOOT[0], B_FOOT[1]]:
+		var bi := skel.find_bone(bone_name)
+		if bi < 0:
+			continue
+		var xf: Transform3D = skel.global_transform * skel.get_bone_global_pose(bi)
+		var g := (xf.origin - plane_point).dot(plane_normal)
+		# Skip feet that would need a long rubber-hose pull.
+		if absf(g - gap) > max_pull * 1.25:
+			continue
+		var pull := clampf(g - gap, -max_pull, max_pull)
+		var planted := Transform3D(xf.basis, xf.origin - plane_normal * pull)
+		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
+		skel.set_bone_global_pose_override(bi, local_xf, 1.0, true)
+	skel.force_update_transform()
+
+
 ## Clear any foot pose overrides (call when leaving lie / before reseeding).
 func clear_foot_plant() -> void:
 	if skel == null:
@@ -917,13 +1389,21 @@ func clear_foot_plant() -> void:
 	skel.force_update_transform()
 
 
-## Bench / log lie-back: soft flat supine (kept for seatlie).
+## Bench / log lie-back: soft flat supine with bent knees + hands on belly.
 func _apply_seatlie_pose(w: float, breath: float) -> void:
 	_pose_abs("mixamorig_Spine", Vector3(0.04 + breath * 0.4, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine1", Vector3(0.05 + breath * 0.5, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine2", Vector3(0.04 + breath * 0.3, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Neck", Vector3(-0.1, 0.08, 0.0), w)
 	_pose_abs("mixamorig_Head", Vector3(-0.15 + breath * 0.2, 0.1, 0.0), w)
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.45, 0.1, 0.12), w * 0.75)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-0.45, -0.1, -0.12), w * 0.75)
+	_pose_add("mixamorig_LeftLeg", Vector3(0.85, 0.0, 0.0), w * 0.7)
+	_pose_add("mixamorig_RightLeg", Vector3(0.85, 0.0, 0.0), w * 0.7)
+	_pose_add("mixamorig_LeftArm", Vector3(0.25, 0.35, -0.4), w * 0.55)
+	_pose_add("mixamorig_RightArm", Vector3(0.25, -0.35, 0.4), w * 0.55)
+	_pose_add("mixamorig_LeftForeArm", Vector3(-0.55, 0.1, 0.0), w * 0.55)
+	_pose_add("mixamorig_RightForeArm", Vector3(-0.55, -0.1, 0.0), w * 0.55)
 
 
 func _pose_abs(bone: String, euler: Vector3, w: float) -> void:
@@ -943,28 +1423,33 @@ func _pose_add(bone: String, euler: Vector3, w: float) -> void:
 	skel.set_bone_pose_rotation(bi, cur.slerp(add * cur, w))
 
 
-## Upright chair/log/hammock sit: thighs near horizontal, knees ~90°, shins down.
-## Additive on idle seed (keeps Mixamo UpLeg π-twist so thighs fold forward along facing).
+## Upright chair/log/hammock sit: parallel horizontal thighs, vertical shins, no cross.
 func _apply_ergonomic_sit(w: float) -> void:
 	if skel == null or w <= 0.001:
 		return
-	# hy/hz sign flip vs sit_fwd_scan2: thighs along character forward (off the seat front),
-	# not tucked back onto the log. elev≈0°, shin≈−76°, thigh·fwd≈1.0, foot past seat rim.
-	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.70, 0.70, 0.40), w)
-	_pose_add("mixamorig_RightUpLeg", Vector3(-1.70, -0.70, -0.40), w)
-	_pose_add("mixamorig_LeftLeg", Vector3(1.70, 0.0, 0.0), w)
-	_pose_add("mixamorig_RightLeg", Vector3(1.70, 0.0, 0.0), w)
-	_pose_add("mixamorig_LeftFoot", Vector3(0.30, 0.0, 0.05), w * 0.75)
-	_pose_add("mixamorig_RightFoot", Vector3(0.30, 0.0, -0.05), w * 0.75)
-	_pose_add("mixamorig_Spine", Vector3(-0.08, 0.0, 0.0), w * 0.55)
-	_pose_add("mixamorig_Spine1", Vector3(-0.05, 0.0, 0.0), w * 0.45)
-	# Hands rest on the thighs (not tucked behind the hips — that clipped the shorts).
-	_pose_add("mixamorig_LeftArm", Vector3(0.35, 0.25, -0.25), w * 0.65)
-	_pose_add("mixamorig_RightArm", Vector3(0.35, -0.25, 0.25), w * 0.65)
-	_pose_add("mixamorig_LeftForeArm", Vector3(-0.55, 0.15, 0.0), w * 0.7)
-	_pose_add("mixamorig_RightForeArm", Vector3(-0.55, -0.15, 0.0), w * 0.7)
+	var k := smoothstep(0.0, 1.0, w)
+	# Flat-eye Mixamo: BOTH UpLegs take negative X (mirrored Y/Z only). Positive Left X
+	# pointed the left thigh backward. Scanned: L/R (-1.55, ±0.30, -0.45) + Legs -1.72
+	# → both thighs forward (align≈0.9), elev≈3°, opposite outward lateral, shins down.
+	_pose_abs("mixamorig_LeftUpLeg", Vector3(-1.55, 0.30, -0.45), k)
+	_pose_abs("mixamorig_RightUpLeg", Vector3(-1.55, -0.30, -0.45), k)
+	_pose_abs("mixamorig_LeftLeg", Vector3(-1.72, 0.0, 0.0), k)
+	_pose_abs("mixamorig_RightLeg", Vector3(-1.72, 0.0, 0.0), k)
+	_pose_abs("mixamorig_LeftFoot", Vector3(-0.08, 0.0, -0.02), k * 0.8)
+	_pose_abs("mixamorig_RightFoot", Vector3(-0.08, 0.0, 0.02), k * 0.8)
+	# Upright back.
+	_pose_abs("mixamorig_Spine", Vector3(-0.02, 0.0, 0.0), k * 0.45)
+	_pose_abs("mixamorig_Spine1", Vector3(-0.01, 0.0, 0.0), k * 0.35)
+	_pose_abs("mixamorig_Spine2", Vector3(0.0, 0.0, 0.0), k * 0.25)
+	# Hands resting on mid-thighs.
+	_pose_abs("mixamorig_LeftArm", Vector3(0.70, 0.55, -0.55), k)
+	_pose_abs("mixamorig_RightArm", Vector3(0.70, -0.55, 0.55), k)
+	_pose_abs("mixamorig_LeftForeArm", Vector3(-1.05, 0.20, 0.08), k)
+	_pose_abs("mixamorig_RightForeArm", Vector3(-1.05, -0.20, -0.08), k)
+	_pose_abs("mixamorig_LeftHand", Vector3(0.12, 0.06, 0.18), k)
+	_pose_abs("mixamorig_RightHand", Vector3(0.12, -0.06, -0.18), k)
 	skel.force_update_transform()
-
+	_plant_hands_on_thighs(k)
 
 ## Bake the current skeleton pose into a static ArrayMesh so stills show deformation on
 ## drivers that leave the skinned mesh at bind pose (llvmpipe Compatibility).
@@ -972,6 +1457,9 @@ func bake_pose_mesh() -> void:
 	_ensure_skin_cache()
 	if skel == null or _body_mi == null or _skin_verts.is_empty():
 		return
+	# Keep chest-mode collapse in the skinned bake so the baked brim doesn't reappear.
+	if hat_mode != "head":
+		_set_baked_hat_collapsed(true)
 	skel.force_update_transform()
 	var n: int = _skin_verts.size()
 	var bone_xf: Array[Transform3D] = []
@@ -1011,12 +1499,25 @@ func bake_pose_mesh() -> void:
 			continue
 		clean[ai] = arrays[ai]
 	baked.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, clean, [], {}, fmt)
-	if _body_mesh_orig is ArrayMesh and (_body_mesh_orig as ArrayMesh).surface_get_material(0):
-		baked.surface_set_material(0, (_body_mesh_orig as ArrayMesh).surface_get_material(0))
+	# Keep the LIVE expression albedo (face paint), not the bind-pose day texture.
+	var live_mat: Material = null
+	if _face_mat != null:
+		live_mat = _face_mat
+	elif _boy_mat != null:
+		live_mat = _boy_mat
+	elif _body_mi.get_active_material(0) != null:
+		live_mat = _body_mi.get_active_material(0)
+	elif _body_mesh_orig is ArrayMesh:
+		live_mat = (_body_mesh_orig as ArrayMesh).surface_get_material(0)
+	if live_mat:
+		baked.surface_set_material(0, live_mat)
 	_body_mi.mesh = baked
 	_body_mi.skeleton = NodePath()
 	_body_mi.skin = null
 	_pose_baked = true
+	# Re-assert current expression maps on the baked material.
+	if expr != "":
+		_apply_face_pack(expr)
 
 
 func restore_pose_mesh() -> void:
@@ -1026,6 +1527,11 @@ func restore_pose_mesh() -> void:
 	_body_mi.skeleton = _body_skel_path
 	_body_mi.skin = _body_skin_orig
 	_pose_baked = false
+	# Re-apply chest collapse after restoring the pristine bind mesh.
+	if hat_mode != "head":
+		_set_baked_hat_collapsed(true)
+	else:
+		_set_baked_hat_collapsed(false)
 
 
 ## World elevation of hip→knee (0° = horizontal thigh). Positive = knee above hip.
@@ -1174,10 +1680,21 @@ func skinned_sample_world(max_samples := 500) -> Array[Vector3]:
 	return out
 
 
-## Sample baked straw-hat crown/brim verts in world space (for penetration / containment).
+## Sample straw-hat verts in world space (split hat mesh, else residual baked idxs).
 func hat_sample_world(max_samples := 160) -> Array[Vector3]:
-	_ensure_skin_cache()
 	var out: Array[Vector3] = []
+	if hat != null and is_instance_valid(hat) and hat.mesh != null and hat.visible:
+		var arr: Array = hat.mesh.surface_get_arrays(0)
+		if not arr.is_empty():
+			var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			if not verts.is_empty():
+				var xf: Transform3D = hat.global_transform
+				var step: int = maxi(1, verts.size() / maxi(max_samples, 1))
+				for i in range(0, verts.size(), step):
+					out.append(xf * verts[i])
+				if out.size() >= 8:
+					return out
+	_ensure_skin_cache()
 	if skel == null or _hat_skin_idxs.is_empty():
 		return out
 	skel.force_update_transform()
@@ -1186,18 +1703,18 @@ func hat_sample_world(max_samples := 160) -> Array[Vector3]:
 	for bi in skel.get_bone_count():
 		bone_xf[bi] = skel.global_transform * skel.get_bone_global_pose(bi) * skel.get_bone_global_rest(bi).affine_inverse()
 	var n: int = _hat_skin_idxs.size()
-	var step: int = maxi(1, n / maxi(max_samples, 1))
-	for k in range(0, n, step):
+	var step2: int = maxi(1, n / maxi(max_samples, 1))
+	for k in range(0, n, step2):
 		var i: int = _hat_skin_idxs[k]
 		var v: Vector3 = _skin_verts[i]
 		var skinned := Vector3.ZERO
 		var wsum := 0.0
 		for j in 4:
-			var bi: int = _skin_bones[i * 4 + j]
+			var bi2: int = _skin_bones[i * 4 + j]
 			var w: float = _skin_weights[i * 4 + j]
-			if w <= 0.0 or bi < 0 or bi >= bone_xf.size():
+			if w <= 0.0 or bi2 < 0 or bi2 >= bone_xf.size():
 				continue
-			skinned += bone_xf[bi] * v * w
+			skinned += bone_xf[bi2] * v * w
 			wsum += w
 		if wsum < 0.01:
 			continue
@@ -1210,7 +1727,8 @@ func throw_stance() -> Array:
 
 
 func _throw_clip() -> String:
-	return "throw_stand"
+	# Meta key in boy_meta.json (has t_charge / t_release). Playback resolves to pitch_baseball.
+	return "throw_crouch" if stance == "crouch" else "throw_stand"
 
 
 func _to_idle() -> void:
@@ -1233,15 +1751,26 @@ func _to_idle() -> void:
 func _resolve_clip(name: String) -> String:
 	if ap.has_animation(name):
 		return name
-	# aliases
+	# aliases — dig/lift_heavy intentionally omitted (not sleep / stone-pick).
 	var map := {
-		"stroll": "walk", "throw_crouch": "throw_stand", "oops": "wave",
+		"stroll": "walk",
+		"throw_stand": "pitch_baseball", "throw_crouch": "pitch_baseball",
+		"wave": "turn", "oops": "cheer", "standing_relax": "idle", "jump": "idle",
 		"sun_sit": "sit", "sun_lie": "sit", "sun_rest": "sit", "sun_up": "sit", "sun_stand": "idle",
-		"hammock_sit": "sit", "hammock_lie": "sit", "hammock_sleep": "sit", "hammock_up": "sit", "hammock_stand": "idle",
-		"seat_sit": "sit", "seat_rest": "sit", "seat_lie": "sit", "seat_nap": "sit", "seat_up": "sit", "seat_stand": "idle",
+		# Authored hammock/bench/log clips — resolve only when present.
+		"hammock_sit": "hammock_enter", "hammock_lie": "hammock_sleep",
+		"hammock_sleep": "hammock_sleep", "hammock_up": "hammock_exit", "hammock_stand": "idle",
+		"seat_sit": "bench_sit_idle", "seat_rest": "bench_sit_idle",
+		"seat_lie": "bench_sit_idle", "seat_nap": "bench_sit_idle",
+		"seat_up": "bench_sit_exit", "seat_stand": "idle",
 	}
 	var a: String = map.get(name, "idle")
-	return a if ap.has_animation(a) else "idle"
+	if ap.has_animation(a):
+		return a
+	# Fallbacks when a prop clip is missing.
+	if ap.has_animation("sit"):
+		return "sit"
+	return "idle" if ap.has_animation("idle") else name
 
 
 func _set_slot(i: int, clip: String, tseek: float) -> void:
@@ -1331,7 +1860,8 @@ func _tick(delta: float) -> void:
 	if anim == "move":
 		speed_s = move_speed
 		run_k = 0.0 if pivoting else smoothstep(RUN_FROM, RUN_TO, speed_s)
-		walk_k = 1.0
+		# Light stick → stroll (soft), then walk. Keep walk_k for mix amount.
+		walk_k = clampf(smoothstep(0.35, 1.05, speed_s), 0.0, 1.0)
 		move_w = move_toward(move_w, 1.0, delta * 4.0)
 		var dist := 0.0
 		if has_prev:
@@ -1339,6 +1869,7 @@ func _tick(delta: float) -> void:
 		prev_pos = global_position
 		has_prev = true
 		var stride := float(clips["run"]["stride"]) if run_k > 0.5 else float(clips["walk"]["stride"])
+		# Match phase advance to travel so stance feet don't skate on the ground texture.
 		var dphase := dist / maxf(stride, 0.05)
 		if pivoting or dist < 0.001:
 			dphase = delta / maxf(float(clips["walk"]["length"]), 0.2)
@@ -1389,6 +1920,15 @@ func _tick(delta: float) -> void:
 			else:
 				slot_t[i] = fposmod(slot_t[i] + delta, maxf(L, 0.01)) if clips.get(slot_clip[i], {}).get("loop", false) else minf(slot_t[i] + delta, L)
 
+	if anim == "prop_clip" or prop_clip != "":
+		# Authored bench/log/hammock clips: AnimationPlayer only, no tree/pose stack.
+		if tree:
+			tree.active = false
+		if ap and not ap.active:
+			ap.active = true
+		_update_blob()
+		_update_face(delta)
+		return
 	if anim == "activity" and act_lie_k > 0.45 and act_kind in ["sun", "sleep", "seatlie"]:
 		_seed_lie_from_sit()
 		_apply_lie_pose(act_kind, act_lie_k, act_tt)
@@ -1410,46 +1950,52 @@ func _tick(delta: float) -> void:
 	_update_face(delta)
 
 
-## Child-like walk polish on top of Mixamo: upright torso, visible stride, opposite arms.
-## Tripo's Mixamo walk has tiny limb travel — amplify hip/knee/foot + arms so the filmstrip reads.
+## Soft child gait on Mixamo: light limb boost, hip sway, bob, turn lean.
+## Keep amps small — v24 overdrive made a conveyor/skating read next to AC.
 func _polish_gait(delta: float) -> void:
 	if skel == null or model == null:
 		return
+	if _settle_left > 0.0:
+		_settle_left = maxf(0.0, _settle_left - delta)
 	var moving := anim == "move" and move_w > 0.25 and not pivoting
 	var bob_amp := 0.0
+	var sway := 0.0
 	if moving:
-		var amp := lerpf(1.0, 1.25, run_k) * move_w
-		bob_amp = lerpf(0.014, 0.028, run_k) * move_w
-		# Slight forward lean; kill hunch.
-		var upright := 0.05 + 0.08 * run_k
-		_pose_add("mixamorig_Spine", Vector3(-upright * 0.45, 0.0, 0.0), move_w * 0.6)
-		_pose_add("mixamorig_Spine1", Vector3(-upright * 0.35, 0.0, 0.0), move_w * 0.55)
-		var look_y := clampf(turn_ahead, -0.35, 0.35) * 0.45
-		_pose_add("mixamorig_Head", Vector3(upright * 0.2, look_y, 0.0), move_w * 0.45)
-		# Alternating hip pitch (stride) + swing-leg knee flex + plant-leg stiff.
+		var amp := lerpf(0.55, 0.85, run_k) * move_w
+		bob_amp = lerpf(0.018, 0.032, run_k) * move_w
+		# Soft forward lean + turn lean into corners.
+		var upright := 0.04 + 0.06 * run_k + absf(turn_lean) * 0.08
+		_pose_add("mixamorig_Spine", Vector3(-upright * 0.4, turn_lean * 0.12, turn_lean * 0.18), move_w * 0.55)
+		_pose_add("mixamorig_Spine1", Vector3(-upright * 0.28, turn_lean * 0.08, 0.0), move_w * 0.5)
+		var look_y := clampf(turn_ahead, -0.35, 0.35) * 0.4
+		_pose_add("mixamorig_Head", Vector3(upright * 0.15, look_y, 0.0), move_w * 0.4)
 		var s := sin(phase * TAU)
 		var c := cos(phase * TAU)
-		var hip_amp := lerpf(0.55, 0.85, run_k) * amp
-		var knee_swing := lerpf(0.85, 1.15, run_k) * amp
-		var knee_plant := lerpf(0.12, 0.22, run_k) * amp
-		# Left forward when s>0; right forward when s<0.
-		_pose_add("mixamorig_LeftUpLeg", Vector3(-hip_amp * s, 0.0, 0.0), 0.85)
-		_pose_add("mixamorig_RightUpLeg", Vector3(hip_amp * s, 0.0, 0.0), 0.85)
-		_pose_add("mixamorig_LeftLeg", Vector3(knee_swing * maxf(s, 0.0) + knee_plant * maxf(-s, 0.0), 0.0, 0.0), 0.85)
-		_pose_add("mixamorig_RightLeg", Vector3(knee_swing * maxf(-s, 0.0) + knee_plant * maxf(s, 0.0), 0.0, 0.0), 0.85)
-		# Heel strike / toe-off on the leading foot.
-		_pose_add("mixamorig_LeftFoot", Vector3(0.35 * maxf(s, 0.0) - 0.2 * maxf(-s, 0.0), 0.0, 0.0), 0.7)
-		_pose_add("mixamorig_RightFoot", Vector3(0.35 * maxf(-s, 0.0) - 0.2 * maxf(s, 0.0), 0.0, 0.0), 0.7)
-		# Contra-lateral arm swing (opposite the legs).
-		var swing := s * lerpf(1.05, 1.35, run_k) * amp
-		_pose_add("mixamorig_LeftArm", Vector3(swing * 0.7, -swing * 0.1, -swing * 0.25), 0.9)
-		_pose_add("mixamorig_RightArm", Vector3(-swing * 0.7, swing * 0.1, swing * 0.25), 0.9)
-		_pose_add("mixamorig_LeftForeArm", Vector3(-absf(swing) * 0.5, 0.0, 0.0), 0.75)
-		_pose_add("mixamorig_RightForeArm", Vector3(-absf(swing) * 0.5, 0.0, 0.0), 0.75)
+		# Mild stride amplify (Mixamo already carries most of the motion).
+		var hip_amp := lerpf(0.18, 0.28, run_k) * amp
+		var knee_swing := lerpf(0.28, 0.42, run_k) * amp
+		var knee_plant := lerpf(0.04, 0.08, run_k) * amp
+		_pose_add("mixamorig_LeftUpLeg", Vector3(-hip_amp * s, 0.0, 0.06 * c), 0.7)
+		_pose_add("mixamorig_RightUpLeg", Vector3(hip_amp * s, 0.0, -0.06 * c), 0.7)
+		_pose_add("mixamorig_LeftLeg", Vector3(knee_swing * maxf(s, 0.0) + knee_plant * maxf(-s, 0.0), 0.0, 0.0), 0.7)
+		_pose_add("mixamorig_RightLeg", Vector3(knee_swing * maxf(-s, 0.0) + knee_plant * maxf(s, 0.0), 0.0, 0.0), 0.7)
+		_pose_add("mixamorig_LeftFoot", Vector3(0.18 * maxf(s, 0.0) - 0.1 * maxf(-s, 0.0), 0.0, 0.0), 0.55)
+		_pose_add("mixamorig_RightFoot", Vector3(0.18 * maxf(-s, 0.0) - 0.1 * maxf(s, 0.0), 0.0, 0.0), 0.55)
+		var swing := s * lerpf(0.45, 0.65, run_k) * amp
+		_pose_add("mixamorig_LeftArm", Vector3(swing * 0.55, -swing * 0.08, -swing * 0.18), 0.75)
+		_pose_add("mixamorig_RightArm", Vector3(-swing * 0.55, swing * 0.08, swing * 0.18), 0.75)
+		_pose_add("mixamorig_LeftForeArm", Vector3(-absf(swing) * 0.35, 0.0, 0.0), 0.6)
+		_pose_add("mixamorig_RightForeArm", Vector3(-absf(swing) * 0.35, 0.0, 0.0), 0.6)
+		# Lateral weight shift toward the stance foot (AC-style hip sway).
+		sway = -c * lerpf(0.012, 0.02, run_k) * move_w
+		hip_shift = hip_shift.lerp(Vector3(sway, 0, 0), 1.0 - exp(-delta * 8.0))
 		skel.force_update_transform()
-	var want_bob := sin(phase * TAU) * bob_amp if moving else 0.0
+	else:
+		hip_shift = hip_shift.lerp(Vector3.ZERO, 1.0 - exp(-delta * 6.0))
+	# Double-frequency bob: dip on each footfall, rise on mid-swing.
+	var want_bob := -absf(sin(phase * TAU)) * bob_amp if moving else 0.0
 	_walk_bob = lerpf(_walk_bob, want_bob, 1.0 - exp(-delta * 10.0))
-	model.position = model_base + Vector3(0, _walk_bob, 0)
+	model.position = model_base + Vector3(hip_shift.x, _walk_bob, 0)
 
 
 func _reset_to_rest_pose() -> void:
@@ -1523,11 +2069,17 @@ static func move_turn(face: float, want: float, speed: float, delta: float) -> A
 
 
 func spin_busy() -> bool:
-	return false
+	# Only the post-pivot grace — do NOT include `pivoting` itself (that deadlocks
+	# spot_turning forever: need≈0 but spin_busy stays true while pivoting is still set).
+	return pivot_grace > 0.05 and not pivoting
 
 
 func settling() -> bool:
-	return false
+	return _settle_left > 0.0
+
+
+func begin_settle(seconds := 0.35) -> void:
+	_settle_left = maxf(_settle_left, seconds)
 
 
 func hat_seat(s := -1.0) -> Transform3D:
@@ -1546,100 +2098,146 @@ func hat_grip_gap() -> float:
 	return 0.0
 
 
+var _face_decal: Node3D = null  # removed — opaque plate rejected
+var _face_mat: StandardMaterial3D = null
+var _face_surf_i := -1  # mesh surface index for map swaps (−1 = whole body)
+## Legacy alias: kind -> albedo Texture2D (selftest / older probes).
+var _face_alb := {}
+var _face_normal_flat: Texture2D = null  # unused — expression normals replace Tripo maps
+var _idle_smile_t := 0.0  # standing idle smile pulse timer
+
+
 func _build_face_expr() -> void:
-	# Soft eyelid + mouth overlays on the Head bone (Tripo has no blendshapes).
-	if not parts.has("head") or parts["head"] == null:
+	# Texture-swap only — no plates, lid discs, or runtime paints.
+	_face_decal = null
+	_mouth = null
+	_eyelid_l = null
+	_eyelid_r = null
+	blink_timer = 9999.0
+	blink_t = -1.0
+
+
+func _load_face_tex(path: String) -> Texture2D:
+	# Always read pixels from disk so rebakes aren't stuck behind .import cache.
+	var abs_path := ProjectSettings.globalize_path(path)
+	if FileAccess.file_exists(abs_path):
+		var img := Image.load_from_file(abs_path)
+		if img != null and not img.is_empty():
+			return ImageTexture.create_from_image(img)
+	if ResourceLoader.exists(path):
+		return load(path) as Texture2D
+	return null
+
+
+func _load_face_albedos() -> void:
+	# Preload verified offline packs: albedo + normal + MR per expression.
+	# cheer/sleep share one closed-eye normal and one closed-eye MR (identical sources).
+	var root := "res://boy/tex/"
+	var closed_n: Texture2D = _load_face_tex(root + "normal_closed.jpg")
+	if closed_n == null:
+		closed_n = _load_face_tex(root + "normal_cheer.jpg")
+	var closed_mr: Texture2D = _load_face_tex(root + "mr_closed.jpg")
+	if closed_mr == null:
+		closed_mr = _load_face_tex(root + "mr_cheer.jpg")
+	face_textures = {}
+	_face_alb = {}
+	for kind in ["idle", "smile", "cheer", "sleep"]:
+		var alb: Texture2D = _load_face_tex(root + "albedo_%s.jpg" % kind)
+		if alb == null:
+			alb = _load_face_tex(root + "albedo_%s.png" % kind)
+		var nrm: Texture2D
+		var mr: Texture2D
+		if kind == "cheer" or kind == "sleep":
+			nrm = closed_n
+			mr = closed_mr
+		else:
+			nrm = _load_face_tex(root + "normal_%s.jpg" % kind)
+			mr = _load_face_tex(root + "mr_%s.jpg" % kind)
+		if alb == null:
+			alb = _boy_albedo_tex_day
+		face_textures[kind] = {"albedo": alb, "normal": nrm, "mr": mr}
+		_face_alb[kind] = alb
+	face_textures["neutral"] = face_textures["idle"]
+	_face_alb["neutral"] = _face_alb.get("idle", null)
+	# Apply idle pack immediately so first frame isn't the Tripo ghost-eye maps.
+	_apply_face_pack("idle")
+
+
+func _cache_eye_shell_verts() -> void:
+	pass
+
+
+func _hard_sink_eye_shells(_closed: bool) -> void:
+	pass
+
+
+func _set_eye_shells_closed(closed: bool) -> void:
+	_set_eyes_closed(closed)
+
+
+func _apply_brow_offsets(_kind: String) -> void:
+	pass
+
+
+func _write_skin_verts_to_mesh(verts: PackedVector3Array) -> void:
+	if _body_mi == null or _pose_baked:
 		return
-	var head: Node3D = parts["head"]
-	_eyelid_l = _make_eyelid("EyelidL")
-	_eyelid_r = _make_eyelid("EyelidR")
-	head.add_child(_eyelid_l)
-	head.add_child(_eyelid_r)
-	# Mixamo head local: +Y up skull, −Z face-forward after model.y=PI.
-	# Tripo eyes are bulbous shells — lids sit just in front and cover them fully when closed.
-	_eyelid_l.position = Vector3(0.034, 0.062, -0.152)
-	_eyelid_r.position = Vector3(-0.034, 0.062, -0.152)
-	_eyelid_l.scale = Vector3(1.15, 0.04, 1.05)
-	_eyelid_r.scale = Vector3(1.15, 0.04, 1.05)
-	_mouth = MeshInstance3D.new()
-	_mouth.name = "MouthExpr"
-	var mm := SphereMesh.new()
-	mm.radius = 0.016
-	mm.height = 0.01
-	mm.radial_segments = 10
-	mm.rings = 6
-	_mouth.mesh = mm
-	var mout := StandardMaterial3D.new()
-	mout.albedo_color = Color(0.78, 0.32, 0.34)
-	mout.roughness = 0.65
-	mout.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_mouth.material_override = mout
-	_mouth.position = Vector3(0.0, 0.002, -0.102)
-	_mouth.rotation_degrees = Vector3(10, 0, 0)
-	_mouth.scale = Vector3(1.15, 0.4, 0.5)
-	head.add_child(_mouth)
-	blink_timer = rng.randf_range(2.0, 5.0)
+	if _body_arrays_orig.is_empty():
+		return
+	var arrays: Array = _body_arrays_orig.duplicate(true)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	var fmt: int = 0
+	if _body_mesh_orig is ArrayMesh:
+		fmt = (_body_mesh_orig as ArrayMesh).surface_get_format(0)
+	var mat: Material = null
+	if _body_mesh_orig is ArrayMesh:
+		mat = (_body_mesh_orig as ArrayMesh).surface_get_material(0)
+	var rebuilt := ArrayMesh.new()
+	rebuilt.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, fmt)
+	if mat:
+		rebuilt.surface_set_material(0, mat)
+	_body_mi.mesh = rebuilt
 
 
-func _make_eyelid(nm: String) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	mi.name = nm
-	# Flattened disc: covers Tripo's bulbous eye shells without reading as a beige ball.
-	var sm := SphereMesh.new()
-	sm.radius = 0.055
-	sm.height = 0.028
-	sm.radial_segments = 16
-	sm.rings = 8
-	mi.mesh = sm
-	var mat := StandardMaterial3D.new()
-	# Match Tripo peach skin (albedo_color multiply is applied on the body mat).
-	mat.albedo_color = Color(0.96, 0.82, 0.70)
-	mat.roughness = 1.0
-	mat.metallic = 0.0
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.no_depth_test = true  # draw over protruding eye shells
-	mat.render_priority = 12
-	mi.material_override = mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.layers = 1 | 2
-	return mi
+func _apply_lid_discs(_kind: String) -> void:
+	pass
 
 
-## expr: "smile" | "sleep" | "cheer" | "neutral"
-## Sleep keeps eyes open (forearm covers them in the lie pose). No blink.
+## expr: "smile" | "sleep" | "cheer" | "neutral" | "idle"
+## Swaps albedo + normal + MR together — no runtime painting.
 func set_face_expr(kind: String) -> void:
 	expr = kind
-	_set_eyes_closed(false)
 	blink_t = -1.0
 	blink_timer = 9999.0
+	_apply_face_pack(kind)
 
 
 func _update_face(delta: float = 0.0) -> void:
-	if _eyelid_l == null or _eyelid_r == null:
-		return
-	# No blink, no closed-eye albedo — Tripo shells can't fake lids. Sleep life is
-	# smile + soft gaze + head/breath motion; forearm covers the eyes in the nap pose.
-	_set_eyes_closed(false)
+	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) \
+			or (expr == "sleep" and act_kind in ["sun", "sleep", "seatlie"])
+	var want := "idle"
+	if react_kind == "cheer":
+		want = "cheer"
+	elif sleeping:
+		want = "sleep"
+	elif anim == "move" and move_w > 0.25:
+		# Walking happily.
+		want = "smile"
+	elif expr == "smile" or expr == "cheer" or expr == "sleep":
+		want = expr
+	else:
+		# Standing idle: soft smile pulse every few seconds.
+		_idle_smile_t += delta
+		if _idle_smile_t > 4.5 and _idle_smile_t < 6.2:
+			want = "smile"
+		elif _idle_smile_t >= 6.2:
+			_idle_smile_t = 0.0
+			want = "idle"
+		else:
+			want = "idle"
+	_apply_face_pack(want)
 	blink_t = -1.0
 	blink_timer = 9999.0
-	_eyelid_l.visible = false
-	_eyelid_r.visible = false
-	if _mouth == null:
-		return
-	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) or expr == "sleep"
-	# Hide the procedural mouth blob while napping — it floats off the Tripo Head bone.
-	if sleeping:
-		_mouth.visible = false
-		return
-	var smile := 0.55
-	if expr == "cheer" or react_kind == "cheer":
-		smile = 1.0
-	elif expr == "neutral":
-		smile = 0.35
-	_mouth.scale.y = lerpf(_mouth.scale.y, 0.22 + smile * 0.45, 1.0 - exp(-delta * 6.0))
-	_mouth.scale.x = lerpf(_mouth.scale.x, 0.85 + smile * 0.55, 1.0 - exp(-delta * 6.0))
-	_mouth.visible = smile > 0.3
 
 
 func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:

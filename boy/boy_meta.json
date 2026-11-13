@@ -1,86 +1,102 @@
 {
   "fps": 30,
-  "ground": -0.0047,
-  "height": 0.9587,
+  "ground": -0.0062,
+  "height": 0.9775,
   "clips": {
     "idle": {
-      "length": 12.3,
-      "loop": true
-    },
-    "standing_relax": {
-      "length": 14.1,
+      "length": 15.3333,
       "loop": true
     },
     "walk": {
-      "length": 1.9,
+      "length": 2.3333,
       "loop": true,
-      "period": 1.9,
-      "stride": 1.1,
-      "speed": 0.5789473684210527,
+      "period": 2.3333,
+      "stride": 0.55,
+      "speed": 0.236,
       "duty": 0.6
     },
     "run": {
-      "length": 1.0333,
+      "length": 1.25,
       "loop": true,
-      "period": 1.0333,
-      "stride": 1.8,
-      "speed": 1.7419916771508757,
+      "period": 1.25,
+      "stride": 0.85,
+      "speed": 0.68,
       "duty": 0.45
     },
+    "sit": {
+      "length": 7.1667,
+      "loop": true
+    },
     "throw_stand": {
-      "length": 3.0667,
+      "length": 3.7917,
       "loop": false,
       "t_charge": 0.35,
       "t_release": 0.55,
       "hand_r": [],
       "release": [
-        -0.15921075642108917,
-        0.0038485436234623194,
-        0.36999231576919556
+        -0.1572801172733307,
+        0.008765826933085918,
+        0.3719930350780487
       ]
     },
-    "sit": {
-      "length": 5.7667,
-      "loop": true
-    },
     "cheer": {
-      "length": 9.7,
-      "loop": false
-    },
-    "wave": {
-      "length": 5.3,
+      "length": 12.0833,
       "loop": false
     },
     "look_around": {
-      "length": 12.5,
+      "length": 15.5833,
       "loop": false
     },
-    "jump": {
-      "length": 1.8,
+    "turn": {
+      "length": 3.8333,
       "loop": false
+    },
+    "lift_heavy": {
+      "length": 19.5,
+      "loop": false
+    },
+    "dig": {
+      "length": 16.375,
+      "loop": false
+    },
+    "standing_relax": {
+      "length": 15.3333,
+      "loop": true
     },
     "stroll": {
-      "length": 1.9,
+      "length": 2.3333,
       "loop": true,
-      "period": 1.9,
-      "stride": 1.1,
-      "speed": 0.3763157894736842,
+      "period": 2.3333,
+      "stride": 0.55,
+      "speed": 0.1534,
       "duty": 0.6
     },
     "throw_crouch": {
-      "length": 3.0667,
+      "length": 3.7917,
       "loop": false,
       "t_charge": 0.35,
       "t_release": 0.55,
       "hand_r": [],
       "release": [
-        -0.15921075642108917,
-        0.0038485436234623194,
-        0.36999231576919556
+        -0.1572801172733307,
+        0.008765826933085918,
+        0.3719930350780487
       ]
     },
+    "wave": {
+      "length": 3.8333,
+      "loop": false
+    },
+    "oops": {
+      "length": 12.0833,
+      "loop": false
+    },
+    "jump": {
+      "length": 15.3333,
+      "loop": false
+    },
     "sun_sit": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -91,7 +107,7 @@
       ]
     },
     "sun_lie": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -102,7 +118,7 @@
       ]
     },
     "sun_rest": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -113,7 +129,7 @@
       ]
     },
     "sun_up": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -124,7 +140,7 @@
       ]
     },
     "sun_stand": {
-      "length": 12.3,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -135,7 +151,7 @@
       ]
     },
     "hammock_sit": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -146,7 +162,7 @@
       ]
     },
     "hammock_lie": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -157,7 +173,7 @@
       ]
     },
     "hammock_sleep": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -168,7 +184,7 @@
       ]
     },
     "hammock_up": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -179,7 +195,7 @@
       ]
     },
     "hammock_stand": {
-      "length": 12.3,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -190,7 +206,7 @@
       ]
     },
     "seat_sit": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -201,7 +217,7 @@
       ]
     },
     "seat_rest": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -212,7 +228,7 @@
       ]
     },
     "seat_lie": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -223,7 +239,7 @@
       ]
     },
     "seat_nap": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -234,7 +250,7 @@
       ]
     },
     "seat_up": {
-      "length": 5.7667,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -245,7 +261,7 @@
       ]
     },
     "seat_stand": {
-      "length": 12.3,
+      "length": 7.1667,
       "loop": true,
       "pelvis": [
         [
@@ -254,27 +270,23 @@
           0.25
         ]
       ]
-    },
-    "oops": {
-      "length": 5.3,
-      "loop": false
     }
   },
   "rest": {
     "pelvis": [
-      0.0019093762384727597,
-      -0.005727995187044144,
-      0.3837761878967285
+      0.0019137263298034668,
+      -0.0019137716153636575,
+      0.38848644495010376
     ],
     "head": [
-      0.0019093831069767475,
-      0.005728014744818211,
-      0.6701763272285461
+      0.001913708751089871,
+      0.009568658657371998,
+      0.6755454540252686
     ],
     "hand_r": [
-      -0.15921075642108917,
-      0.0038485436234623194,
-      0.36999231576919556
+      -0.1572801172733307,
+      0.008765826933085918,
+      0.3719930350780487
     ]
   },
   "stone_local": [
@@ -291,7 +303,6 @@
   ],
   "tripo": true,
   "bones": "mixamo",
-  "tris": 19494,
-  "verts": 21414,
-  "glb_bytes": 6697960
+  "flat_eyes": true,
+  "source": "boy_flateyes_rigged.glb"
 }

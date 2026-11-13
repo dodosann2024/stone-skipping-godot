@@ -1,0 +1,4 @@
+PASS bench hips_err=0.0002m knee_err=0.0002m ankle_err=0.0005m (tol 0.020) hips_prop=(0.0, 0.387914, -0.055167) exp=(0.0, 0.38774, -0.055167) knee_prop=(0.000134, 0.286965, -0.233212) foot_prop=(-0.000023, 0.093108, -0.25546)
+PASS log hips_err=0.0002m knee_err=0.0002m ankle_err=0.0005m (tol 0.020) hips_prop=(0.0, 0.347447, -0.050167) exp=(0.0, 0.347274, -0.050167) knee_prop=(0.000048, 0.286285, -0.234948) foot_prop=(-0.000005, 0.093103, -0.250437)
+PASS hammock hips_err=0.0064m knee_err=0.0000m ankle_err=0.0000m (tol 0.020) hips_prop=(-0.254748, -0.727006, -0.000002) exp=(-0.254668, -0.733411, 0.0) knee_prop=(-0.482499, -0.687644, -0.000002) foot_prop=(-0.650359, -0.787958, -0.000001)
+OVERALL PASS

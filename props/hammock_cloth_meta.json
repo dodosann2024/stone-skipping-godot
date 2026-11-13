@@ -1,0 +1,22 @@
+{
+ "hammock_enter": {
+  "frames": 222,
+  "verts": 2465,
+  "offset": 0,
+  "bytes": 6566760
+ },
+ "hammock_sleep": {
+  "frames": 193,
+  "verts": 2465,
+  "offset": 6566760,
+  "bytes": 5708940
+ },
+ "hammock_exit": {
+  "frames": 123,
+  "verts": 2465,
+  "offset": 12275700,
+  "bytes": 3638340
+ },
+ "bind_auth": "hammock_cloth_bind_auth.bin",
+ "bind_verts": 2465
+}

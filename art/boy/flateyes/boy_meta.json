@@ -1,0 +1,308 @@
+{
+  "fps": 30,
+  "ground": -0.0062,
+  "height": 0.9775,
+  "clips": {
+    "idle": {
+      "length": 15.3333,
+      "loop": true
+    },
+    "walk": {
+      "length": 2.3333,
+      "loop": true,
+      "period": 2.3333,
+      "stride": 0.55,
+      "speed": 0.236,
+      "duty": 0.6
+    },
+    "run": {
+      "length": 1.25,
+      "loop": true,
+      "period": 1.25,
+      "stride": 0.85,
+      "speed": 0.68,
+      "duty": 0.45
+    },
+    "sit": {
+      "length": 7.1667,
+      "loop": true
+    },
+    "throw_stand": {
+      "length": 3.7917,
+      "loop": false,
+      "t_charge": 0.35,
+      "t_release": 0.55,
+      "hand_r": [],
+      "release": [
+        -0.1572801172733307,
+        0.008765826933085918,
+        0.3719930350780487
+      ]
+    },
+    "cheer": {
+      "length": 12.0833,
+      "loop": false
+    },
+    "look_around": {
+      "length": 15.5833,
+      "loop": false
+    },
+    "turn": {
+      "length": 3.8333,
+      "loop": false
+    },
+    "lift_heavy": {
+      "length": 19.5,
+      "loop": false
+    },
+    "dig": {
+      "length": 16.375,
+      "loop": false
+    },
+    "standing_relax": {
+      "length": 15.3333,
+      "loop": true
+    },
+    "stroll": {
+      "length": 2.3333,
+      "loop": true,
+      "period": 2.3333,
+      "stride": 0.55,
+      "speed": 0.1534,
+      "duty": 0.6
+    },
+    "throw_crouch": {
+      "length": 3.7917,
+      "loop": false,
+      "t_charge": 0.35,
+      "t_release": 0.55,
+      "hand_r": [],
+      "release": [
+        -0.1572801172733307,
+        0.008765826933085918,
+        0.3719930350780487
+      ]
+    },
+    "wave": {
+      "length": 3.8333,
+      "loop": false
+    },
+    "oops": {
+      "length": 12.0833,
+      "loop": false
+    },
+    "jump": {
+      "length": 15.3333,
+      "loop": false
+    },
+    "sun_sit": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    },
+    "sun_lie": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.15,
+          0.12
+        ]
+      ]
+    },
+    "sun_rest": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    },
+    "sun_up": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    },
+    "sun_stand": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    },
+    "hammock_sit": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    },
+    "hammock_lie": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.15,
+          0.12
+        ]
+      ]
+    },
+    "hammock_sleep": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.15,
+          0.12
+        ]
+      ]
+    },
+    "hammock_up": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    },
+    "hammock_stand": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    },
+    "seat_sit": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    },
+    "seat_rest": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    },
+    "seat_lie": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.15,
+          0.12
+        ]
+      ]
+    },
+    "seat_nap": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.15,
+          0.12
+        ]
+      ]
+    },
+    "seat_up": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    },
+    "seat_stand": {
+      "length": 7.1667,
+      "loop": true,
+      "pelvis": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ]
+    }
+  },
+  "rest": {
+    "pelvis": [
+      0.0019137263298034668,
+      -0.0019137716153636575,
+      0.38848644495010376
+    ],
+    "head": [
+      0.001913708751089871,
+      0.009568658657371998,
+      0.6755454540252686
+    ],
+    "hand_r": [
+      -0.1572801172733307,
+      0.008765826933085918,
+      0.3719930350780487
+    ]
+  },
+  "stone_local": [
+    0.02,
+    0.06,
+    0.0
+  ],
+  "eyes": [],
+  "face_rect": [
+    -0.08,
+    -0.08,
+    0.16,
+    0.18
+  ],
+  "tripo": true,
+  "bones": "mixamo",
+  "flat_eyes": true,
+  "source": "boy_flateyes_rigged.glb"
+}
