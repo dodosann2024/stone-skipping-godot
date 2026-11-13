@@ -50,6 +50,7 @@ func g() -> void:
 		m.player.global_position.x += 1.2 * dt
 		m.boy.global_position = m.player.global_position
 		m.boy._tick(dt)
+		# Bake after mixer so llvmpipe shows stride; restore before next tick.
 		m.boy.bake_pose_mesh()
 		m.cam_target = m.player.global_position + Vector3(0, 0.62, 0)
 		m.cam_yaw = PI * 0.5
@@ -57,7 +58,9 @@ func g() -> void:
 		m.cam_dist = 2.7
 		m.cam_fixed = true
 		m._apply_camera()
-		await process_frame
+		for _w in 2:
+			m._apply_camera()
+			await process_frame
 		vp.get_texture().get_image().save_png("/workspace/screenshots/v24/walk_frames/f%04d.png" % frame)
 		m.boy.restore_pose_mesh()
 		frame += 1
@@ -80,7 +83,9 @@ func g() -> void:
 		m.cam_pitch = 0.06
 		m.cam_dist = 2.7
 		m._apply_camera()
-		await process_frame
+		for _w in 2:
+			m._apply_camera()
+			await process_frame
 		vp.get_texture().get_image().save_png("/workspace/screenshots/v24/walk_frames/f%04d.png" % frame)
 		m.boy.restore_pose_mesh()
 		frame += 1

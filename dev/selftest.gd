@@ -553,6 +553,16 @@ func _sit(i: int, from: String, lie: bool) -> void:
 		print("SELFTEST sit ergonomics %-18s FAIL  (butt_gap=%.1fcm)" % [tag, mesh_clear * 100.0])
 	else:
 		print("SELFTEST sit ergonomics %-18s ok  (thigh_elev=%.0f°, butt_gap=%.1fcm)" % [tag, elev, mesh_clear * 100.0])
+	# Legs must hang in front of the seat (L/Z), not tuck back onto the top.
+	var knee_w: Vector3 = m.boy.lie_bone_world("mixamorig_LeftLeg")
+	var hips_w: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
+	var sit_fwd: Vector3 = (-m.rest_sit_b.z).normalized()
+	var thigh_fwd: float = (knee_w - hips_w).normalized().dot(sit_fwd)
+	if thigh_fwd < 0.55:
+		fails.append("sit thighs not forward on " + tag + " (fwd %.2f)" % thigh_fwd)
+		print("SELFTEST sit forward %-20s FAIL  (thigh_fwd=%.2f)" % [tag, thigh_fwd])
+	else:
+		print("SELFTEST sit forward %-20s ok  (thigh_fwd=%.2f)" % [tag, thigh_fwd])
 	if st["two_sided"]:
 		# the logs rest on levelled sand: no slope under the log ends or the feet on either side
 		var base: float = top.y - m.island.SEAT_TOP

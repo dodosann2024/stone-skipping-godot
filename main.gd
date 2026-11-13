@@ -1296,6 +1296,10 @@ func _begin_rest(kind: String) -> void:
 		var top: Vector3 = st["top"]
 		# Seed from live sit-hip height; mesh snap raises the butt onto the seat top.
 		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
+		# On logs, sit slightly toward the fire-side rim so knees/feet clear past the
+		# cylinder (thighs along +face) instead of perching mid-log.
+		if st["name"] == "坐木":
+			rest_seat += face.normalized() * 0.06
 		# lying back: head towards his right, pelvis a little towards the foot end, back on the seat
 		rest_lie = top + Vector3(0, LIE_BACK, 0) - rest_side * 0.1
 		if st["name"] == "长椅":
@@ -1367,9 +1371,9 @@ func _setup_hammock_rest() -> void:
 	# Centre of the cradle (hat is detached — no brim bias).
 	var hip_pos: Vector3 = hip_f["pos"] as Vector3
 	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.12
-	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground
-	# (facing into the cradle left him standing upright inside the fabric).
-	rest_sit_b = Basis(Vector3.UP, atan2(side.x, side.z))
+	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground.
+	# Basis(UP, atan2(x,z)) aims local −Z at (x,z); use −side so −Z == +side (outward).
+	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
 	# Sit ON the mid fabric (occupied sag), approach from OUTSIDE so walk never clips through.
 	var sit_frame: Dictionary = island.hammock_frame(0.50)
 	rest_seat = (sit_frame["pos"] as Vector3) + (sit_frame["normal"] as Vector3) * 0.10
@@ -1533,12 +1537,12 @@ func _snap_sit_contact() -> void:
 			deepest = minf(deepest, s.y - top.y)
 		if not hit:
 			deepest = (hips.y - 0.10) - top.y
-		# Light kiss ~1.2 cm above the board (shorts hem still clears visually).
-		var target := 0.012
+		# Kiss the board (~0.5 cm). Logs need a tighter settle so he is not hovering.
+		var target := 0.005
 		var err := target - deepest
-		if absf(err) < 0.003:
+		if absf(err) < 0.002:
 			return
-		var step := clampf(err, -0.05, 0.05)
+		var step := clampf(err, -0.06, 0.06)
 		rest_root_sit.y += step
 		rest_seat.y += step
 	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)

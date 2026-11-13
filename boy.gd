@@ -136,6 +136,7 @@ var act_lie_k := 0.0
 var act_tt := 0.0
 var face_fill: OmniLight3D
 var _night_rim: OmniLight3D
+var _night_body: OmniLight3D
 var _face_fill_day_energy := 0.35
 var _boy_mat: StandardMaterial3D
 var _boy_albedo_day := Color(1.08, 0.98, 0.92, 1.0)
@@ -386,7 +387,7 @@ func _build_face_fill() -> void:
 	face_fill.omni_attenuation = 1.4
 	face_fill.shadow_enabled = false
 	face_fill.light_specular = 0.0
-	face_fill.light_cull_mask = 2  # boy mesh only (see _tune_boy_material)
+	face_fill.light_cull_mask = 0xFFFFF  # include boy (layer 2) and world for night seat/hammock stills
 	parts["head"].add_child(face_fill)
 	face_fill.position = Vector3(0.0, -0.02, -0.1)
 	# Cool moonlight rim — only on at night, opposite the fill so edges read without flattening him.
@@ -398,9 +399,25 @@ func _build_face_fill() -> void:
 	_night_rim.omni_attenuation = 1.2
 	_night_rim.shadow_enabled = false
 	_night_rim.light_specular = 0.08
-	_night_rim.light_cull_mask = 2
+	_night_rim.light_cull_mask = 0xFFFFF
 	parts["head"].add_child(_night_rim)
 	_night_rim.position = Vector3(0.0, 0.04, 0.12)
+	# Soft torso fill at night so vest/shorts match the moonlit ground (head fill alone leaves the body black).
+	_night_body = OmniLight3D.new()
+	_night_body.name = "NightBody"
+	_night_body.light_color = Color(0.70, 0.80, 1.0)
+	_night_body.light_energy = 0.0
+	_night_body.omni_range = 1.4
+	_night_body.omni_attenuation = 0.85
+	_night_body.shadow_enabled = false
+	_night_body.light_specular = 0.0
+	_night_body.light_cull_mask = 0xFFFFF
+	if parts.has("pelvis"):
+		parts["pelvis"].add_child(_night_body)
+		_night_body.position = Vector3(0.0, 0.12, -0.08)
+	else:
+		add_child(_night_body)
+		_night_body.position = Vector3(0.0, 0.55, -0.1)
 
 
 ## Blend the character-only fill with the world night look. k=0 day, k=1 full night.
@@ -409,17 +426,17 @@ func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 	k = clampf(k, 0.0, 1.0)
 	if face_fill:
 		# Day: warm under-brim fill. Night: cool body fill so seats/hammock match moonlit ground
-		# (v22 night body ~100 mean; crushed fill+albedo 0.40 made seats ~46 / near-black).
-		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.72, 0.80, 0.98), k)
-		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.55, k)
-		face_fill.omni_range = lerpf(0.4, 0.85, k)
-		face_fill.omni_attenuation = lerpf(1.4, 1.05, k)
-		# Slightly in front of the chest so vest/hat read under the brim at night.
-		face_fill.position = Vector3(0.0, -0.04, -0.16).lerp(Vector3(0.0, 0.02, -0.22), k)
+		# (v23 balance — boy luminance tracks the scene, not a black silhouette).
+		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.78, 0.86, 1.0), k)
+		face_fill.light_energy = lerpf(_face_fill_day_energy, 1.35, k)
+		face_fill.omni_range = lerpf(0.4, 1.6, k)
+		face_fill.omni_attenuation = lerpf(1.4, 0.7, k)
+		# Chest/torso fill (not just under the brim) so vest/shorts read at night.
+		face_fill.position = Vector3(0.0, -0.04, -0.16).lerp(Vector3(0.0, -0.12, -0.22), k)
 	if _night_rim:
 		_night_rim.light_color = Color(0.55, 0.68, 0.98)
-		_night_rim.light_energy = lerpf(0.0, 0.35, k)
-		_night_rim.omni_range = lerpf(0.55, 0.90, k)
+		_night_rim.light_energy = lerpf(0.0, 0.95, k)
+		_night_rim.omni_range = lerpf(0.55, 1.6, k)
 		var local_off := Vector3(0.0, 0.04, 0.14)
 		if moon_dir.length_squared() > 0.01 and parts.has("head") and parts["head"] is Node3D:
 			var head := parts["head"] as Node3D
@@ -430,9 +447,13 @@ func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 			else:
 				local_off = local_off.normalized() * 0.18
 		_night_rim.position = local_off
+	if _night_body:
+		_night_body.light_energy = lerpf(0.0, 1.15, k)
+		_night_body.omni_range = lerpf(0.8, 1.8, k)
+		_night_body.light_color = Color(0.70, 0.80, 1.0)
 	# Keep Tripo textures readable against moonlit sand (not a black silhouette).
 	if _boy_mat:
-		_boy_mat.albedo_color = _boy_albedo_day.lerp(Color(0.92, 0.94, 1.0, 1.0), k)
+		_boy_mat.albedo_color = _boy_albedo_day.lerp(Color(1.05, 1.05, 1.1, 1.0), k)
 		_boy_mat.metallic_specular = lerpf(0.2, 0.06, k)
 		_boy_mat.roughness = lerpf(0.78, 0.86, k)
 		_boy_mat.emission_enabled = false
@@ -849,13 +870,14 @@ func _pose_add(bone: String, euler: Vector3, w: float) -> void:
 func _apply_ergonomic_sit(w: float) -> void:
 	if skel == null or w <= 0.001:
 		return
-	# sit_fwd_scan2_v24: elev≈0.6°, shin≈−74°, thigh · forward ≈ 1.0, side ≈ 0.
-	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.80, -0.70, -0.40), w)
-	_pose_add("mixamorig_RightUpLeg", Vector3(-1.80, 0.70, 0.40), w)
-	_pose_add("mixamorig_LeftLeg", Vector3(2.10, 0.0, 0.0), w)
-	_pose_add("mixamorig_RightLeg", Vector3(2.10, 0.0, 0.0), w)
-	_pose_add("mixamorig_LeftFoot", Vector3(0.20, 0.0, 0.05), w * 0.7)
-	_pose_add("mixamorig_RightFoot", Vector3(0.20, 0.0, -0.05), w * 0.7)
+	# hy/hz sign flip vs sit_fwd_scan2: thighs along character forward (off the seat front),
+	# not tucked back onto the log. elev≈0°, shin≈−76°, thigh·fwd≈1.0, foot past seat rim.
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.70, 0.70, 0.40), w)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-1.70, -0.70, -0.40), w)
+	_pose_add("mixamorig_LeftLeg", Vector3(1.70, 0.0, 0.0), w)
+	_pose_add("mixamorig_RightLeg", Vector3(1.70, 0.0, 0.0), w)
+	_pose_add("mixamorig_LeftFoot", Vector3(0.30, 0.0, 0.05), w * 0.75)
+	_pose_add("mixamorig_RightFoot", Vector3(0.30, 0.0, -0.05), w * 0.75)
 	_pose_add("mixamorig_Spine", Vector3(-0.08, 0.0, 0.0), w * 0.55)
 	_pose_add("mixamorig_Spine1", Vector3(-0.05, 0.0, 0.0), w * 0.45)
 	_pose_add("mixamorig_LeftArm", Vector3(0.20, 0.40, -0.55), w * 0.7)
@@ -1328,6 +1350,12 @@ func _polish_gait(delta: float) -> void:
 		var knee := absf(sin(phase * TAU)) * lerpf(0.08, 0.14, run_k) * move_w
 		_pose_add("mixamorig_LeftLeg", Vector3(knee, 0.0, 0.0), 0.55)
 		_pose_add("mixamorig_RightLeg", Vector3(knee, 0.0, 0.0), 0.55)
+		# Visible contra-lateral arm swing (Tripo Mixamo walk has tiny hand travel).
+		var swing := sin(phase * TAU) * lerpf(0.95, 1.25, run_k) * move_w
+		_pose_add("mixamorig_LeftArm", Vector3(-swing * 0.65, swing * 0.12, swing * 0.28), 0.9)
+		_pose_add("mixamorig_RightArm", Vector3(swing * 0.65, -swing * 0.12, -swing * 0.28), 0.9)
+		_pose_add("mixamorig_LeftForeArm", Vector3(-absf(swing) * 0.45, 0.0, 0.0), 0.7)
+		_pose_add("mixamorig_RightForeArm", Vector3(-absf(swing) * 0.45, 0.0, 0.0), 0.7)
 		skel.force_update_transform()
 	var want_bob := sin(phase * TAU) * bob_amp if moving else 0.0
 	_walk_bob = lerpf(_walk_bob, want_bob, 1.0 - exp(-delta * 10.0))
@@ -1440,10 +1468,11 @@ func _build_face_expr() -> void:
 	# Mixamo head: local +Y up the skull, −Z roughly face-forward after model.y=PI.
 	# Mixamo head local: +Y up skull, −Z face-forward after model.y=PI.
 	# Quiet when open (thin); grow in Y to cover irises for blink/sleep.
-	_eyelid_l.position = Vector3(0.022, 0.058, -0.092)
-	_eyelid_r.position = Vector3(-0.022, 0.058, -0.092)
-	_eyelid_l.scale = Vector3(1.05, 0.03, 0.6)
-	_eyelid_r.scale = Vector3(1.05, 0.03, 0.6)
+	# Tripo eyes sit higher/further forward than Mixamo defaults — calibrated via lid_debug.
+	_eyelid_l.position = Vector3(0.032, 0.065, -0.145)
+	_eyelid_r.position = Vector3(-0.032, 0.065, -0.145)
+	_eyelid_l.scale = Vector3(1.25, 0.03, 0.9)
+	_eyelid_r.scale = Vector3(1.25, 0.03, 0.9)
 	_mouth = MeshInstance3D.new()
 	_mouth.name = "MouthExpr"
 	var mm := SphereMesh.new()
@@ -1468,18 +1497,23 @@ func _make_eyelid(nm: String) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.name = nm
 	var sm := SphereMesh.new()
-	sm.radius = 0.03
-	sm.height = 0.022
-	sm.radial_segments = 12
-	sm.rings = 6
+	# Large enough to cover Tripo's painted irises when scale.y grows for sleep/blink.
+	sm.radius = 0.048
+	sm.height = 0.055
+	sm.radial_segments = 14
+	sm.rings = 8
 	mi.mesh = sm
 	var mat := StandardMaterial3D.new()
 	# Skin-tone lid that covers the painted eye when scale.y grows.
-	mat.albedo_color = Color(0.90, 0.72, 0.60)
-	mat.roughness = 0.88
+	mat.albedo_color = Color(0.92, 0.74, 0.62)
+	mat.roughness = 0.9
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.no_depth_test = true  # always draw over painted irises
+	mat.render_priority = 10
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.layers = 1 | 2
 	return mi
 
 
@@ -1495,15 +1529,15 @@ func _update_face(delta: float = 0.0) -> void:
 	var want_close := open_h
 	# Sleep / nap: eyes shut.
 	if act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55:
-		want_close = 1.35
+		want_close = 1.75
 	elif expr == "sleep":
-		want_close = 1.35
+		want_close = 1.75
 	else:
 		# Random blink every 2–6 s.
 		if blink_t >= 0.0:
 			blink_t += delta
 			var u := blink_t / 0.14
-			want_close = 1.35 if u < 0.55 else lerpf(1.35, open_h, (u - 0.55) / 0.45)
+			want_close = 1.55 if u < 0.55 else lerpf(1.55, open_h, (u - 0.55) / 0.45)
 			if blink_t >= 0.14:
 				blink_t = -1.0
 				blink_timer = rng.randf_range(2.0, 6.0)

@@ -87,7 +87,10 @@ func g() -> void:
 		await process_frame
 	print("HAMMOCK_SIT thigh_elev=%.1f°" % m.boy.sit_thigh_elev_deg())
 	m.boy.bake_pose_mesh()
-	await _shot(m, vp, "hammock_sit", m.boy.lie_bone_world("mixamorig_Hips") + Vector3(0, 0.05, 0), atan2(m.rest_side.x, m.rest_side.z), 0.18, 3.3)
+	# Side profile of the L-sit: camera along hammock axis; boy faces out (rest_side).
+	var ham_along: Vector3 = (m.island.hammock_b - m.island.hammock_a).normalized()
+	var ham_hips: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
+	await _shot(m, vp, "hammock_sit", ham_hips + Vector3(0, 0.05, 0), atan2(ham_along.x, ham_along.z), 0.06, 2.9)
 	m.boy.restore_pose_mesh()
 	# Hold lying
 	m.rest_phase = 4
@@ -206,17 +209,25 @@ func g() -> void:
 	m.boy._eyelid_l.visible = true
 	m.boy._eyelid_r.visible = true
 	m.boy.bake_pose_mesh()
+	# Force lids shut after bake (eyelid meshes are separate from the body bake).
+	m.boy._eyelid_l.scale.y = 1.45
+	m.boy._eyelid_r.scale.y = 1.45
+	m.boy._eyelid_l.visible = true
+	m.boy._eyelid_r.visible = true
 	head = m.boy.lie_bone_world("mixamorig_Head")
-	# Three-quarter from above the face (sky side), clear of the lounger board.
+	# Hide the island so the lounger board cannot clip the close-up.
+	var island_vis: bool = m.island.visible
+	m.island.visible = false
 	var face_dir2: Vector3 = (-m.rest_lie_b.z).normalized()
-	var head_axis: Vector3 = m.rest_lie_b.x.normalized()  # along body toward head
+	var side2: Vector3 = m.rest_side.normalized()
+	# Three-quarter: from the side, slightly toward the sky/face — shows closed lids, not hat top.
 	var look2: Vector3 = head + face_dir2 * 0.04
-	# Camera sits on the sky/face side, slightly toward the foot so the board stays out of frustum.
-	var cam_pos: Vector3 = head + face_dir2 * 0.72 + Vector3.UP * 0.35 - head_axis * 0.12 + m.rest_side * 0.18
-	var to: Vector3 = look2 - cam_pos
-	var yaw2 := atan2(-to.x, -to.z)
-	var pitch2 := asin(clampf(to.normalized().y, -0.7, 0.7))
-	await _shot(m, vp, "face_sleep", look2, yaw2, pitch2, cam_pos.distance_to(look2))
+	var cam_from2: Vector3 = head + side2 * 0.52 + face_dir2 * 0.32 + Vector3.UP * 0.10
+	var to2: Vector3 = look2 - cam_from2
+	var yaw2 := atan2(-to2.x, -to2.z)
+	var pitch2 := asin(clampf((-to2).normalized().y, -0.55, 0.55))
+	await _shot(m, vp, "face_sleep", look2, yaw2, pitch2, cam_from2.distance_to(look2))
+	m.island.visible = island_vis
 	m.boy.restore_pose_mesh()
 	m.set_process(true)
 	m.boy.set_process(true)
@@ -308,16 +319,33 @@ func _shot(m, vp, name: String, target: Vector3, yaw: float, pitch: float, dist:
 		if m.mode == m.Mode.REST and m.rest_phase == 4 and m.rest_kind == "seat" and not m.seat_lying:
 			m.boy.activity("seat", 1.0, 0.0, m.gt)
 			m.boy.global_transform = Transform3D(m.rest_sit_b, m.rest_root_sit)
-		elif m.mode == m.Mode.REST and m.rest_kind == "sleep" and m.rest_phase == 2:
-			m.boy.activity("sleep", 1.0, 0.0, m.gt)
+		elif m.mode == m.Mode.REST and m.rest_kind == "sleep" and m.rest_phase in [2, 6]:
+			m.boy.activity("sleep", 1.0 if m.rest_phase == 2 else 0.85, 0.0, m.gt)
 			m.boy.global_transform = Transform3D(m.rest_sit_b, m.rest_root_sit)
 			m._update_hammock_load()
+		if name == "face_sleep":
+			m.island.visible = false
+			m.boy._eyelid_l.scale.y = 1.55
+			m.boy._eyelid_r.scale.y = 1.55
+			m.boy._eyelid_l.visible = true
+			m.boy._eyelid_r.visible = true
 		m.cam_target = target
 		m.cam_yaw = yaw
 		m.cam_pitch = pitch
 		m.cam_dist = dist
 		m._apply_camera()
 		await process_frame
+	# Final bake so llvmpipe stills show the posed mesh (not bind).
+	if name.begins_with("seat") or name.begins_with("hammock_sit") or name.begins_with("hammock_exit") or name == "face_sleep":
+		if name == "face_sleep":
+			m.boy._eyelid_l.scale.y = 1.55
+			m.boy._eyelid_r.scale.y = 1.55
+			m.boy._eyelid_l.visible = true
+			m.boy._eyelid_r.visible = true
+		m.boy.bake_pose_mesh()
+		for _b in 2:
+			m._apply_camera()
+			await process_frame
 	await _shot_raw(vp, name)
 
 
