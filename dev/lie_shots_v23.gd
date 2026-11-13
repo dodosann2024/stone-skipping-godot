@@ -57,6 +57,11 @@ func g() -> void:
 			var swing2 := Transform3D.IDENTITY
 			if kind == "sleep":
 				swing2 = m.island.swing_hammock(0.0)
+				m._update_hammock_load()
+			m.boy.global_transform = swing2 * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl2)
+			# Keep hat-brim contact snapped while the pose re-applies each frame.
+			m._snap_lie_contact()
+			pl2 = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
 			m.boy.global_transform = swing2 * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl2)
 			m._plant_lie_feet()
 			if m.zzz and is_instance_valid(m.zzz):
@@ -68,20 +73,20 @@ func g() -> void:
 		var swing3 := Transform3D.IDENTITY
 		if kind == "sleep":
 			swing3 = m.island.swing_hammock(0.0)
+			m._update_hammock_load()
+		m.boy.global_transform = swing3 * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl3)
+		m._snap_lie_contact()
+		pl3 = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
 		m.boy.global_transform = swing3 * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl3)
 		m._plant_lie_feet()
-		# Force a single consistent hat state AFTER the freeze loop (activity would re-sync).
-		if kind == "sun":
-			m.boy.set_hat_mode("beside", m.boy.hat_beside_world)
-		else:
-			m.boy.set_hat_mode("face")
-		# One more idle frame with hat locked so cameras see the final state.
+		# Hat stays on the head (baked Tripo mesh) — tip contact via lie pose.
+		m.boy.set_hat_mode("head")
 		for _h in 3:
 			if m.zzz and is_instance_valid(m.zzz):
 				m.zzz.visible = false
 			await process_frame
 		print(kind, " hat_mode=", m.boy.hat_mode,
-			" hat_pos=", m.boy.hat.global_position if m.boy.hat else Vector3.ZERO)
+			" hat_samples=", m.boy.hat_sample_world(40).size())
 
 		var face_n: Vector3 = m.boy.lie_face_normal()
 		print(kind, " gaps", m.lie_contact_gaps(), " face_up", face_n.dot(Vector3.UP),
@@ -118,6 +123,9 @@ func g() -> void:
 			["top", atan2(look_side.x, look_side.z), 1.28, 3.5, hips.lerp(head, 0.45)],
 			# Front: looking along the body toward the head.
 			["front", atan2(-look_along.x, -look_along.z), 0.22, 3.2, hips.lerp(head, 0.35)],
+			# Head close-ups for hat-on-contact review (zoom-check face / brim / backrest).
+			["head", atan2(look_side.x, look_side.z) + 0.35, 0.28, 1.15, head],
+			["head_side", atan2(look_side.x, look_side.z), 0.20, 1.05, head],
 		]
 		# Default gameplay rest camera
 		m.rest_cam_yaw = INF
@@ -136,6 +144,19 @@ func g() -> void:
 			var path := "/workspace/screenshots/v23/%s_%s.png" % [prefix, s[0]]
 			vp.get_texture().get_image().save_png(path)
 			print("SHOT ", path)
+			# Extra cropped head ROI for lounger / hammock zoom review.
+			if str(s[0]).begins_with("head"):
+				var img: Image = vp.get_texture().get_image()
+				var w := img.get_width()
+				var h := img.get_height()
+				var cw := int(w * 0.55)
+				var ch := int(h * 0.42)
+				var cx := int((w - cw) * 0.5)
+				var cy := int(h * 0.22)
+				var crop := img.get_region(Rect2i(cx, cy, cw, ch))
+				var cpath := "/workspace/screenshots/v23/%s_%s_crop.png" % [prefix, s[0]]
+				crop.save_png(cpath)
+				print("SHOT ", cpath)
 		m._wake()
 		m.mode = m.Mode.EXPLORE
 		m.boy.end_activity()

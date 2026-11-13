@@ -1448,18 +1448,18 @@ func _lie_swing() -> Transform3D:
 
 
 ## After the lie pose is applied, nudge rest_lie so the skinned mesh sits on the support
-## (no poke-through deeper than ~0, no large float). Uses skinned verts, not bone capsules.
+## (no poke-through deeper than ~0, no large float). Includes baked hat verts.
 func _snap_lie_contact() -> void:
 	if rest_kind != "sun" and rest_kind != "sleep":
 		return
 	var into_bed: Vector3 = _lie_into_bed()
-	# Shell ≈ Tripo skin thickness (hat is detached — no brim margin).
-	# Hammock shell is thick: Tripo butt/back hangs well below the hip bone in the cradle.
+	# Shell ≈ Tripo skin thickness. Hammock shell is thick: Tripo butt/back hangs
+	# well below the hip bone in the cradle.
 	var mesh_off := 0.28 if rest_kind == "sleep" else 0.08
 	var pts: Dictionary = boy.lie_contact_points(into_bed, mesh_off)
 	var swing := _lie_swing()
-	# Snap uses body mesh only — hat-on-chest must not fight the cradle settle.
-	var mesh_d := lie_mesh_penetration_depth(false)
+	# Include baked hat verts for hammock fabric; lounger uses bone snap (hat tip ~kiss).
+	var mesh_d := lie_mesh_penetration_depth(true)
 	if rest_kind == "sleep":
 		var hip_f: Dictionary = island.hammock_frame(float(get_meta("lie_hip_t", 0.48)))
 		var head_f0: Dictionary = island.hammock_frame(float(get_meta("lie_head_t", 0.68)))
@@ -1477,12 +1477,11 @@ func _snap_lie_contact() -> void:
 		var corr: float = 0.6 * hip_lat0 + 0.4 * head_lat0
 		if absf(corr) > 0.004:
 			rest_lie -= hip_side * clampf(corr, -0.16, 0.16)
-		# Vertical: only lift for deep poke-through; light mesh digs are expected shell.
+		# Vertical: lift for poke-through (hat brim included); settle light floats.
 		var hip_gap := _signed_gap(pts["hips"], hip_p, hn0)
 		var head_gap := _signed_gap(pts["head"], head_p0, head_n0)
-		if mesh_d < -0.02:
-			# Lift out of real poke-through; fabric shell already accounts for light digs.
-			rest_lie += hn0 * minf(-0.006 - mesh_d, 0.035)
+		if mesh_d < -0.01:
+			rest_lie += hn0 * minf(-0.004 - mesh_d, 0.04)
 		elif hip_gap > 0.02 or head_gap > 0.02:
 			rest_lie -= hn0 * minf(maxf(hip_gap, head_gap) - 0.008, 0.04)
 		elif mesh_d > 0.01:
@@ -1491,6 +1490,7 @@ func _snap_lie_contact() -> void:
 			rest_lie += hn0 * minf(-minf(hip_gap, head_gap), 0.03)
 		return
 	# Lounger: foam sink OK; fail only on wood-board punch. Settle hips/head onto the pads.
+	# Bone snap only — hat tip may kiss foam within 1 cm; over-lifting floats the torso.
 	var seat_u: float = float(get_meta("lie_seat_hip_u", 0.96))
 	var hip_s: Dictionary = island.lounger_seat_point(seat_u)
 	var mid_b: Dictionary = island.lounger_back_point(0.38)
@@ -1533,6 +1533,9 @@ func _snap_lie_contact() -> void:
 		move -= seat_n * minf(g_hip - 0.008, 0.022)
 	elif g_hip < -0.01:
 		move += seat_n * minf(-g_hip - 0.002, 0.03)
+	# Cap hat/body dig at ~8 mm: tip may kiss foam, but approach-angle leftovers must clear.
+	if mesh_d < -0.01 and move.dot(head_n) < 0.008:
+		move += head_n * minf(-mesh_d - 0.005, 0.014)
 	if move.length() > 0.05:
 		move = move.normalized() * 0.05
 	rest_lie += move
@@ -1710,15 +1713,14 @@ func lie_seat_penetration_depth() -> float:
 	return deepest if hit else 0.02
 
 
-## Skinned body (+ optional detachable hat) vs the support surface.
+## Skinned body (+ baked hat crown/brim verts) vs the support surface.
 ## Returns the deepest signed gap (negative = into the furniture). Selftest fails below −1 cm.
-## Hat on sand ("beside") is excluded from furniture tests — it must only clear the ground.
 func lie_mesh_penetration_depth(include_hat := true) -> float:
 	if rest_kind != "sun" and rest_kind != "sleep":
 		return 0.0
 	var samples: Array[Vector3] = boy.skinned_sample_world(450)
-	# Include the split hat whenever it is on the body/head (not sand-beside).
-	if include_hat and boy.hat_mode != "beside":
+	# Always include baked hat verts (hat stays on the head in both lying poses).
+	if include_hat:
 		samples.append_array(boy.hat_sample_world(140))
 	if samples.is_empty():
 		return 0.0

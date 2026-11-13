@@ -208,7 +208,9 @@ func _rest(kind: String, approach: Vector3) -> void:
 	await _wait(1.0)
 	if kind in ["sun", "sleep"]:
 		m.set_meta("lie_snapped", false)
-		for _p in 10:
+		# Extra passes for lounger: tipped hat brim needs more settle than bone-only contact.
+		var passes := 40 if kind == "sun" else 16
+		for _p in passes:
 			if kind == "sun":
 				m.boy.clear_foot_plant()
 			for _s in 4:
@@ -217,6 +219,7 @@ func _rest(kind: String, approach: Vector3) -> void:
 				var swing = Transform3D.IDENTITY
 				if kind == "sleep":
 					swing = m.island.swing_hammock(m.swing_amp * sin(m.gt * 1.3))
+					m._update_hammock_load()
 				m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
 			m._plant_lie_feet()
 			await _frames(1)
@@ -261,11 +264,15 @@ func _lie_contact_check(kind: String) -> void:
 			penet = minf(penet, float(gaps[key2]))
 	if penet < PENET_MIN:
 		bad.append("penetrate=%.1fcm" % (penet * 100.0))
-	# Mesh penet includes the detachable hat when it is on the body / head.
-	var mesh_penet: float = m.lie_mesh_penetration_depth()
+	# Mesh penet includes all baked hat verts against backrest / hammock fabric.
+	var mesh_penet: float = m.lie_mesh_penetration_depth(true)
 	if mesh_penet < PENET_MIN:
 		bad.append("mesh_penet=%.1fcm" % (mesh_penet * 100.0))
-	var hat_n: int = m.boy.hat_sample_world(40).size() if m.boy.hat_mode != "beside" else 0
+	var hat_n: int = m.boy.hat_sample_world(80).size()
+	if m.boy.hat_mode != "head":
+		bad.append("hat_mode=%s" % m.boy.hat_mode)
+	if hat_n < 8:
+		bad.append("hat_samples=%d" % hat_n)
 	var parts: PackedStringArray = PackedStringArray()
 	for k in gaps.keys():
 		parts.append("%s=%.1fcm" % [k, float(gaps[k]) * 100.0])
