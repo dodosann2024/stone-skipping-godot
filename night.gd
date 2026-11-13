@@ -38,17 +38,22 @@ func build(island: Island) -> void:
 		h.position = p
 		h.scale = Vector3.ONE * (1.6 if kind != "path" else 1.1)
 		halos.append(hm)
+		# Path lamps stay halo-only: Compatibility only lights each mesh with a handful of
+		# OmniLights, so keep real lights for dock / porch / beacon where the boy stands.
 		if kind != "path":
 			var ol := OmniLight3D.new()
-			ol.light_color = Color(1.0, 0.72, 0.38)
-			ol.omni_range = 4.5 if kind == "dock" else 3.5
-			ol.omni_attenuation = 1.3
+			ol.light_color = Color(1.0, 0.64, 0.30) if kind == "dock" else Color(1.0, 0.68, 0.32)
+			# Dock: warm pool that falls off within a few metres — not a floodlight.
+			ol.omni_range = 2.2 if kind == "dock" else 5.5
+			ol.omni_attenuation = 1.75 if kind == "dock" else 0.65
 			ol.shadow_enabled = false
+			ol.light_specular = 0.1 if kind == "dock" else 0.35
 			ol.position = p + Vector3(0, -0.15, 0)
 			ol.visible = false
 			add_child(ol)
 			lamp_lights.append(ol)
-			lamp_energy.append(1.4 if kind == "dock" else 1.1)
+			lamp_energy.append(0.45 if kind == "dock" else 3.2)
+			# No deck flood — one lantern pool only (two corner posts share the dock).
 	# lighthouse: glow, a local light on the tower top and two opposite beams sweeping round
 	var bh := ShaderMaterial.new()
 	bh.shader = halo_sh

@@ -1,7 +1,10 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v22 可爱的小男孩
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v23 躺姿贴合
 
 低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩由 Blender 脚本（`art/boy/`）建模、绑定骨骼、制作动画后导出 glTF；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+## v23 改动
+只修躺姿反馈：晒太阳 / 吊床时身体悬空、像硬木板。晒太阳改到蓝色躺椅（上身跟靠背、腿在座面），吊床按布面弧度弯腰；0.6 s 过渡 + 呼吸；selftest 检查髋/背与表面间隙。在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（`game_v23.*`）。截图见 `screenshots/v23/`。
 
 ## v22 改动
 只改一条反馈：“太丑了，请重新设计，这应该是一个可爱的小男孩形象”。第二稿仍偏 MakeHuman 写实后，改为**独立卡通头**（Pixar / Animal Crossing 式小孩）：大圆颅、软圆下巴、小纽扣鼻、低位大眼、细颈；接到原身体与骨骼，形变 / 眨眼保留。衣服、步态、物理、声音不变。在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/>（`game_v22.*`）。截图与视频见 `screenshots/v22/`。

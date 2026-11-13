@@ -17,8 +17,30 @@ const WALL_CELL := 3.0
 var hammock_a := Vector3.ZERO
 var hammock_b := Vector3.ZERO
 var hammock_node: Node3D
+## Deformable hammock grid (local to hammock_node). Empty sag is light; occupied sag deepens under the body.
+var hammock_mi: MeshInstance3D
+var hammock_nt := 14
+var hammock_nu := 11
+var hammock_empty_sag := 0.22
+var hammock_occ_sag := 0.48
+var hammock_half_w := 0.55
+var hammock_occupied := false
+var hammock_body_pts: Array[Vector3] = []  # world points that weigh the fabric
+var _ham_rest_y: PackedFloat32Array = PackedFloat32Array()  # centreline rest Y offset per t
+var _ham_cur_y: PackedFloat32Array = PackedFloat32Array()
 var towel_pos := Vector3.ZERO
 var towel_dir := Vector3.FORWARD   # towel long axis, pointing out to sea (feet end)
+## Deck-chair lounger (晒太阳): root transform, seat/backrest sizes, and hinge in local Z.
+var lounger_xf := Transform3D.IDENTITY
+## Contact plane at the foam top. Pads are ~7 cm thick — legs rest ON TOP with light compress.
+var lounger_seat_half := Vector3(0.32, 0.03, 0.55)
+var lounger_back_half := Vector3(0.32, 0.04, 0.58)   # long backrest: full torso + head
+var lounger_seat_tilt := 0.08                        # rad about local +X (slight foot-down)
+var lounger_back_tilt := 0.70                         # ~40° chaise: head rises away from seat
+var lounger_seat_local := Vector3(0, 0.34, 0.08)      # seat centre in lounger_xf
+# Centre past the seat hinge (−local Z); raised so the pad clears the crease/thighs.
+# +tilt raises the −Z (head) end.
+var lounger_back_local := Vector3(0, 0.92, -0.78)
 var umbrella_pos := Vector3.ZERO
 var hut_pos := Vector3.ZERO
 var lighthouse_pos := Vector3.ZERO
@@ -1476,20 +1498,42 @@ func _build_beach_life() -> void:
 		var g1 = ground_h(sc.x + out.x * 0.18, sc.z + out.z * 0.18)
 		var tilt = atan2(g0 - g1, 0.36)
 		boxb(SB, Vector3(0.9, 0.03, 0.37), Transform3D(Basis(Vector3.UP, tyaw) * Basis(Vector3.RIGHT, tilt), Vector3(sc.x, (g0 + g1) * 0.5 + 0.03, sc.z)), col)
-	var cp = tw + out.cross(Vector3.UP).normalized() * 1.15 + out * 0.1
+	# Beach chaise: clear of the towel/umbrella/bushes, facing the sea/sun, legs on sand.
+	var side_beach: Vector3 = out.cross(Vector3.UP).normalized()
+	# Slightly more seaward + lateral so the backrest clears inland foliage.
+	var cp = tw + side_beach * 1.55 + out * 0.55
 	cp.y = ground_h(cp.x, cp.z)
 	var cxf = Transform3D(Basis(Vector3.UP, tyaw), cp)
-	var lc: Vector3 = cxf * Vector3(0, 0, -0.08)
-	wall_b(Vector2(lc.x, lc.z), Vector2(0.33, 0.62), tyaw, cp.y - 0.3, cp.y + 0.9, "躺椅")
+	lounger_xf = cxf
+	lounger_seat_tilt = 0.08
+	lounger_back_tilt = 0.70  # ~40°; head rises away from the seat (−local Z)
+	lounger_seat_local = Vector3(0, 0.34, 0.08)
+	# Pad raised clear of the crease so thighs rest ON the seat surface.
+	lounger_back_local = Vector3(0, 0.92, -0.78)
+	lounger_seat_half = Vector3(0.32, 0.03, 0.55)
+	lounger_back_half = Vector3(0.32, 0.04, 0.55)
+	var lc: Vector3 = cxf * Vector3(0, 0, -0.05)
+	wall_b(Vector2(lc.x, lc.z), Vector2(0.36, 0.75), tyaw, cp.y - 0.3, cp.y + 1.1, "躺椅")
 	var lface: Vector3 = cxf.basis * Vector3(1, 0, 0)
 	if lface.dot(towel_pos - cp) > 0.0:
-		lface = -lface   # sit on the edge away from the towel, looking along the beach
-	_add_seat("躺椅", cp + lface * 0.1 + Vector3(0, 0.325, 0) + cxf.basis * Vector3(0, 0, 0.12), lface, 0.55, "蓝色躺椅：点「坐下」歇一会儿")
-	boxb(SB, Vector3(0.6, 0.05, 1.0), cxf * Transform3D(Basis(Vector3.RIGHT, 0.1), Vector3(0, 0.3, 0)), Color(0.3, 0.55, 0.85))
-	boxb(SB, Vector3(0.6, 0.05, 0.7), cxf * Transform3D(Basis(Vector3.RIGHT, -0.9), Vector3(0, 0.55, -0.6)), Color(0.3, 0.55, 0.85))
+		lface = -lface
+	_add_seat("躺椅", cp + lface * 0.12 + Vector3(0, 0.36, 0) + cxf.basis * Vector3(0, 0, 0.15), lface, 0.55, "蓝色躺椅：点「坐下」歇一会儿")
+	var wood := Color(0.72, 0.55, 0.32)
+	var cush := Color(0.28, 0.52, 0.82)
+	# Four legs down to the sand.
 	for lx in [-0.28, 0.28]:
-		for lz in [-0.4, 0.4]:
-			boxb(SB, Vector3(0.04, 0.3, 0.04), cxf * Transform3D(Basis.IDENTITY, Vector3(lx, 0.15, lz)), Color(0.9, 0.9, 0.9))
+		for lz in [-0.42, 0.48]:
+			var leg_h: float = 0.34
+			boxb(SB, Vector3(0.045, leg_h, 0.045), cxf * Transform3D(Basis.IDENTITY, Vector3(lx, leg_h * 0.5, lz)), wood)
+	# Seat frame + ~7 cm cushion (legs lie ON TOP; 2–4 cm compress max).
+	boxb(SB, Vector3(0.68, 0.04, 1.12), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local + Vector3(0, -0.04, 0)), wood)
+	boxb(SB, Vector3(0.64, 0.06, 1.08), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_seat_tilt), lounger_seat_local), cush)
+	# Backrest frame + cushion (~40°) — torso/head rest on the pad surface.
+	boxb(SB, Vector3(0.68, 0.04, 1.18), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local + Vector3(0, -0.04, 0)), wood)
+	boxb(SB, Vector3(0.64, 0.08, 1.14), cxf * Transform3D(Basis(Vector3.RIGHT, lounger_back_tilt), lounger_back_local), cush)
+	# Armrests — outboard of the cushion so heels stay clear of the rails.
+	for lx2 in [-0.40, 0.40]:
+		boxb(SB, Vector3(0.045, 0.04, 0.7), cxf * Transform3D(Basis.IDENTITY, Vector3(lx2, 0.48, 0.05)), wood)
 	# surfboard stuck in the sand
 	var sp = shore_pt(0.55, 3.5)
 	wall_c(Vector2(sp.x, sp.z), 0.17, sp.y - 0.2, sp.y + 2.0, "冲浪板")
@@ -1723,58 +1767,224 @@ func _build_palms() -> void:
 			continue
 		var crown = palm(FB, p, s[1], s[2], s[3], s[4], rng.randf_range(0.85, 1.1))
 		palm_spots.append(crown)
-	# hammock between the hut pair: its own node so it can swing about the a-b axis
-	var a = h1 + Vector3(0, 1.05, 0)   # low enough that the (taller) kid sits with his feet near the sand
+	# hammock between the hut pair: deformable grid that sags under the boy
+	var a = h1 + Vector3(0, 1.05, 0)
 	var b = h2 + Vector3(0, 1.05, 0)
 	hammock_a = a
 	hammock_b = b
 	var mid = (a + b) * 0.5
-	var HB = MeshBuilder.new()
-	var ab = b - a
-	var side = ab.cross(Vector3.UP).normalized() * 0.4
-	for s in 10:
-		var t0 = s / 10.0
-		var t1 = (s + 1) / 10.0
-		var p0 = a + ab * t0 + Vector3(0, -0.6 * sin(PI * t0), 0) - mid
-		var p1 = a + ab * t1 + Vector3(0, -0.6 * sin(PI * t1), 0) - mid
-		var w0 = side * sin(PI * clamp(t0 * 1.2 - 0.1, 0.0, 1.0)) + side * 0.05
-		var w1 = side * sin(PI * clamp(t1 * 1.2 - 0.1, 0.0, 1.0)) + side * 0.05
-		for st in 3:
-			var u0 = -1.0 + st * 2.0 / 3.0
-			var u1 = u0 + 2.0 / 3.0
-			var col = [Color(0.95, 0.4, 0.3), Color(0.98, 0.88, 0.5), Color(0.3, 0.6, 0.8)][st]
-			var A = p0 + w0 * u0 + Vector3(0, -0.12 * (1.0 - u0 * u0), 0)
-			var B = p0 + w0 * u1 + Vector3(0, -0.12 * (1.0 - u1 * u1), 0)
-			var C = p1 + w1 * u1 + Vector3(0, -0.12 * (1.0 - u1 * u1), 0)
-			var D = p1 + w1 * u0 + Vector3(0, -0.12 * (1.0 - u0 * u0), 0)
-			HB.face(A, B, C, col, col, col, Vector3.UP)
-			HB.face(A, C, D, col, col, col, Vector3.UP)
-			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
-			HB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
-	# end ropes to the trunks
-	for e in [a, b]:
-		var q = e.lerp(mid, 0.08) + Vector3(0, -0.06, 0)
-		tube(HB, e - mid, q - mid, 0.02, 0.02, 4, Color(0.85, 0.75, 0.55))
+	hammock_node = Node3D.new()
+	hammock_node.position = mid
+	add_child(hammock_node)
+	_ham_rest_y.resize(hammock_nt + 1)
+	_ham_cur_y.resize(hammock_nt + 1)
+	for i in hammock_nt + 1:
+		var t := float(i) / float(hammock_nt)
+		_ham_rest_y[i] = -hammock_empty_sag * sin(PI * t)
+		_ham_cur_y[i] = _ham_rest_y[i]
 	var hsm = StandardMaterial3D.new()
 	hsm.vertex_color_use_as_albedo = true
 	hsm.vertex_color_is_srgb = true
 	hsm.roughness = 0.9
 	hsm.cull_mode = BaseMaterial3D.CULL_DISABLED
-	hammock_node = Node3D.new()
-	hammock_node.position = mid
-	add_child(hammock_node)
-	var hmi = MeshInstance3D.new()
-	hmi.mesh = HB.commit()
-	hmi.material_override = hsm
-	hammock_node.add_child(hmi)
-	# the hanging bed blocks walking
+	hammock_mi = MeshInstance3D.new()
+	hammock_mi.material_override = hsm
+	hammock_node.add_child(hammock_mi)
+	# end ropes (static)
+	var RB = MeshBuilder.new()
+	for e in [a, b]:
+		var q = e.lerp(mid, 0.08) + Vector3(0, -0.06, 0)
+		tube(RB, e - mid, q - mid, 0.02, 0.02, 4, Color(0.85, 0.75, 0.55))
+	var rope_mi = MeshInstance3D.new()
+	rope_mi.mesh = RB.commit()
+	rope_mi.material_override = hsm
+	hammock_node.add_child(rope_mi)
+	_rebuild_hammock_mesh()
 	var qa: Vector3 = a.lerp(b, 0.2)
 	var qb: Vector3 = a.lerp(b, 0.8)
 	wall_s(Vector2(qa.x, qa.z), Vector2(qb.x, qb.z), 0.32, hammock_bed().y - 1.0, hammock_bed().y + 0.4, "吊床")
 
+
+## Drive fabric sag from world-space body samples (hips, shoulders, heels). Empty when pts empty.
+func set_hammock_load(pts: Array[Vector3]) -> void:
+	hammock_body_pts = pts
+	hammock_occupied = pts.size() > 0
+	var ab := hammock_b - hammock_a
+	var ham_len := maxf(ab.length(), 0.01)
+	var along := ab / ham_len
+	var mid := (hammock_a + hammock_b) * 0.5
+	for i in hammock_nt + 1:
+		var t := float(i) / float(hammock_nt)
+		var y := _ham_rest_y[i]
+		if hammock_occupied:
+			var deepen := 0.0
+			for p in pts:
+				var tp := clampf(0.5 + (p - mid).dot(along) / ham_len, 0.0, 1.0)
+				var d := absf(tp - t)
+				deepen = maxf(deepen, exp(-d * d * 18.0))
+			y = -lerpf(hammock_empty_sag, hammock_occ_sag, deepen) * sin(PI * t)
+		_ham_cur_y[i] = y
+	_rebuild_hammock_mesh()
+
+
+func _rebuild_hammock_mesh() -> void:
+	if hammock_mi == null:
+		return
+	var mid := (hammock_a + hammock_b) * 0.5
+	var ab := hammock_b - hammock_a
+	var side_u := ab.cross(Vector3.UP).normalized()
+	if side_u.length_squared() < 1e-6:
+		side_u = Vector3.RIGHT
+	var HB = MeshBuilder.new()
+	for s in hammock_nt:
+		var t0 := float(s) / float(hammock_nt)
+		var t1 := float(s + 1) / float(hammock_nt)
+		var y0 := _ham_cur_y[s]
+		var y1 := _ham_cur_y[s + 1]
+		var taper0 := sin(PI * clampf(t0 * 1.12 - 0.06, 0.0, 1.0))
+		var taper1 := sin(PI * clampf(t1 * 1.12 - 0.06, 0.0, 1.0))
+		var w0 := hammock_half_w * (0.15 + 0.85 * taper0)
+		var w1 := hammock_half_w * (0.15 + 0.85 * taper1)
+		var p0 := hammock_a + ab * t0 + Vector3(0, y0, 0) - mid
+		var p1 := hammock_a + ab * t1 + Vector3(0, y1, 0) - mid
+		# Cradle: centre deep (−wrap), side rails rise so fabric wraps the body.
+		var wrap := 0.30 if hammock_occupied else 0.12
+		var rail := 0.14 if hammock_occupied else 0.0
+		for st in hammock_nu - 1:
+			var u0 := lerpf(-1.0, 1.0, float(st) / float(hammock_nu - 1))
+			var u1 := lerpf(-1.0, 1.0, float(st + 1) / float(hammock_nu - 1))
+			var col: Color
+			if absf(u0) > 0.72 and absf(u1) > 0.72:
+				col = Color(0.3, 0.6, 0.8)
+			elif u0 < 0.0:
+				col = Color(0.95, 0.4, 0.3)
+			else:
+				col = Color(0.98, 0.88, 0.5)
+			var cy0 := -wrap * (1.0 - u0 * u0) + rail * (u0 * u0)
+			var cy1 := -wrap * (1.0 - u1 * u1) + rail * (u1 * u1)
+			var A = p0 + side_u * (w0 * u0) + Vector3(0, cy0, 0)
+			var B = p0 + side_u * (w0 * u1) + Vector3(0, cy1, 0)
+			var C = p1 + side_u * (w1 * u1) + Vector3(0, cy1, 0)
+			var D = p1 + side_u * (w1 * u0) + Vector3(0, cy0, 0)
+			HB.face(A, B, C, col, col, col, Vector3.UP)
+			HB.face(A, C, D, col, col, col, Vector3.UP)
+			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
+			HB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), Vector3.DOWN)
+	hammock_mi.mesh = HB.commit()
+
+
 ## lowest point of the hammock bed (world, at rest)
 func hammock_bed() -> Vector3:
-	return (hammock_a + hammock_b) * 0.5 + Vector3(0, -0.72, 0)
+	return hammock_point(0.5)
+
+## Point on the hammock centreline. t=0 at hammock_a, t=1 at hammock_b (matches mesh sag).
+func hammock_point(t: float) -> Vector3:
+	t = clampf(t, 0.0, 1.0)
+	var p := hammock_a.lerp(hammock_b, t)
+	# Interpolate current centreline sag (empty or occupied).
+	var ft := t * float(hammock_nt)
+	var i0 := clampi(int(ft), 0, hammock_nt - 1)
+	var i1 := mini(i0 + 1, hammock_nt)
+	var f := ft - float(i0)
+	var y_off := lerpf(_ham_cur_y[i0] if _ham_cur_y.size() > i0 else -hammock_empty_sag * sin(PI * t),
+		_ham_cur_y[i1] if _ham_cur_y.size() > i1 else -hammock_empty_sag * sin(PI * t), f)
+	# Centre wrap depth (u=0).
+	var wrap := 0.30 if hammock_occupied else 0.12
+	p.y = lerpf(hammock_a.y, hammock_b.y, t) + y_off - wrap
+	return p
+
+## Unit tangent along the hammock fabric (a→b), and the upward normal of the sag.
+func hammock_frame(t: float) -> Dictionary:
+	var eps := 0.02
+	var p0 := hammock_point(clampf(t - eps, 0.0, 1.0))
+	var p1 := hammock_point(clampf(t + eps, 0.0, 1.0))
+	var along := (p1 - p0).normalized()
+	var side := (hammock_b - hammock_a).cross(Vector3.UP).normalized()
+	if side.length_squared() < 1e-6:
+		side = Vector3.RIGHT
+	var normal := along.cross(side).normalized()
+	if normal.y < 0.0:
+		normal = -normal
+		side = -side
+	return {"pos": hammock_point(t), "along": along, "side": side, "normal": normal}
+
+## Lounger seat surface. u=0 at the foot end (+local Z), u=1 at the backrest hinge (−local Z).
+func lounger_seat_point(u: float) -> Dictionary:
+	u = clampf(u, 0.0, 1.0)
+	var z := lerpf(lounger_seat_half.z, -lounger_seat_half.z, u)
+	var b := Basis(Vector3.RIGHT, lounger_seat_tilt)
+	var local := lounger_seat_local + b * Vector3(0.0, lounger_seat_half.y, z)
+	return {
+		"pos": lounger_xf * local,
+		"normal": (lounger_xf.basis * (b * Vector3.UP)).normalized(),
+		"along": (lounger_xf.basis * (b * Vector3(0, 0, -1))).normalized(),
+	}
+
+## Lounger backrest FRONT surface (the face the boy rests on). v=0 near the seat hinge,
+## v=1 at the raised head end. Normal points out of the cushion (sky + toward the open seat).
+func lounger_back_point(v: float) -> Dictionary:
+	v = clampf(v, 0.0, 1.0)
+	# +tilt raises −local Z. v=0 at +Z (hinge / lower), v=1 at −Z (head / higher).
+	var z := lerpf(lounger_back_half.z, -lounger_back_half.z, v)
+	var b := Basis(Vector3.RIGHT, lounger_back_tilt)
+	# Centre of the board slab, then step to the cushion face.
+	var centre := lounger_xf * (lounger_back_local + b * Vector3(0.0, 0.0, z))
+	var along := (lounger_xf.basis * (b * Vector3(0, 0, -1))).normalized()  # toward head end
+	var side := (lounger_xf.basis * Vector3.RIGHT).normalized()
+	# Outward cushion normal = along × side, flipped to the skyward / seat-open side.
+	var n := along.cross(side).normalized()
+	if n.y < 0.0:
+		n = -n
+	# Prefer the side that faces the seat (toward the feet).
+	var feet_dir := (lounger_seat_point(0.0)["pos"] as Vector3) - (lounger_seat_point(1.0)["pos"] as Vector3)
+	if n.dot(feet_dir.normalized()) < 0.0:
+		n = -n
+		# If that flip pointed us into the ground, blend toward sky so contact stays outside.
+		if n.y < 0.2:
+			n = (n * 0.35 + Vector3.UP * 0.65 + feet_dir.normalized() * 0.4).normalized()
+	var pos: Vector3 = centre + n * lounger_back_half.y
+	return {
+		"pos": pos,
+		"normal": n,
+		"along": along,
+	}
+
+## True when `world` projects onto the finite backrest cushion (with a small margin).
+func lounger_back_contains(world: Vector3, margin := 0.04) -> bool:
+	var mid: Dictionary = lounger_back_point(0.5)
+	var n: Vector3 = (mid["normal"] as Vector3).normalized()
+	var along: Vector3 = (mid["along"] as Vector3).normalized()
+	var side: Vector3 = n.cross(along).normalized()
+	var d: Vector3 = world - (mid["pos"] as Vector3)
+	# Reject points far from the board plane before the in-plane test.
+	if absf(d.dot(n)) > 0.35:
+		return false
+	var u := d.dot(along)  # along pad length from centre
+	var v := d.dot(side)
+	return absf(u) <= lounger_back_half.z + margin and absf(v) <= lounger_back_half.x + margin
+
+
+## True when `world` projects onto the finite seat cushion (with a small margin).
+func lounger_seat_contains(world: Vector3, margin := 0.04) -> bool:
+	var mid: Dictionary = lounger_seat_point(0.5)
+	var n: Vector3 = (mid["normal"] as Vector3).normalized()
+	var along: Vector3 = (mid["along"] as Vector3).normalized()
+	var side: Vector3 = n.cross(along).normalized()
+	var d: Vector3 = world - (mid["pos"] as Vector3)
+	if absf(d.dot(n)) > 0.35:
+		return false
+	var u := d.dot(along)
+	var v := d.dot(side)
+	return absf(u) <= lounger_seat_half.z + margin and absf(v) <= lounger_seat_half.x + margin
+
+
+## Body-parameter surface for sunbathing: s=0 feet (seat), s≈0.45 hips (hinge), s=1 head (backrest).
+func lounger_body_surface(s: float) -> Dictionary:
+	s = clampf(s, 0.0, 1.0)
+	const HIP := 0.45
+	if s <= HIP:
+		return lounger_seat_point(s / HIP)
+	return lounger_back_point((s - HIP) / (1.0 - HIP))
 
 func swing_hammock(ang: float) -> Transform3D:
 	var mid = (hammock_a + hammock_b) * 0.5
@@ -1901,6 +2111,20 @@ func _blade(base: Vector3, dir: Vector3, h: float, w: float, lean: float, g: Col
 		prev_l = l
 		prev_r = r
 
+func _near_beach_prop(x: float, z: float) -> bool:
+	# Keep grass/bushes out of the lounger, towel, umbrella and hammock footprints.
+	if Vector2(x - lounger_xf.origin.x, z - lounger_xf.origin.z).length() < 2.2:
+		return true
+	if Vector2(x - towel_pos.x, z - towel_pos.z).length() < 1.6:
+		return true
+	if Vector2(x - umbrella_pos.x, z - umbrella_pos.z).length() < 1.8:
+		return true
+	var ham_mid := (hammock_a + hammock_b) * 0.5
+	if Vector2(x - ham_mid.x, z - ham_mid.z).length() < 2.4:
+		return true
+	return false
+
+
 func _build_vegetation() -> void:
 	var placed = 0
 	var tries = 0
@@ -1916,6 +2140,8 @@ func _build_vegetation() -> void:
 		if Vector2(x - lighthouse_pos.x, z - lighthouse_pos.z).length() < 2.6:
 			continue
 		if Vector2(x - hut_pos.x, z - hut_pos.z).length() < 4.0 or Vector2(x - campfire_pos.x, z - campfire_pos.z).length() < 3.2:
+			continue
+		if _near_beach_prop(x, z):
 			continue
 		var p = gp(x, z)
 		var inland = -d
@@ -1937,7 +2163,8 @@ func _build_vegetation() -> void:
 	for i in 40:
 		var th = rng.randf() * TAU
 		var p = shore_pt(th, rng.randf_range(3.5, 5.5))
-		if path_dist(p.x, p.z) > 1.0 and absf(wrapf(th + PI / 2.0, -PI, PI)) > 0.2:
+		if path_dist(p.x, p.z) > 1.0 and absf(wrapf(th + PI / 2.0, -PI, PI)) > 0.2 \
+				and not _near_beach_prop(p.x, p.z):
 			_grass(p, 1.0)
 	# fence along the lighthouse path
 	var pl: Array = paths[1]

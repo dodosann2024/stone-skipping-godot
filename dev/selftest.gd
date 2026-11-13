@@ -206,12 +206,85 @@ func _rest(kind: String, approach: Vector3) -> void:
 		fails.append(kind + " never lay down")
 		return
 	await _wait(1.0)
+	if kind in ["sun", "sleep"]:
+		m.set_meta("lie_snapped", false)
+		# Extra passes for lounger: tipped hat brim needs more settle than bone-only contact.
+		var passes := 40 if kind == "sun" else 16
+		for _p in passes:
+			if kind == "sun":
+				m.boy.clear_foot_plant()
+			for _s in 4:
+				m._snap_lie_contact()
+				var pl = m.boy.activity(m._act_kind(), 1.0, 1.0, m.gt)
+				var swing = Transform3D.IDENTITY
+				if kind == "sleep":
+					swing = m.island.swing_hammock(m.swing_amp * sin(m.gt * 1.3))
+					m._update_hammock_load()
+				m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
+			m._plant_lie_feet()
+			await _frames(1)
+		m.set_meta("lie_snapped", true)
+		_lie_contact_check(kind)
 	m._wake()
 	if not await _until(func() -> bool: return m.mode == m.Mode.EXPLORE, 6.0):
 		fails.append(kind + " never got up")
 		return
 	await _frames(3)
 	await _can_walk("after " + kind + " from " + str(approach.snapped(Vector3.ONE * 0.1)))
+
+
+## Hips / spine near the support (sky-side positive). Face/chest must point skyward (supine).
+## No contact point may penetrate the support deeper than 1 cm.
+func _lie_contact_check(kind: String) -> void:
+	var gaps: Dictionary = m.lie_contact_gaps()
+	if gaps.is_empty():
+		fails.append(kind + " contact: no gaps")
+		print("SELFTEST %-28s FAIL  (no gaps)" % ("lie contact " + kind))
+		return
+	var bad: Array = []
+	# Contact within 2 cm of the support (sky-side positive after shell offset).
+	const CONTACT_MAX := 0.02
+	const PENET_MIN := -0.01
+	for key in ["hips", "spine", "head"]:
+		if not gaps.has(key):
+			continue
+		var g: float = float(gaps[key])
+		# 0.5 mm slack for float noise at the 2 cm boundary.
+		if g < PENET_MIN or g > CONTACT_MAX + 0.0005:
+			bad.append("%s=%.1fcm" % [key, g * 100.0])
+
+	var face_n: Vector3 = m.boy.lie_face_normal()
+	var face_dot := face_n.dot(Vector3.UP)
+	if face_dot <= 0.5:
+		bad.append("face_up=%.2f" % face_dot)
+	# Penetration: hips/spine/head only (feet are planted separately on the lounger).
+	var penet: float = 0.0
+	for key2 in ["hips", "spine", "head"]:
+		if gaps.has(key2):
+			penet = minf(penet, float(gaps[key2]))
+	if penet < PENET_MIN:
+		bad.append("penetrate=%.1fcm" % (penet * 100.0))
+	# Mesh penet includes all baked hat verts against backrest / hammock fabric.
+	var mesh_penet: float = m.lie_mesh_penetration_depth(true)
+	if mesh_penet < PENET_MIN:
+		bad.append("mesh_penet=%.1fcm" % (mesh_penet * 100.0))
+	var hat_n: int = m.boy.hat_sample_world(80).size()
+	if m.boy.hat_mode != "head":
+		bad.append("hat_mode=%s" % m.boy.hat_mode)
+	if hat_n < 8:
+		bad.append("hat_samples=%d" % hat_n)
+	var parts: PackedStringArray = PackedStringArray()
+	for k in gaps.keys():
+		parts.append("%s=%.1fcm" % [k, float(gaps[k]) * 100.0])
+	parts.append("face_up=%.2f" % face_dot)
+	parts.append("penetrate=%.1fcm" % (penet * 100.0))
+	parts.append("mesh_penet=%.1fcm" % (mesh_penet * 100.0))
+	parts.append("hat_mode=%s" % m.boy.hat_mode)
+	parts.append("hat_samples=%d" % hat_n)
+	var ok := bad.is_empty()
+	print("SELFTEST %-28s %s  (%s)" % ["lie contact " + kind, "ok" if ok else "FAIL", ", ".join(parts)])
+	if not ok:
+		fails.append(kind + " contact: " + ", ".join(bad))
 
 var jitter := 0
 
@@ -693,11 +766,16 @@ func run(main: Node) -> void:
 	_slide_check()
 	await _turn_check()
 	await _can_walk("start")
-	# towel: from both sides and from the sea end
+	# sunbathing on the lounger (approach from both sides and the foot end)
+	var lounger_ap: Vector3 = m.island.towel_pos
+	for st in m.island.seats:
+		if st["name"] == "躺椅":
+			lounger_ap = st["approach"]
+			break
 	var td: Vector3 = m.island.towel_dir
 	var sd: Vector3 = td.cross(Vector3.UP).normalized()
-	for off: Vector3 in [sd * 1.4, -sd * 1.4, td * 1.6, -td * 1.8]:
-		await _rest("sun", m.island.towel_pos + off)
+	for off: Vector3 in [Vector3.ZERO, sd * 0.4, -sd * 0.4, td * 0.5]:
+		await _rest("sun", lounger_ap + off)
 	# hammock: both sides
 	var hs: Array = m._hammock_spot()
 	for s: float in [1.6, -1.6]:
