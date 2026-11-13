@@ -403,8 +403,10 @@ func _lie_contact_check(kind: String) -> void:
 	if mesh_penet < penet_min:
 		bad.append("mesh_penet=%.1fcm" % (mesh_penet * 100.0))
 	var hat_n: int = m.boy.hat_sample_world(80).size()
-	if m.boy.hat_mode != "head":
-		bad.append("hat_mode=%s" % m.boy.hat_mode)
+	# Hammock lie keeps the hat on the chest so fabric clears the brim.
+	var want_hat := "chest" if kind == "sleep" else "head"
+	if m.boy.hat_mode != want_hat:
+		bad.append("hat_mode=%s(want %s)" % [m.boy.hat_mode, want_hat])
 	if hat_n < 8:
 		bad.append("hat_samples=%d" % hat_n)
 	var parts: PackedStringArray = PackedStringArray()
@@ -998,17 +1000,74 @@ func _flateye_rig_check() -> void:
 	if not ok_map:
 		fails.append("flat-eye anim mapping")
 
-	# Face albedo paints loaded (no eye-shell path).
-	var has_idle: bool = m.boy._face_alb.get("idle", null) != null
-	var has_sleep: bool = m.boy._face_alb.get("sleep", null) != null
-	var ok_face := has_idle and has_sleep and m.boy._face_decal == null
-	print("SELFTEST %-28s %s  (idle_tex=%s sleep_tex=%s plate=%s)" % [
-		"flat-eye face albedos",
+	# Face packs: every expression must preload albedo + normal + MR; swap must change the material.
+	var bad_face: PackedStringArray = PackedStringArray()
+	if m.boy._face_decal != null:
+		bad_face.append("plate_present")
+	var mats_ok := true
+	var prev_alb: Texture2D = null
+	var prev_nrm: Texture2D = null
+	var prev_mr: Texture2D = null
+	for kind in ["idle", "smile", "cheer", "sleep"]:
+		var pack = m.boy.face_textures.get(kind, null)
+		if typeof(pack) != TYPE_DICTIONARY:
+			bad_face.append("%s_pack" % kind)
+			mats_ok = false
+			continue
+		if pack.get("albedo", null) == null:
+			bad_face.append("%s_albedo" % kind)
+			mats_ok = false
+		if pack.get("normal", null) == null:
+			bad_face.append("%s_normal" % kind)
+			mats_ok = false
+		if pack.get("mr", null) == null:
+			bad_face.append("%s_mr" % kind)
+			mats_ok = false
+		m.boy.set_face_expr(kind)
+		var mat: StandardMaterial3D = m.boy._face_mat if m.boy._face_mat else m.boy._boy_mat
+		if mat == null:
+			bad_face.append("%s_no_mat" % kind)
+			mats_ok = false
+			continue
+		if mat.albedo_texture != pack["albedo"]:
+			bad_face.append("%s_alb_not_applied" % kind)
+			mats_ok = false
+		if mat.normal_texture != pack["normal"]:
+			bad_face.append("%s_nrm_not_applied" % kind)
+			mats_ok = false
+		if mat.roughness_texture != pack["mr"]:
+			bad_face.append("%s_mr_not_applied" % kind)
+			mats_ok = false
+		if prev_alb != null and kind != "idle":
+			# Consecutive expressions must change at least albedo (cheer/sleep share nrm/mr).
+			if mat.albedo_texture == prev_alb and kind != "sleep":
+				bad_face.append("%s_alb_unchanged" % kind)
+				mats_ok = false
+		prev_alb = mat.albedo_texture
+		prev_nrm = mat.normal_texture
+		prev_mr = mat.roughness_texture
+	# cheer/sleep must share closed normal+MR, but differ in albedo.
+	var cheer_p = m.boy.face_textures.get("cheer", {})
+	var sleep_p = m.boy.face_textures.get("sleep", {})
+	if typeof(cheer_p) == TYPE_DICTIONARY and typeof(sleep_p) == TYPE_DICTIONARY:
+		if cheer_p.get("normal") != sleep_p.get("normal"):
+			bad_face.append("cheer_sleep_normal_not_shared")
+			mats_ok = false
+		if cheer_p.get("mr") != sleep_p.get("mr"):
+			bad_face.append("cheer_sleep_mr_not_shared")
+			mats_ok = false
+		if cheer_p.get("albedo") == sleep_p.get("albedo"):
+			bad_face.append("cheer_sleep_alb_identical")
+			mats_ok = false
+	m.boy.set_face_expr("idle")
+	var ok_face := mats_ok and bad_face.is_empty()
+	print("SELFTEST %-28s %s  (%s)" % [
+		"face 3-map packs",
 		"ok" if ok_face else "FAIL",
-		has_idle, has_sleep, m.boy._face_decal != null,
+		("alb+nrm+mr×4" if ok_face else "; ".join(bad_face)),
 	])
 	if not ok_face:
-		fails.append("flat-eye face albedos")
+		fails.append("face 3-map packs: " + "; ".join(bad_face))
 
 
 func run(main: Node) -> void:

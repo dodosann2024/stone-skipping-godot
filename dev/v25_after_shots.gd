@@ -5,7 +5,7 @@ extends SceneTree
 const OUT := "/workspace/screenshots/v25/after"
 const W := 390
 const H := 844
-const BUILD_ID := "v25-flateyes02"
+const BUILD_ID := "v25-expr3map-03"
 
 
 func _initialize() -> void:
@@ -200,10 +200,10 @@ func _bench_transition(m, vp) -> void:
 		m._apply_camera()
 		await process_frame
 	imgs.append(await _shot(vp, "%s/bench/end.png" % OUT))
-	# Side corroboration crop source
+	# Side corroboration — camera along ±side so thighs/shins read clearly.
 	var side: Vector3 = face.cross(Vector3.UP).normalized()
-	_cam(m, hips + Vector3(0, 0.15, 0), atan2(-side.x, -side.z), 3.0, 0.1)
-	for _r in 4:
+	_cam(m, hips + Vector3(0, 0.20, 0), atan2(side.x, side.z) + 0.05, 2.9, 0.12)
+	for _r in 5:
 		m._apply_camera()
 		await process_frame
 	await _shot(vp, "%s/crops/bench_end_side.png" % OUT)
@@ -214,7 +214,17 @@ func _bench_transition(m, vp) -> void:
 
 
 func _log_sit(m, vp) -> void:
+	# Prefer the log whose face aims away from the campfire sprite (readable sit, no flame over head).
 	var li: int = _pick_seat(m, "坐木")
+	var best_d := -1.0
+	for i in m.island.seats.size():
+		var cand: Dictionary = m.island.seats[i]
+		if String(cand["name"]) != "坐木":
+			continue
+		var d: float = (cand["top"] as Vector3).distance_to(m.island.campfire_pos)
+		if d > best_d:
+			best_d = d
+			li = i
 	var st: Dictionary = m.island.seats[li]
 	m.seat_i = li
 	m.seat_ap = st["approach"]
@@ -223,7 +233,7 @@ func _log_sit(m, vp) -> void:
 	m._begin_rest("seat")
 	m.rest_frozen = true
 	m.rest_phase = 2
-	for _p in 20:
+	for _p in 24:
 		var pl: Vector3 = m.boy.activity("seat", 1.0, 0.0, m.gt)
 		m.rest_root_sit = m.rest_seat - m.rest_sit_b * pl
 		m.boy.global_transform = Transform3D(m.rest_sit_b, m.rest_root_sit)
@@ -231,18 +241,22 @@ func _log_sit(m, vp) -> void:
 		await process_frame
 	m.boy.bake_pose_mesh()
 	var face: Vector3 = st["face"].normalized()
+	var hips: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
 	var imgs: Array = []
-	_cam(m, m.rest_seat + Vector3(0, 0.5, 0), atan2(face.x, face.z) + 0.25, 3.0, 0.12)
-	for _r in 5:
+	# Front: look AT his face (from seaward / fire direction).
+	var yaw_front: float = atan2(face.x, face.z)
+	_cam(m, hips + Vector3(0, 0.25, 0), yaw_front, 2.9, 0.14)
+	for _r in 6:
 		m._apply_camera()
 		await process_frame
 	imgs.append(await _shot(vp, "%s/log/sit.png" % OUT))
 	var side: Vector3 = face.cross(Vector3.UP).normalized()
-	_cam(m, m.rest_seat + Vector3(0, 0.45, 0), atan2(-side.x, -side.z), 2.8, 0.1)
-	for _r in 4:
+	_cam(m, hips + Vector3(0, 0.20, 0), atan2(side.x, side.z), 2.7, 0.12)
+	for _r in 5:
 		m._apply_camera()
 		await process_frame
 	imgs.append(await _shot(vp, "%s/log/sit_side.png" % OUT))
+	await _shot(vp, "%s/crops/log_sit_side.png" % OUT)
 	m.boy.restore_pose_mesh()
 	_montage_imgs(imgs, "log_sit.png")
 	if m.has_method("_wake"):
@@ -255,8 +269,8 @@ func _hammock_seq(m, vp) -> void:
 	m.rest_frozen = true
 	var side: Vector3 = m.rest_side.normalized()
 	var imgs: Array = []
-	# Prefer the open beach side so foliage doesn't eat the climb/lie frames.
-	var side_yaw: float = atan2(-side.x, -side.z) + 0.25
+	# Boy faces +side (out). Camera yaw along +side = in front of him (readable sit/lie).
+	var side_yaw: float = atan2(side.x, side.z) + 0.15
 
 	# 1) approach stand (beside fabric, not inside)
 	m.rest_phase = 0
@@ -268,7 +282,7 @@ func _hammock_seq(m, vp) -> void:
 	m.island.set_hammock_load([] as Array[Vector3])
 	for _i in 6:
 		await process_frame
-	_cam(m, m.rest_approach.lerp(m.rest_seat, 0.35) + Vector3(0, 0.55, 0), side_yaw, 3.0, 0.12)
+	_cam(m, m.rest_approach.lerp(m.rest_seat, 0.35) + Vector3(0, 0.45, 0), side_yaw, 2.5, deg_to_rad(35.0))
 	for _r in 4:
 		m._apply_camera()
 		await process_frame
@@ -284,7 +298,8 @@ func _hammock_seq(m, vp) -> void:
 		m._update_hammock_load()
 		await process_frame
 	m.boy.bake_pose_mesh()
-	_cam(m, m.rest_seat + Vector3(0, 0.45, 0), side_yaw, 2.75, 0.15)
+	# Side cam: 2.5 m / 35° elevation.
+	_cam(m, m.rest_seat + Vector3(0, 0.35, 0), side_yaw, 2.5, deg_to_rad(35.0))
 	for _r in 5:
 		m._apply_camera()
 		await process_frame
@@ -304,14 +319,14 @@ func _hammock_seq(m, vp) -> void:
 		m._update_hammock_load()
 		await process_frame
 	m.boy.bake_pose_mesh()
-	_cam(m, m.rest_seat.lerp(m.rest_lie, 0.45) + Vector3(0, 0.38, 0), side_yaw, 2.55, 0.18)
+	_cam(m, m.rest_seat.lerp(m.rest_lie, 0.45) + Vector3(0, 0.30, 0), side_yaw, 2.5, deg_to_rad(35.0))
 	for _r in 5:
 		m._apply_camera()
 		await process_frame
 	imgs.append(await _shot(vp, "%s/hammock/climb_mid.png" % OUT))
 	m.boy.restore_pose_mesh()
 
-	# 4) full lie — cradled, sleep face
+	# 4) full lie — cradled, hat on chest, sleep face
 	m.rest_phase = 4
 	m.set_meta("lie_snapped", false)
 	m.boy.set_face_expr("sleep")
@@ -331,36 +346,38 @@ func _hammock_seq(m, vp) -> void:
 	var hips2: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
 	var head_b: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
 	var spine_b: Vector3 = m.boy.lie_bone_world("mixamorig_Spine1")
-	# Elevated 3/4: fabric rails above torso sides + hat on head readable.
-	_cam(m, hips2.lerp(spine_b, 0.5), side_yaw + 0.2, 2.15, 0.52)
+	# Side capture: 2.5 m / 35° — body in dish, fabric sides above torso, hat on chest.
+	_cam(m, hips2.lerp(spine_b, 0.45), side_yaw, 2.5, deg_to_rad(35.0))
 	for _r in 6:
 		m._apply_camera()
 		await process_frame
 	imgs.append(await _shot(vp, "%s/hammock/lie.png" % OUT))
 	await _shot(vp, "%s/crops/hammock_lie_crop.png" % OUT)
 	await _shot(vp, "%s/crops/hammock_cradle_top.png" % OUT)
-	_cam(m, head_b, side_yaw - 0.1, 1.35, 0.10)
+	_cam(m, spine_b, side_yaw - 0.05, 2.0, deg_to_rad(40.0))
 	for _r in 4:
 		m._apply_camera()
 		await process_frame
 	await _shot(vp, "%s/crops/hammock_hat_clear.png" % OUT)
-	# Sleep face: MUST be the actual lie pose (not upright idle). Elevated side view of head.
+	# Sleep face from above (positive pitch = camera elevation). Hat is on the chest.
 	m.boy.set_face_expr("sleep")
 	for _i in 10:
-		m.boy._update_face(0.08)
+		m.boy.expr = "sleep"
+		m.boy._apply_face_pack("sleep")
 		await process_frame
 	var along_h: Vector3 = head_b - hips2
 	along_h.y = 0.0
 	if along_h.length_squared() < 1e-4:
 		along_h = side
 	along_h = along_h.normalized()
-	var sleep_cam: Vector3 = head_b + side * 1.15 + Vector3(0, 0.95, 0) - along_h * 0.2
-	var to_sf: Vector3 = head_b - sleep_cam
-	_cam(m, head_b, atan2(-to_sf.x, -to_sf.z), sleep_cam.distance_to(head_b), atan2(to_sf.y, Vector2(to_sf.x, to_sf.z).length()))
-	for _r in 6:
+	# Look from the foot side / slightly aside so the closed lids read; pitch elevates the cam.
+	var sleep_yaw: float = atan2(-(-along_h).x, -(-along_h).z) + 0.35
+	_cam(m, head_b + along_h * 0.02, sleep_yaw, 0.95, deg_to_rad(58.0))
+	for _r in 8:
 		m._apply_camera()
 		await process_frame
 	await _shot(vp, "%s/hammock/sleep_face.png" % OUT)
+	await _shot(vp, "%s/crops/face_sleep_hammock.png" % OUT)
 	m.boy.restore_pose_mesh()
 	# Resume hammock exit from sit edge.
 	m.rest_frozen = true
@@ -368,7 +385,7 @@ func _hammock_seq(m, vp) -> void:
 	m.rest_frozen = true
 	m.rest_phase = 6
 	side = m.rest_side.normalized()
-	side_yaw = atan2(side.x, side.z) + 0.45
+	side_yaw = atan2(side.x, side.z) + 0.15
 
 	# 5) exit — sit edge then stand
 	m.rest_phase = 6
@@ -380,7 +397,7 @@ func _hammock_seq(m, vp) -> void:
 		m._update_hammock_load()
 		await process_frame
 	m.boy.bake_pose_mesh()
-	_cam(m, m.rest_seat + Vector3(0, 0.5, 0), side_yaw, 2.9, 0.12)
+	_cam(m, m.rest_seat + Vector3(0, 0.4, 0), side_yaw, 2.5, deg_to_rad(35.0))
 	for _r in 4:
 		m._apply_camera()
 		await process_frame
@@ -395,7 +412,9 @@ func _hammock_seq(m, vp) -> void:
 	m.island.set_hammock_load([] as Array[Vector3])
 	for _i in 6:
 		await process_frame
-	_cam(m, m.rest_approach + Vector3(0, 0.55, 0), side_yaw, 3.0, 0.1)
+	side = m.rest_side.normalized()
+	side_yaw = atan2(side.x, side.z) + 0.15
+	_cam(m, m.rest_approach + Vector3(0, 0.45, 0), side_yaw, 2.5, deg_to_rad(35.0))
 	for _r in 4:
 		m._apply_camera()
 		await process_frame
@@ -413,79 +432,38 @@ func _faces(m, vp) -> void:
 	m.boy.set_idle()
 	m.boy.end_activity()
 	var face_imgs: Array = []
-	# Idle / smile / cheer: upright front + 3/4 for texture smoothness.
-	for expr in ["idle", "smile", "cheer"]:
-		m.boy.set_face_expr(expr)
-		m.boy.react_kind = "cheer" if expr == "cheer" else ""
+	# All four expressions upright — near-zoom front + 3/4 to match expr_front / expr_34 refs.
+	for expr in ["idle", "smile", "cheer", "sleep"]:
+		m.boy.react_kind = ""
 		m.boy.act_kind = ""
 		m.boy.act_lie_k = 0.0
-		for _i in 16:
-			m.boy._update_face(0.08)
+		m.boy.set_face_expr(expr)
+		for _i in 12:
+			# Keep the pinned expression (don't let idle-smile pulse steal cheer/sleep).
+			m.boy.expr = expr
+			m.boy._apply_face_pack(expr)
 			await process_frame
 		m.boy.bake_pose_mesh()
 		var head: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
-		_cam(m, head, PI + 0.05, 0.92, -0.02)
+		# Near zoom front (fills face under the brim).
+		_cam(m, head + Vector3(0, 0.02, 0), PI + 0.02, 0.62, -0.04)
 		for _r in 6:
 			m._apply_camera()
 			await process_frame
 		face_imgs.append(await _shot(vp, "%s/faces/%s.png" % [OUT, expr]))
+		await _shot(vp, "%s/crops/face_%s_near.png" % [OUT, expr])
 		await _shot(vp, "%s/crops/face_%s.png" % [OUT, expr])
-		# 3/4 corroboration
-		_cam(m, head, PI + 0.55, 1.05, -0.02)
-		for _r in 4:
+		# Near 3/4
+		_cam(m, head + Vector3(0, 0.02, 0), PI + 0.55, 0.70, -0.03)
+		for _r in 5:
 			m._apply_camera()
 			await process_frame
 		await _shot(vp, "%s/crops/face_%s_34.png" % [OUT, expr])
+		await _shot(vp, "%s/crops/face_%s_34_near.png" % [OUT, expr])
 		m.boy.restore_pose_mesh()
-	m.boy.react_kind = ""
-
-	# Sleep face: actual hammock lie pose (never upright idle with sleep albedo).
-	m.rest_frozen = false
-	m._begin_rest("sleep")
-	m.rest_frozen = true
-	m.rest_phase = 4
-	m.set_meta("lie_snapped", false)
-	m.boy.set_face_expr("sleep")
-	for _p in 36:
-		var pl: Vector3 = m.boy.activity("sleep", 1.0, 1.0, m.gt)
-		var swing = m.island.swing_hammock(0.0)
-		m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
-		m._update_hammock_load()
-		m._snap_lie_contact()
-		m.boy._update_face(0.05)
-		await process_frame
-	m.set_meta("lie_snapped", true)
-	for _i in 10:
-		m.boy._update_face(0.1)
-		await process_frame
-	m.boy.bake_pose_mesh()
-	var head_s: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
-	var hips_s: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
-	var side_v: Vector3 = m.rest_side.normalized()
-	var along: Vector3 = head_s - hips_s
-	along.y = 0.0
-	if along.length_squared() < 1e-4:
-		along = side_v.cross(Vector3.UP)
-	along = along.normalized()
-	var side_yaw_s: float = atan2(-side_v.x, -side_v.z) + 0.15
-	_cam(m, head_s, side_yaw_s - 0.05, 1.45, 0.22)
-	for _r in 8:
-		m._apply_camera()
-		await process_frame
-	face_imgs.append(await _shot(vp, "%s/faces/sleep.png" % OUT))
-	await _shot(vp, "%s/crops/face_sleep.png" % OUT)
-	_cam(m, head_s, side_yaw_s + 0.35, 1.65, 0.35)
-	for _r in 6:
-		m._apply_camera()
-		await process_frame
-	await _shot(vp, "%s/crops/face_sleep_34.png" % OUT)
-	m.boy.restore_pose_mesh()
-	m.boy.act_kind = ""
-	m.boy.act_lie_k = 0.0
-	m.island.set_hammock_load([] as Array[Vector3])
-	if m.has_method("_wake"):
-		m._wake()
 	_montage_imgs(face_imgs, "faces_montage.png")
+	_montage_faces_vs_refs()
+	# Extra hammock sleep face is captured inside _hammock_seq (positive-pitch above head).
 
 
 func _camera_zoom(m, vp) -> void:
@@ -557,6 +535,51 @@ func _scenes(m, vp) -> void:
 		await process_frame
 	imgs.append(await _shot(vp, "%s/scene/night.png" % OUT))
 	_montage_imgs(imgs, "scene_day_sunset_night.png")
+
+
+func _montage_faces_vs_refs() -> void:
+	# Side-by-side: offline reference strip + in-game near-zoom crops (front and 3/4).
+	var ref_front := Image.load_from_file("%s/crops/expr_ref_front.png" % OUT)
+	var ref_34 := Image.load_from_file("%s/crops/expr_ref_34.png" % OUT)
+	if ref_front == null or ref_34 == null:
+		push_warning("missing expr_ref_*.png — skip faces_vs_ref montages")
+		return
+	if ref_front.get_format() != Image.FORMAT_RGBA8:
+		ref_front.convert(Image.FORMAT_RGBA8)
+	if ref_34.get_format() != Image.FORMAT_RGBA8:
+		ref_34.convert(Image.FORMAT_RGBA8)
+	for tag_pair in [["front", ref_front, ""], ["34", ref_34, "_34"]]:
+		var tag: String = tag_pair[0]
+		var ref: Image = tag_pair[1]
+		var suffix: String = tag_pair[2]
+		var cell_w := 390
+		var cell_h := 844
+		# Ref is 4000×1000 (4×1000). Scale each panel to cell_w × cell_w square, then pad.
+		var panel := cell_w
+		var ref_row := Image.create(panel * 4, panel, false, Image.FORMAT_RGBA8)
+		for i in 4:
+			var src := ref.get_region(Rect2i(i * 1000, 0, 1000, 1000))
+			if src.get_format() != Image.FORMAT_RGBA8:
+				src.convert(Image.FORMAT_RGBA8)
+			src.resize(panel, panel, Image.INTERPOLATE_LANCZOS)
+			ref_row.blit_rect(src, Rect2i(0, 0, panel, panel), Vector2i(i * panel, 0))
+		var game_row := Image.create(panel * 4, cell_h, false, Image.FORMAT_RGBA8)
+		var names := ["idle", "smile", "cheer", "sleep"]
+		for i in 4:
+			var path := "%s/crops/face_%s%s_near.png" % [OUT, names[i], suffix]
+			var g := Image.load_from_file(path)
+			if g == null:
+				continue
+			if g.get_format() != Image.FORMAT_RGBA8:
+				g.convert(Image.FORMAT_RGBA8)
+			game_row.blit_rect(g, Rect2i(0, 0, mini(panel, g.get_width()), mini(cell_h, g.get_height())), Vector2i(i * panel, 0))
+		var out := Image.create(panel * 4, panel + cell_h, false, Image.FORMAT_RGBA8)
+		out.fill(Color(0.08, 0.09, 0.10, 1))
+		out.blit_rect(ref_row, Rect2i(0, 0, panel * 4, panel), Vector2i(0, 0))
+		out.blit_rect(game_row, Rect2i(0, 0, panel * 4, cell_h), Vector2i(0, panel))
+		var out_path := "%s/faces_vs_ref_%s.png" % [OUT, tag]
+		out.save_png(out_path)
+		print("MONTAGE faces_vs_ref_%s.png" % tag)
 
 
 func _write_crops() -> void:

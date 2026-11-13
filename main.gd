@@ -1304,14 +1304,13 @@ func _begin_rest(kind: String) -> void:
 		var top: Vector3 = st["top"]
 		# Seed from live sit-hip height; mesh snap raises the butt onto the seat top.
 		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
-		# Park bench: mid-front of the board so the butt sits ON the plank (not past the
-		# seaward lip). Backrest stays behind the spine; thighs hang over the edge.
+		# Bench top is authored ~0.12 m in front of the backrest; keep pelvis there so
+		# thighs stay on the board and shins hang clear of the front edge (no cross/clip).
 		if st["name"] == "长椅":
-			rest_seat += face * 0.02
-		# On logs, sit slightly toward the fire-side rim so knees/feet clear past the
-		# cylinder (thighs along +face) instead of perching mid-log.
+			pass
+		# Log: sit centered on the cylinder so shins hang clear of the bark.
 		elif st["name"] == "坐木":
-			rest_seat += face * 0.06
+			pass
 		# lying back: head towards his right, pelvis a little towards the foot end, back on the seat
 		rest_lie = top + Vector3(0, LIE_BACK, 0) - rest_side * 0.1
 		if st["name"] == "长椅":
@@ -1353,10 +1352,10 @@ func _setup_hammock_rest() -> void:
 	var side: Vector3 = hs[2]
 	rest_side = side
 	var bed: Vector3 = island.hammock_point(0.5)
-	# Head toward one end, heels toward the other — cradle mid-pocket.
-	var head_t := 0.68
+	# Head on the upper end, hips mid-pocket — body along the hammock centreline.
+	var head_t := 0.72
 	var hip_t := 0.48
-	var foot_t := 0.28
+	var foot_t := 0.24
 	var hip_f: Dictionary = island.hammock_frame(hip_t)
 	var head_f: Dictionary = island.hammock_frame(head_t)
 	var foot_f: Dictionary = island.hammock_frame(foot_t)
@@ -1372,36 +1371,87 @@ func _setup_hammock_rest() -> void:
 		head_f = island.hammock_frame(head_t)
 		foot_f = island.hammock_frame(foot_t)
 		head_dir = ((head_f["pos"] as Vector3) - (hip_f["pos"] as Vector3)).normalized()
-	# ~20° diagonal — flatter lie in a gathered-end hammock, still inside the cradle.
-	var diag := head_dir.rotated(Vector3.UP, 0.35).normalized()
-	if diag.dot(along) < 0.45:
-		diag = head_dir.rotated(Vector3.UP, -0.35).normalized()
-	head_dir = head_dir.lerp(diag, 0.5).normalized()
-	var into: Vector3 = (-Vector3.UP).lerp(-(hip_f["normal"] as Vector3).normalized(), 0.2).normalized()
+	# Keep the spine on the centreline (no diagonal twist into the rails).
+	var into: Vector3 = (-Vector3.UP).lerp(-(hip_f["normal"] as Vector3).normalized(), 0.25).normalized()
 	rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Nest deep in the cradle so fabric sides read above the torso (not floating on ribbons).
+	# Nest ~8 cm into the dish so fabric sides rise above the torso without burying him.
 	var hip_pos: Vector3 = hip_f["pos"] as Vector3
-	rest_lie = hip_pos - (hip_f["normal"] as Vector3) * 0.02
+	rest_lie = hip_pos - (hip_f["normal"] as Vector3) * 0.08
 	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground.
-	# Basis(UP, atan2(x,z)) aims local −Z at (x,z); use −side so −Z == +side (outward).
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
-	# Sit on the NEAR edge (toward approach): butt on fabric lip, thighs hang outside.
-	# Mid-cradle sit buries the torso in the rails and reads as "standing in fabric".
 	var sit_frame: Dictionary = island.hammock_frame(0.50)
 	var sit_n: Vector3 = (sit_frame["normal"] as Vector3).normalized()
 	var sit_side: Vector3 = (sit_frame["side"] as Vector3).normalized()
 	if sit_side.dot(side) < 0.0:
 		sit_side = -sit_side
-	# Outer lip (~0.92 * half_w): butt on fabric, torso clear of opposite rail.
-	rest_seat = (sit_frame["pos"] as Vector3) + sit_side * (island.hammock_half_w * 0.92) + sit_n * 0.10
-	# Clear of fabric + wall (half_w≈0.55, wall +0.06) — stand beside, not inside.
-	rest_approach = bed + side * (island.hammock_half_w + 0.72)
-	rest_approach.y = Island.ground_h(rest_approach.x, rest_approach.z)
+	rest_seat = (sit_frame["pos"] as Vector3) + sit_side * (island.hammock_half_w * 0.90) + sit_n * 0.08
+	# Stand on sand beside the hammock, ≥0.6 m from any palm trunk.
+	rest_approach = _hammock_stand_clear(bed, side)
 	boy.hat_beside_world = Vector3.ZERO
 	set_meta("lie_head_t", head_t)
 	set_meta("lie_hip_t", hip_t)
 	set_meta("lie_foot_t", foot_t)
 	set_meta("lie_foot_pos", foot_f["pos"])
+
+
+## Pick a stand pose beside the hammock that clears palm trunks by ≥ min_clear metres.
+func _hammock_stand_clear(bed: Vector3, side: Vector3, min_clear := 0.6) -> Vector3:
+	var candidates: Array[Vector3] = []
+	for sgn in [1.0, -1.0]:
+		for dist in [0.95, 1.15, 1.40, 1.70]:
+			var p: Vector3 = bed + side * sgn * (island.hammock_half_w + dist)
+			p.y = Island.ground_h(p.x, p.z)
+			candidates.append(p)
+	var best := candidates[0]
+	var best_d := -1.0
+	for p in candidates:
+		var d := _nearest_trunk_dist(p)
+		if d >= min_clear and d > best_d:
+			best_d = d
+			best = p
+	if best_d < min_clear:
+		# Nudge the better side away until clear.
+		best = candidates[0]
+		for _i in 16:
+			var d2 := _nearest_trunk_dist(best)
+			if d2 >= min_clear:
+				break
+			var away := _nearest_trunk_away(best)
+			best += away * (min_clear - d2 + 0.08)
+			best.y = Island.ground_h(best.x, best.z)
+		rest_side = (best - bed).normalized()
+		rest_side.y = 0.0
+		if rest_side.length_squared() < 1e-6:
+			rest_side = side
+		else:
+			rest_side = rest_side.normalized()
+	return best
+
+
+func _nearest_trunk_dist(p: Vector3) -> float:
+	var best := 1e9
+	for tr in island.trunks:
+		if tr.is_empty():
+			continue
+		var base: Vector3 = tr[0]
+		best = minf(best, Vector2(p.x - base.x, p.z - base.z).length())
+	return best
+
+
+func _nearest_trunk_away(p: Vector3) -> Vector3:
+	var best := 1e9
+	var away := Vector3.RIGHT
+	for tr in island.trunks:
+		if tr.is_empty():
+			continue
+		var base: Vector3 = tr[0]
+		var d := Vector2(p.x - base.x, p.z - base.z).length()
+		if d < best:
+			best = d
+			away = Vector3(p.x - base.x, 0.0, p.z - base.z)
+	if away.length_squared() < 1e-6:
+		return rest_side if rest_side.length_squared() > 1e-6 else Vector3.RIGHT
+	return away.normalized()
 
 
 ## Sunbathing on the chaise: hips in the seat–back crease, spine+head on the ~45° pad,
@@ -1574,8 +1624,8 @@ func _snap_sit_contact() -> void:
 			# Low percentile — ignore a few remaining spikes.
 			var idx := mini(maxi(int(depths.size() * 0.15), 0), depths.size() - 1)
 			deepest = depths[idx]
-		# Kiss the board inside selftest −1…3 cm; slight sink reads as seated.
-		var target := -0.005 if is_bench else 0.003
+		# Bench: slight float so Tripo shorts don't bury through the plank; log kisses closer.
+		var target := 0.012 if is_bench else 0.003
 		var err := target - deepest
 		if absf(err) < 0.004:
 			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
@@ -1675,14 +1725,14 @@ func _snap_lie_contact() -> void:
 		# penetrating hip deeper just because the spine still floats a bit.
 		var both_float := hip_gap > 0.012 and spine_gap > 0.012
 		var float_gap := minf(hip_gap, spine_gap)
-		# Nest by bone gaps only — Tripo shorts/hat mesh samples falsely dig 10cm+.
-		if sink_gap < -0.05:
-			rest_lie += hn0 * minf(-sink_gap * 0.4, 0.08)
-		elif hip_gap > 0.025 or both_float:
-			# Settle until hips nearly kiss the dish (visible cradle under torso).
-			rest_lie -= hn0 * minf(hip_gap - 0.015, 0.18)
-		if head_gap < 0.0 and hip_gap < 0.08:
-			rest_lie += head_n0 * minf(-head_gap + 0.01, 0.03) * 0.4
+		# Nest ~10 cm into the dish so fabric sides rise above the torso.
+		const NEST := -0.08
+		if sink_gap < NEST - 0.06:
+			rest_lie += hn0 * minf(-(sink_gap - NEST) * 0.45, 0.08)
+		elif hip_gap > NEST + 0.025 or both_float:
+			rest_lie -= hn0 * minf(hip_gap - NEST, 0.16)
+		if head_gap < -0.02 and hip_gap < 0.05:
+			rest_lie += head_n0 * minf(-head_gap, 0.04) * 0.35
 		return
 	# Lounger: foam sink OK; fail only on wood-board punch. Settle hips/head onto the pads.
 	# Bone snap only — hat tip may kiss foam within 1 cm; over-lifting floats the torso.
@@ -1914,8 +1964,8 @@ func lie_mesh_penetration_depth(include_hat := true) -> float:
 	if rest_kind != "sun" and rest_kind != "sleep":
 		return 0.0
 	var samples: Array[Vector3] = boy.skinned_sample_world(450)
-	# Always include baked hat verts (hat stays on the head in both lying poses).
-	if include_hat:
+	# Include hat samples when the brim is still on the head (chest mode clears fabric).
+	if include_hat and boy.hat_mode == "head":
 		samples.append_array(boy.hat_sample_world(140))
 	if samples.is_empty():
 		return 0.0

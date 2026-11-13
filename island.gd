@@ -19,11 +19,11 @@ var hammock_b := Vector3.ZERO
 var hammock_node: Node3D
 ## Deformable hammock grid (local to hammock_node). Empty sag is light; occupied sag deepens under the body.
 var hammock_mi: MeshInstance3D
-var hammock_nt := 16
-var hammock_nu := 15
-var hammock_empty_sag := 0.22
-var hammock_occ_sag := 0.48
-var hammock_half_w := 0.62
+var hammock_nt := 28
+var hammock_nu := 22
+var hammock_empty_sag := 0.26
+var hammock_occ_sag := 0.42
+var hammock_half_w := 0.58
 var hammock_occupied := false
 var hammock_body_pts: Array[Vector3] = []  # world points that weigh the fabric
 var _ham_rest_y: PackedFloat32Array = PackedFloat32Array()  # centreline rest Y offset per t
@@ -1265,8 +1265,8 @@ func _build_lighthouse() -> void:
 	var bc: Vector3 = bxf * Vector3(0, 0, -0.05)
 	wall_b(Vector2(bc.x, bc.z), Vector2(0.72, 0.24), 0.7, bp.y - 0.3, bp.y + 0.75, "长椅")
 	var bface: Vector3 = (bxf.basis * Vector3(0, 0, -1)).normalized()
-	# Sit target well onto the FRONT half (away from backrest).
-	var bench_top: Vector3 = bxf * Vector3(0, seat_y + 0.035, -0.18)
+	# Sit target ~0.12 m in front of the backrest (+Z lip at 0.40) so pelvis is centered.
+	var bench_top: Vector3 = bxf * Vector3(0, seat_y + 0.035, 0.28)
 	_add_seat("长椅", bench_top, bface, 0.7, "灯塔边的长椅：点「坐下」看看海，坐下后还能躺下", false, true)
 
 func _build_campfire() -> void:
@@ -1795,10 +1795,13 @@ func _build_palms() -> void:
 	var hsm = StandardMaterial3D.new()
 	hsm.vertex_color_use_as_albedo = true
 	hsm.vertex_color_is_srgb = true
-	hsm.roughness = 0.9
+	hsm.roughness = 0.92
 	hsm.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# Soften cloth shadows so the dish doesn't crush the body into a black wedge.
+	hsm.metallic = 0.0
 	hammock_mi = MeshInstance3D.new()
 	hammock_mi.material_override = hsm
+	hammock_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	hammock_node.add_child(hammock_mi)
 	# end ropes (static)
 	var RB = MeshBuilder.new()
@@ -1854,31 +1857,33 @@ func _rebuild_hammock_mesh() -> void:
 	var side_u := ab.cross(Vector3.UP).normalized()
 	if side_u.length_squared() < 1e-6:
 		side_u = Vector3.RIGHT
+	# Smooth catenary cloth: subdivided grid, length sag + raised side edges, length stripes.
+	var wrap := 0.16 if hammock_occupied else 0.10
+	var rail := 0.20 if hammock_occupied else 0.10
+	var cream := Color(0.94, 0.84, 0.62)
+	var stripe := Color(0.42, 0.62, 0.78)
+	var rim := Color(0.72, 0.52, 0.32)
 	var HB = MeshBuilder.new()
 	for s in hammock_nt:
 		var t0 := float(s) / float(hammock_nt)
 		var t1 := float(s + 1) / float(hammock_nt)
 		var y0 := _ham_cur_y[s]
 		var y1 := _ham_cur_y[s + 1]
-		# Continuous fabric bed: mild end-gather only (not ribbon taper).
-		var taper0 := sin(PI * clampf(t0, 0.0, 1.0))
-		var taper1 := sin(PI * clampf(t1, 0.0, 1.0))
-		var w0 := hammock_half_w * (0.55 + 0.45 * taper0)
-		var w1 := hammock_half_w * (0.55 + 0.45 * taper1)
+		# Mild end gather only — keep a continuous bed, not two ribbons.
+		var taper0 := 0.88 + 0.12 * sin(PI * clampf(t0, 0.0, 1.0))
+		var taper1 := 0.88 + 0.12 * sin(PI * clampf(t1, 0.0, 1.0))
+		var w0 := hammock_half_w * taper0
+		var w1 := hammock_half_w * taper1
 		var p0 := hammock_a + ab * t0 + Vector3(0, y0, 0) - mid
 		var p1 := hammock_a + ab * t1 + Vector3(0, y1, 0) - mid
-		# Deep dish under the body + raised sides (cradle). Contact uses wrap only.
-		var wrap := 0.22 if hammock_occupied else 0.14
-		var rail := 0.42 if hammock_occupied else 0.08
-		# One continuous canvas colour (stripe left/right read as two ribbons).
-		var canvas := Color(0.92, 0.78, 0.52)
-		var rim := Color(0.78, 0.58, 0.36)
+		var stripe_on := (int(floor(t0 * 14.0)) % 2) == 0
+		var bed_col: Color = cream if stripe_on else stripe
 		for st in hammock_nu - 1:
 			var u0 := lerpf(-1.0, 1.0, float(st) / float(hammock_nu - 1))
 			var u1 := lerpf(-1.0, 1.0, float(st + 1) / float(hammock_nu - 1))
-			var edge := maxf(absf(u0), absf(u1)) > 0.78
-			var col: Color = rim if edge else canvas
-			# Parabolic cradle: centre deep, sides high above torso.
+			var edge := maxf(absf(u0), absf(u1)) > 0.86
+			var col: Color = rim if edge else bed_col
+			# Parabolic dish: centre sunk, sides rise above the torso.
 			var cy0 := -wrap * (1.0 - u0 * u0) + rail * (u0 * u0)
 			var cy1 := -wrap * (1.0 - u1 * u1) + rail * (u1 * u1)
 			var A = p0 + side_u * (w0 * u0) + Vector3(0, cy0, 0)
@@ -1890,8 +1895,8 @@ func _rebuild_hammock_mesh() -> void:
 				n0 = -n0
 			HB.face(A, B, C, col, col, col, n0)
 			HB.face(A, C, D, col, col, col, n0)
-			HB.face(A, B, C, col.darkened(0.18), col.darkened(0.18), col.darkened(0.18), -n0)
-			HB.face(A, C, D, col.darkened(0.18), col.darkened(0.18), col.darkened(0.18), -n0)
+			HB.face(A, B, C, col.darkened(0.10), col.darkened(0.10), col.darkened(0.10), -n0)
+			HB.face(A, C, D, col.darkened(0.10), col.darkened(0.10), col.darkened(0.10), -n0)
 	hammock_mi.mesh = HB.commit()
 
 
@@ -1910,8 +1915,8 @@ func hammock_point(t: float) -> Vector3:
 	var f := ft - float(i0)
 	var y_off := lerpf(_ham_cur_y[i0] if _ham_cur_y.size() > i0 else -hammock_empty_sag * sin(PI * t),
 		_ham_cur_y[i1] if _ham_cur_y.size() > i1 else -hammock_empty_sag * sin(PI * t), f)
-	# MUST match visual dish wrap in _rebuild_hammock_mesh (not the tall rail).
-	var wrap := 0.22 if hammock_occupied else 0.14
+	# MUST match visual dish wrap in _rebuild_hammock_mesh.
+	var wrap := 0.16 if hammock_occupied else 0.10
 	p.y = lerpf(hammock_a.y, hammock_b.y, t) + y_off - wrap
 	return p
 

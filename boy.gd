@@ -2,10 +2,9 @@ class_name Boy
 extends Node3D
 ## v25 flat-eye Tripo boy: Mixamo-rigged kid (boy/boy.glb from art/boy/flateyes/).
 ## Same public API as the old procedural Boy so main.gd / selftest / sim keep working.
-## Straw hat is baked into the mesh (never split). An invisible HatProbe proxy
-## sits on the Head bone. Lying poses tip the head so the brim rests on the support.
-## Face expressions = UV albedo paints (idle/smile/cheer/sleep) on the flat-eye atlas.
-## No eye-shell morphs, lid discs, or opaque face plates.
+## Straw hat: baked brim stays on the head mesh; a procedural hat reparents to the chest
+## bone in the hammock (baked brim collapsed into the scalp). Face expressions =
+## full-body albedo+normal+MR swaps from boy/tex/ (no runtime painting or masks).
 
 signal released
 signal footstep(side: int, running: bool)
@@ -74,12 +73,19 @@ var hat_side := "r"
 var hat_band_c := Vector3(0, 0.02, 0)
 var hat_head_xf := Transform3D.IDENTITY
 var hat_face_xf := Transform3D.IDENTITY
-## Always "head" — baked Tripo hat never detaches. Kept for selftest / main API.
+## "head" | "chest" | "face" | "beside" — hammock lie uses chest so fabric clears the brim.
 var hat_mode := "head"
-## Legacy sand spot (unused; hat stays on the head). Kept so main.gd can still assign it.
+## Sand spot for lounger "beside" mode (optional).
 var hat_beside_world := Vector3.ZERO
-## Bind-pose local verts of the baked straw crown/brim (for lie penetration).
+## Bind-pose local verts of residual crown/brim on the body (usually empty after split).
 var _hat_skin_idxs: PackedInt32Array = PackedInt32Array()
+var _chest_attach: BoneAttachment3D
+var _scalp_cover: MeshInstance3D
+var _hat_on_head_xf := Transform3D.IDENTITY
+var _hat_blend := 0.0
+var _hat_bind_orig: PackedVector3Array = PackedVector3Array()
+## kind -> {albedo, normal, mr} ImageTextures preloaded from boy/tex/
+var face_textures := {}
 
 var t := 0.0
 var t_idle := 0.0
@@ -105,7 +111,7 @@ var prev_sit := 0.0
 var prev_lie := 0.0
 var blink_timer := 2.5
 var blink_t := -1.0
-var expr := "smile"
+var expr := "idle"
 var rng := RandomNumberGenerator.new()
 var frozen := false
 var model_base := Vector3.ZERO
@@ -189,8 +195,10 @@ func _ready() -> void:
 	_build_face_fill()
 	_build_face_expr()
 	_tune_boy_material()
+	_build_procedural_hat_fallback()
+	_cache_hat_bind_verts()
 	_load_face_albedos()
-	set_face_expr("smile")
+	set_face_expr("idle")
 	release_stand = _probe_release("throw_stand")
 	# crouch: clearly lower release so water entry is flatter than standing
 	release_crouch = release_stand + Vector3(0.02, -0.14 * SCALE, 0.04)
@@ -371,38 +379,174 @@ func _build_stone() -> void:
 
 
 func _build_hat_proxy() -> void:
-	# Tiny invisible mesh so HatProbe can sample verts; hat is baked into the body.
 	_hat_attach = BoneAttachment3D.new()
 	_hat_attach.name = "HatAttach"
 	_hat_attach.bone_name = B_HEAD
 	skel.add_child(_hat_attach)
+	_chest_attach = BoneAttachment3D.new()
+	_chest_attach.name = "ChestAttach"
+	_chest_attach.bone_name = "mixamorig_Spine2"
+	skel.add_child(_chest_attach)
 	hat = MeshInstance3D.new()
 	hat.name = "Hat"
-	var bm := SphereMesh.new()
-	bm.radius = 0.04
-	bm.height = 0.06
-	hat.mesh = bm
 	hat.visible = false
-	hat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	hat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	_hat_attach.add_child(hat)
 	hat.position = Vector3(0, 0.08, 0)
 	hat_mode = "head"
 
 
-## API stub: baked hat never leaves the head. Modes other than "head" are ignored.
+## Procedural straw hat used only when the baked brim is collapsed (chest/beside modes).
+func _build_procedural_hat_fallback() -> void:
+	if hat == null:
+		return
+	var HB = MeshBuilder.new()
+	var straw := Color(0.90, 0.74, 0.45)
+	var band := Color(0.55, 0.28, 0.18)
+	for i in 12:
+		var a0 := TAU * float(i) / 12.0
+		var a1 := TAU * float(i + 1) / 12.0
+		var c0 := Vector3(cos(a0) * 0.09, 0.10, sin(a0) * 0.09)
+		var c1 := Vector3(cos(a1) * 0.09, 0.10, sin(a1) * 0.09)
+		var top := Vector3(0, 0.16, 0)
+		HB.face(c0, c1, top, straw, straw, straw, Vector3.UP)
+		var b0 := Vector3(cos(a0) * 0.09, 0.02, sin(a0) * 0.09)
+		var b1 := Vector3(cos(a1) * 0.09, 0.02, sin(a1) * 0.09)
+		HB.face(b0, b1, c1, straw, straw, straw, Vector3(cos(a0), 0, sin(a0)))
+		HB.face(b0, c1, c0, straw, straw, straw, Vector3(cos(a0), 0, sin(a0)))
+		var r0 := Vector3(cos(a0) * 0.20, 0.02, sin(a0) * 0.20)
+		var r1 := Vector3(cos(a1) * 0.20, 0.02, sin(a1) * 0.20)
+		HB.face(b0, b1, r1, straw.darkened(0.05), straw.darkened(0.05), straw.darkened(0.05), Vector3.UP)
+		HB.face(b0, r1, r0, straw.darkened(0.05), straw.darkened(0.05), straw.darkened(0.05), Vector3.UP)
+	for i in 12:
+		var a0 := TAU * float(i) / 12.0
+		var a1 := TAU * float(i + 1) / 12.0
+		var u0 := Vector3(cos(a0) * 0.095, 0.045, sin(a0) * 0.095)
+		var u1 := Vector3(cos(a1) * 0.095, 0.045, sin(a1) * 0.095)
+		var l0 := Vector3(cos(a0) * 0.095, 0.025, sin(a0) * 0.095)
+		var l1 := Vector3(cos(a1) * 0.095, 0.025, sin(a1) * 0.095)
+		HB.face(l0, l1, u1, band, band, band, Vector3(cos(a0), 0, sin(a0)))
+		HB.face(l0, u1, u0, band, band, band, Vector3(cos(a0), 0, sin(a0)))
+	hat.mesh = HB.commit()
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 0.9
+	hat.material_override = mat
+	# Hidden while baked hat is on the head; shown when reparented to chest.
+	hat.visible = false
+	hat.transform = Transform3D(Basis.IDENTITY, Vector3(0, 0.08, 0))
+	_hat_on_head_xf = hat.transform
+	if _scalp_cover == null:
+		_scalp_cover = MeshInstance3D.new()
+		_scalp_cover.name = "ScalpCover"
+		var sm := SphereMesh.new()
+		sm.radius = 0.08
+		sm.height = 0.10
+		_scalp_cover.mesh = sm
+		var scalp_mat := StandardMaterial3D.new()
+		scalp_mat.albedo_color = Color(0.55, 0.38, 0.28)
+		_scalp_cover.material_override = scalp_mat
+		_scalp_cover.position = Vector3(0, 0.06, 0)
+		_scalp_cover.visible = false
+		_hat_attach.add_child(_scalp_cover)
+
+
+## Snapshot baked brim verts so chest mode can collapse them into the scalp.
+func _cache_hat_bind_verts() -> void:
+	_ensure_skin_cache()
+	_hat_bind_orig = PackedVector3Array()
+	_hat_bind_orig.resize(_hat_skin_idxs.size())
+	for k in _hat_skin_idxs.size():
+		_hat_bind_orig[k] = _skin_verts[_hat_skin_idxs[k]]
+
+
+func _set_baked_hat_collapsed(collapsed: bool) -> void:
+	_ensure_skin_cache()
+	if _hat_skin_idxs.is_empty() or _hat_bind_orig.is_empty():
+		return
+	var head_i := skel.find_bone(B_HEAD) if skel else -1
+	var target := Vector3(0, 0.10, 0)
+	if head_i >= 0:
+		target = skel.get_bone_global_rest(head_i).origin + Vector3(0, 0.07, 0)
+	for k in _hat_skin_idxs.size():
+		var i: int = _hat_skin_idxs[k]
+		if collapsed:
+			_skin_verts[i] = _hat_bind_orig[k].lerp(target, 0.94)
+		else:
+			_skin_verts[i] = _hat_bind_orig[k]
+	_write_skin_verts_to_mesh(_skin_verts)
+
+
+func _hat_chest_local(face_tip: bool) -> Transform3D:
+	if face_tip:
+		return Transform3D(Basis.from_euler(Vector3(0.35, 0.2, 0.1)), Vector3(0.0, 0.06, 0.14))
+	return Transform3D(Basis.from_euler(Vector3(1.15, 0.4, 0.25)), Vector3(0.0, 0.10, 0.12))
+
+
+func _hat_beside_xf(beside_world: Vector3) -> Transform3D:
+	var p := beside_world
+	if p == Vector3.ZERO:
+		p = hat_beside_world
+	if p == Vector3.ZERO:
+		p = global_position + Vector3(0.45, 0.04, 0.12)
+	return Transform3D(Basis.from_euler(Vector3(0.15, 0.9, 0.4)), p)
+
+
 func set_hat_mode(mode: String, beside_world: Vector3 = Vector3.ZERO) -> void:
-	hat_mode = "head"
+	if hat == null or not is_instance_valid(hat):
+		return
 	if beside_world != Vector3.ZERO:
 		hat_beside_world = beside_world
-	if hat and is_instance_valid(hat):
+	hat_mode = mode
+	if _scalp_cover:
+		_scalp_cover.visible = mode != "head"
+	if mode == "head":
+		_set_baked_hat_collapsed(false)
 		hat.visible = false
+		if hat.get_parent() != _hat_attach:
+			if hat.get_parent():
+				hat.get_parent().remove_child(hat)
+			_hat_attach.add_child(hat)
+		hat.transform = _hat_on_head_xf
+		_hat_blend = 0.0
+	elif mode == "face" or mode == "chest":
+		if _chest_attach == null:
+			return
+		_set_baked_hat_collapsed(true)
+		hat.visible = true
+		if hat.get_parent() != _chest_attach:
+			if hat.get_parent():
+				hat.get_parent().remove_child(hat)
+			_chest_attach.add_child(hat)
+		hat.transform = _hat_chest_local(mode == "face")
+		_hat_blend = 1.0
+	elif mode == "beside":
+		_set_baked_hat_collapsed(true)
+		hat.visible = true
+		if hat.get_parent() != self:
+			if hat.get_parent():
+				hat.get_parent().remove_child(hat)
+			add_child(hat)
+		hat.global_transform = _hat_beside_xf(beside_world)
+		_hat_blend = 1.0
 
 
-## API stub: keep the baked hat on the Head bone for the whole sit↔lie window.
-func sync_hat_lie(_kind: String, _lie_k: float) -> void:
-	hat_mode = "head"
-	if hat and is_instance_valid(hat):
-		hat.visible = false
+## Hammock lie → procedural hat on chest; baked brim collapsed into scalp.
+func sync_hat_lie(kind: String, lie_k: float) -> void:
+	if hat == null or not is_instance_valid(hat) or _hat_attach == null:
+		return
+	var b := smoothstep(0.18, 0.85, lie_k)
+	_hat_blend = b
+	if b <= 0.001:
+		set_hat_mode("head")
+		return
+	if kind == "sleep":
+		set_hat_mode("chest" if b > 0.35 else "head")
+		return
+	if kind == "sun" and hat_beside_world != Vector3.ZERO and b > 0.5:
+		set_hat_mode("beside", hat_beside_world)
+		return
+	set_hat_mode("head")
 
 
 func _build_glasses_stub() -> void:
@@ -560,13 +704,14 @@ func _harden_boy_mat(mat: StandardMaterial3D) -> void:
 	mat.emission_energy_multiplier = 0.0
 	mat.emission = Color(0, 0, 0, 1)
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
-	# Flat-eye: kill Tripo's bulging-eyeball normals (they read as glass shells).
-	if _face_normal_flat != null:
-		mat.normal_enabled = true
-		mat.normal_texture = _face_normal_flat
-		mat.normal_scale = 0.55
-	elif mat.normal_texture != null:
-		mat.normal_scale = 0.35
+	# Expression normals (boy/tex) replace Tripo eye-bulge normals; scale 1.0.
+	mat.normal_enabled = true
+	mat.normal_scale = 1.0
+	# glTF metallicRoughnessTexture: G=roughness, B=metallic (same ImageTexture).
+	if mat.roughness_texture != null:
+		mat.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+	if mat.metallic_texture != null:
+		mat.metallic_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_BLUE
 	mat.albedo_color = _boy_albedo_day
 	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
 	mat.disable_receive_shadows = false
@@ -587,35 +732,61 @@ func _surface_looks_like_face(mesh: Mesh, si: int, nsurf: int) -> bool:
 	return false
 
 
-## Swap face-slot albedo for expression (eye/mouth paints). Body mats stay put when multi-slot.
+## Apply albedo + normal + metallic-roughness for one expression (required together).
 func _set_face_albedo(kind: String) -> void:
+	_apply_face_pack(kind)
+
+
+func _apply_face_pack(kind: String) -> void:
+	# Prefer the dedicated face slot when multi-surface; fall back to body mat.
 	var target: StandardMaterial3D = _face_mat if _face_mat else _boy_mat
 	if target == null:
 		return
 	var key := kind
-	if key == "neutral":
+	if key == "neutral" or key == "":
 		key = "idle"
-	var tex: Texture2D = _face_alb.get(key, null)
-	if tex == null:
-		tex = _boy_albedo_tex_day
-	if tex == null:
+	var pack = face_textures.get(key, null)
+	if pack == null:
+		pack = face_textures.get("idle", null)
+	if pack == null:
 		return
-	var closed := (key == "sleep" or key == "cheer")
-	_eyes_closed_tex = closed
-	target.albedo_texture = tex
+	_eyes_closed_tex = (key == "sleep" or key == "cheer")
+	var alb: Texture2D = pack.get("albedo", null) if typeof(pack) == TYPE_DICTIONARY else pack
+	var nrm: Texture2D = pack.get("normal", null) if typeof(pack) == TYPE_DICTIONARY else null
+	var mr: Texture2D = pack.get("mr", null) if typeof(pack) == TYPE_DICTIONARY else null
+	if alb != null:
+		target.albedo_texture = alb
+	if nrm != null:
+		target.normal_enabled = true
+		target.normal_texture = nrm
+		target.normal_scale = 1.0
+	if mr != null:
+		# Same glTF channel layout as the embedded RM map.
+		target.roughness_texture = mr
+		target.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+		target.metallic_texture = mr
+		target.metallic_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_BLUE
+	if _face_mat != null and _face_mat != target:
+		_face_mat.albedo_texture = target.albedo_texture
+		_face_mat.normal_texture = target.normal_texture
+		_face_mat.normal_enabled = target.normal_enabled
+		_face_mat.normal_scale = target.normal_scale
+		_face_mat.roughness_texture = target.roughness_texture
+		_face_mat.roughness_texture_channel = target.roughness_texture_channel
+		_face_mat.metallic_texture = target.metallic_texture
+		_face_mat.metallic_texture_channel = target.metallic_texture_channel
 	if _body_mi and _body_mi.mesh and _face_surf_i >= 0 \
 			and _face_surf_i < _body_mi.mesh.get_surface_count():
 		_body_mi.mesh.surface_set_material(_face_surf_i, target)
 
 
 func _set_eyes_closed(closed: bool) -> void:
-	# Flat-eye path: closed = sleep albedo only (no shell morph / lid discs).
 	if closed:
-		_set_face_albedo("sleep")
+		_apply_face_pack("sleep")
 	elif expr != "" and expr != "sleep":
-		_set_face_albedo(expr)
+		_apply_face_pack(expr)
 	else:
-		_set_face_albedo("idle")
+		_apply_face_pack("idle")
 
 
 func b2g(v) -> Vector3:
@@ -679,13 +850,14 @@ func start_throw(p: float) -> void:
 func react(kind: String) -> void:
 	react_kind = kind
 	if kind == "":
-		set_face_expr("smile")
+		set_face_expr("idle")
 		_to_idle()
 		return
 	anim = "react"
 	anim_t = 0.0
 	act_target = 1.0
 	act_rate = 5.0
+	# Good skip → cheer maps; other reacts keep a soft smile.
 	set_face_expr("cheer" if kind == "cheer" else "smile")
 	var clip := "cheer" if kind == "cheer" else ("wave" if clips.has("wave") else "cheer")
 	if kind == "oops" and clips.has("oops"):
@@ -784,7 +956,7 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 		# Seek clears pose overrides — keep thighs planted on the lounger cushion.
 		if lie_foot_plant and kind == "sun":
 			plant_feet_on_plane(lie_foot_plane_point, lie_foot_plane_normal, lie_foot_plant_gap, true)
-		# Hat stays on the head; contact via head tilt in the lie poses.
+		# Hammock: hat moves to chest. Lounger: tip/beside. Sit: hat on head.
 		sync_hat_lie(kind, lie_k)
 	else:
 		sync_hat_lie(kind, 0.0)
@@ -1150,24 +1322,25 @@ func _pose_add(bone: String, euler: Vector3, w: float) -> void:
 	skel.set_bone_pose_rotation(bi, cur.slerp(add * cur, w))
 
 
-## Upright chair/log/hammock sit: additive on idle seed (keeps Mixamo UpLeg rest twist).
-## Mild yaw so both feet stay forward of the hips along seat face.
+## Upright chair/log/hammock sit: parallel horizontal thighs, vertical shins, no cross.
 func _apply_ergonomic_sit(w: float) -> void:
 	if skel == null or w <= 0.001:
 		return
 	var k := smoothstep(0.0, 1.0, w)
-	# Flat-eye bind: absolute L-sit eulers (additive never reached elev≈0 / fwd>0.55).
-	# Scanned: UpLeg (1.30, ±0.75, ±0.20) → elev≈2.5°, thigh_fwd≈0.73.
-	_pose_abs("mixamorig_LeftUpLeg", Vector3(1.30, 0.75, 0.20), k)
-	_pose_abs("mixamorig_RightUpLeg", Vector3(1.30, -0.75, -0.20), k)
-	# Positive knee flex drops short Tripo shins toward the ground.
-	_pose_abs("mixamorig_LeftLeg", Vector3(1.90, 0.0, 0.0), k)
-	_pose_abs("mixamorig_RightLeg", Vector3(1.90, 0.0, 0.0), k)
-	_pose_abs("mixamorig_LeftFoot", Vector3(0.15, 0.0, 0.04), k * 0.75)
-	_pose_abs("mixamorig_RightFoot", Vector3(0.15, 0.0, -0.04), k * 0.75)
-	_pose_abs("mixamorig_Spine", Vector3(-0.05, 0.0, 0.0), k * 0.5)
-	_pose_abs("mixamorig_Spine1", Vector3(-0.03, 0.0, 0.0), k * 0.4)
-	# Hands on mid-thighs.
+	# Flat-eye Mixamo: BOTH UpLegs take negative X (mirrored Y/Z only). Positive Left X
+	# pointed the left thigh backward. Scanned: L/R (-1.55, ±0.30, -0.45) + Legs -1.72
+	# → both thighs forward (align≈0.9), elev≈3°, opposite outward lateral, shins down.
+	_pose_abs("mixamorig_LeftUpLeg", Vector3(-1.55, 0.30, -0.45), k)
+	_pose_abs("mixamorig_RightUpLeg", Vector3(-1.55, -0.30, -0.45), k)
+	_pose_abs("mixamorig_LeftLeg", Vector3(-1.72, 0.0, 0.0), k)
+	_pose_abs("mixamorig_RightLeg", Vector3(-1.72, 0.0, 0.0), k)
+	_pose_abs("mixamorig_LeftFoot", Vector3(-0.08, 0.0, -0.02), k * 0.8)
+	_pose_abs("mixamorig_RightFoot", Vector3(-0.08, 0.0, 0.02), k * 0.8)
+	# Upright back.
+	_pose_abs("mixamorig_Spine", Vector3(-0.02, 0.0, 0.0), k * 0.45)
+	_pose_abs("mixamorig_Spine1", Vector3(-0.01, 0.0, 0.0), k * 0.35)
+	_pose_abs("mixamorig_Spine2", Vector3(0.0, 0.0, 0.0), k * 0.25)
+	# Hands resting on mid-thighs.
 	_pose_abs("mixamorig_LeftArm", Vector3(0.70, 0.55, -0.55), k)
 	_pose_abs("mixamorig_RightArm", Vector3(0.70, -0.55, 0.55), k)
 	_pose_abs("mixamorig_LeftForeArm", Vector3(-1.05, 0.20, 0.08), k)
@@ -1183,6 +1356,9 @@ func bake_pose_mesh() -> void:
 	_ensure_skin_cache()
 	if skel == null or _body_mi == null or _skin_verts.is_empty():
 		return
+	# Keep chest-mode collapse in the skinned bake so the baked brim doesn't reappear.
+	if hat_mode != "head":
+		_set_baked_hat_collapsed(true)
 	skel.force_update_transform()
 	var n: int = _skin_verts.size()
 	var bone_xf: Array[Transform3D] = []
@@ -1238,9 +1414,9 @@ func bake_pose_mesh() -> void:
 	_body_mi.skeleton = NodePath()
 	_body_mi.skin = null
 	_pose_baked = true
-	# Re-assert current expression so cheers/sleep don't flash back to idle.
+	# Re-assert current expression maps on the baked material.
 	if expr != "":
-		_set_face_albedo(expr)
+		_apply_face_pack(expr)
 
 
 func restore_pose_mesh() -> void:
@@ -1250,6 +1426,11 @@ func restore_pose_mesh() -> void:
 	_body_mi.skeleton = _body_skel_path
 	_body_mi.skin = _body_skin_orig
 	_pose_baked = false
+	# Re-apply chest collapse after restoring the pristine bind mesh.
+	if hat_mode != "head":
+		_set_baked_hat_collapsed(true)
+	else:
+		_set_baked_hat_collapsed(false)
 
 
 ## World elevation of hip→knee (0° = horizontal thigh). Positive = knee above hip.
@@ -1398,10 +1579,21 @@ func skinned_sample_world(max_samples := 500) -> Array[Vector3]:
 	return out
 
 
-## Sample baked straw-hat crown/brim verts in world space (for penetration / containment).
+## Sample straw-hat verts in world space (split hat mesh, else residual baked idxs).
 func hat_sample_world(max_samples := 160) -> Array[Vector3]:
-	_ensure_skin_cache()
 	var out: Array[Vector3] = []
+	if hat != null and is_instance_valid(hat) and hat.mesh != null and hat.visible:
+		var arr: Array = hat.mesh.surface_get_arrays(0)
+		if not arr.is_empty():
+			var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			if not verts.is_empty():
+				var xf: Transform3D = hat.global_transform
+				var step: int = maxi(1, verts.size() / maxi(max_samples, 1))
+				for i in range(0, verts.size(), step):
+					out.append(xf * verts[i])
+				if out.size() >= 8:
+					return out
+	_ensure_skin_cache()
 	if skel == null or _hat_skin_idxs.is_empty():
 		return out
 	skel.force_update_transform()
@@ -1410,18 +1602,18 @@ func hat_sample_world(max_samples := 160) -> Array[Vector3]:
 	for bi in skel.get_bone_count():
 		bone_xf[bi] = skel.global_transform * skel.get_bone_global_pose(bi) * skel.get_bone_global_rest(bi).affine_inverse()
 	var n: int = _hat_skin_idxs.size()
-	var step: int = maxi(1, n / maxi(max_samples, 1))
-	for k in range(0, n, step):
+	var step2: int = maxi(1, n / maxi(max_samples, 1))
+	for k in range(0, n, step2):
 		var i: int = _hat_skin_idxs[k]
 		var v: Vector3 = _skin_verts[i]
 		var skinned := Vector3.ZERO
 		var wsum := 0.0
 		for j in 4:
-			var bi: int = _skin_bones[i * 4 + j]
+			var bi2: int = _skin_bones[i * 4 + j]
 			var w: float = _skin_weights[i * 4 + j]
-			if w <= 0.0 or bi < 0 or bi >= bone_xf.size():
+			if w <= 0.0 or bi2 < 0 or bi2 >= bone_xf.size():
 				continue
-			skinned += bone_xf[bi] * v * w
+			skinned += bone_xf[bi2] * v * w
 			wsum += w
 		if wsum < 0.01:
 			continue
@@ -1787,14 +1979,15 @@ func hat_grip_gap() -> float:
 
 var _face_decal: Node3D = null  # removed — opaque plate rejected
 var _face_mat: StandardMaterial3D = null
-var _face_surf_i := -1  # mesh surface index for eye/mouth texture swaps (−1 = whole body)
-var _face_alb := {}  # kind -> Texture2D (face-slot or full Tripo albedo with mouth/lid paints)
-var _face_normal_flat: Texture2D = null  # eye-bulge normals flattened for flat-eye look
+var _face_surf_i := -1  # mesh surface index for map swaps (−1 = whole body)
+## Legacy alias: kind -> albedo Texture2D (selftest / older probes).
+var _face_alb := {}
+var _face_normal_flat: Texture2D = null  # unused — expression normals replace Tripo maps
+var _idle_smile_t := 0.0  # standing idle smile pulse timer
 
 
 func _build_face_expr() -> void:
-	# No opaque face plate, no MeshInstance lid discs (both read as paper masks on Tripo).
-	# Emotion = mouth albedo paints on original UVs. Closed lids need AC-style Tripo regen.
+	# Texture-swap only — no plates, lid discs, or runtime paints.
 	_face_decal = null
 	_mouth = null
 	_eyelid_l = null
@@ -1816,48 +2009,39 @@ func _load_face_tex(path: String) -> Texture2D:
 
 
 func _load_face_albedos() -> void:
-	# Flat-eye UV paints (art/boy/flateyes/). Prefer flateyes; fall back to tripo copies.
-	var root := "res://art/boy/flateyes/"
-	_face_normal_flat = _load_face_tex(root + "normal_flat.png")
-	# Kill Tripo eye-bulge normals (read as glass shells). Prefer flattened map; else disable.
-	for mat in [_boy_mat, _face_mat]:
-		if mat == null:
-			continue
-		if _face_normal_flat != null:
-			mat.normal_enabled = true
-			mat.normal_texture = _face_normal_flat
-			mat.normal_scale = 0.25
-		else:
-			mat.normal_enabled = false
-			mat.normal_scale = 0.0
-	_face_alb = {
-		"idle": _load_face_tex(root + "face_alb_idle.jpg"),
-		"neutral": _load_face_tex(root + "face_alb_idle.jpg"),
-		"smile": _load_face_tex(root + "face_alb_smile.jpg"),
-		"cheer": _load_face_tex(root + "face_alb_cheer.jpg"),
-		"sleep": _load_face_tex(root + "face_alb_sleep.jpg"),
-	}
-	# PNG fallbacks (dev painter) + tripo/ mirrors.
+	# Preload verified offline packs: albedo + normal + MR per expression.
+	# cheer/sleep share one closed-eye normal and one closed-eye MR (identical sources).
+	var root := "res://boy/tex/"
+	var closed_n: Texture2D = _load_face_tex(root + "normal_closed.jpg")
+	if closed_n == null:
+		closed_n = _load_face_tex(root + "normal_cheer.jpg")
+	var closed_mr: Texture2D = _load_face_tex(root + "mr_closed.jpg")
+	if closed_mr == null:
+		closed_mr = _load_face_tex(root + "mr_cheer.jpg")
+	face_textures = {}
+	_face_alb = {}
 	for kind in ["idle", "smile", "cheer", "sleep"]:
-		if _face_alb[kind] == null:
-			_face_alb[kind] = _load_face_tex(root + "face_alb_%s.png" % kind)
-		if _face_alb[kind] == null:
-			_face_alb[kind] = _load_face_tex("res://art/boy/tripo/face_alb_%s.jpg" % kind)
-		if _face_alb[kind] == null:
-			_face_alb[kind] = _load_face_tex("res://art/boy/tripo/face_alb_%s.png" % kind)
-	_face_alb["neutral"] = _face_alb["idle"]
-	if _face_alb["idle"] == null:
-		_face_alb["idle"] = _boy_albedo_tex_day
-		_face_alb["neutral"] = _boy_albedo_tex_day
-	if _face_alb["smile"] == null:
-		_face_alb["smile"] = _face_alb["idle"]
-	if _face_alb["cheer"] == null:
-		_face_alb["cheer"] = _face_alb["smile"]
-	if _face_alb["sleep"] == null:
-		_face_alb["sleep"] = _face_alb["idle"]
+		var alb: Texture2D = _load_face_tex(root + "albedo_%s.jpg" % kind)
+		if alb == null:
+			alb = _load_face_tex(root + "albedo_%s.png" % kind)
+		var nrm: Texture2D
+		var mr: Texture2D
+		if kind == "cheer" or kind == "sleep":
+			nrm = closed_n
+			mr = closed_mr
+		else:
+			nrm = _load_face_tex(root + "normal_%s.jpg" % kind)
+			mr = _load_face_tex(root + "mr_%s.jpg" % kind)
+		if alb == null:
+			alb = _boy_albedo_tex_day
+		face_textures[kind] = {"albedo": alb, "normal": nrm, "mr": mr}
+		_face_alb[kind] = alb
+	face_textures["neutral"] = face_textures["idle"]
+	_face_alb["neutral"] = _face_alb.get("idle", null)
+	# Apply idle pack immediately so first frame isn't the Tripo ghost-eye maps.
+	_apply_face_pack("idle")
 
 
-## Removed: eye-shell morph hacks for the old bulging-eye GLB. Flat-eye path is albedo-only.
 func _cache_eye_shell_verts() -> void:
 	pass
 
@@ -1876,9 +2060,7 @@ func _apply_brow_offsets(_kind: String) -> void:
 
 func _write_skin_verts_to_mesh(verts: PackedVector3Array) -> void:
 	if _body_mi == null or _pose_baked:
-		# bake_pose_mesh reads _skin_verts — nothing else to do while posed-static.
 		return
-	# Rebuild bind mesh from the immutable array cache so bones/weights stay intact.
 	if _body_arrays_orig.is_empty():
 		return
 	var arrays: Array = _body_arrays_orig.duplicate(true)
@@ -1894,31 +2076,45 @@ func _write_skin_verts_to_mesh(verts: PackedVector3Array) -> void:
 	if mat:
 		rebuilt.surface_set_material(0, mat)
 	_body_mi.mesh = rebuilt
-	# Do NOT overwrite _body_mesh_orig — restore_pose_mesh needs the pristine bind mesh.
 
 
 func _apply_lid_discs(_kind: String) -> void:
-	# No lid discs on flat-eye boy.
 	pass
 
 
 ## expr: "smile" | "sleep" | "cheer" | "neutral" | "idle"
-## Flat-eye UV albedo paints only — no lid discs / eye-shell morphs.
+## Swaps albedo + normal + MR together — no runtime painting.
 func set_face_expr(kind: String) -> void:
 	expr = kind
 	blink_t = -1.0
 	blink_timer = 9999.0
-	_set_face_albedo(kind)
+	_apply_face_pack(kind)
 
 
-func _update_face(_delta: float = 0.0) -> void:
-	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) or expr == "sleep"
-	var want := expr
+func _update_face(delta: float = 0.0) -> void:
+	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) \
+			or (expr == "sleep" and act_kind in ["sun", "sleep", "seatlie"])
+	var want := "idle"
 	if react_kind == "cheer":
 		want = "cheer"
 	elif sleeping:
 		want = "sleep"
-	_set_face_albedo(want)
+	elif anim == "move" and move_w > 0.25:
+		# Walking happily.
+		want = "smile"
+	elif expr == "smile" or expr == "cheer" or expr == "sleep":
+		want = expr
+	else:
+		# Standing idle: soft smile pulse every few seconds.
+		_idle_smile_t += delta
+		if _idle_smile_t > 4.5 and _idle_smile_t < 6.2:
+			want = "smile"
+		elif _idle_smile_t >= 6.2:
+			_idle_smile_t = 0.0
+			want = "idle"
+		else:
+			want = "idle"
+	_apply_face_pack(want)
 	blink_t = -1.0
 	blink_timer = 9999.0
 
