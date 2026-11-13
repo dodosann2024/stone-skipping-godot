@@ -3,7 +3,7 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://dlfplgmhm07bj"
+uid="uid://11783hnpjucv"
 path="res://.godot/imported/boy.glb-2f7a56e3be2ae34ecc75a1b705b7f7fa.scn"
 
 [deps]
@@ -41,5 +41,5 @@ materials/extract_format=0
 materials/extract_path=""
 _subresources={}
 gltf/naming_version=2
-gltf/embedded_image_handling=3
+gltf/embedded_image_handling=1
 gltf/texture_map_mode=1

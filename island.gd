@@ -22,8 +22,8 @@ var hammock_mi: MeshInstance3D
 var hammock_nt := 14
 var hammock_nu := 11
 var hammock_empty_sag := 0.18
-var hammock_occ_sag := 0.34
-var hammock_half_w := 0.55
+var hammock_occ_sag := 0.40
+var hammock_half_w := 0.58
 var hammock_occupied := false
 var hammock_body_pts: Array[Vector3] = []  # world points that weigh the fabric
 var _ham_rest_y: PackedFloat32Array = PackedFloat32Array()  # centreline rest Y offset per t
@@ -1866,10 +1866,10 @@ func _rebuild_hammock_mesh() -> void:
 		var w1 := hammock_half_w * (0.15 + 0.85 * taper1)
 		var p0 := hammock_a + ab * t0 + Vector3(0, y0, 0) - mid
 		var p1 := hammock_a + ab * t1 + Vector3(0, y1, 0) - mid
-		# Occupied: shallow dish + tall side rails so fabric edges sit ABOVE the torso
-		# without sinking the contact plane through the mesh.
-		var wrap := 0.14 if hammock_occupied else 0.12
-		var rail := 0.32 if hammock_occupied else 0.0
+		# Occupied cradle: moderate dish + tall side rails. Edges rise ABOVE torso
+		# sides without burying the body (rail ≫ wrap). Contact matches wrap only.
+		var wrap := 0.15 if hammock_occupied else 0.12
+		var rail := 0.38 if hammock_occupied else 0.0
 		for st in hammock_nu - 1:
 			var u0 := lerpf(-1.0, 1.0, float(st) / float(hammock_nu - 1))
 			var u1 := lerpf(-1.0, 1.0, float(st + 1) / float(hammock_nu - 1))
@@ -1911,9 +1911,8 @@ func hammock_point(t: float) -> Vector3:
 	var f := ft - float(i0)
 	var y_off := lerpf(_ham_cur_y[i0] if _ham_cur_y.size() > i0 else -hammock_empty_sag * sin(PI * t),
 		_ham_cur_y[i1] if _ham_cur_y.size() > i1 else -hammock_empty_sag * sin(PI * t), f)
-	# MUST match visual dish in _rebuild_hammock_mesh (wrap 0.14/0.12) or the body
-	# sits on a deeper contact plane and sinks through the visible fabric.
-	var wrap := 0.14 if hammock_occupied else 0.12
+	# MUST match visual dish wrap in _rebuild_hammock_mesh (not the tall rail).
+	var wrap := 0.15 if hammock_occupied else 0.12
 	p.y = lerpf(hammock_a.y, hammock_b.y, t) + y_off - wrap
 	return p
 

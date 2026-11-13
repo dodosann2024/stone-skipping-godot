@@ -1304,11 +1304,10 @@ func _begin_rest(kind: String) -> void:
 		var top: Vector3 = st["top"]
 		# Seed from live sit-hip height; mesh snap raises the butt onto the seat top.
 		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
-		# Park bench: sit on the FRONT half so the backrest stays behind the spine,
-		# thighs hang over the seaward edge, feet toward the ground in front.
+		# Park bench: mid-front of the board so the butt sits ON the plank (not past the
+		# seaward lip). Backrest stays behind the spine; thighs hang over the edge.
 		if st["name"] == "长椅":
-			# Slight forward of center: back near backrest, thighs over the seaward edge.
-			rest_seat += face * 0.08
+			rest_seat += face * 0.02
 		# On logs, sit slightly toward the fire-side rim so knees/feet clear past the
 		# cylinder (thighs along +face) instead of perching mid-log.
 		elif st["name"] == "坐木":
@@ -1383,8 +1382,9 @@ func _setup_hammock_rest() -> void:
 	# Nest into the cradle: low enough that raised side rails read above the torso,
 	# high enough that the butt doesn't punch through the bed.
 	var hip_pos: Vector3 = hip_f["pos"] as Vector3
-	# Slight lift above contact so fabric rails read above the torso sides.
-	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.10
+	# Nest in the dish: low enough for tall rails above the torso sides, high enough
+	# that the body stays readable (not buried under the rim).
+	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.11
 	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground.
 	# Basis(UP, atan2(x,z)) aims local −Z at (x,z); use −side so −Z == +side (outward).
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
@@ -1537,47 +1537,60 @@ func _snap_sit_contact() -> void:
 	# Logs (坐木) need a wider contact cloud + more passes: short Tripo butt can
 	# miss a tight hip sphere, leaving a 3–4 cm hover or a 2 cm dig from the back.
 	var is_log := String(st.get("name", "")) == "坐木"
-	var passes := 12 if is_log else 8
+	var is_bench := String(st.get("name", "")) == "长椅"
+	var passes := 12 if is_log else 10
 	for _iter in passes:
+		# Clear foot overrides before measuring — a prior soft-plant can stretch Tripo
+		# shorts through the board and fool the deepest sample into a false dig/float.
+		boy.clear_foot_plant()
 		boy.activity("seat", 1.0, 0.0, gt)
 		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 		var hips: Vector3 = boy.lie_bone_world("mixamorig_Hips")
-		var samples: Array[Vector3] = boy.skinned_sample_world(1000)
-		var deepest := 1e9
-		var hit := false
-		var hip_r := 0.38 if is_log else 0.32
-		var lat_max := 0.70 if is_log else 0.55
+		var samples: Array[Vector3] = boy.skinned_sample_world(1200)
+		var depths: Array[float] = []
+		var hip_r := 0.38 if is_log else 0.30
+		var lat_max := 0.70 if is_log else 0.50
 		for s in samples:
-			# Contact cloud: butt + proximal thighs above the board.
+			# Contact cloud: underside of butt + proximal thighs over the board.
 			if s.distance_to(hips) > hip_r:
 				continue
-			if (s - hips).dot(face) > 0.28:
+			if (s - hips).dot(face) > 0.22:
 				continue
-			if s.y > hips.y + 0.06:
+			if s.y > hips.y + 0.02:
+				continue
+			# Ignore Tripo shorts spike verts that hang far below the hip — they dig
+			# the metric while the visible sit surface still floats.
+			if hips.y - s.y > 0.11:
 				continue
 			var lat: float = (s - top).dot(rest_side)
 			var along: float = (s - top).dot(-face)
-			# Allow a little behind the top for round logs (back/end approaches).
-			if absf(lat) > lat_max or along < (-0.22 if is_log else -0.12) or along > 0.45:
+			# Stay over the plank (bench front half); logs allow a little behind.
+			if absf(lat) > lat_max or along < (-0.22 if is_log else -0.05) or along > (0.50 if is_log else 0.28):
 				continue
-			hit = true
-			deepest = minf(deepest, s.y - top.y)
-		if not hit:
-			# Tripo ischia hang ~12–14 cm below the hip bone.
-			deepest = (hips.y - 0.13) - top.y
-		# Kiss the board (~0.3 cm). Stay inside selftest −1 cm … 3 cm window.
-		var target := 0.003
+			depths.append(s.y - top.y)
+		var deepest: float
+		if depths.is_empty():
+			# Tripo ischia hang ~10–12 cm below the hip bone at the visual sit shell.
+			deepest = (hips.y - 0.11) - top.y
+		else:
+			depths.sort()
+			# Low percentile — ignore a few remaining spikes.
+			var idx := mini(maxi(int(depths.size() * 0.15), 0), depths.size() - 1)
+			deepest = depths[idx]
+		# Kiss the board inside selftest −1…3 cm; slight sink reads as seated.
+		var target := -0.005 if is_bench else 0.003
 		var err := target - deepest
-		if absf(err) < 0.002:
+		if absf(err) < 0.004:
 			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 			break
-		var step := clampf(err, -0.07, 0.07)
+		var step := clampf(err, -0.08, 0.08)
 		rest_root_sit.y += step
 		rest_seat.y += step
 	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-	# NOTE: do not absolute-plant feet to ground here — Tripo shins are short vs
-	# SEAT_TOP and plant_feet_to_ground rubber-hoses a leg onto the board. Feet
-	# hang toward the ground from the ergonomic L-sit; soft dangling reads better.
+	# Gentle sole kiss / soft hang — never rubber-hose short Tripo shins through the board.
+	if is_bench:
+		var gnd := Vector3(rest_root_sit.x, _surface(rest_root_sit.x, rest_root_sit.z), rest_root_sit.z)
+		boy.plant_feet_soft(gnd, Vector3.UP, 0.025, 0.12)
 
 
 ## Settle butt onto the near-edge hammock fabric while seated (legs hang outside).
@@ -1665,17 +1678,20 @@ func _snap_lie_contact() -> void:
 		var both_float := hip_gap > 0.012 and spine_gap > 0.012
 		var float_gap := minf(hip_gap, spine_gap)
 		# Prefer lifting out of fabric over leaving a poke-through (hat/shoulder).
-		# Cap float settle so we never re-bury the mesh just to tighten bone gaps.
-		if mesh_d < -0.002 or sink_gap < -0.008:
+		if mesh_d < -0.004 or sink_gap < -0.012:
 			var lift := 0.0
-			if mesh_d < -0.002:
-				lift = maxf(lift, -mesh_d + 0.01)
-			if sink_gap < -0.008:
-				lift = maxf(lift, -sink_gap)
-			rest_lie += hn0 * minf(lift, 0.18)
-		elif both_float and mesh_d > 0.025:
-			# Only settle large floats — keep a clear stand-off above the fabric.
-			rest_lie -= hn0 * minf(float_gap - 0.020, 0.02)
+			if mesh_d < -0.004:
+				lift = maxf(lift, -mesh_d + 0.008)
+			if sink_gap < -0.012:
+				lift = maxf(lift, -sink_gap * 0.5)
+			rest_lie += hn0 * minf(lift, 0.14)
+		elif both_float and mesh_d > 0.006:
+			# Settle a little into the dish so rails read above the torso — stop when
+			# the mesh is already kissing so we don't bury him under the rim.
+			rest_lie -= hn0 * minf(maxf(float_gap - 0.012, 0.0), 0.03)
+		# Keep a tiny head stand-off so the brim doesn't lie flat across the fabric.
+		if head_gap < 0.015 and mesh_d > -0.002:
+			rest_lie += head_n0 * minf(0.015 - head_gap, 0.025) * 0.4
 		return
 	# Lounger: foam sink OK; fail only on wood-board punch. Settle hips/head onto the pads.
 	# Bone snap only — hat tip may kiss foam within 1 cm; over-lifting floats the torso.

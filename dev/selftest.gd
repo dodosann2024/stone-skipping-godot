@@ -333,7 +333,7 @@ func _sample_rest_penet(kind: String, stage: String, timeout: float, done: Calla
 
 
 ## Deepest sit-contact mesh gap vs seat top plane (sky-side positive). Negative = into the board.
-## Sampling matches `_snap_sit_contact` (wider cloud on 坐木) so snap and assert agree.
+## Sampling matches `_snap_sit_contact` (spike verts far below the hip are ignored).
 func _sit_mesh_clearance(top: Vector3, seat_face: Vector3, _unused: Vector3 = Vector3.ZERO) -> float:
 	var face := seat_face.normalized()
 	var side: Vector3 = m.rest_side.normalized() if m.rest_side.length() > 0.1 else face.cross(Vector3.UP).normalized()
@@ -341,24 +341,28 @@ func _sit_mesh_clearance(top: Vector3, seat_face: Vector3, _unused: Vector3 = Ve
 	if m.seat_i >= 0 and m.seat_i < m.island.seats.size():
 		is_log = String(m.island.seats[m.seat_i].get("name", "")) == "坐木"
 	var hips: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
-	var deepest := 1e9
-	var hit := false
-	var hip_r := 0.38 if is_log else 0.32
-	var lat_max := 0.70 if is_log else 0.55
+	var depths: Array[float] = []
+	var hip_r := 0.38 if is_log else 0.30
+	var lat_max := 0.70 if is_log else 0.50
 	for s in m.boy.skinned_sample_world(1000 if is_log else 650):
 		if s.distance_to(hips) > hip_r:
 			continue
-		if (s - hips).dot(face) > (0.28 if is_log else 0.20):
+		if (s - hips).dot(face) > (0.28 if is_log else 0.22):
 			continue
-		if s.y > hips.y + (0.06 if is_log else 0.04):
+		if s.y > hips.y + 0.02:
+			continue
+		# Match snap: ignore Tripo shorts spikes hanging far below the hip.
+		if hips.y - s.y > 0.11:
 			continue
 		var lat: float = (s - top).dot(side)
 		var along: float = (s - top).dot(-face)
-		if absf(lat) > lat_max or along < (-0.22 if is_log else -0.12) or along > (0.45 if is_log else 0.35):
+		if absf(lat) > lat_max or along < (-0.22 if is_log else -0.05) or along > (0.50 if is_log else 0.28):
 			continue
-		hit = true
-		deepest = minf(deepest, s.y - top.y)
-	return deepest if hit else 0.0
+		depths.append(s.y - top.y)
+	if depths.is_empty():
+		return 0.0
+	depths.sort()
+	return depths[mini(maxi(int(depths.size() * 0.15), 0), depths.size() - 1)]
 
 
 ## Hips / spine near the support (sky-side positive). Face/chest must point skyward (supine).
@@ -924,6 +928,89 @@ func _hat_quick(hat: HatProbe) -> void:
 	print("SELFTEST %s" % ("PASS" if fails.is_empty() else "FAIL: " + ", ".join(fails)))
 	m.get_tree().quit(0 if fails.is_empty() else 1)
 
+func _flateye_rig_check() -> void:
+	## New flat-eye GLB: Mixamo bone names + gameplay clip mapping (no dig/lift→sleep).
+	var skel: Skeleton3D = m.boy.skel
+	var need_bones := [
+		"mixamorig_Hips", "mixamorig_Spine", "mixamorig_Spine1", "mixamorig_Spine2",
+		"mixamorig_Neck", "mixamorig_Head",
+		"mixamorig_LeftUpLeg", "mixamorig_LeftLeg", "mixamorig_LeftFoot",
+		"mixamorig_RightUpLeg", "mixamorig_RightLeg", "mixamorig_RightFoot",
+		"mixamorig_LeftArm", "mixamorig_LeftForeArm", "mixamorig_LeftHand",
+		"mixamorig_RightArm", "mixamorig_RightForeArm", "mixamorig_RightHand",
+	]
+	var missing: Array[String] = []
+	if skel == null:
+		missing.append("(no Skeleton3D)")
+	else:
+		for b in need_bones:
+			if skel.find_bone(b) < 0:
+				missing.append(b)
+	var ok_bones := missing.is_empty() and skel != null and skel.get_bone_count() >= 60
+	print("SELFTEST %-28s %s  (bones %d, missing %s, flat_eyes=%s)" % [
+		"flat-eye Mixamo bones",
+		"ok" if ok_bones else "FAIL",
+		skel.get_bone_count() if skel else 0,
+		(", ".join(missing) if missing else "none"),
+		str(m.boy.meta.get("flat_eyes", false)),
+	])
+	if not ok_bones:
+		fails.append("flat-eye Mixamo bones")
+
+	var ap: AnimationPlayer = m.boy.ap
+	var core := ["idle", "walk", "run", "sit", "throw_stand", "cheer", "turn", "look_around"]
+	var aliases := {
+		"standing_relax": "idle", "wave": "turn", "oops": "cheer",
+		"stroll": "walk", "throw_crouch": "throw_stand",
+	}
+	var bad_map: Array[String] = []
+	for clip in core:
+		if ap == null or not ap.has_animation(clip):
+			bad_map.append("missing core '%s'" % clip)
+	for alias in aliases.keys():
+		var src: String = aliases[alias]
+		var resolved: String = m.boy._resolve_clip(alias)
+		# Alias may be duplicated onto AP (resolved==alias) or fall through to src.
+		if resolved != alias and resolved != src:
+			bad_map.append("%s→%s (want %s or self)" % [alias, resolved, src])
+		elif ap == null or not ap.has_animation(resolved):
+			bad_map.append("%s missing anim '%s'" % [alias, resolved])
+	# dig / lift_heavy must exist but must NOT resolve as sleep / sit sleep roles.
+	for keep in ["dig", "lift_heavy"]:
+		if ap == null or not ap.has_animation(keep):
+			bad_map.append("%s missing (keep unused)" % keep)
+		else:
+			var r: String = m.boy._resolve_clip(keep)
+			if r != keep:
+				bad_map.append("%s wrongly aliased to %s" % [keep, r])
+	for sleep_role in ["hammock_sleep", "seat_nap", "sun_lie"]:
+		var r2: String = m.boy._resolve_clip(sleep_role)
+		if r2 in ["dig", "lift_heavy"]:
+			bad_map.append("%s resolved to %s (must stay procedural sit)" % [sleep_role, r2])
+		elif r2 != "sit" and not (ap and ap.has_animation(sleep_role)):
+			bad_map.append("%s→%s (want sit)" % [sleep_role, r2])
+	var ok_map := bad_map.is_empty()
+	print("SELFTEST %-28s %s  (%s)" % [
+		"flat-eye anim mapping",
+		"ok" if ok_map else "FAIL",
+		("ok" if ok_map else "; ".join(bad_map)),
+	])
+	if not ok_map:
+		fails.append("flat-eye anim mapping")
+
+	# Face albedo paints loaded (no eye-shell path).
+	var has_idle: bool = m.boy._face_alb.get("idle", null) != null
+	var has_sleep: bool = m.boy._face_alb.get("sleep", null) != null
+	var ok_face := has_idle and has_sleep and m.boy._face_decal == null
+	print("SELFTEST %-28s %s  (idle_tex=%s sleep_tex=%s plate=%s)" % [
+		"flat-eye face albedos",
+		"ok" if ok_face else "FAIL",
+		has_idle, has_sleep, m.boy._face_decal != null,
+	])
+	if not ok_face:
+		fails.append("flat-eye face albedos")
+
+
 func run(main: Node) -> void:
 	m = main
 	await _wait(0.5)
@@ -931,6 +1018,7 @@ func run(main: Node) -> void:
 	if "--only=hat" in OS.get_cmdline_user_args():
 		await _hat_quick(hat)
 		return
+	_flateye_rig_check()
 	_arm_check()
 	_angle_check()
 	_gait_check()

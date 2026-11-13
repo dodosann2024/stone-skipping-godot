@@ -5,7 +5,7 @@ extends SceneTree
 const OUT := "/workspace/screenshots/v25/after"
 const W := 390
 const H := 844
-const BUILD_ID := "v25-fix10"
+const BUILD_ID := "v25-flateyes01"
 
 
 func _initialize() -> void:
@@ -330,26 +330,33 @@ func _hammock_seq(m, vp) -> void:
 	m.boy.bake_pose_mesh()
 	var hips2: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
 	var head_b: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
-	_cam(m, hips2.lerp(head_b, 0.4), side_yaw, 2.45, 0.28)
+	var spine_b: Vector3 = m.boy.lie_bone_world("mixamorig_Spine1")
+	# Elevated 3/4: fabric rails above torso sides + hat on head readable.
+	_cam(m, hips2.lerp(spine_b, 0.5), side_yaw + 0.2, 2.15, 0.52)
 	for _r in 6:
 		m._apply_camera()
 		await process_frame
 	imgs.append(await _shot(vp, "%s/hammock/lie.png" % OUT))
 	await _shot(vp, "%s/crops/hammock_lie_crop.png" % OUT)
-	# Sleep face: upright framing (never camera-into-mesh). Stand him for the crop.
-	m.boy.restore_pose_mesh()
-	m.boy.set_idle()
-	m.boy.end_activity()
-	m.island.set_hammock_load([] as Array[Vector3])
-	m._place(Vector3(2.0, 0, -6.5), 0.0)
-	m.boy.rotation = Vector3.ZERO
+	await _shot(vp, "%s/crops/hammock_cradle_top.png" % OUT)
+	_cam(m, head_b, side_yaw - 0.1, 1.35, 0.10)
+	for _r in 4:
+		m._apply_camera()
+		await process_frame
+	await _shot(vp, "%s/crops/hammock_hat_clear.png" % OUT)
+	# Sleep face: MUST be the actual lie pose (not upright idle). Elevated side view of head.
 	m.boy.set_face_expr("sleep")
-	for _i in 12:
+	for _i in 10:
 		m.boy._update_face(0.08)
 		await process_frame
-	m.boy.bake_pose_mesh()
-	var head_up: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
-	_cam(m, head_up, PI + 0.05, 0.92, -0.02)
+	var along_h: Vector3 = head_b - hips2
+	along_h.y = 0.0
+	if along_h.length_squared() < 1e-4:
+		along_h = side
+	along_h = along_h.normalized()
+	var sleep_cam: Vector3 = head_b + side * 1.15 + Vector3(0, 0.95, 0) - along_h * 0.2
+	var to_sf: Vector3 = head_b - sleep_cam
+	_cam(m, head_b, atan2(-to_sf.x, -to_sf.z), sleep_cam.distance_to(head_b), atan2(to_sf.y, Vector2(to_sf.x, to_sf.z).length()))
 	for _r in 6:
 		m._apply_camera()
 		await process_frame
@@ -406,12 +413,12 @@ func _faces(m, vp) -> void:
 	m.boy.set_idle()
 	m.boy.end_activity()
 	var face_imgs: Array = []
-	# Same framing for all four — including sleep (no hammock cam).
-	for expr in ["idle", "smile", "cheer", "sleep"]:
+	# Idle / smile / cheer: upright front + 3/4 for texture smoothness.
+	for expr in ["idle", "smile", "cheer"]:
 		m.boy.set_face_expr(expr)
 		m.boy.react_kind = "cheer" if expr == "cheer" else ""
-		m.boy.act_kind = "sleep" if expr == "sleep" else ""
-		m.boy.act_lie_k = 1.0 if expr == "sleep" else 0.0
+		m.boy.act_kind = ""
+		m.boy.act_lie_k = 0.0
 		for _i in 16:
 			m.boy._update_face(0.08)
 			await process_frame
@@ -423,10 +430,61 @@ func _faces(m, vp) -> void:
 			await process_frame
 		face_imgs.append(await _shot(vp, "%s/faces/%s.png" % [OUT, expr]))
 		await _shot(vp, "%s/crops/face_%s.png" % [OUT, expr])
+		# 3/4 corroboration
+		_cam(m, head, PI + 0.55, 1.05, -0.02)
+		for _r in 4:
+			m._apply_camera()
+			await process_frame
+		await _shot(vp, "%s/crops/face_%s_34.png" % [OUT, expr])
 		m.boy.restore_pose_mesh()
 	m.boy.react_kind = ""
+
+	# Sleep face: actual hammock lie pose (never upright idle with sleep albedo).
+	m.rest_frozen = false
+	m._begin_rest("sleep")
+	m.rest_frozen = true
+	m.rest_phase = 4
+	m.set_meta("lie_snapped", false)
+	m.boy.set_face_expr("sleep")
+	for _p in 36:
+		var pl: Vector3 = m.boy.activity("sleep", 1.0, 1.0, m.gt)
+		var swing = m.island.swing_hammock(0.0)
+		m.boy.global_transform = swing * Transform3D(m.rest_lie_b, m.rest_lie - m.rest_lie_b * pl)
+		m._update_hammock_load()
+		m._snap_lie_contact()
+		m.boy._update_face(0.05)
+		await process_frame
+	m.set_meta("lie_snapped", true)
+	for _i in 10:
+		m.boy._update_face(0.1)
+		await process_frame
+	m.boy.bake_pose_mesh()
+	var head_s: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
+	var hips_s: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
+	var side_v: Vector3 = m.rest_side.normalized()
+	var along: Vector3 = head_s - hips_s
+	along.y = 0.0
+	if along.length_squared() < 1e-4:
+		along = side_v.cross(Vector3.UP)
+	along = along.normalized()
+	var side_yaw_s: float = atan2(-side_v.x, -side_v.z) + 0.15
+	_cam(m, head_s, side_yaw_s - 0.05, 1.45, 0.22)
+	for _r in 8:
+		m._apply_camera()
+		await process_frame
+	face_imgs.append(await _shot(vp, "%s/faces/sleep.png" % OUT))
+	await _shot(vp, "%s/crops/face_sleep.png" % OUT)
+	_cam(m, head_s, side_yaw_s + 0.35, 1.65, 0.35)
+	for _r in 6:
+		m._apply_camera()
+		await process_frame
+	await _shot(vp, "%s/crops/face_sleep_34.png" % OUT)
+	m.boy.restore_pose_mesh()
 	m.boy.act_kind = ""
 	m.boy.act_lie_k = 0.0
+	m.island.set_hammock_load([] as Array[Vector3])
+	if m.has_method("_wake"):
+		m._wake()
 	_montage_imgs(face_imgs, "faces_montage.png")
 
 
