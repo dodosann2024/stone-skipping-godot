@@ -1379,12 +1379,9 @@ func _setup_hammock_rest() -> void:
 	head_dir = head_dir.lerp(diag, 0.5).normalized()
 	var into: Vector3 = (-Vector3.UP).lerp(-(hip_f["normal"] as Vector3).normalized(), 0.2).normalized()
 	rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Nest into the cradle: low enough that raised side rails read above the torso,
-	# high enough that the butt doesn't punch through the bed.
+	# Nest deep in the cradle so fabric sides read above the torso (not floating on ribbons).
 	var hip_pos: Vector3 = hip_f["pos"] as Vector3
-	# Nest in the dish: low enough for tall rails above the torso sides, high enough
-	# that the body stays readable (not buried under the rim).
-	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.11
+	rest_lie = hip_pos - (hip_f["normal"] as Vector3) * 0.02
 	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground.
 	# Basis(UP, atan2(x,z)) aims local −Z at (x,z); use −side so −Z == +side (outward).
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
@@ -1588,9 +1585,10 @@ func _snap_sit_contact() -> void:
 		rest_seat.y += step
 	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 	# Gentle sole kiss / soft hang — never rubber-hose short Tripo shins through the board.
-	if is_bench:
+	if is_bench or is_log:
 		var gnd := Vector3(rest_root_sit.x, _surface(rest_root_sit.x, rest_root_sit.z), rest_root_sit.z)
-		boy.plant_feet_soft(gnd, Vector3.UP, 0.025, 0.12)
+		# Short Tripo shins hang above the sand — allow a longer soft pull toward ground.
+		boy.plant_feet_soft(gnd, Vector3.UP, 0.02, 0.28)
 
 
 ## Settle butt onto the near-edge hammock fabric while seated (legs hang outside).
@@ -1644,9 +1642,9 @@ func _snap_lie_contact() -> void:
 	if rest_kind != "sun" and rest_kind != "sleep":
 		return
 	var into_bed: Vector3 = _lie_into_bed()
-	# Shell ≈ Tripo skin thickness. Hammock shell is thick: Tripo butt/back hangs
-	# well below the hip bone in the cradle.
-	var mesh_off := 0.28 if rest_kind == "sleep" else 0.08
+	# Skin shell toward the bed. Tiny hammock offset — large offsets made the snap
+	# "settle" while the visible hip bone still floated above the fabric.
+	var mesh_off := 0.04 if rest_kind == "sleep" else 0.08
 	var pts: Dictionary = boy.lie_contact_points(into_bed, mesh_off)
 	var swing := _lie_swing()
 	# Include baked hat verts for hammock fabric; lounger uses bone snap (hat tip ~kiss).
@@ -1677,21 +1675,14 @@ func _snap_lie_contact() -> void:
 		# penetrating hip deeper just because the spine still floats a bit.
 		var both_float := hip_gap > 0.012 and spine_gap > 0.012
 		var float_gap := minf(hip_gap, spine_gap)
-		# Prefer lifting out of fabric over leaving a poke-through (hat/shoulder).
-		if mesh_d < -0.004 or sink_gap < -0.012:
-			var lift := 0.0
-			if mesh_d < -0.004:
-				lift = maxf(lift, -mesh_d + 0.008)
-			if sink_gap < -0.012:
-				lift = maxf(lift, -sink_gap * 0.5)
-			rest_lie += hn0 * minf(lift, 0.14)
-		elif both_float and mesh_d > 0.006:
-			# Settle a little into the dish so rails read above the torso — stop when
-			# the mesh is already kissing so we don't bury him under the rim.
-			rest_lie -= hn0 * minf(maxf(float_gap - 0.012, 0.0), 0.03)
-		# Keep a tiny head stand-off so the brim doesn't lie flat across the fabric.
-		if head_gap < 0.015 and mesh_d > -0.002:
-			rest_lie += head_n0 * minf(0.015 - head_gap, 0.025) * 0.4
+		# Nest by bone gaps only — Tripo shorts/hat mesh samples falsely dig 10cm+.
+		if sink_gap < -0.05:
+			rest_lie += hn0 * minf(-sink_gap * 0.4, 0.08)
+		elif hip_gap > 0.025 or both_float:
+			# Settle until hips nearly kiss the dish (visible cradle under torso).
+			rest_lie -= hn0 * minf(hip_gap - 0.015, 0.18)
+		if head_gap < 0.0 and hip_gap < 0.08:
+			rest_lie += head_n0 * minf(-head_gap + 0.01, 0.03) * 0.4
 		return
 	# Lounger: foam sink OK; fail only on wood-board punch. Settle hips/head onto the pads.
 	# Bone snap only — hat tip may kiss foam within 1 cm; over-lifting floats the torso.

@@ -19,11 +19,11 @@ var hammock_b := Vector3.ZERO
 var hammock_node: Node3D
 ## Deformable hammock grid (local to hammock_node). Empty sag is light; occupied sag deepens under the body.
 var hammock_mi: MeshInstance3D
-var hammock_nt := 14
-var hammock_nu := 11
-var hammock_empty_sag := 0.18
-var hammock_occ_sag := 0.40
-var hammock_half_w := 0.58
+var hammock_nt := 16
+var hammock_nu := 15
+var hammock_empty_sag := 0.22
+var hammock_occ_sag := 0.48
+var hammock_half_w := 0.62
 var hammock_occupied := false
 var hammock_body_pts: Array[Vector3] = []  # world points that weigh the fabric
 var _ham_rest_y: PackedFloat32Array = PackedFloat32Array()  # centreline rest Y offset per t
@@ -1860,26 +1860,25 @@ func _rebuild_hammock_mesh() -> void:
 		var t1 := float(s + 1) / float(hammock_nt)
 		var y0 := _ham_cur_y[s]
 		var y1 := _ham_cur_y[s + 1]
-		var taper0 := sin(PI * clampf(t0 * 1.12 - 0.06, 0.0, 1.0))
-		var taper1 := sin(PI * clampf(t1 * 1.12 - 0.06, 0.0, 1.0))
-		var w0 := hammock_half_w * (0.15 + 0.85 * taper0)
-		var w1 := hammock_half_w * (0.15 + 0.85 * taper1)
+		# Continuous fabric bed: mild end-gather only (not ribbon taper).
+		var taper0 := sin(PI * clampf(t0, 0.0, 1.0))
+		var taper1 := sin(PI * clampf(t1, 0.0, 1.0))
+		var w0 := hammock_half_w * (0.55 + 0.45 * taper0)
+		var w1 := hammock_half_w * (0.55 + 0.45 * taper1)
 		var p0 := hammock_a + ab * t0 + Vector3(0, y0, 0) - mid
 		var p1 := hammock_a + ab * t1 + Vector3(0, y1, 0) - mid
-		# Occupied cradle: moderate dish + tall side rails. Edges rise ABOVE torso
-		# sides without burying the body (rail ≫ wrap). Contact matches wrap only.
-		var wrap := 0.15 if hammock_occupied else 0.12
-		var rail := 0.38 if hammock_occupied else 0.0
+		# Deep dish under the body + raised sides (cradle). Contact uses wrap only.
+		var wrap := 0.22 if hammock_occupied else 0.14
+		var rail := 0.42 if hammock_occupied else 0.08
+		# One continuous canvas colour (stripe left/right read as two ribbons).
+		var canvas := Color(0.92, 0.78, 0.52)
+		var rim := Color(0.78, 0.58, 0.36)
 		for st in hammock_nu - 1:
 			var u0 := lerpf(-1.0, 1.0, float(st) / float(hammock_nu - 1))
 			var u1 := lerpf(-1.0, 1.0, float(st + 1) / float(hammock_nu - 1))
-			var col: Color
-			if absf(u0) > 0.72 and absf(u1) > 0.72:
-				col = Color(0.3, 0.6, 0.8)
-			elif u0 < 0.0:
-				col = Color(0.95, 0.4, 0.3)
-			else:
-				col = Color(0.98, 0.88, 0.5)
+			var edge := maxf(absf(u0), absf(u1)) > 0.78
+			var col: Color = rim if edge else canvas
+			# Parabolic cradle: centre deep, sides high above torso.
 			var cy0 := -wrap * (1.0 - u0 * u0) + rail * (u0 * u0)
 			var cy1 := -wrap * (1.0 - u1 * u1) + rail * (u1 * u1)
 			var A = p0 + side_u * (w0 * u0) + Vector3(0, cy0, 0)
@@ -1891,8 +1890,8 @@ func _rebuild_hammock_mesh() -> void:
 				n0 = -n0
 			HB.face(A, B, C, col, col, col, n0)
 			HB.face(A, C, D, col, col, col, n0)
-			HB.face(A, B, C, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), -n0)
-			HB.face(A, C, D, col.darkened(0.2), col.darkened(0.2), col.darkened(0.2), -n0)
+			HB.face(A, B, C, col.darkened(0.18), col.darkened(0.18), col.darkened(0.18), -n0)
+			HB.face(A, C, D, col.darkened(0.18), col.darkened(0.18), col.darkened(0.18), -n0)
 	hammock_mi.mesh = HB.commit()
 
 
@@ -1912,7 +1911,7 @@ func hammock_point(t: float) -> Vector3:
 	var y_off := lerpf(_ham_cur_y[i0] if _ham_cur_y.size() > i0 else -hammock_empty_sag * sin(PI * t),
 		_ham_cur_y[i1] if _ham_cur_y.size() > i1 else -hammock_empty_sag * sin(PI * t), f)
 	# MUST match visual dish wrap in _rebuild_hammock_mesh (not the tall rail).
-	var wrap := 0.15 if hammock_occupied else 0.12
+	var wrap := 0.22 if hammock_occupied else 0.14
 	p.y = lerpf(hammock_a.y, hammock_b.y, t) + y_off - wrap
 	return p
 

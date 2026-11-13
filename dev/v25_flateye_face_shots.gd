@@ -50,22 +50,39 @@ func g() -> void:
 			m.boy._update_face(0.08)
 			await process_frame
 		m.boy.bake_pose_mesh()
+		var tm = m.boy._face_mat if m.boy._face_mat else m.boy._boy_mat
+		var tex: Texture2D = tm.albedo_texture if tm else null
+		var mean := Vector3.ZERO
+		if tex:
+			var img: Image = tex.get_image()
+			if img:
+				var sx := mini(64, img.get_width())
+				var sy := mini(64, img.get_height())
+				var acc := Vector3.ZERO
+				var n := 0
+				for yy in sy:
+					for xx in sx:
+						var c: Color = img.get_pixel(xx * img.get_width() / sx, yy * img.get_height() / sy)
+						acc += Vector3(c.r, c.g, c.b)
+						n += 1
+				mean = acc / float(maxi(n, 1))
+		print("FACE_TEX ", expr, " mean=", mean, " same_as_cheer=", tex == m.boy._face_alb.get("cheer"), " same_as_smile=", tex == m.boy._face_alb.get("smile"))
 		var head: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
 		m.demo_cam = true
 		m.cam_fixed = true
 		m.cam_target = head
 		m.cam_yaw = PI + 0.05
 		m.cam_pitch = -0.02
-		m.fix_dist = 0.92
 		m.cam_dist = 0.92
+		m.fix_dist = 0.92
 		for _r in 5:
 			m._apply_camera()
 			await process_frame
 		_shot(vp, "%s/%s.png" % [OUT, expr])
 		_shot(vp, "%s/../crops/face_%s.png" % [OUT, expr])
 		m.cam_yaw = PI + 0.55
-		m.fix_dist = 1.05
 		m.cam_dist = 1.05
+		m.fix_dist = 1.05
 		for _r in 4:
 			m._apply_camera()
 			await process_frame
@@ -95,33 +112,27 @@ func g() -> void:
 	m.boy.bake_pose_mesh()
 	var head_s: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
 	var hips_s: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
-	# Hammock face points mostly skyward — shoot from open side + elevated, not along +Y.
 	var side: Vector3 = m.rest_side.normalized()
-	var along: Vector3 = (head_s - hips_s)
-	along.y = 0.0
-	if along.length_squared() < 1e-4:
-		along = side.cross(Vector3.UP)
-	along = along.normalized()
 	var look: Vector3 = head_s + Vector3(0, 0.02, 0)
-	# Same framing family as hammock/lie.png (worked): elevated side looking at head.
-	var side_yaw: float = atan2(-side.x, -side.z) + 0.15
+	# Elevated open-side view looking down at the face (skyward supine).
+	var side_yaw: float = atan2(-side.x, -side.z) + 0.2
 	m.demo_cam = true
 	m.cam_fixed = true
 	m.cam_target = look
-	m.cam_yaw = side_yaw - 0.05
-	m.cam_pitch = 0.22
-	m.fix_dist = 1.45
-	m.cam_dist = 1.45
-	print("SLEEP_FACE head=", head_s, " hips=", hips_s, " side=", side, " dist=", m.fix_dist, " normal_flat=", m.boy._face_normal_flat != null)
+	m.cam_yaw = side_yaw
+	m.cam_pitch = 0.55
+	m.cam_dist = 1.25
+	m.fix_dist = 1.25
+	print("SLEEP_FACE head=", head_s, " hips=", hips_s, " side=", side, " dist=", m.cam_dist)
 	for _r in 8:
 		m._apply_camera()
 		await process_frame
 	_shot(vp, "%s/sleep.png" % OUT)
 	_shot(vp, "%s/../crops/face_sleep.png" % OUT)
-	m.cam_yaw = side_yaw + 0.35
-	m.cam_pitch = 0.35
-	m.fix_dist = 1.65
-	m.cam_dist = 1.65
+	m.cam_yaw = side_yaw + 0.45
+	m.cam_pitch = 0.62
+	m.cam_dist = 1.45
+	m.fix_dist = 1.45
 	for _r in 6:
 		m._apply_camera()
 		await process_frame

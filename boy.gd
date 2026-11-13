@@ -919,9 +919,9 @@ func _apply_hammock_pose(w: float, breath: float) -> void:
 	_pose_abs("mixamorig_Spine", Vector3(0.10 + breath * 0.08, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine1", Vector3(0.12 + breath * 0.1, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine2", Vector3(0.08 + breath * 0.06, 0.0, 0.0), w)
-	# Mild chin tuck; no yaw/roll (that laid the brim sideways across the fabric).
-	_pose_abs("mixamorig_Neck", Vector3(-0.06, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.10 + breath * 0.02, 0.0, 0.0), w)
+	# Tip head/hat BACK toward the pillow end so the brim clears the fabric bed.
+	_pose_abs("mixamorig_Neck", Vector3(0.28, 0.0, 0.0), w)
+	_pose_abs("mixamorig_Head", Vector3(0.62 + breath * 0.02, 0.0, 0.0), w)
 	# Soft knee curl so shins follow the cradle instead of a stiff plank.
 	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.55, 0.12, 0.18), w * 0.85)
 	_pose_add("mixamorig_RightUpLeg", Vector3(-0.55, -0.12, -0.18), w * 0.85)
@@ -1156,25 +1156,26 @@ func _apply_ergonomic_sit(w: float) -> void:
 	if skel == null or w <= 0.001:
 		return
 	var k := smoothstep(0.0, 1.0, w)
-	# Park-bench L-sit: thighs on the board, shins hang/swing gently toward ground.
-	# Additive on idle seed — keeps Mixamo UpLeg rest twist (absolute from I broke fwd).
-	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.05, 0.14, 0.08), k)
-	_pose_add("mixamorig_RightUpLeg", Vector3(-1.05, -0.14, -0.08), k)
-	_pose_add("mixamorig_LeftLeg", Vector3(0.90, 0.0, 0.0), k)
-	_pose_add("mixamorig_RightLeg", Vector3(0.90, 0.0, 0.0), k)
-	_pose_add("mixamorig_LeftFoot", Vector3(0.20, 0.0, 0.04), k * 0.7)
-	_pose_add("mixamorig_RightFoot", Vector3(0.20, 0.0, -0.04), k * 0.7)
-	_pose_add("mixamorig_Spine", Vector3(-0.06, 0.0, 0.0), k * 0.5)
-	_pose_add("mixamorig_Spine1", Vector3(-0.04, 0.0, 0.0), k * 0.4)
-	# Fold arms onto the lap (absolute so idle hands-on-hips doesn't win).
-	_pose_abs("mixamorig_LeftArm", Vector3(0.85, 0.60, -0.60), k)
-	_pose_abs("mixamorig_RightArm", Vector3(0.85, -0.60, 0.60), k)
-	_pose_abs("mixamorig_LeftForeArm", Vector3(-1.15, 0.25, 0.10), k)
-	_pose_abs("mixamorig_RightForeArm", Vector3(-1.15, -0.25, -0.10), k)
-	_pose_abs("mixamorig_LeftHand", Vector3(0.15, 0.08, 0.20), k)
-	_pose_abs("mixamorig_RightHand", Vector3(0.15, -0.08, -0.20), k)
+	# Flat-eye bind: absolute L-sit eulers (additive never reached elev≈0 / fwd>0.55).
+	# Scanned: UpLeg (1.30, ±0.75, ±0.20) → elev≈2.5°, thigh_fwd≈0.73.
+	_pose_abs("mixamorig_LeftUpLeg", Vector3(1.30, 0.75, 0.20), k)
+	_pose_abs("mixamorig_RightUpLeg", Vector3(1.30, -0.75, -0.20), k)
+	# Positive knee flex drops short Tripo shins toward the ground.
+	_pose_abs("mixamorig_LeftLeg", Vector3(1.90, 0.0, 0.0), k)
+	_pose_abs("mixamorig_RightLeg", Vector3(1.90, 0.0, 0.0), k)
+	_pose_abs("mixamorig_LeftFoot", Vector3(0.15, 0.0, 0.04), k * 0.75)
+	_pose_abs("mixamorig_RightFoot", Vector3(0.15, 0.0, -0.04), k * 0.75)
+	_pose_abs("mixamorig_Spine", Vector3(-0.05, 0.0, 0.0), k * 0.5)
+	_pose_abs("mixamorig_Spine1", Vector3(-0.03, 0.0, 0.0), k * 0.4)
+	# Hands on mid-thighs.
+	_pose_abs("mixamorig_LeftArm", Vector3(0.70, 0.55, -0.55), k)
+	_pose_abs("mixamorig_RightArm", Vector3(0.70, -0.55, 0.55), k)
+	_pose_abs("mixamorig_LeftForeArm", Vector3(-1.05, 0.20, 0.08), k)
+	_pose_abs("mixamorig_RightForeArm", Vector3(-1.05, -0.20, -0.08), k)
+	_pose_abs("mixamorig_LeftHand", Vector3(0.12, 0.06, 0.18), k)
+	_pose_abs("mixamorig_RightHand", Vector3(0.12, -0.06, -0.18), k)
 	skel.force_update_transform()
-
+	_plant_hands_on_thighs(k)
 
 ## Bake the current skeleton pose into a static ArrayMesh so stills show deformation on
 ## drivers that leave the skinned mesh at bind pose (llvmpipe Compatibility).
@@ -1221,12 +1222,25 @@ func bake_pose_mesh() -> void:
 			continue
 		clean[ai] = arrays[ai]
 	baked.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, clean, [], {}, fmt)
-	if _body_mesh_orig is ArrayMesh and (_body_mesh_orig as ArrayMesh).surface_get_material(0):
-		baked.surface_set_material(0, (_body_mesh_orig as ArrayMesh).surface_get_material(0))
+	# Keep the LIVE expression albedo (face paint), not the bind-pose day texture.
+	var live_mat: Material = null
+	if _face_mat != null:
+		live_mat = _face_mat
+	elif _boy_mat != null:
+		live_mat = _boy_mat
+	elif _body_mi.get_active_material(0) != null:
+		live_mat = _body_mi.get_active_material(0)
+	elif _body_mesh_orig is ArrayMesh:
+		live_mat = (_body_mesh_orig as ArrayMesh).surface_get_material(0)
+	if live_mat:
+		baked.surface_set_material(0, live_mat)
 	_body_mi.mesh = baked
 	_body_mi.skeleton = NodePath()
 	_body_mi.skin = null
 	_pose_baked = true
+	# Re-assert current expression so cheers/sleep don't flash back to idle.
+	if expr != "":
+		_set_face_albedo(expr)
 
 
 func restore_pose_mesh() -> void:
