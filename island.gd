@@ -1956,11 +1956,12 @@ func _find_cloth_mi(n: Node) -> MeshInstance3D:
 func _load_hammock_cloth_frames() -> void:
 	hammock_cloth_meta = {}
 	hammock_cloth_bytes = PackedByteArray()
+	# Use res:// paths (not globalize_path) so packed web exports can read them.
 	var meta_path := "res://props/hammock_cloth_meta.json"
 	var bin_path := "res://props/hammock_cloth_frames.bin"
-	if not FileAccess.file_exists(ProjectSettings.globalize_path(meta_path)):
+	if not FileAccess.file_exists(meta_path):
 		return
-	var f := FileAccess.open(ProjectSettings.globalize_path(meta_path), FileAccess.READ)
+	var f := FileAccess.open(meta_path, FileAccess.READ)
 	if f == null:
 		return
 	var parsed = JSON.parse_string(f.get_as_text())
@@ -1968,7 +1969,7 @@ func _load_hammock_cloth_frames() -> void:
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return
 	hammock_cloth_meta = parsed
-	var bf := FileAccess.open(ProjectSettings.globalize_path(bin_path), FileAccess.READ)
+	var bf := FileAccess.open(bin_path, FileAccess.READ)
 	if bf == null:
 		return
 	hammock_cloth_bytes = bf.get_buffer(bf.get_length())
@@ -1981,11 +1982,10 @@ func _build_hammock_cloth_remap() -> void:
 	if hammock_cloth_bind.is_empty():
 		return
 	var auth_path := "res://props/hammock_cloth_bind_auth.bin"
-	var abs_path := ProjectSettings.globalize_path(auth_path)
-	if not FileAccess.file_exists(abs_path):
+	if not FileAccess.file_exists(auth_path):
 		push_warning("Island: missing hammock_cloth_bind_auth.bin — cloth remap skipped")
 		return
-	var af := FileAccess.open(abs_path, FileAccess.READ)
+	var af := FileAccess.open(auth_path, FileAccess.READ)
 	if af == null:
 		return
 	var raw := af.get_buffer(af.get_length())

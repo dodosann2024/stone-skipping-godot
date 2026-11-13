@@ -1727,9 +1727,8 @@ func throw_stance() -> Array:
 
 
 func _throw_clip() -> String:
-	if ap and ap.has_animation("pitch_baseball"):
-		return "pitch_baseball"
-	return "throw_stand"
+	# Meta key in boy_meta.json (has t_charge / t_release). Playback resolves to pitch_baseball.
+	return "throw_crouch" if stance == "crouch" else "throw_stand"
 
 
 func _to_idle() -> void:
