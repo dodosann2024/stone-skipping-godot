@@ -541,6 +541,18 @@ func _sit(i: int, from: String, lie: bool) -> void:
 		print("SELFTEST sit contact %-20s FAIL  (mesh_clear=%.1fcm)" % [tag, mesh_clear * 100.0])
 	else:
 		print("SELFTEST sit contact %-20s ok  (mesh_clear=%.1fcm)" % [tag, mesh_clear * 100.0])
+	# Ergonomic sit: thighs near horizontal (|elev| < 30°); butt contact within 3 cm of seat top.
+	# (Tripo hip bone sits ~25 cm above the board — assert mesh contact, not the bone.)
+	var elev: float = m.boy.sit_thigh_elev_deg()
+	note += ", thigh_elev %.0f°, butt_gap %.1fcm" % [elev, mesh_clear * 100.0]
+	if absf(elev) > 30.0:
+		fails.append("sit thighs not horizontal on " + tag + " (elev %.0f°)" % elev)
+		print("SELFTEST sit ergonomics %-18s FAIL  (thigh_elev=%.0f°)" % [tag, elev])
+	elif mesh_clear < -0.01 or mesh_clear > 0.03:
+		fails.append("sit butt not on seat " + tag + " (gap %.1fcm)" % (mesh_clear * 100.0))
+		print("SELFTEST sit ergonomics %-18s FAIL  (butt_gap=%.1fcm)" % [tag, mesh_clear * 100.0])
+	else:
+		print("SELFTEST sit ergonomics %-18s ok  (thigh_elev=%.0f°, butt_gap=%.1fcm)" % [tag, elev, mesh_clear * 100.0])
 	if st["two_sided"]:
 		# the logs rest on levelled sand: no slope under the log ends or the feet on either side
 		var base: float = top.y - m.island.SEAT_TOP

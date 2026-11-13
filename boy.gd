@@ -166,6 +166,7 @@ func _ready() -> void:
 	skel = model.find_child("Skeleton3D", true, false) as Skeleton3D
 	ap = model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	_force_loops()
+	_patch_ergonomic_sit_anim()
 	_setup_parts()
 	_setup_tree()
 	_build_blob()
@@ -190,6 +191,37 @@ func _force_loops() -> void:
 			var a: Animation = ap.get_animation(n)
 			a.loop_mode = Animation.LOOP_LINEAR
 	# stroll may be missing — AnimationTree uses walk for stroll seek
+
+
+## Rewrite Mixamo sit leg keys to an ergonomic L-sit. Compatibility skinning only follows
+## AnimationTree/Player — set_bone_pose_rotation alone leaves the mesh standing.
+func _patch_ergonomic_sit_anim() -> void:
+	if ap == null or not ap.has_animation("sit"):
+		return
+	var sit: Animation = ap.get_animation("sit")
+	var targets := {
+		"mixamorig_LeftUpLeg": Quaternion.from_euler(Vector3(-1.30, 0.05, 0.08)),
+		"mixamorig_RightUpLeg": Quaternion.from_euler(Vector3(-1.30, -0.05, -0.08)),
+		"mixamorig_LeftLeg": Quaternion.from_euler(Vector3(-1.90, 0.0, 0.0)),
+		"mixamorig_RightLeg": Quaternion.from_euler(Vector3(-1.90, 0.0, 0.0)),
+		"mixamorig_LeftFoot": Quaternion.from_euler(Vector3(0.25, 0.0, 0.05)),
+		"mixamorig_RightFoot": Quaternion.from_euler(Vector3(0.25, 0.0, -0.05)),
+		"mixamorig_Spine": Quaternion.from_euler(Vector3(-0.08, 0.0, 0.0)),
+		"mixamorig_Spine1": Quaternion.from_euler(Vector3(-0.05, 0.0, 0.0)),
+		"mixamorig_LeftArm": Quaternion.from_euler(Vector3(0.20, 0.40, -0.60)),
+		"mixamorig_RightArm": Quaternion.from_euler(Vector3(0.20, -0.40, 0.60)),
+		"mixamorig_LeftForeArm": Quaternion.from_euler(Vector3(-0.40, 0.0, 0.0)),
+		"mixamorig_RightForeArm": Quaternion.from_euler(Vector3(-0.40, 0.0, 0.0)),
+	}
+	for t in sit.get_track_count():
+		if sit.track_get_type(t) != Animation.TYPE_ROTATION_3D:
+			continue
+		var p := str(sit.track_get_path(t))
+		for bone in targets.keys():
+			if p.ends_with(":" + bone):
+				for k in sit.track_get_key_count(t):
+					sit.track_set_key_value(t, k, targets[bone])
+				break
 
 
 func _setup_parts() -> void:
@@ -376,34 +408,33 @@ func _build_face_fill() -> void:
 func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 	k = clampf(k, 0.0, 1.0)
 	if face_fill:
-		# Day: warm under-brim fill. Night: nearly off so moon/lanterns light him like the world
-		# (target: body luminance within ~1.3× of nearby ground unless a lantern is next to him).
-		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.60, 0.72, 0.95), k)
-		# Night fill fully off — moon/lanterns alone must light him like the ground.
-		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.0, k)
-		face_fill.omni_range = lerpf(0.4, 0.45, k)
-		face_fill.omni_attenuation = lerpf(1.4, 1.3, k)
-		face_fill.position = Vector3(0.0, -0.02, -0.1)
+		# Day: warm under-brim fill. Night: cool body fill so seats/hammock match moonlit ground
+		# (v22 night body ~100 mean; crushed fill+albedo 0.40 made seats ~46 / near-black).
+		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.72, 0.80, 0.98), k)
+		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.55, k)
+		face_fill.omni_range = lerpf(0.4, 0.85, k)
+		face_fill.omni_attenuation = lerpf(1.4, 1.05, k)
+		# Slightly in front of the chest so vest/hat read under the brim at night.
+		face_fill.position = Vector3(0.0, -0.04, -0.16).lerp(Vector3(0.0, 0.02, -0.22), k)
 	if _night_rim:
-		# No private rim at night (was the "pasted on" studio look on dark paths).
-		_night_rim.light_energy = 0.0
 		_night_rim.light_color = Color(0.55, 0.68, 0.98)
-		_night_rim.omni_range = lerpf(0.55, 0.65, k)
+		_night_rim.light_energy = lerpf(0.0, 0.35, k)
+		_night_rim.omni_range = lerpf(0.55, 0.90, k)
 		var local_off := Vector3(0.0, 0.04, 0.14)
 		if moon_dir.length_squared() > 0.01 and parts.has("head") and parts["head"] is Node3D:
 			var head := parts["head"] as Node3D
-			var world_off: Vector3 = moon_dir.normalized() * 0.16 + Vector3(0, 0.03, 0)
+			var world_off: Vector3 = moon_dir.normalized() * 0.18 + Vector3(0, 0.04, 0)
 			local_off = head.global_transform.basis.inverse() * world_off
 			if local_off.length() < 0.06:
 				local_off = Vector3(0.0, 0.04, 0.14)
 			else:
-				local_off = local_off.normalized() * 0.16
+				local_off = local_off.normalized() * 0.18
 		_night_rim.position = local_off
-	# Dim + cool the boy albedo at night so Tripo textures match the moonlit ground.
+	# Keep Tripo textures readable against moonlit sand (not a black silhouette).
 	if _boy_mat:
-		_boy_mat.albedo_color = _boy_albedo_day.lerp(Color(0.40, 0.46, 0.55, 1.0), k)
-		_boy_mat.metallic_specular = lerpf(0.2, 0.04, k)
-		_boy_mat.roughness = lerpf(0.78, 0.93, k)
+		_boy_mat.albedo_color = _boy_albedo_day.lerp(Color(0.92, 0.94, 1.0, 1.0), k)
+		_boy_mat.metallic_specular = lerpf(0.2, 0.06, k)
+		_boy_mat.roughness = lerpf(0.78, 0.86, k)
 		_boy_mat.emission_enabled = false
 		_boy_mat.emission_energy_multiplier = 0.0
 		_boy_mat.emission = Color(0, 0, 0, 1)
@@ -577,10 +608,15 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 		play_clip = "idle"
 		seek_len = float(clips["idle"]["length"])
 		u = 0.0
-	_play(play_clip, clampf(u, 0.0, 0.99) * seek_len, 0.2 if not full_lie else 0.0)
+	# Instant action-slot blend when already seated — otherwise ab_w stays on the idle slot
+	# (shots/selftest with process paused looked like a standing T-pose).
+	var fade := 0.0 if (full_lie or sit_k >= 0.95) else 0.2
+	_play(play_clip, clampf(u, 0.0, 0.99) * seek_len, fade)
 	act_target = 1.0
 	act_w = 1.0 if sit_k > 0.02 or lie_k > 0.0 else act_w
 	act_rate = 8.0
+	if sit_k >= 0.95 or full_lie:
+		ab_w = float(cur_slot)
 	hat_s = 1.0 if lie_k > 0.7 else 0.0
 	glasses.visible = kind == "sun" and lie_k > 0.5
 	blob.visible = sit_k < 0.3 and lie_k <= 0.0
@@ -601,11 +637,20 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 		sync_hat_lie(kind, lie_k)
 	else:
 		sync_hat_lie(kind, 0.0)
-		if ap and not ap.active:
-			ap.active = true
-		if tree and not tree.active:
-			tree.active = true
-		_apply_mixer()
+		var sit_w := smoothstep(0.15, 1.0, sit_k) * (1.0 - lie_k)
+		if sit_w >= 0.95 and kind in ["seat", "sleep", "sun"]:
+			# Freeze tree + additive L-sit on idle seed (preserves Mixamo UpLeg twist so
+			# thighs fold forward, not sideways). bake_pose_mesh() for llvmpipe stills.
+			_seed_lie_from_sit()
+			_apply_ergonomic_sit(1.0)
+		else:
+			if ap and not ap.active:
+				ap.active = true
+			if tree and not tree.active:
+				tree.active = true
+			_apply_mixer()
+			if sit_w > 0.15 and kind in ["seat", "sleep", "sun"]:
+				_apply_ergonomic_sit(sit_w)
 	var pel := _live_pelvis()
 	if pel.y < 0.05:
 		pel = Vector3(0.0, Island.SEAT_TOP, 0.0)
@@ -799,6 +844,99 @@ func _pose_add(bone: String, euler: Vector3, w: float) -> void:
 	skel.set_bone_pose_rotation(bi, cur.slerp(add * cur, w))
 
 
+## Upright chair/log/hammock sit: thighs near horizontal, knees ~90°, shins down.
+## Additive on idle seed (keeps Mixamo UpLeg π-twist so thighs fold forward along facing).
+func _apply_ergonomic_sit(w: float) -> void:
+	if skel == null or w <= 0.001:
+		return
+	# sit_fwd_scan2_v24: elev≈0.6°, shin≈−74°, thigh · forward ≈ 1.0, side ≈ 0.
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.80, -0.70, -0.40), w)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-1.80, 0.70, 0.40), w)
+	_pose_add("mixamorig_LeftLeg", Vector3(2.10, 0.0, 0.0), w)
+	_pose_add("mixamorig_RightLeg", Vector3(2.10, 0.0, 0.0), w)
+	_pose_add("mixamorig_LeftFoot", Vector3(0.20, 0.0, 0.05), w * 0.7)
+	_pose_add("mixamorig_RightFoot", Vector3(0.20, 0.0, -0.05), w * 0.7)
+	_pose_add("mixamorig_Spine", Vector3(-0.08, 0.0, 0.0), w * 0.55)
+	_pose_add("mixamorig_Spine1", Vector3(-0.05, 0.0, 0.0), w * 0.45)
+	_pose_add("mixamorig_LeftArm", Vector3(0.20, 0.40, -0.55), w * 0.7)
+	_pose_add("mixamorig_RightArm", Vector3(0.20, -0.40, 0.55), w * 0.7)
+	_pose_add("mixamorig_LeftForeArm", Vector3(-0.35, 0.0, 0.0), w * 0.6)
+	_pose_add("mixamorig_RightForeArm", Vector3(-0.35, 0.0, 0.0), w * 0.6)
+	skel.force_update_transform()
+
+
+## Bake the current skeleton pose into a static ArrayMesh so stills show deformation on
+## drivers that leave the skinned mesh at bind pose (llvmpipe Compatibility).
+func bake_pose_mesh() -> void:
+	_ensure_skin_cache()
+	if skel == null or _body_mi == null or _skin_verts.is_empty():
+		return
+	skel.force_update_transform()
+	var n: int = _skin_verts.size()
+	var bone_xf: Array[Transform3D] = []
+	bone_xf.resize(skel.get_bone_count())
+	for bi in skel.get_bone_count():
+		# Skinning in skeleton space (mesh is child of Skeleton3D).
+		bone_xf[bi] = skel.get_bone_global_pose(bi) * skel.get_bone_global_rest(bi).affine_inverse()
+	var out := PackedVector3Array()
+	out.resize(n)
+	for i in n:
+		var v: Vector3 = _skin_verts[i]
+		var skinned := Vector3.ZERO
+		var wsum := 0.0
+		for j in 4:
+			var bi2: int = _skin_bones[i * 4 + j]
+			var w: float = _skin_weights[i * 4 + j]
+			if w <= 0.0 or bi2 < 0 or bi2 >= bone_xf.size():
+				continue
+			skinned += bone_xf[bi2] * v * w
+			wsum += w
+		out[i] = skinned / wsum if wsum > 0.01 else v
+	var arrays: Array = _body_arrays_orig.duplicate(true)
+	arrays[Mesh.ARRAY_VERTEX] = out
+	# Drop bone weights so the mesh is treated as static (already posed).
+	arrays[Mesh.ARRAY_BONES] = null
+	arrays[Mesh.ARRAY_WEIGHTS] = null
+	var baked := ArrayMesh.new()
+	var fmt: int = 0
+	if _body_mesh_orig is ArrayMesh:
+		fmt = int((_body_mesh_orig as ArrayMesh).surface_get_format(0))
+	fmt &= ~(Mesh.ARRAY_FORMAT_BONES | Mesh.ARRAY_FORMAT_WEIGHTS)
+	# Rebuild arrays without bone streams (static posed mesh).
+	var clean: Array = []
+	clean.resize(Mesh.ARRAY_MAX)
+	for ai in Mesh.ARRAY_MAX:
+		if ai == Mesh.ARRAY_BONES or ai == Mesh.ARRAY_WEIGHTS:
+			continue
+		clean[ai] = arrays[ai]
+	baked.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, clean, [], {}, fmt)
+	if _body_mesh_orig is ArrayMesh and (_body_mesh_orig as ArrayMesh).surface_get_material(0):
+		baked.surface_set_material(0, (_body_mesh_orig as ArrayMesh).surface_get_material(0))
+	_body_mi.mesh = baked
+	_body_mi.skeleton = NodePath()
+	_body_mi.skin = null
+	_pose_baked = true
+
+
+func restore_pose_mesh() -> void:
+	if not _pose_baked or _body_mi == null:
+		return
+	_body_mi.mesh = _body_mesh_orig
+	_body_mi.skeleton = _body_skel_path
+	_body_mi.skin = _body_skin_orig
+	_pose_baked = false
+
+
+## World elevation of hip→knee (0° = horizontal thigh). Positive = knee above hip.
+func sit_thigh_elev_deg() -> float:
+	var hips := lie_bone_world("mixamorig_Hips")
+	var knee := lie_bone_world("mixamorig_LeftLeg")
+	var d := knee - hips
+	if d.length_squared() < 1e-8:
+		return 90.0
+	return rad_to_deg(asin(clampf(d.normalized().dot(Vector3.UP), -1.0, 1.0)))
+
+
 ## World positions of key bones after the current lie pose (for contact checks / snaps).
 func lie_bone_world(bone: String) -> Vector3:
 	if skel == null:
@@ -836,6 +974,13 @@ var _skin_verts: PackedVector3Array = PackedVector3Array()
 var _skin_bones: PackedInt32Array = PackedInt32Array()
 var _skin_weights: PackedFloat32Array = PackedFloat32Array()
 var _skin_ready := false
+var _body_mi: MeshInstance3D
+var _body_mesh_orig: Mesh
+var _body_skin_orig: Skin
+var _body_skel_path: NodePath = NodePath("..")
+var _body_arrays_orig: Array = []
+## llvmpipe / some GL paths leave the GPU mesh at bind pose; bake CPU-skinned verts for stills.
+var _pose_baked := false
 
 
 func _ensure_skin_cache() -> void:
@@ -859,6 +1004,11 @@ func _ensure_skin_cache() -> void:
 		var weights_a = arrays[Mesh.ARRAY_WEIGHTS]
 		if verts.is_empty() or bones_a == null or weights_a == null:
 			continue
+		_body_mi = mi
+		_body_mesh_orig = mi.mesh
+		_body_skin_orig = mi.skin
+		_body_skel_path = mi.skeleton
+		_body_arrays_orig = arrays.duplicate(true)
 		_skin_verts = verts
 		# Godot may store bones as PackedInt32Array or PackedFloat32Array depending on importer.
 		_skin_bones = PackedInt32Array()
@@ -1144,6 +1294,10 @@ func _tick(delta: float) -> void:
 		# Idle seek clears global pose overrides — re-plant so thighs stay ON the cushion.
 		if lie_foot_plant and act_kind == "sun":
 			plant_feet_on_plane(lie_foot_plane_point, lie_foot_plane_normal, lie_foot_plant_gap, true)
+	elif anim == "activity" and act_lie_k < 0.45 and act_kind in ["seat", "sleep", "sun"] and act_w > 0.5:
+		# Re-seed every tick — pose_add is relative; stacking without reset bends sideways.
+		_seed_lie_from_sit()
+		_apply_ergonomic_sit(clampf(act_w, 0.0, 1.0) * (1.0 - act_lie_k))
 	else:
 		if ap and not ap.active:
 			ap.active = true

@@ -1310,14 +1310,16 @@ func _begin_rest(kind: String) -> void:
 	rest_root_sit = rest_seat - rest_sit_b * pl
 	# Do NOT hard-pin root.y to SEAT_TOP — Tripo butt flesh hangs below the hip bone.
 	# Snap after the sit pose so ischia rest ON the seat (see _snap_sit_contact).
-	if kind == "seat":
+	if kind == "seat" or kind == "sleep":
 		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 		for _s in 12:
 			_snap_sit_contact()
-			pl = boy.activity("seat", 1.0, 0.0, 0.0)
+			pl = boy.activity(kind, 1.0, 0.0, 0.0)
 			rest_root_sit = rest_seat - rest_sit_b * pl
 			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 	boy.end_activity()
+	if kind == "sleep":
+		island.set_hammock_load([] as Array[Vector3])
 	boy.rotation = Vector3(0, face_yaw, 0)
 	_update_ui()
 
@@ -1365,10 +1367,12 @@ func _setup_hammock_rest() -> void:
 	# Centre of the cradle (hat is detached — no brim bias).
 	var hip_pos: Vector3 = hip_f["pos"] as Vector3
 	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.12
-	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
+	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground
+	# (facing into the cradle left him standing upright inside the fabric).
+	rest_sit_b = Basis(Vector3.UP, atan2(side.x, side.z))
 	# Sit ON the mid fabric (occupied sag), approach from OUTSIDE so walk never clips through.
 	var sit_frame: Dictionary = island.hammock_frame(0.50)
-	rest_seat = (sit_frame["pos"] as Vector3) + (sit_frame["normal"] as Vector3) * 0.14
+	rest_seat = (sit_frame["pos"] as Vector3) + (sit_frame["normal"] as Vector3) * 0.10
 	# Clear of fabric + wall (half_w≈0.55, wall +0.06) — stand beside, not inside.
 	rest_approach = bed + side * (island.hammock_half_w + 0.72)
 	rest_approach.y = Island.ground_h(rest_approach.x, rest_approach.z)
@@ -1495,9 +1499,12 @@ func _lie_swing() -> Transform3D:
 ## Uses skinned verts near the hips over the seat footprint — not the hip bone alone.
 ## Seat top Y comes from the prop entry (mesh AABB / authored surface), never a hardcoded offset alone.
 func _snap_sit_contact() -> void:
-	if rest_kind != "seat" or seat_i < 0 or seat_i >= island.seats.size():
-		return
 	if seat_lying:
+		return
+	if rest_kind == "sleep":
+		_snap_hammock_sit_contact()
+		return
+	if rest_kind != "seat" or seat_i < 0 or seat_i >= island.seats.size():
 		return
 	var st: Dictionary = island.seats[seat_i]
 	var top: Vector3 = st["top"]
@@ -1535,6 +1542,47 @@ func _snap_sit_contact() -> void:
 		rest_root_sit.y += step
 		rest_seat.y += step
 	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+
+
+## Settle butt onto the sagging hammock mid-pocket while seated (legs over the near edge).
+func _snap_hammock_sit_contact() -> void:
+	if rest_kind != "sleep":
+		return
+	for _iter in 6:
+		boy.activity("sleep", 1.0, 0.0, gt)
+		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+		_update_hammock_load()
+		var sit_frame: Dictionary = island.hammock_frame(0.50)
+		var top: Vector3 = sit_frame["pos"] as Vector3
+		var n: Vector3 = (sit_frame["normal"] as Vector3).normalized()
+		if n.y < 0.2:
+			n = Vector3.UP
+		var hips: Vector3 = boy.lie_bone_world("mixamorig_Hips")
+		var samples: Array[Vector3] = boy.skinned_sample_world(700)
+		var deepest := 1e9
+		var hit := false
+		for s in samples:
+			if s.distance_to(hips) > 0.30:
+				continue
+			if s.y > hips.y + 0.04:
+				continue
+			# Keep samples near mid fabric (not out on the hanging thighs).
+			if (s - top).length() > 0.55:
+				continue
+			hit = true
+			deepest = minf(deepest, (s - top).dot(n))
+		if not hit:
+			deepest = (hips - top).dot(n) - 0.12
+		var target := 0.015
+		var err := target - deepest
+		if absf(err) < 0.004:
+			_update_hammock_load()
+			return
+		var step := clampf(err, -0.05, 0.05)
+		rest_root_sit += n * step
+		rest_seat += n * step
+	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+	_update_hammock_load()
 
 
 ## After the lie pose is applied, nudge rest_lie so the skinned mesh sits on the support
@@ -1976,6 +2024,12 @@ func _rest_tick(delta: float) -> void:
 				var settled := rest_approach.lerp(rest_root_sit, ks)
 				settled.y += 0.08 * sin(PI * ks)
 				boy.global_transform = Transform3D(rest_sit_b, settled)
+			if sleep and rest_phase == 2 and ks > 0.70:
+				_snap_sit_contact()
+				pl = boy.activity("sleep", 1.0, 0.0, gt)
+				rest_root_sit = rest_seat - rest_sit_b * pl
+				boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+				_update_hammock_load()
 			if rest_t >= dur:
 				rest_t = 0.0
 				if rest_phase == 2:
@@ -1983,6 +2037,11 @@ func _rest_tick(delta: float) -> void:
 						_snap_sit_contact()
 						pl = boy.activity("seat", 1.0, 0.0, gt)
 						rest_root_sit = rest_seat - rest_sit_b * pl
+					elif sleep:
+						_snap_sit_contact()
+						pl = boy.activity("sleep", 1.0, 0.0, gt)
+						rest_root_sit = rest_seat - rest_sit_b * pl
+						_update_hammock_load()
 					rest_phase = 4 if rest_kind == "seat" else 3
 					_update_ui()
 				else:
