@@ -5,7 +5,7 @@ extends SceneTree
 const OUT := "/workspace/screenshots/v25/after"
 const W := 390
 const H := 844
-const BUILD_ID := "v25-clips-01"
+const BUILD_ID := "v25-clips-02"
 
 
 func _initialize() -> void:
@@ -191,7 +191,9 @@ func _prop_seq(m, vp, tag: String, seat_name: String) -> void:
 	m._play_rest_enter_clip()
 	var enter_len: float = m.boy.prop_clip_length()
 	var exit_len := 2.5
-	var side: Vector3 = face.cross(Vector3.UP).normalized()
+	# Prop-frame side: +X shows seat depth (−Z) and shins past the front edge.
+	# Do NOT bake_pose_mesh here — the static bake can drift vs live skin + props.
+	var side: Vector3 = m.rest_prop_xf.basis.x.normalized()
 	var yaw_front: float = atan2(face.x, face.z)
 	var yaw_side: float = atan2(side.x, side.z)
 	var imgs: Array = []
@@ -199,7 +201,6 @@ func _prop_seq(m, vp, tag: String, seat_name: String) -> void:
 	var labels_enter := ["enter_0", "enter_1", "enter_2", "enter_3", "enter_end"]
 	for i in times_enter.size():
 		await _hold_clip(m, times_enter[i])
-		m.boy.bake_pose_mesh()
 		var hips: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
 		# Default-ish game camera
 		_game_cam_rest(m)
@@ -212,23 +213,21 @@ func _prop_seq(m, vp, tag: String, seat_name: String) -> void:
 		for _r in 4:
 			m._apply_camera()
 			await process_frame
-		var img = await _shot(vp, "%s/%s/%s_front.png" % [OUT, tag, labels_enter[i]])
-		if i == 0 or i == 2 or i == 4:
-			imgs.append(img)
-		# Close side
-		_cam(m, hips + Vector3(0, 0.20, 0), yaw_side, 2.7, 0.12)
+		await _shot(vp, "%s/%s/%s_front.png" % [OUT, tag, labels_enter[i]])
+		# Close side — montage uses side so seat-depth / shin hang matches Blender previews.
+		_cam(m, hips + Vector3(0, 0.20, 0), yaw_side, 2.55, 0.10)
 		for _r in 4:
 			m._apply_camera()
 			await process_frame
-		await _shot(vp, "%s/%s/%s_side.png" % [OUT, tag, labels_enter[i]])
-		m.boy.restore_pose_mesh()
+		var img = await _shot(vp, "%s/%s/%s_side.png" % [OUT, tag, labels_enter[i]])
+		if i == 0 or i == 2 or i == 4:
+			imgs.append(img)
 
 	# Idle loop
 	m.rest_phase = 4
 	m._play_rest_idle_clip()
 	for tsec in [0.3, 2.0, 4.5]:
 		await _hold_clip(m, tsec)
-		m.boy.bake_pose_mesh()
 		var hips2: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
 		_game_cam_rest(m)
 		for _r in 3:
@@ -239,13 +238,12 @@ func _prop_seq(m, vp, tag: String, seat_name: String) -> void:
 		for _r in 4:
 			m._apply_camera()
 			await process_frame
-		imgs.append(await _shot(vp, "%s/%s/idle_%.0f_front.png" % [OUT, tag, tsec * 10.0]))
-		_cam(m, hips2 + Vector3(0, 0.20, 0), yaw_side, 2.7, 0.12)
+		await _shot(vp, "%s/%s/idle_%.0f_front.png" % [OUT, tag, tsec * 10.0])
+		_cam(m, hips2 + Vector3(0, 0.20, 0), yaw_side, 2.55, 0.10)
 		for _r in 4:
 			m._apply_camera()
 			await process_frame
-		await _shot(vp, "%s/%s/idle_%.0f_side.png" % [OUT, tag, tsec * 10.0])
-		m.boy.restore_pose_mesh()
+		imgs.append(await _shot(vp, "%s/%s/idle_%.0f_side.png" % [OUT, tag, tsec * 10.0]))
 
 	# Exit
 	m.rest_phase = 6
@@ -253,7 +251,6 @@ func _prop_seq(m, vp, tag: String, seat_name: String) -> void:
 	exit_len = m.boy.prop_clip_length()
 	for pair in [[0.2, "exit_0"], [exit_len * 0.45, "exit_mid"], [exit_len - 0.05, "exit_end"]]:
 		await _hold_clip(m, float(pair[0]))
-		m.boy.bake_pose_mesh()
 		var hips3: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
 		_game_cam_rest(m)
 		for _r in 3:
@@ -264,13 +261,12 @@ func _prop_seq(m, vp, tag: String, seat_name: String) -> void:
 		for _r in 4:
 			m._apply_camera()
 			await process_frame
-		imgs.append(await _shot(vp, "%s/%s/%s_front.png" % [OUT, tag, pair[1]]))
-		_cam(m, hips3 + Vector3(0, 0.22, 0), yaw_side, 2.8, 0.12)
+		await _shot(vp, "%s/%s/%s_front.png" % [OUT, tag, pair[1]])
+		_cam(m, hips3 + Vector3(0, 0.22, 0), yaw_side, 2.55, 0.10)
 		for _r in 4:
 			m._apply_camera()
 			await process_frame
-		await _shot(vp, "%s/%s/%s_side.png" % [OUT, tag, pair[1]])
-		m.boy.restore_pose_mesh()
+		imgs.append(await _shot(vp, "%s/%s/%s_side.png" % [OUT, tag, pair[1]]))
 
 	_montage_imgs(imgs, "%s_sit_sequence.png" % tag if tag != "bench" else "bench_sit_transition.png")
 	if tag == "log":
@@ -287,8 +283,9 @@ func _hammock_seq(m, vp) -> void:
 	m.rest_frozen = true
 	m.rest_phase = 1
 	m._play_rest_enter_clip()
-	var side: Vector3 = m.rest_side.normalized()
-	var side_yaw: float = atan2(side.x, side.z) + 0.15
+	# Look along prop +Z (inland) — +X is the span; end-on makes cloth a thin line.
+	var side: Vector3 = m.rest_prop_xf.basis.z.normalized()
+	var side_yaw: float = atan2(side.x, side.z)
 	var enter_len: float = m.boy.prop_clip_length()
 	var imgs: Array = []
 
@@ -297,21 +294,20 @@ func _hammock_seq(m, vp) -> void:
 	var enter_labels := ["enter_0", "enter_1", "swing_29", "swing_36", "swing_44", "swing_52", "swing_56", "enter_lie", "enter_end"]
 	for i in enter_times.size():
 		await _hold_clip(m, enter_times[i])
-		m.boy.bake_pose_mesh()
 		var hips: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
+		var look_h: Vector3 = m.rest_prop_xf.origin + m.rest_prop_xf.basis * Vector3(0.0, -0.35, 0.0)
 		_game_cam_rest(m)
 		for _r in 3:
 			m._apply_camera()
 			await process_frame
 		await _shot(vp, "%s/hammock/%s_game.png" % [OUT, enter_labels[i]])
-		_cam(m, hips + Vector3(0, 0.25, 0), side_yaw, 2.5, deg_to_rad(35.0))
+		_cam(m, look_h, side_yaw, 3.2, 0.22)
 		for _r in 4:
 			m._apply_camera()
 			await process_frame
 		var img = await _shot(vp, "%s/hammock/%s_side.png" % [OUT, enter_labels[i]])
 		if i in [0, 2, 4, 6, 8]:
 			imgs.append(img)
-		m.boy.restore_pose_mesh()
 
 	# Sleep loop
 	m.rest_phase = 4
@@ -321,15 +317,15 @@ func _hammock_seq(m, vp) -> void:
 		m.boy.set_face_expr("sleep")
 		m.boy.expr = "sleep"
 		m.boy._apply_face_pack("sleep")
-		m.boy.bake_pose_mesh()
 		var hips2: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
 		var head_b: Vector3 = m.boy.lie_bone_world("mixamorig_Head")
+		var look_h2: Vector3 = m.rest_prop_xf.origin + m.rest_prop_xf.basis * Vector3(0.0, -0.35, 0.0)
 		_game_cam_rest(m)
 		for _r in 3:
 			m._apply_camera()
 			await process_frame
 		await _shot(vp, "%s/hammock/sleep_%.0f_game.png" % [OUT, tsec * 10.0])
-		_cam(m, hips2 + Vector3(0, 0.2, 0), side_yaw, 2.5, deg_to_rad(35.0))
+		_cam(m, look_h2, side_yaw, 3.2, 0.22)
 		for _r in 5:
 			m._apply_camera()
 			await process_frame
@@ -340,7 +336,6 @@ func _hammock_seq(m, vp) -> void:
 			m._apply_camera()
 			await process_frame
 		await _shot(vp, "%s/hammock/sleep_%.0f_face.png" % [OUT, tsec * 10.0])
-		m.boy.restore_pose_mesh()
 
 	# Exit — dense samples in leg-swing 0.9–2.4 s
 	m.rest_phase = 6
@@ -350,21 +345,20 @@ func _hammock_seq(m, vp) -> void:
 	var exit_labels := ["exit_0", "swing_09", "swing_14", "swing_19", "swing_24", "exit_stand", "exit_end"]
 	for i in exit_times.size():
 		await _hold_clip(m, exit_times[i])
-		m.boy.bake_pose_mesh()
 		var hips3: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
+		var look_h3: Vector3 = m.rest_prop_xf.origin + m.rest_prop_xf.basis * Vector3(0.0, -0.35, 0.0)
 		_game_cam_rest(m)
 		for _r in 3:
 			m._apply_camera()
 			await process_frame
 		await _shot(vp, "%s/hammock/%s_game.png" % [OUT, exit_labels[i]])
-		_cam(m, hips3 + Vector3(0, 0.25, 0), side_yaw, 2.5, deg_to_rad(35.0))
+		_cam(m, look_h3, side_yaw, 3.2, 0.22)
 		for _r in 4:
 			m._apply_camera()
 			await process_frame
 		var img2 = await _shot(vp, "%s/hammock/%s_side.png" % [OUT, exit_labels[i]])
 		if i in [0, 1, 4, 6]:
 			imgs.append(img2)
-		m.boy.restore_pose_mesh()
 
 	_montage_imgs(imgs, "hammock_sequence.png")
 	m._finish_rest_exit()

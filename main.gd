@@ -1385,13 +1385,14 @@ func _setup_seat_clip_rest(st: Dictionary) -> void:
 	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
 	rest_seat = st["top"]
 	rest_sit_b = rest_prop_xf.basis
-	# Clip enter starts at root_pos (0,0,-0.5) yaw 0 in prop frame.
+	# Clip enter starts at root_pos (0,0,-0.5) yaw 0 in prop frame (exact prop Y).
 	var clip_key := "bench_sit_enter" if rest_clip_prop == "bench" else "log_sit_enter"
 	var cinfo: Dictionary = rest_align.get("clips", {}).get(clip_key, {})
 	var rp: Array = cinfo.get("root_pos_prop", [0, 0, -0.5])
 	var local := Vector3(float(rp[0]), float(rp[1]), float(rp[2]))
 	rest_root_sit = rest_prop_xf * local
-	rest_root_sit.y = _surface(rest_root_sit.x, rest_root_sit.z) + float(rp[1])
+	rest_approach = rest_prop_xf * Vector3(0.0, 0.0, -0.50)
+	rest_approach.y = rest_prop_xf.origin.y
 
 
 func _setup_hammock_clip_rest() -> void:
@@ -2166,17 +2167,15 @@ func _apply_boy_prop_root(clip_key: String) -> void:
 	var rp: Array = cinfo.get("root_pos_prop", [0, 0, -0.5])
 	var yaw_deg := float(cinfo.get("root_yaw_deg", 0.0))
 	var local := Vector3(float(rp[0]), float(rp[1]), float(rp[2]))
+	# Prop-frame placement exactly as authored (do NOT re-snap Y to terrain — slope was
+	# burying the boy ~10–15 cm into the seat). player == boy, so never overwrite after.
 	var pos := rest_prop_xf * local
-	# Keep authored y for hammock (terrain baked into root_pos); seats use ground + local y.
-	if rest_clip_prop != "hammock":
-		pos.y = _surface(pos.x, pos.z) + float(rp[1])
 	# alignment.json yaw 0 => faces +Z; boy.gd model.rotation.y = PI flips Mixamo +Z to game −Z,
 	# so add PI when placing the boy node to match authored facing.
 	var yaw := rest_prop_xf.basis.get_euler().y + deg_to_rad(yaw_deg) + PI
 	boy.global_transform = Transform3D(Basis(Vector3.UP, yaw), pos)
-	player.global_position = Vector3(pos.x, _surface(pos.x, pos.z), pos.z)
 	face_yaw = yaw
-	player.rotation.y = yaw
+	ground_y = pos.y
 
 
 func _play_rest_enter_clip() -> void:
@@ -2219,17 +2218,11 @@ func _finish_rest_exit() -> void:
 		var np: Array = after["new_root_pos_prop"]
 		var local := Vector3(float(np[0]), float(np[1]), float(np[2]))
 		var pos := rest_prop_xf * local
-		if rest_clip_prop != "hammock":
-			pos.y = _surface(pos.x, pos.z) + float(np[1])
-		else:
-			# Hammock after_exit y is authored in prop frame (terrain).
-			pass
 		var yaw := rest_prop_xf.basis.get_euler().y + deg_to_rad(float(after.get("new_yaw_deg", 180.0))) + PI
 		boy.global_transform = Transform3D(Basis(Vector3.UP, yaw), pos)
-		player.global_position = Vector3(pos.x, _surface(pos.x, pos.z), pos.z)
 		face_yaw = yaw
-		player.rotation.y = yaw
-		rest_approach = player.global_position
+		ground_y = pos.y
+		rest_approach = Vector3(pos.x, _surface(pos.x, pos.z), pos.z)
 	else:
 		# Fallback: end_root_shift in prop XZ (shift is [x,z]).
 		var sh: Array = cinfo.get("end_root_shift_prop", [0, 0])
@@ -2241,13 +2234,13 @@ func _finish_rest_exit() -> void:
 		var base := rest_prop_xf * local0
 		var shift := rest_prop_xf.basis * Vector3(float(sh[0]), 0.0, float(sh[1]))
 		var pos2 := base + shift
+		# After exit: stand on terrain at the new XZ (authored pad should be flat).
 		pos2.y = _surface(pos2.x, pos2.z)
 		var yaw0 := rest_prop_xf.basis.get_euler().y + deg_to_rad(float(einfo.get("root_yaw_deg", 0.0))) + PI
 		var yaw2 := yaw0 + yaw_d
 		boy.global_transform = Transform3D(Basis(Vector3.UP, yaw2), pos2)
-		player.global_position = pos2
 		face_yaw = yaw2
-		player.rotation.y = yaw2
+		ground_y = pos2.y
 	boy.end_prop_clip(0.2)
 	if rest_clip_prop == "hammock":
 		island.set_hammock_clip_frame("empty", 0)

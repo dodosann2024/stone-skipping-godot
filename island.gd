@@ -116,8 +116,8 @@ static func shore_d(x: float, z: float) -> float:
 ## back to the clearing over a wide pad_blend so the banks stay no steeper than the hill round them.
 static var pads: Array = []
 static var pad_half := 0.35
-static var pad_flat := 0.42
-static var pad_blend := 1.9
+static var pad_flat := 0.70   # was 0.42 — keep bench/log sit footprints level
+static var pad_blend := 1.4
 static var site := Vector3.ZERO
 static var site_on := false
 static var site_k := 0.25
@@ -248,11 +248,22 @@ func _make_pads() -> void:
 	site = c
 	site_on = true
 	var out: Array = []
+	# Campfire log pads (wider so sit feet stay on flat ground).
 	for i in 3:
 		var a := 0.6 + i * 2.1
 		var lp := c + Vector3(cos(a) * 1.7, 0, sin(a) * 1.7)
-		var t := Vector2(-sin(a), cos(a)) * pad_half
-		out.append([Vector2(lp.x, lp.z) + t, Vector2(lp.x, lp.z) - t, ground_h(lp.x, lp.z)])
+		var t := Vector2(-sin(a), cos(a)) * 0.75
+		out.append([Vector2(lp.x, lp.z) + t, Vector2(lp.x, lp.z) - t, _ground_raw(lp.x, lp.z)])
+	# Bench pad at the lighthouse sit spot (same offset as _build_lighthouse).
+	var lh := gp(2.0, 3.0)
+	var bp := lh + Vector3(-2.2, 0, -2.0)
+	var bench_h := _ground_raw(bp.x, bp.z)
+	# Axis along seat width (local +X at yaw 0.7) so the whole footprint is flat.
+	var bx := Vector2(cos(0.7), -sin(0.7)) * 0.85
+	out.append([Vector2(bp.x, bp.z) + bx, Vector2(bp.x, bp.z) - bx, bench_h])
+	# Also flatten along seat depth (±Z) so approach feet match prop origin Y.
+	var bz := Vector2(sin(0.7), cos(0.7)) * 0.55
+	out.append([Vector2(bp.x, bp.z) + bz, Vector2(bp.x, bp.z) - bz, bench_h])
 	pads = out
 	campfire_pos.y = ground_h(c.x, c.z)
 
@@ -470,15 +481,19 @@ func _build_terrain() -> void:
 			st.set_color(_ground_color(x, z, h))
 			st.set_uv(Vector2(x, z))
 			st.add_vertex(Vector3(x, h, z))
-	# the campfire clearing gets a 4x finer patch so the level pads and their banks are drawn as they are
-	# walked on; its border vertices sit on the coarse cells' edges, so no cracks open between the two
-	var fi0 := int(floor(campfire_pos.x + half)) - 6
-	var fj0 := int(floor(campfire_pos.z + half)) - 6
-	var fi1 := fi0 + 12
-	var fj1 := fj0 + 12
+	# Fine patches over campfire logs + lighthouse bench so flatten pads draw cleanly.
+	var fine_rects: Array = []
+	fine_rects.append([int(floor(campfire_pos.x + half)) - 6, int(floor(campfire_pos.z + half)) - 6, 12, 12])
+	var lh_xz := gp(2.0, 3.0) + Vector3(-2.2, 0, -2.0)
+	fine_rects.append([int(floor(lh_xz.x + half)) - 4, int(floor(lh_xz.z + half)) - 4, 8, 8])
 	for j in n:
 		for i in n:
-			if i >= fi0 and i < fi1 and j >= fj0 and j < fj1:
+			var skip := false
+			for fr in fine_rects:
+				if i >= int(fr[0]) and i < int(fr[0]) + int(fr[2]) and j >= int(fr[1]) and j < int(fr[1]) + int(fr[3]):
+					skip = true
+					break
+			if skip:
 				continue
 			var a = j * (n + 1) + i
 			var b = a + 1
@@ -487,32 +502,39 @@ func _build_terrain() -> void:
 			st.add_index(a); st.add_index(b); st.add_index(c)
 			st.add_index(b); st.add_index(d); st.add_index(c)
 	var sub := 4
-	var fn := (fi1 - fi0) * sub
 	var base: int = (n + 1) * (n + 1)
-	for j in fn + 1:
-		for i in fn + 1:
-			var x: float = -half + fi0 + float(i) / sub
-			var z: float = -half + fj0 + float(j) / sub
-			var h: float
-			if i == 0 or i == fn or j == 0 or j == fn:
-				var x0: float = floorf(x + half + 1e-4) - half
-				var z0: float = floorf(z + half + 1e-4) - half
-				var tx := x - x0
-				var tz := z - z0
-				h = lerpf(lerpf(ground_h(x0, z0), ground_h(x0 + 1.0, z0), tx), lerpf(ground_h(x0, z0 + 1.0), ground_h(x0 + 1.0, z0 + 1.0), tx), tz)
-			else:
-				h = ground_h(x, z)
-			st.set_color(_ground_color(x, z, h))
-			st.set_uv(Vector2(x, z))
-			st.add_vertex(Vector3(x, h, z))
-	for j in fn:
-		for i in fn:
-			var a = base + j * (fn + 1) + i
-			var b = a + 1
-			var c = a + fn + 1
-			var d = c + 1
-			st.add_index(a); st.add_index(b); st.add_index(c)
-			st.add_index(b); st.add_index(d); st.add_index(c)
+	for fr in fine_rects:
+		var fi0: int = int(fr[0])
+		var fj0: int = int(fr[1])
+		var fi1: int = fi0 + int(fr[2])
+		var fj1: int = fj0 + int(fr[3])
+		var fn := (fi1 - fi0) * sub
+		var patch_base := base
+		for j in fn + 1:
+			for i in fn + 1:
+				var x: float = -half + fi0 + float(i) / sub
+				var z: float = -half + fj0 + float(j) / sub
+				var h: float
+				if i == 0 or i == fn or j == 0 or j == fn:
+					var x0: float = floorf(x + half + 1e-4) - half
+					var z0: float = floorf(z + half + 1e-4) - half
+					var tx := x - x0
+					var tz := z - z0
+					h = lerpf(lerpf(ground_h(x0, z0), ground_h(x0 + 1.0, z0), tx), lerpf(ground_h(x0, z0 + 1.0), ground_h(x0 + 1.0, z0 + 1.0), tx), tz)
+				else:
+					h = ground_h(x, z)
+				st.set_color(_ground_color(x, z, h))
+				st.set_uv(Vector2(x, z))
+				st.add_vertex(Vector3(x, h, z))
+		for j in fn:
+			for i in fn:
+				var a2 = patch_base + j * (fn + 1) + i
+				var b2 = a2 + 1
+				var c2 = a2 + fn + 1
+				var d2 = c2 + 1
+				st.add_index(a2); st.add_index(b2); st.add_index(c2)
+				st.add_index(b2); st.add_index(d2); st.add_index(c2)
+		base += (fn + 1) * (fn + 1)
 	st.generate_normals()
 	terrain_mat = ShaderMaterial.new()
 	terrain_mat.shader = load("res://shaders/terrain.gdshader")
@@ -1269,14 +1291,16 @@ func _build_lighthouse() -> void:
 	box(SB, Vector3(0.55, 1.0, 0.06), p + Vector3(0.0, 0.95, 0.96), Vector3.ZERO, Color(0.35, 0.5, 0.62))
 	add_obstacle(Vector2(p.x, p.z), 1.3, p.y + h + 1.7, "灯塔", -99.0, false)
 	wall_c(Vector2(p.x, p.z), 1.38, p.y - 1.0, p.y + h + 1.7, "灯塔")
-	# Bench looking out to sea — geometry matches props/bench_v25.glb / alignment.json:
-	# seat top 0.22, depth 0.26 centred on z=0, width 1.40, backrest on +Z.
+	# Bench looking out to sea — ALWAYS use props/bench_v25.glb (prop frame = Godot axes:
+	# seat top 0.22, depth 0.26 on z=0, width 1.40, backrest on +Z). Flat pad under footprint.
 	var bp = p + Vector3(-2.2, 0, -2.0)
 	bp.y = ground_h(bp.x, bp.z)
 	var bxf = Transform3D(Basis(Vector3.UP, 0.7), bp)
-	_spawn_prop_glb("res://props/bench_v25.glb", bxf)
-	# Fallback procedural match if GLB missing (same dims).
-	if not ResourceLoader.exists("res://props/bench_v25.glb"):
+	var bench_n := _spawn_prop_glb("res://props/bench_v25.glb", bxf, Color(0.58, 0.40, 0.26))
+	if bench_n:
+		bench_n.name = "bench_v25"
+	if bench_n == null:
+		push_warning("Island: bench_v25.glb missing — procedural fallback")
 		var seat_y := SEAT_TOP - 0.025
 		boxb(SB, Vector3(1.40, 0.05, 0.26), bxf * Transform3D(Basis.IDENTITY, Vector3(0, seat_y, 0)), _wood())
 		boxb(SB, Vector3(1.35, 0.18, 0.035), bxf * Transform3D(Basis(Vector3.RIGHT, deg_to_rad(-6.0)), Vector3(0, SEAT_TOP + 0.10, 0.13)), Color(0.55, 0.38, 0.24))
@@ -1285,10 +1309,10 @@ func _build_lighthouse() -> void:
 	var bc: Vector3 = bxf * Vector3(0, 0, 0)
 	wall_b(Vector2(bc.x, bc.z), Vector2(0.72, 0.20), 0.7, bp.y - 0.3, bp.y + 0.75, "长椅")
 	var bface: Vector3 = (bxf.basis * Vector3(0, 0, -1)).normalized()
-	# Prop origin = seat centre on ground; seat top at local y=0.22; boy sits facing −Z.
+	# Prop origin = seat centre on the (flat) ground; approach shares prop-frame Y.
 	var bench_top: Vector3 = bxf * Vector3(0, SEAT_TOP, 0)
 	var bench_ap: Vector3 = bxf * Vector3(0, 0, -0.50)
-	bench_ap.y = ground_h(bench_ap.x, bench_ap.z)
+	bench_ap.y = bp.y
 	_add_seat("长椅", bench_top, bface, 0.7, "灯塔边的长椅：点「坐下」看看海", false, false, bxf, bench_ap)
 
 func _build_campfire() -> void:
@@ -1318,15 +1342,18 @@ func _build_campfire() -> void:
 		var a = 0.6 + i * 2.1
 		var lp = c + Vector3(cos(a) * 1.7, 0, sin(a) * 1.7)
 		lp.y = ground_h(lp.x, lp.z)
-		# v25 authored log: r=0.12, axis_y=0.10, top=0.22, axis along local +X.
+		# v25 authored log_v25.glb: cylinder axis along local +X, axis_y=0.10, r=0.12, top=0.22.
 		var log_r := 0.12
 		var axis_y := 0.10
 		var to_fire := Vector3(c.x - lp.x, 0, c.z - lp.z).normalized()
 		# Prop frame: origin at ground under log centre; −Z faces the fire (boy sits facing −Z).
 		var log_yaw := atan2(-to_fire.x, -to_fire.z) + PI
 		var lxf := Transform3D(Basis(Vector3.UP, log_yaw), lp)
-		_spawn_prop_glb("res://props/log_v25.glb", lxf)
-		if not ResourceLoader.exists("res://props/log_v25.glb"):
+		var log_n := _spawn_prop_glb("res://props/log_v25.glb", lxf, Color(0.50, 0.34, 0.20))
+		if log_n:
+			log_n.name = "log_v25_%d" % i
+		if log_n == null:
+			push_warning("Island: log_v25.glb missing — procedural fallback")
 			var la: Vector3 = lxf * Vector3(-0.7, axis_y, 0)
 			var lb: Vector3 = lxf * Vector3(0.7, axis_y, 0)
 			tube(SB, la, lb, log_r, log_r, 7, Color(0.5, 0.34, 0.2), 1.0, 1.0, Color(0.6, 0.45, 0.3))
@@ -1335,7 +1362,7 @@ func _build_campfire() -> void:
 			log_r + 0.01, lp.y - 0.3, lp.y + SEAT_TOP + 0.25, "坐木")
 		var log_top: Vector3 = lxf * Vector3(0, SEAT_TOP, 0)
 		var log_ap: Vector3 = lxf * Vector3(0, 0, -0.50)
-		log_ap.y = ground_h(log_ap.x, log_ap.z)
+		log_ap.y = lp.y
 		_add_seat("坐木", log_top, to_fire, 0.45, "篝火边的木头：点「坐下」烤烤火", true, false, lxf, log_ap)
 	# tiki torches
 	for a in [1.5, -1.6]:
@@ -1837,7 +1864,7 @@ func _build_palms() -> void:
 	wall_b(Vector2(ham_mid.x, ham_mid.z), Vector2(hammock_half_w + 0.04, ham_len * 0.5), ham_yaw, ham_mid.y - 1.0, ham_mid.y + 0.5, "吊床")
 
 
-func _spawn_prop_glb(path: String, xf: Transform3D) -> Node3D:
+func _spawn_prop_glb(path: String, xf: Transform3D, wood_tint := Color(0.55, 0.38, 0.24)) -> Node3D:
 	if not ResourceLoader.exists(path):
 		return null
 	var packed := load(path) as PackedScene
@@ -1847,6 +1874,16 @@ func _spawn_prop_glb(path: String, xf: Transform3D) -> Node3D:
 	if n == null:
 		return null
 	n.transform = xf
+	# Authored GLBs ship untextured/white — tint wood props so they read as timber, not boxes.
+	if wood_tint.a > 0.0:
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = wood_tint
+		mat.roughness = 0.85
+		mat.metallic = 0.0
+		for c in n.find_children("*", "MeshInstance3D", true, false):
+			var mi := c as MeshInstance3D
+			mi.material_override = mat
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(n)
 	return n
 
