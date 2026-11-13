@@ -120,6 +120,8 @@ var keys_run := false
 # rest (hammock / towel)
 var rest_kind := ""
 var rest_phase := 0
+## When true, _rest_tick holds pose (shot scripts pose manually without advancing phases).
+var rest_frozen := false
 var rest_t := 0.0
 var rest_approach := Vector3.ZERO
 var rest_seat := Vector3.ZERO
@@ -1374,9 +1376,15 @@ func _setup_hammock_rest() -> void:
 	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground.
 	# Basis(UP, atan2(x,z)) aims local −Z at (x,z); use −side so −Z == +side (outward).
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
-	# Sit ON the mid fabric (occupied sag), approach from OUTSIDE so walk never clips through.
+	# Sit on the NEAR edge (toward approach): butt on fabric lip, thighs hang outside.
+	# Mid-cradle sit buries the torso in the rails and reads as "standing in fabric".
 	var sit_frame: Dictionary = island.hammock_frame(0.50)
-	rest_seat = (sit_frame["pos"] as Vector3) + (sit_frame["normal"] as Vector3) * 0.10
+	var sit_n: Vector3 = (sit_frame["normal"] as Vector3).normalized()
+	var sit_side: Vector3 = (sit_frame["side"] as Vector3).normalized()
+	if sit_side.dot(side) < 0.0:
+		sit_side = -sit_side
+	# Outer lip (~0.92 * half_w): butt on fabric, torso clear of opposite rail.
+	rest_seat = (sit_frame["pos"] as Vector3) + sit_side * (island.hammock_half_w * 0.92) + sit_n * 0.10
 	# Clear of fabric + wall (half_w≈0.55, wall +0.06) — stand beside, not inside.
 	rest_approach = bed + side * (island.hammock_half_w + 0.72)
 	rest_approach.y = Island.ground_h(rest_approach.x, rest_approach.z)
@@ -1548,36 +1556,40 @@ func _snap_sit_contact() -> void:
 	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 
 
-## Settle butt onto the sagging hammock mid-pocket while seated (legs over the near edge).
+## Settle butt onto the near-edge hammock fabric while seated (legs hang outside).
 func _snap_hammock_sit_contact() -> void:
 	if rest_kind != "sleep":
 		return
-	for _iter in 6:
+	for _iter in 8:
 		boy.activity("sleep", 1.0, 0.0, gt)
 		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 		_update_hammock_load()
 		var sit_frame: Dictionary = island.hammock_frame(0.50)
-		var top: Vector3 = sit_frame["pos"] as Vector3
 		var n: Vector3 = (sit_frame["normal"] as Vector3).normalized()
 		if n.y < 0.2:
 			n = Vector3.UP
+		var sit_side: Vector3 = (sit_frame["side"] as Vector3).normalized()
+		if sit_side.dot(rest_side) < 0.0:
+			sit_side = -sit_side
+		# Contact target = near-edge lip (matches rest_seat), not cradle centre.
+		var top: Vector3 = (sit_frame["pos"] as Vector3) + sit_side * (island.hammock_half_w * 0.92)
 		var hips: Vector3 = boy.lie_bone_world("mixamorig_Hips")
 		var samples: Array[Vector3] = boy.skinned_sample_world(700)
 		var deepest := 1e9
 		var hit := false
 		for s in samples:
-			if s.distance_to(hips) > 0.30:
+			if s.distance_to(hips) > 0.28:
 				continue
-			if s.y > hips.y + 0.04:
+			if s.y > hips.y + 0.05:
 				continue
-			# Keep samples near mid fabric (not out on the hanging thighs).
-			if (s - top).length() > 0.55:
+			# Near-edge samples only (ignore hanging thighs outside the fabric).
+			if (s - top).length() > 0.42:
 				continue
 			hit = true
 			deepest = minf(deepest, (s - top).dot(n))
 		if not hit:
-			deepest = (hips - top).dot(n) - 0.12
-		var target := 0.015
+			deepest = (hips - top).dot(n) - 0.10
+		var target := 0.02
 		var err := target - deepest
 		if absf(err) < 0.004:
 			_update_hammock_load()
@@ -1622,8 +1634,9 @@ func _snap_lie_contact() -> void:
 		# Vertical: lift for poke-through (hat brim included); settle light floats.
 		var hip_gap := _signed_gap(pts["hips"], hip_p, hn0)
 		var head_gap := _signed_gap(pts["head"], head_p0, head_n0)
-		if mesh_d < -0.01:
-			rest_lie += hn0 * minf(-0.004 - mesh_d, 0.04)
+		# Prefer lifting out of fabric over leaving a poke-through (hat/shoulder).
+		if mesh_d < -0.005:
+			rest_lie += hn0 * minf(-0.002 - mesh_d, 0.08)
 		elif hip_gap > 0.02 or head_gap > 0.02:
 			rest_lie -= hn0 * minf(maxf(hip_gap, head_gap) - 0.008, 0.04)
 		elif mesh_d > 0.01:
@@ -1964,6 +1977,18 @@ func _wake() -> void:
 		_update_ui()
 
 func _rest_tick(delta: float) -> void:
+	if rest_frozen:
+		# Shot / selftest hold: keep hammock sag + Zzz, do not advance phases.
+		if rest_kind == "sleep" and rest_phase in [2, 3, 4, 5, 6]:
+			_update_hammock_load()
+			if rest_phase == 4:
+				zzz.visible = true
+				var head_z: Vector3 = (boy.parts["head"] as Node3D).global_position
+				zzz.global_position = head_z + Vector3(0, 0.42, 0) + rest_side * 0.1
+				zzz.modulate.a = 0.85
+			else:
+				zzz.visible = false
+		return
 	rest_t += delta
 	var sleep := rest_kind == "sleep"
 	var swing := Transform3D.IDENTITY

@@ -140,6 +140,9 @@ var _night_body: OmniLight3D
 var _face_fill_day_energy := 0.35
 var _boy_mat: StandardMaterial3D
 var _boy_albedo_day := Color(1.08, 0.98, 0.92, 1.0)
+var _boy_albedo_tex_day: Texture2D
+var _boy_albedo_tex_sleep: Texture2D
+var _eyes_closed_tex := false
 var _eyelid_l: MeshInstance3D
 var _eyelid_r: MeshInstance3D
 var _mouth: MeshInstance3D
@@ -495,11 +498,102 @@ func _tune_boy_material() -> void:
 		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		mi.material_override = mat
 		_boy_mat = mat
+		_boy_albedo_tex_day = mat.albedo_texture
+		_ensure_sleep_eye_albedo()
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mi.transparency = 0
 		# layer 1 (world) + layer 2 (face fill only) — still lit by the sun on layer 1
 		mi.layers = 1 | 2
 		break
+
+
+## Tripo eyes are painted into the albedo (no lid blendshapes). Sleep swaps a
+## closed-eye albedo that covers those UV islands with skin + a lash line.
+## Does not split/recolor the baked hat — only the two eye UV boxes.
+func _ensure_sleep_eye_albedo() -> void:
+	if _boy_albedo_tex_sleep != null or _boy_albedo_tex_day == null:
+		return
+	# Prefer the pre-authored closed-eye albedo (painted offline from the Tripo baseColor).
+	var path := "res://art/boy/tripo/boy_tripo_sleep_eyes.png"
+	var abs_path := "/workspace/art/boy/tripo/boy_tripo_sleep_eyes.png"
+	var img: Image = null
+	if FileAccess.file_exists(path):
+		img = Image.load_from_file(ProjectSettings.globalize_path(path))
+	if img == null and FileAccess.file_exists(abs_path):
+		img = Image.load_from_file(abs_path)
+	if img == null:
+		# Runtime paint from the day albedo using authored UV boxes.
+		img = _boy_albedo_tex_day.get_image()
+		if img == null:
+			return
+		img = img.duplicate()
+		_paint_closed_eyes(img)
+	_boy_albedo_tex_sleep = ImageTexture.create_from_image(img)
+
+
+func _paint_closed_eyes(img: Image) -> void:
+	# UV boxes authored from head mesh eye triangles (white+dark islands).
+	var boxes: Array = []
+	var box_path := "/workspace/art/boy/tripo/sleep_eye_boxes.txt"
+	if FileAccess.file_exists(box_path):
+		var f := FileAccess.open(box_path, FileAccess.READ)
+		while f != null and not f.eof_reached():
+			var line := f.get_line().strip_edges()
+			if line.is_empty():
+				continue
+			var parts := line.split(" ")
+			if parts.size() >= 4:
+				boxes.append([float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])])
+	if boxes.is_empty():
+		boxes = [
+			[0.288, 0.340, 0.615, 0.675],
+			[0.834, 0.886, 0.538, 0.596],
+		]
+	var lash := Color(0.18, 0.11, 0.08)
+	var iw := img.get_width()
+	var ih := img.get_height()
+	for box in boxes:
+		var x0 := int(float(box[0]) * iw)
+		var x1 := int(float(box[1]) * iw)
+		var y0 := int(float(box[2]) * ih)
+		var y1 := int(float(box[3]) * ih)
+		var skin := img.get_pixel(clampi(x0 - 2, 0, iw - 1), clampi(y0 - 2, 0, ih - 1))
+		skin = skin.lerp(img.get_pixel(clampi(x1 + 2, 0, iw - 1), clampi(y1 + 2, 0, ih - 1)), 0.5)
+		skin = skin.lerp(Color(0.91, 0.73, 0.61), 0.15)
+		var cx := (x0 + x1) * 0.5
+		var cy := (y0 + y1) * 0.5
+		var rx := maxf((x1 - x0) * 0.55, 1.0)
+		var ry := maxf((y1 - y0) * 0.52, 1.0)
+		for y in range(y0, y1 + 1):
+			for x in range(x0, x1 + 1):
+				var nx := (float(x) - cx) / rx
+				var ny := (float(y) - cy) / ry
+				var almond := nx * nx + (ny * ny) * (1.0 + 0.55 * nx * nx)
+				if almond > 1.05:
+					continue
+				var col := skin
+				if ny < -0.05 and ny > -0.72 and absf(nx) < 0.92:
+					var crease := smoothstep(-0.05, -0.35, ny) * (1.0 - absf(nx) * 0.35)
+					col = skin.lerp(lash, clampf(crease * 1.4, 0.0, 0.95))
+				elif ny < -0.72 and absf(nx) < 0.75:
+					col = lash.lerp(skin, 0.25)
+				img.set_pixel(x, y, col)
+
+
+func _set_eyes_closed(closed: bool) -> void:
+	if _boy_mat == null:
+		return
+	_ensure_sleep_eye_albedo()
+	_eyes_closed_tex = closed
+	var tex: Texture2D = _boy_albedo_tex_sleep if closed and _boy_albedo_tex_sleep else _boy_albedo_tex_day
+	if tex == null:
+		return
+	_boy_mat.albedo_texture = tex
+	# Keep override + surface material in sync (bake_pose_mesh may expose the surface slot).
+	if _body_mi:
+		_body_mi.material_override = _boy_mat
+		if _body_mi.mesh and _body_mi.mesh.get_surface_count() > 0:
+			_body_mi.mesh.surface_set_material(0, _boy_mat)
 
 
 func b2g(v) -> Vector3:
@@ -1331,31 +1425,42 @@ func _tick(delta: float) -> void:
 	_update_face(delta)
 
 
-## Child-like walk polish on top of Mixamo: upright torso, head steady, soft vertical bob.
+## Child-like walk polish on top of Mixamo: upright torso, visible stride, opposite arms.
+## Tripo's Mixamo walk has tiny limb travel — amplify hip/knee/foot + arms so the filmstrip reads.
 func _polish_gait(delta: float) -> void:
 	if skel == null or model == null:
 		return
 	var moving := anim == "move" and move_w > 0.25 and not pivoting
 	var bob_amp := 0.0
 	if moving:
-		bob_amp = lerpf(0.012, 0.022, run_k) * move_w
-		# Contra-lateral feel is in the clip; keep spine upright (kill hunch).
-		var upright := 0.04 + 0.06 * run_k  # slight run lean forward
-		_pose_add("mixamorig_Spine", Vector3(-upright * 0.4, 0.0, 0.0), move_w * 0.55)
+		var amp := lerpf(1.0, 1.25, run_k) * move_w
+		bob_amp = lerpf(0.014, 0.028, run_k) * move_w
+		# Slight forward lean; kill hunch.
+		var upright := 0.05 + 0.08 * run_k
+		_pose_add("mixamorig_Spine", Vector3(-upright * 0.45, 0.0, 0.0), move_w * 0.6)
 		_pose_add("mixamorig_Spine1", Vector3(-upright * 0.35, 0.0, 0.0), move_w * 0.55)
-		# Head stays level; slight look into the turn (eyes follow walk intent).
 		var look_y := clampf(turn_ahead, -0.35, 0.35) * 0.45
-		_pose_add("mixamorig_Head", Vector3(upright * 0.18, look_y, 0.0), move_w * 0.4)
-		# Soft knee flex at mid-stance so legs are not stiff sticks.
-		var knee := absf(sin(phase * TAU)) * lerpf(0.08, 0.14, run_k) * move_w
-		_pose_add("mixamorig_LeftLeg", Vector3(knee, 0.0, 0.0), 0.55)
-		_pose_add("mixamorig_RightLeg", Vector3(knee, 0.0, 0.0), 0.55)
-		# Visible contra-lateral arm swing (Tripo Mixamo walk has tiny hand travel).
-		var swing := sin(phase * TAU) * lerpf(0.95, 1.25, run_k) * move_w
-		_pose_add("mixamorig_LeftArm", Vector3(-swing * 0.65, swing * 0.12, swing * 0.28), 0.9)
-		_pose_add("mixamorig_RightArm", Vector3(swing * 0.65, -swing * 0.12, -swing * 0.28), 0.9)
-		_pose_add("mixamorig_LeftForeArm", Vector3(-absf(swing) * 0.45, 0.0, 0.0), 0.7)
-		_pose_add("mixamorig_RightForeArm", Vector3(-absf(swing) * 0.45, 0.0, 0.0), 0.7)
+		_pose_add("mixamorig_Head", Vector3(upright * 0.2, look_y, 0.0), move_w * 0.45)
+		# Alternating hip pitch (stride) + swing-leg knee flex + plant-leg stiff.
+		var s := sin(phase * TAU)
+		var c := cos(phase * TAU)
+		var hip_amp := lerpf(0.55, 0.85, run_k) * amp
+		var knee_swing := lerpf(0.85, 1.15, run_k) * amp
+		var knee_plant := lerpf(0.12, 0.22, run_k) * amp
+		# Left forward when s>0; right forward when s<0.
+		_pose_add("mixamorig_LeftUpLeg", Vector3(-hip_amp * s, 0.0, 0.0), 0.85)
+		_pose_add("mixamorig_RightUpLeg", Vector3(hip_amp * s, 0.0, 0.0), 0.85)
+		_pose_add("mixamorig_LeftLeg", Vector3(knee_swing * maxf(s, 0.0) + knee_plant * maxf(-s, 0.0), 0.0, 0.0), 0.85)
+		_pose_add("mixamorig_RightLeg", Vector3(knee_swing * maxf(-s, 0.0) + knee_plant * maxf(s, 0.0), 0.0, 0.0), 0.85)
+		# Heel strike / toe-off on the leading foot.
+		_pose_add("mixamorig_LeftFoot", Vector3(0.35 * maxf(s, 0.0) - 0.2 * maxf(-s, 0.0), 0.0, 0.0), 0.7)
+		_pose_add("mixamorig_RightFoot", Vector3(0.35 * maxf(-s, 0.0) - 0.2 * maxf(s, 0.0), 0.0, 0.0), 0.7)
+		# Contra-lateral arm swing (opposite the legs).
+		var swing := s * lerpf(1.05, 1.35, run_k) * amp
+		_pose_add("mixamorig_LeftArm", Vector3(swing * 0.7, -swing * 0.1, -swing * 0.25), 0.9)
+		_pose_add("mixamorig_RightArm", Vector3(-swing * 0.7, swing * 0.1, swing * 0.25), 0.9)
+		_pose_add("mixamorig_LeftForeArm", Vector3(-absf(swing) * 0.5, 0.0, 0.0), 0.75)
+		_pose_add("mixamorig_RightForeArm", Vector3(-absf(swing) * 0.5, 0.0, 0.0), 0.75)
 		skel.force_update_transform()
 	var want_bob := sin(phase * TAU) * bob_amp if moving else 0.0
 	_walk_bob = lerpf(_walk_bob, want_bob, 1.0 - exp(-delta * 10.0))
@@ -1520,6 +1625,7 @@ func _make_eyelid(nm: String) -> MeshInstance3D:
 ## expr: "smile" | "sleep" | "cheer" | "neutral"
 func set_face_expr(kind: String) -> void:
 	expr = kind
+	_set_eyes_closed(kind == "sleep")
 
 
 func _update_face(delta: float = 0.0) -> void:
@@ -1527,24 +1633,31 @@ func _update_face(delta: float = 0.0) -> void:
 		return
 	var open_h := 0.04
 	var want_close := open_h
-	# Sleep / nap: eyes shut.
-	if act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55:
-		want_close = 1.75
-	elif expr == "sleep":
-		want_close = 1.75
+	# Sleep / nap: eyes shut via closed-eye albedo (painted Tripo irises).
+	# Mesh eyelid overlays are NOT used for sleep — they float as beige blobs and
+	# never fully cover the painted irises. Blink still uses thin lids.
+	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) or expr == "sleep"
+	_set_eyes_closed(sleeping)
+	if sleeping:
+		_eyelid_l.visible = false
+		_eyelid_r.visible = false
+		_eyelid_l.scale.y = open_h
+		_eyelid_r.scale.y = open_h
+		if _mouth:
+			_mouth.visible = false
+		return
+	# Random blink every 2–6 s.
+	if blink_t >= 0.0:
+		blink_t += delta
+		var u := blink_t / 0.14
+		want_close = 1.55 if u < 0.55 else lerpf(1.55, open_h, (u - 0.55) / 0.45)
+		if blink_t >= 0.14:
+			blink_t = -1.0
+			blink_timer = rng.randf_range(2.0, 6.0)
 	else:
-		# Random blink every 2–6 s.
-		if blink_t >= 0.0:
-			blink_t += delta
-			var u := blink_t / 0.14
-			want_close = 1.55 if u < 0.55 else lerpf(1.55, open_h, (u - 0.55) / 0.45)
-			if blink_t >= 0.14:
-				blink_t = -1.0
-				blink_timer = rng.randf_range(2.0, 6.0)
-		else:
-			blink_timer -= delta
-			if blink_timer <= 0.0:
-				blink_t = 0.0
+		blink_timer -= delta
+		if blink_timer <= 0.0:
+			blink_t = 0.0
 	var cur := _eyelid_l.scale.y
 	var next := move_toward(cur, want_close, delta * 16.0)
 	_eyelid_l.scale.y = next
@@ -1563,13 +1676,10 @@ func _update_face(delta: float = 0.0) -> void:
 		var smile := 0.6
 		if expr == "cheer" or react_kind == "cheer":
 			smile = 1.0
-		elif expr == "sleep" or (act_lie_k > 0.55 and act_kind in ["sun", "sleep"]):
-			smile = 0.2
 		elif expr == "neutral":
 			smile = 0.35
 		_mouth.scale.y = lerpf(_mouth.scale.y, 0.22 + smile * 0.45, 1.0 - exp(-delta * 6.0))
 		_mouth.scale.x = lerpf(_mouth.scale.x, 0.85 + smile * 0.55, 1.0 - exp(-delta * 6.0))
-		# Painted mouth is enough when lids are shut; show overlay smile/cheer otherwise.
 		_mouth.visible = want_close < 0.85 and smile > 0.4
 
 
