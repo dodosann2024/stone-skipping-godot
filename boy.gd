@@ -786,12 +786,33 @@ func _apply_lounger_pose(w: float, breath: float) -> void:
 
 ## Hammock: curl into the occupied cradle. Head turns away; forearm covers the eyes.
 ## Hat stays on — slight forward tip so the brim rests on the fabric.
+## Mid climb-in: reach for the near lip, one knee up, weight leaning into the fabric.
+func apply_hammock_climb(w: float) -> void:
+	if skel == null or w <= 0.001:
+		return
+	_seed_lie_from_sit()
+	var k := smoothstep(0.0, 1.0, w)
+	# Readable climb: torso lean into fabric, one knee hiked onto the lip, both hands on rails.
+	_pose_add("mixamorig_Spine", Vector3(0.45, 0.0, 0.0), k)
+	_pose_add("mixamorig_Spine1", Vector3(0.25, 0.0, 0.0), k * 0.8)
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.45, 0.45, 0.25), k)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-0.35, -0.10, -0.08), k * 0.6)
+	_pose_add("mixamorig_LeftLeg", Vector3(-0.35, 0.0, 0.0), k)
+	_pose_add("mixamorig_RightLeg", Vector3(0.15, 0.0, 0.0), k * 0.5)
+	_pose_add("mixamorig_LeftArm", Vector3(-1.10, 0.70, -0.45), k)
+	_pose_add("mixamorig_RightArm", Vector3(-0.85, -0.55, 0.35), k)
+	_pose_add("mixamorig_LeftForeArm", Vector3(-1.10, 0.15, 0.0), k)
+	_pose_add("mixamorig_RightForeArm", Vector3(-0.95, -0.12, 0.0), k)
+	skel.force_update_transform()
+
+
 func _apply_hammock_pose(w: float, breath: float) -> void:
 	_pose_abs("mixamorig_Spine", Vector3(0.10 + breath * 0.08, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine1", Vector3(0.12 + breath * 0.1, 0.0, 0.0), w)
 	_pose_abs("mixamorig_Spine2", Vector3(0.08 + breath * 0.06, 0.0, 0.0), w)
-	_pose_abs("mixamorig_Neck", Vector3(-0.16, 0.34, 0.06), w)
-	_pose_abs("mixamorig_Head", Vector3(-0.18 + breath * 0.03, 0.52, 0.1), w)
+	# Mild chin tuck only — large head yaw/roll laid the brim sideways across the fabric.
+	_pose_abs("mixamorig_Neck", Vector3(-0.12, 0.06, 0.02), w)
+	_pose_abs("mixamorig_Head", Vector3(-0.18 + breath * 0.02, 0.08, 0.02), w)
 	# Soft knee curl so shins follow the cradle instead of a stiff plank.
 	_pose_add("mixamorig_LeftUpLeg", Vector3(-0.55, 0.12, 0.18), w * 0.85)
 	_pose_add("mixamorig_RightUpLeg", Vector3(-0.55, -0.12, -0.18), w * 0.85)
@@ -800,6 +821,7 @@ func _apply_hammock_pose(w: float, breath: float) -> void:
 	_pose_add("mixamorig_LeftFoot", Vector3(0.15, 0.0, 0.12), w * 0.55)
 	_pose_add("mixamorig_RightFoot", Vector3(0.15, 0.0, -0.12), w * 0.55)
 	_nap_forearm_over_eyes(w, "sleep")
+	set_face_expr("sleep")
 
 
 ## Classic nap: left hand on belly, right forearm draped across the eyes (in front of
@@ -916,6 +938,27 @@ func plant_feet_on_plane(plane_point: Vector3, plane_normal: Vector3, gap := 0.0
 	skel.force_update_transform()
 
 
+## Snap both feet onto a ground plane (pull down or lift) so a park-bench sit plants soles.
+## Caps the pull so short Tripo shins don't rubber-hose through the seat board.
+func plant_feet_to_ground(plane_point: Vector3, plane_normal: Vector3 = Vector3.UP, gap := 0.02) -> void:
+	if skel == null:
+		return
+	plane_normal = plane_normal.normalized()
+	skel.force_update_transform()
+	const MAX_PULL := 0.12
+	for bone_name in [B_FOOT[0], B_FOOT[1]]:
+		var bi := skel.find_bone(bone_name)
+		if bi < 0:
+			continue
+		var xf: Transform3D = skel.global_transform * skel.get_bone_global_pose(bi)
+		var g := (xf.origin - plane_point).dot(plane_normal)
+		var pull := clampf(g - gap, -MAX_PULL, MAX_PULL)
+		var planted := Transform3D(xf.basis, xf.origin - plane_normal * pull)
+		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
+		skel.set_bone_global_pose_override(bi, local_xf, 1.0, true)
+	skel.force_update_transform()
+
+
 ## Clear any foot pose overrides (call when leaving lie / before reseeding).
 func clear_foot_plant() -> void:
 	if skel == null:
@@ -958,26 +1001,26 @@ func _pose_add(bone: String, euler: Vector3, w: float) -> void:
 	skel.set_bone_pose_rotation(bi, cur.slerp(add * cur, w))
 
 
-## Upright chair/log/hammock sit: thighs near horizontal, knees ~90°, shins down.
-## Additive on idle seed (keeps Mixamo UpLeg π-twist so thighs fold forward along facing).
+## Upright chair/log/hammock sit: additive on idle seed (keeps Mixamo UpLeg rest twist).
+## Mild yaw so both feet stay forward of the hips along seat face.
 func _apply_ergonomic_sit(w: float) -> void:
 	if skel == null or w <= 0.001:
 		return
-	# Smoothstep blend; keep v24 L-sit magnitudes so butt contact selftests stay green.
 	var k := smoothstep(0.0, 1.0, w)
-	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.70, 0.70, 0.40), k)
-	_pose_add("mixamorig_RightUpLeg", Vector3(-1.70, -0.70, -0.40), k)
-	_pose_add("mixamorig_LeftLeg", Vector3(1.70, 0.0, 0.0), k)
-	_pose_add("mixamorig_RightLeg", Vector3(1.70, 0.0, 0.0), k)
-	_pose_add("mixamorig_LeftFoot", Vector3(0.30, 0.0, 0.05), k * 0.75)
-	_pose_add("mixamorig_RightFoot", Vector3(0.30, 0.0, -0.05), k * 0.75)
+	# Park-bench L-sit: thighs on the board, shins down toward the ground in front
+	# (less knee tuck than the deep under-seat curl — that perched a foot on the seat).
+	_pose_add("mixamorig_LeftUpLeg", Vector3(-1.15, 0.18, 0.12), k)
+	_pose_add("mixamorig_RightUpLeg", Vector3(-1.15, -0.18, -0.12), k)
+	_pose_add("mixamorig_LeftLeg", Vector3(0.95, 0.0, 0.0), k)
+	_pose_add("mixamorig_RightLeg", Vector3(0.95, 0.0, 0.0), k)
+	_pose_add("mixamorig_LeftFoot", Vector3(0.12, 0.0, 0.04), k * 0.7)
+	_pose_add("mixamorig_RightFoot", Vector3(0.12, 0.0, -0.04), k * 0.7)
 	_pose_add("mixamorig_Spine", Vector3(-0.08, 0.0, 0.0), k * 0.55)
 	_pose_add("mixamorig_Spine1", Vector3(-0.05, 0.0, 0.0), k * 0.45)
-	# Hands rest on the thighs (not tucked behind the hips — that clipped the shorts).
-	_pose_add("mixamorig_LeftArm", Vector3(0.35, 0.25, -0.25), k * 0.65)
-	_pose_add("mixamorig_RightArm", Vector3(0.35, -0.25, 0.25), k * 0.65)
-	_pose_add("mixamorig_LeftForeArm", Vector3(-0.55, 0.15, 0.0), k * 0.7)
-	_pose_add("mixamorig_RightForeArm", Vector3(-0.55, -0.15, 0.0), k * 0.7)
+	_pose_add("mixamorig_LeftArm", Vector3(0.30, 0.22, -0.22), k * 0.65)
+	_pose_add("mixamorig_RightArm", Vector3(0.30, -0.22, 0.22), k * 0.65)
+	_pose_add("mixamorig_LeftForeArm", Vector3(-0.50, 0.12, 0.0), k * 0.7)
+	_pose_add("mixamorig_RightForeArm", Vector3(-0.50, -0.12, 0.0), k * 0.7)
 	skel.force_update_transform()
 
 
@@ -1575,8 +1618,14 @@ func hat_grip_gap() -> float:
 	return 0.0
 
 
+var _face_decal: Node3D
+var _face_mat: StandardMaterial3D
+var _face_tex := {}
+
+
 func _build_face_expr() -> void:
-	# Soft eyelid + mouth overlays on the Head bone (Tripo has no blendshapes).
+	# AC-style 2D face sticker on the Head bone (Tripo has no blendshapes).
+	# Texture swaps make idle / smile / cheer / sleep readable at arm's length.
 	if not parts.has("head") or parts["head"] == null:
 		return
 	var head: Node3D = parts["head"]
@@ -1584,30 +1633,89 @@ func _build_face_expr() -> void:
 	_eyelid_r = _make_eyelid("EyelidR")
 	head.add_child(_eyelid_l)
 	head.add_child(_eyelid_r)
-	# Mixamo head local: +Y up skull, −Z face-forward after model.y=PI.
-	# Tripo eyes are bulbous shells — lids sit just in front and cover them fully when closed.
-	_eyelid_l.position = Vector3(0.034, 0.062, -0.152)
-	_eyelid_r.position = Vector3(-0.034, 0.062, -0.152)
+	# Tripo/Mixamo Head bone (after model.y=PI): +X face-forward, +Y skull-up, +Z character-left.
+	_eyelid_l.position = Vector3(0.155, 0.055, 0.034)
+	_eyelid_r.position = Vector3(0.155, 0.055, -0.034)
 	_eyelid_l.scale = Vector3(1.15, 0.04, 1.05)
 	_eyelid_r.scale = Vector3(1.15, 0.04, 1.05)
+	_eyelid_l.visible = false
+	_eyelid_r.visible = false
+	# Keep a tiny procedural mouth as fallback under the decal.
 	_mouth = MeshInstance3D.new()
 	_mouth.name = "MouthExpr"
 	var mm := SphereMesh.new()
-	mm.radius = 0.016
-	mm.height = 0.01
-	mm.radial_segments = 10
-	mm.rings = 6
+	mm.radius = 0.014
+	mm.height = 0.008
+	mm.radial_segments = 8
+	mm.rings = 4
 	_mouth.mesh = mm
 	var mout := StandardMaterial3D.new()
 	mout.albedo_color = Color(0.78, 0.32, 0.34)
 	mout.roughness = 0.65
 	mout.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_mouth.material_override = mout
-	_mouth.position = Vector3(0.0, 0.002, -0.102)
-	_mouth.rotation_degrees = Vector3(10, 0, 0)
-	_mouth.scale = Vector3(1.15, 0.4, 0.5)
+	_mouth.position = Vector3(0.130, -0.005, 0.0)
+	_mouth.visible = false
 	head.add_child(_mouth)
+	# AC-style face plate: opaque QuadMesh locked to Head bone (no billboard).
+	# Covers Tripo's baked eyes/mouth; texture swap = idle/smile/cheer/sleep.
+	var plate := MeshInstance3D.new()
+	plate.name = "FaceExprDecal"
+	var q := QuadMesh.new()
+	# Large enough to cover Tripo eye shells + mouth once centered on the face.
+	q.size = Vector2(0.15, 0.19)
+	plate.mesh = q
+	_face_mat = StandardMaterial3D.new()
+	_face_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_face_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_face_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_face_mat.no_depth_test = true
+	_face_mat.render_priority = 20
+	_face_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+	plate.material_override = _face_mat
+	# QuadMesh faces +Z by default; yaw −90° maps that normal onto Head +X (face-out).
+	# Tuned against v25_face_fit2: cover eyes+mouth; slight −Z recenters L/R.
+	plate.position = Vector3(0.095, 0.048, -0.018)
+	plate.rotation = Vector3(0.0, -PI / 2.0, 0.0)
+	plate.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	plate.layers = 1 | 2
+	head.add_child(plate)
+	_face_decal = plate
+	_face_tex = {
+		"neutral": _load_face_tex("res://art/boy/face_expr_idle.png"),
+		"idle": _load_face_tex("res://art/boy/face_expr_idle.png"),
+		"smile": _load_face_tex("res://art/boy/face_expr_smile.png"),
+		"cheer": _load_face_tex("res://art/boy/face_expr_cheer.png"),
+		"sleep": _load_face_tex("res://art/boy/face_expr_sleep.png"),
+	}
 	blink_timer = rng.randf_range(2.0, 5.0)
+	_apply_face_decal("smile")
+
+
+func _load_face_tex(path: String) -> Texture2D:
+	# Prefer imported resource; fall back to raw PNG so headless stills work
+	# before Godot has written a .import file.
+	if ResourceLoader.exists(path):
+		var t: Texture2D = load(path) as Texture2D
+		if t != null:
+			return t
+	var img := Image.load_from_file(ProjectSettings.globalize_path(path))
+	if img == null or img.is_empty():
+		return null
+	return ImageTexture.create_from_image(img)
+
+
+func _apply_face_decal(kind: String) -> void:
+	if _face_decal == null:
+		return
+	var key := kind
+	if key == "neutral":
+		key = "idle"
+	var tex: Texture2D = _face_tex.get(key, _face_tex.get("smile", null))
+	if _face_mat != null:
+		_face_mat.albedo_texture = tex
+		_face_mat.albedo_color = Color.WHITE
+	_face_decal.visible = tex != null
 
 
 func _make_eyelid(nm: String) -> MeshInstance3D:
@@ -1635,8 +1743,8 @@ func _make_eyelid(nm: String) -> MeshInstance3D:
 	return mi
 
 
-## expr: "smile" | "sleep" | "cheer" | "neutral"
-## Sleep keeps open-eye albedo (forearm covers eyes). Soft disc blink only — never closed albedo.
+## expr: "smile" | "sleep" | "cheer" | "neutral" | "idle"
+## Face sticker texture swap (AC-style). Soft disc blink on top when awake.
 func set_face_expr(kind: String) -> void:
 	expr = kind
 	_set_eyes_closed(false)
@@ -1645,6 +1753,10 @@ func set_face_expr(kind: String) -> void:
 		blink_timer = 9999.0
 	elif blink_timer > 8.0:
 		blink_timer = rng.randf_range(2.2, 4.5)
+	_apply_face_decal(kind)
+	# Sleep uses eyelid discs, never the upright AC plate (edge-on = fabric ribbon).
+	if kind == "sleep" and _face_decal:
+		_face_decal.visible = false
 
 
 func _update_face(delta: float = 0.0) -> void:
@@ -1652,50 +1764,29 @@ func _update_face(delta: float = 0.0) -> void:
 		return
 	_set_eyes_closed(false)
 	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) or expr == "sleep"
-	# Soft eyelid-disc blink (scale pulse). Never swap to closed-eye albedo — that made glassy bulbs.
+	var want := expr
+	if react_kind == "cheer":
+		want = "cheer"
+	elif sleeping:
+		want = "sleep"
+	_apply_face_decal(want)
+	blink_t = -1.0
+	blink_timer = 9999.0
 	if sleeping:
-		blink_t = -1.0
-		blink_timer = 9999.0
+		# Supine: AC plate reads as a vertical ribbon through the face; soft lids do too
+		# when Head +X points skyward. Hide both — nap forearm covers the eyes instead.
+		if _face_decal:
+			_face_decal.visible = false
+			_face_decal.scale = Vector3.ZERO
 		_eyelid_l.visible = false
 		_eyelid_r.visible = false
 	else:
-		if blink_t < 0.0:
-			blink_timer -= delta
-			if blink_timer <= 0.0:
-				blink_t = 0.0
-				blink_timer = rng.randf_range(2.4, 5.2)
-		if blink_t >= 0.0:
-			blink_t += delta
-			var u := blink_t / 0.14  # ~140 ms blink
-			var close := 1.0 - absf(u - 1.0) if u < 2.0 else 0.0
-			close = clampf(close, 0.0, 1.0)
-			_eyelid_l.visible = close > 0.05
-			_eyelid_r.visible = close > 0.05
-			var sy := lerpf(0.08, 1.05, close)
-			_eyelid_l.scale = Vector3(1.05, sy, 1.0)
-			_eyelid_r.scale = Vector3(1.05, sy, 1.0)
-			if u >= 2.0:
-				blink_t = -1.0
-				_eyelid_l.visible = false
-				_eyelid_r.visible = false
-		else:
-			_eyelid_l.visible = false
-			_eyelid_r.visible = false
-	if _mouth == null:
-		return
-	if sleeping:
+		if _face_decal:
+			_face_decal.scale = Vector3.ONE
+		_eyelid_l.visible = false
+		_eyelid_r.visible = false
+	if _mouth:
 		_mouth.visible = false
-		return
-	var smile := 0.55
-	if expr == "cheer" or react_kind == "cheer":
-		smile = 1.15
-	elif expr == "smile":
-		smile = 0.78
-	elif expr == "neutral":
-		smile = 0.32
-	_mouth.scale.y = lerpf(_mouth.scale.y, 0.2 + smile * 0.55, 1.0 - exp(-delta * 7.0))
-	_mouth.scale.x = lerpf(_mouth.scale.x, 0.8 + smile * 0.7, 1.0 - exp(-delta * 7.0))
-	_mouth.visible = smile > 0.28
 
 
 func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:

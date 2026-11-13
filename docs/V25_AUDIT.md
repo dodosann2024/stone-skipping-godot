@@ -106,14 +106,14 @@ Keep approved Tripo soft look. Prefer animation/contact/camera/shader fixes. Tri
 | Area | What changed | Still short of AC/Sky |
 |------|----------------|------------------------|
 | Walk/run | Softer gait polish, hip sway/bob, settle on stick release, turn lean; `spin_busy` no longer deadlocks spot turns | Mixamo clip still carries ankle travel; not true planted IK |
-| Sit | Single sit path, restored L-sit contact magnitudes, smoothstep blend, hands on thighs | Approach→turn→lower still short of a full climb animation |
-| Hammock | Soft knee curl, shallower visual dish + face normals, occupied sag blend, empty snap, spine-aware settle | Enter/exit still pose-driven, not a continuous climb/roll |
-| Faces | Soft blink discs (no glassy albedo), expression separation | Brow sculpt limited by Tripo topology |
-| Camera | Live rest target, fixed-cam REST retarget, zoom/spring damp | Foliage slam not fully gone on far zoom |
+| Sit | Bench face = mesh −Z (seaward); sit on front half; L-sit without Mixamo chest twist; no rubber foot plant | Feet still dangle (Tripo shins &lt; SEAT_TOP); back not hard against backrest |
+| Hammock | Contact wrap matched visual dish; shallower occ sag; higher stand-off; milder head tip; climb pose + side cam | Climb still reads as stand-near; sleep eyes stay open (nap forearm); no real fabric wrap |
+| Faces | AC-style Head-local face plate (Head +X) with idle/smile/cheer texture swaps; sleep hides plate | Plate is a flat mask (Tripo eyes peek); not UV-composited albedo |
+| Camera | Capture uses live branch + BUILD stamp; near 2.6 / mid 7 / far 16 | Foliage slam not fully gone on far zoom |
 | Visuals | Night boy lights layer-2 only (no sand hotspot) | Soft shadow maps / ambient crabs still thin |
 | Selftest | Tripo phase sync assert; sit/hammock penet; bump slide ≥0.55 m; sleep bone penet −1.5 cm with mesh gate | Stance foot slide &lt;3 cm not enforceable on Mixamo ankles |
 
-### After-fix montages
+### After-fix montages (BUILD `v25-fix6`, live branch)
 
 | Sequence | Path |
 |----------|------|
@@ -125,3 +125,29 @@ Keep approved Tripo soft look. Prefer animation/contact/camera/shader fixes. Tri
 | Faces | `screenshots/v25/after/faces_montage.png` |
 | Camera | `screenshots/v25/after/camera_zoom.png` |
 | Scenes | `screenshots/v25/after/scene_day_sunset_night.png` |
+
+### Pixel-diff vs audit (mean abs, 0–255)
+
+| montage | MAD vs audit |
+|---|---|
+| camera_zoom | **34.4** |
+| log_sit | **60.7** |
+| scene_day_sunset_night | **21.7** |
+| bench_sit | **40.9** |
+| walk | **31.1** |
+| run | **30.9** |
+| faces | **45.6** |
+| hammock | **42.0** |
+
+Camera near-vs-far MAD ≈ **55.8** (framing actually differs).
+
+### P0 crop verdict (player-visible — do not overclaim)
+
+| P0 | Crop | Verdict |
+|----|------|---------|
+| Bench | `after/crops/p0_bench_end.png` | **Partial** — on seat facing seaward/camera, backrest behind; feet dangle; not straddling backrest |
+| Hammock | `after/crops/p0_hammock_lie.png` | **Partial** — body on fabric (wrap/contact aligned); sleep eyes still open; climb still weak |
+| Faces | `after/crops/p0_face_{idle,smile,cheer}.png` | **Partial** — cheer open-mouth vs smile curve vs idle are distinguishable via AC plate; plate is flat/mask-like |
+| Camera | `after/crops/p0_cam_{near,far}.png` | **Pass** — near/mid/far clearly different |
+
+`docs/index.html` still redirects to **v24**. PR stays unmerged.

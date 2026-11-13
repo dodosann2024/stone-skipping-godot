@@ -1292,25 +1292,31 @@ func _begin_rest(kind: String) -> void:
 		_setup_hammock_rest()
 	elif kind == "seat":
 		var st: Dictionary = island.seats[seat_i]
-		var face: Vector3 = seat_face
+		var face: Vector3 = seat_face.normalized()
 		seat_lying = false
 		rest_side = face.cross(Vector3.UP).normalized()
+		# Face OUT (seaward / fire). Back toward backrest (−face). Sit pose uses
+		# absolute idle-seed eulers (not Mixamo sit clip — that twists chest ~180°).
 		rest_sit_b = Basis(Vector3.UP, atan2(-face.x, -face.z))
-		# Approach from the front, turn to face away from the seat, then sit.
+		# Approach from the front, turn back to the backrest, then sit.
 		rest_approach = seat_ap
 		var pl0 := boy.activity("seat", 1.0, 0.0, 0.0)
 		var top: Vector3 = st["top"]
 		# Seed from live sit-hip height; mesh snap raises the butt onto the seat top.
 		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
+		# Park bench: sit on the FRONT half so the backrest stays behind the spine,
+		# thighs hang over the seaward edge, feet toward the ground in front.
+		if st["name"] == "长椅":
+			# Slight forward of center: back near backrest, thighs over the seaward edge.
+			rest_seat += face * 0.08
 		# On logs, sit slightly toward the fire-side rim so knees/feet clear past the
 		# cylinder (thighs along +face) instead of perching mid-log.
-		if st["name"] == "坐木":
-			rest_seat += face.normalized() * 0.06
+		elif st["name"] == "坐木":
+			rest_seat += face * 0.06
 		# lying back: head towards his right, pelvis a little towards the foot end, back on the seat
 		rest_lie = top + Vector3(0, LIE_BACK, 0) - rest_side * 0.1
 		if st["name"] == "长椅":
-			# off the backrest a little: room for the brim of the hat beside his head
-			rest_lie += face * 0.05
+			rest_lie += face * 0.08
 		rest_lie_b = _lie_basis(rest_side)
 	else:
 		# 晒太阳 on the deck-chair lounger (tilted backrest + flat seat), not the flat towel
@@ -1374,9 +1380,9 @@ func _setup_hammock_rest() -> void:
 	head_dir = head_dir.lerp(diag, 0.5).normalized()
 	var into: Vector3 = (-Vector3.UP).lerp(-(hip_f["normal"] as Vector3).normalized(), 0.2).normalized()
 	rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Centre of the cradle (hat is detached — no brim bias).
+	# Centre of the cradle — stand-off above fabric (skin shell ~0.12 + clearance).
 	var hip_pos: Vector3 = hip_f["pos"] as Vector3
-	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.12
+	rest_lie = hip_pos + (hip_f["normal"] as Vector3) * 0.22
 	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground.
 	# Basis(UP, atan2(x,z)) aims local −Z at (x,z); use −side so −Z == +side (outward).
 	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
@@ -1562,11 +1568,14 @@ func _snap_sit_contact() -> void:
 		var err := target - deepest
 		if absf(err) < 0.002:
 			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-			return
+			break
 		var step := clampf(err, -0.07, 0.07)
 		rest_root_sit.y += step
 		rest_seat.y += step
 	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
+	# NOTE: do not absolute-plant feet to ground here — Tripo shins are short vs
+	# SEAT_TOP and plant_feet_to_ground rubber-hoses a leg onto the board. Feet
+	# hang toward the ground from the ergonomic L-sit; soft dangling reads better.
 
 
 ## Settle butt onto the near-edge hammock fabric while seated (legs hang outside).
@@ -1654,19 +1663,17 @@ func _snap_lie_contact() -> void:
 		var both_float := hip_gap > 0.012 and spine_gap > 0.012
 		var float_gap := minf(hip_gap, spine_gap)
 		# Prefer lifting out of fabric over leaving a poke-through (hat/shoulder).
-		if mesh_d < -0.005 or sink_gap < -0.008:
+		# Cap float settle so we never re-bury the mesh just to tighten bone gaps.
+		if mesh_d < -0.002 or sink_gap < -0.008:
 			var lift := 0.0
-			if mesh_d < -0.005:
-				lift = maxf(lift, -0.002 - mesh_d)
+			if mesh_d < -0.002:
+				lift = maxf(lift, -mesh_d + 0.01)
 			if sink_gap < -0.008:
 				lift = maxf(lift, -sink_gap)
-			rest_lie += hn0 * minf(lift, 0.08)
-		elif both_float:
-			rest_lie -= hn0 * minf(float_gap - 0.005, 0.04)
-		elif mesh_d > 0.012 and head_gap > 0.01:
-			rest_lie -= hn0 * minf(mesh_d - 0.004, 0.025)
-		elif head_gap > 0.02 and hip_gap > -0.005:
-			rest_lie -= hn0 * minf(head_gap - 0.008, 0.03)
+			rest_lie += hn0 * minf(lift, 0.18)
+		elif both_float and mesh_d > 0.025:
+			# Only settle large floats — keep a clear stand-off above the fabric.
+			rest_lie -= hn0 * minf(float_gap - 0.020, 0.02)
 		return
 	# Lounger: foam sink OK; fail only on wood-board punch. Settle hips/head onto the pads.
 	# Bone snap only — hat tip may kiss foam within 1 cm; over-lifting floats the torso.

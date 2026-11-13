@@ -21,8 +21,8 @@ var hammock_node: Node3D
 var hammock_mi: MeshInstance3D
 var hammock_nt := 14
 var hammock_nu := 11
-var hammock_empty_sag := 0.22
-var hammock_occ_sag := 0.48
+var hammock_empty_sag := 0.18
+var hammock_occ_sag := 0.34
 var hammock_half_w := 0.55
 var hammock_occupied := false
 var hammock_body_pts: Array[Vector3] = []  # world points that weigh the fabric
@@ -1248,22 +1248,26 @@ func _build_lighthouse() -> void:
 	box(SB, Vector3(0.55, 1.0, 0.06), p + Vector3(0.0, 0.95, 0.96), Vector3.ZERO, Color(0.35, 0.5, 0.62))
 	add_obstacle(Vector2(p.x, p.z), 1.3, p.y + h + 1.7, "灯塔", -99.0, false)
 	wall_c(Vector2(p.x, p.z), 1.38, p.y - 1.0, p.y + h + 1.7, "灯塔")
-	# bench looking out to sea
+	# bench looking out to sea.
+	# Local layout: seat board spans Z ±0.40; backrest on the REAR edge (+Z);
+	# face = −Z (seaward). Sitter approaches from −Z, turns back to +Z backrest,
+	# sits on the front half of the board with feet toward the sea.
 	var bp = p + Vector3(-2.2, 0, -2.0)
 	bp.y = ground_h(bp.x, bp.z)
 	var bxf = Transform3D(Basis(Vector3.UP, 0.7), bp)
 	var seat_y := SEAT_TOP - 0.035
 	# Board half-height 0.035 → visual top at seat_y+0.035 = SEAT_TOP (local).
-	boxb(SB, Vector3(1.4, 0.07, 0.4), bxf * Transform3D(Basis.IDENTITY, Vector3(0, seat_y, 0)), _wood())
-	boxb(SB, Vector3(1.4, 0.3, 0.06), bxf * Transform3D(Basis(Vector3.RIGHT, -0.2), Vector3(0, seat_y + 0.3, 0.2)), _wood())
+	boxb(SB, Vector3(1.4, 0.07, 0.40), bxf * Transform3D(Basis.IDENTITY, Vector3(0, seat_y, 0)), _wood())
+	# Backrest clearly at the REAR lip (+Z); darker so sit contact is readable in stills.
+	boxb(SB, Vector3(1.35, 0.20, 0.04), bxf * Transform3D(Basis(Vector3.RIGHT, -0.10), Vector3(0, seat_y + 0.26, 0.40)), Color(0.55, 0.38, 0.24))
 	for bx in [-0.6, 0.6]:
-		boxb(SB, Vector3(0.07, seat_y, 0.35), bxf * Transform3D(Basis.IDENTITY, Vector3(bx, seat_y * 0.5, 0)), Color(0.42, 0.29, 0.18))
-	var bc: Vector3 = bxf * Vector3(0, 0, 0.03)
+		boxb(SB, Vector3(0.07, seat_y, 0.32), bxf * Transform3D(Basis.IDENTITY, Vector3(bx, seat_y * 0.5, -0.04)), Color(0.42, 0.29, 0.18))
+	var bc: Vector3 = bxf * Vector3(0, 0, -0.05)
 	wall_b(Vector2(bc.x, bc.z), Vector2(0.72, 0.24), 0.7, bp.y - 0.3, bp.y + 0.75, "长椅")
-	var bface: Vector3 = bxf.basis * Vector3(0, 0, -1)
-	# Snap target = mesh AABB top of the seat board (not a hardcoded constant).
-	var bench_top: Vector3 = bxf * Vector3(0, seat_y + 0.035, 0.03)
-	_add_seat("长椅", bench_top, bface, 0.5, "灯塔边的长椅：点「坐下」看看海，坐下后还能躺下", false, true)
+	var bface: Vector3 = (bxf.basis * Vector3(0, 0, -1)).normalized()
+	# Sit target well onto the FRONT half (away from backrest).
+	var bench_top: Vector3 = bxf * Vector3(0, seat_y + 0.035, -0.18)
+	_add_seat("长椅", bench_top, bface, 0.7, "灯塔边的长椅：点「坐下」看看海，坐下后还能躺下", false, true)
 
 func _build_campfire() -> void:
 	var c = campfire_pos
@@ -1906,8 +1910,9 @@ func hammock_point(t: float) -> Vector3:
 	var f := ft - float(i0)
 	var y_off := lerpf(_ham_cur_y[i0] if _ham_cur_y.size() > i0 else -hammock_empty_sag * sin(PI * t),
 		_ham_cur_y[i1] if _ham_cur_y.size() > i1 else -hammock_empty_sag * sin(PI * t), f)
-	# Contact cradle depth (v24). Visual mesh dish can be shallower; shell accounts for skin.
-	var wrap := 0.30 if hammock_occupied else 0.12
+	# MUST match visual dish in _rebuild_hammock_mesh (wrap 0.18/0.12) or the body
+	# sits on a deeper contact plane and sinks through the visible fabric.
+	var wrap := 0.18 if hammock_occupied else 0.12
 	p.y = lerpf(hammock_a.y, hammock_b.y, t) + y_off - wrap
 	return p
 
