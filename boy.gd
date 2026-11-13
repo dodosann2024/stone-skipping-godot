@@ -974,10 +974,11 @@ func _apply_ergonomic_sit(w: float) -> void:
 	_pose_add("mixamorig_RightFoot", Vector3(0.30, 0.0, -0.05), w * 0.75)
 	_pose_add("mixamorig_Spine", Vector3(-0.08, 0.0, 0.0), w * 0.55)
 	_pose_add("mixamorig_Spine1", Vector3(-0.05, 0.0, 0.0), w * 0.45)
-	_pose_add("mixamorig_LeftArm", Vector3(0.20, 0.40, -0.55), w * 0.7)
-	_pose_add("mixamorig_RightArm", Vector3(0.20, -0.40, 0.55), w * 0.7)
-	_pose_add("mixamorig_LeftForeArm", Vector3(-0.35, 0.0, 0.0), w * 0.6)
-	_pose_add("mixamorig_RightForeArm", Vector3(-0.35, 0.0, 0.0), w * 0.6)
+	# Hands rest on the thighs (not tucked behind the hips — that clipped the shorts).
+	_pose_add("mixamorig_LeftArm", Vector3(0.35, 0.25, -0.25), w * 0.65)
+	_pose_add("mixamorig_RightArm", Vector3(0.35, -0.25, 0.25), w * 0.65)
+	_pose_add("mixamorig_LeftForeArm", Vector3(-0.55, 0.15, 0.0), w * 0.7)
+	_pose_add("mixamorig_RightForeArm", Vector3(-0.55, -0.15, 0.0), w * 0.7)
 	skel.force_update_transform()
 
 
@@ -1570,14 +1571,12 @@ func _build_face_expr() -> void:
 	_eyelid_r = _make_eyelid("EyelidR")
 	head.add_child(_eyelid_l)
 	head.add_child(_eyelid_r)
-	# Mixamo head: local +Y up the skull, −Z roughly face-forward after model.y=PI.
 	# Mixamo head local: +Y up skull, −Z face-forward after model.y=PI.
-	# Quiet when open (thin); grow in Y to cover irises for blink/sleep.
-	# Tripo eyes sit higher/further forward than Mixamo defaults — calibrated via lid_debug.
-	_eyelid_l.position = Vector3(0.032, 0.065, -0.145)
-	_eyelid_r.position = Vector3(-0.032, 0.065, -0.145)
-	_eyelid_l.scale = Vector3(1.25, 0.03, 0.9)
-	_eyelid_r.scale = Vector3(1.25, 0.03, 0.9)
+	# Tripo eyes are bulbous shells — lids sit just in front and cover them fully when closed.
+	_eyelid_l.position = Vector3(0.034, 0.062, -0.152)
+	_eyelid_r.position = Vector3(-0.034, 0.062, -0.152)
+	_eyelid_l.scale = Vector3(1.15, 0.04, 1.05)
+	_eyelid_r.scale = Vector3(1.15, 0.04, 1.05)
 	_mouth = MeshInstance3D.new()
 	_mouth.name = "MouthExpr"
 	var mm := SphereMesh.new()
@@ -1601,21 +1600,22 @@ func _build_face_expr() -> void:
 func _make_eyelid(nm: String) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.name = nm
+	# Flattened disc: covers Tripo's bulbous eye shells without reading as a beige ball.
 	var sm := SphereMesh.new()
-	# Large enough to cover Tripo's painted irises when scale.y grows for sleep/blink.
-	sm.radius = 0.048
-	sm.height = 0.055
-	sm.radial_segments = 14
+	sm.radius = 0.055
+	sm.height = 0.028
+	sm.radial_segments = 16
 	sm.rings = 8
 	mi.mesh = sm
 	var mat := StandardMaterial3D.new()
-	# Skin-tone lid that covers the painted eye when scale.y grows.
-	mat.albedo_color = Color(0.92, 0.74, 0.62)
-	mat.roughness = 0.9
+	# Match Tripo peach skin (albedo_color multiply is applied on the body mat).
+	mat.albedo_color = Color(0.96, 0.82, 0.70)
+	mat.roughness = 1.0
+	mat.metallic = 0.0
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.no_depth_test = true  # always draw over painted irises
-	mat.render_priority = 10
+	mat.no_depth_test = true  # draw over protruding eye shells
+	mat.render_priority = 12
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.layers = 1 | 2
@@ -1633,46 +1633,38 @@ func _update_face(delta: float = 0.0) -> void:
 		return
 	var open_h := 0.04
 	var want_close := open_h
-	# Sleep / nap: eyes shut via closed-eye albedo (painted Tripo irises).
-	# Mesh eyelid overlays are NOT used for sleep — they float as beige blobs and
-	# never fully cover the painted irises. Blink still uses thin lids.
+	# Sleep / blink: closed-eye albedo (projection bake) + flat opaque lid discs.
+	# Tripo eyes are protruding shells — albedo alone still reads as glass bulbs;
+	# discs hide the shells while the albedo keeps UV islands from flashing iris.
 	var sleeping := (act_kind in ["sun", "sleep", "seatlie"] and act_lie_k > 0.55) or expr == "sleep"
-	_set_eyes_closed(sleeping)
+	var blinking := false
+	if not sleeping:
+		if blink_t >= 0.0:
+			blink_t += delta
+			var u := blink_t / 0.14
+			want_close = 1.0 if u < 0.55 else lerpf(1.0, open_h, (u - 0.55) / 0.45)
+			blinking = u < 0.85
+			if blink_t >= 0.14:
+				blink_t = -1.0
+				blink_timer = rng.randf_range(2.0, 6.0)
+				blinking = false
+		else:
+			blink_timer -= delta
+			if blink_timer <= 0.0:
+				blink_t = 0.0
+	var closed := sleeping or blinking
+	_set_eyes_closed(closed)
+	# Mesh lid discs mis-parent on Tripo Head (float beside the face). Keep hidden;
+	# closed-eye albedo is the only cover until a Tripo regen with flatter eyes/lids.
+	_eyelid_l.scale = Vector3(1.15, open_h, 1.05)
+	_eyelid_r.scale = Vector3(1.15, open_h, 1.05)
+	_eyelid_l.visible = false
+	_eyelid_r.visible = false
 	if sleeping:
-		_eyelid_l.visible = false
-		_eyelid_r.visible = false
-		_eyelid_l.scale.y = open_h
-		_eyelid_r.scale.y = open_h
 		if _mouth:
 			_mouth.visible = false
 		return
-	# Random blink every 2–6 s.
-	if blink_t >= 0.0:
-		blink_t += delta
-		var u := blink_t / 0.14
-		want_close = 1.55 if u < 0.55 else lerpf(1.55, open_h, (u - 0.55) / 0.45)
-		if blink_t >= 0.14:
-			blink_t = -1.0
-			blink_timer = rng.randf_range(2.0, 6.0)
-	else:
-		blink_timer -= delta
-		if blink_timer <= 0.0:
-			blink_t = 0.0
-	var cur := _eyelid_l.scale.y
-	var next := move_toward(cur, want_close, delta * 16.0)
-	_eyelid_l.scale.y = next
-	_eyelid_r.scale.y = next
-	# Hide thin open lids so they do not float as cheek artifacts.
-	var lids_on := next > 0.2
-	_eyelid_l.visible = lids_on
-	_eyelid_r.visible = lids_on
-	# Subtle gaze: shift lids with turn intent (no blendshapes).
-	if skel and anim == "move" and want_close < 0.5:
-		var look := clampf(turn_ahead, -0.4, 0.4)
-		_eyelid_l.position.x = 0.022 + look * 0.004
-		_eyelid_r.position.x = -0.022 + look * 0.004
 	if _mouth:
-		# Subtle smile by default; cheer widens; sleep softens.
 		var smile := 0.6
 		if expr == "cheer" or react_kind == "cheer":
 			smile = 1.0
@@ -1680,7 +1672,7 @@ func _update_face(delta: float = 0.0) -> void:
 			smile = 0.35
 		_mouth.scale.y = lerpf(_mouth.scale.y, 0.22 + smile * 0.45, 1.0 - exp(-delta * 6.0))
 		_mouth.scale.x = lerpf(_mouth.scale.x, 0.85 + smile * 0.55, 1.0 - exp(-delta * 6.0))
-		_mouth.visible = want_close < 0.85 and smile > 0.4
+		_mouth.visible = not closed and smile > 0.4
 
 
 func debug_pose(kind: String, p := 1.0, tt := 0.3) -> Vector3:

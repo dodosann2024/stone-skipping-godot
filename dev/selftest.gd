@@ -282,22 +282,28 @@ func _sample_rest_penet(kind: String, stage: String, timeout: float, done: Calla
 
 
 ## Deepest sit-contact mesh gap vs seat top plane (sky-side positive). Negative = into the board.
+## Sampling matches `_snap_sit_contact` (wider cloud on 坐木) so snap and assert agree.
 func _sit_mesh_clearance(top: Vector3, seat_face: Vector3, _unused: Vector3 = Vector3.ZERO) -> float:
 	var face := seat_face.normalized()
-	var side := face.cross(Vector3.UP).normalized()
+	var side: Vector3 = m.rest_side.normalized() if m.rest_side.length() > 0.1 else face.cross(Vector3.UP).normalized()
+	var is_log := false
+	if m.seat_i >= 0 and m.seat_i < m.island.seats.size():
+		is_log = String(m.island.seats[m.seat_i].get("name", "")) == "坐木"
 	var hips: Vector3 = m.boy.lie_bone_world("mixamorig_Hips")
 	var deepest := 1e9
 	var hit := false
-	for s in m.boy.skinned_sample_world(650):
-		if s.distance_to(hips) > 0.30:
+	var hip_r := 0.38 if is_log else 0.32
+	var lat_max := 0.70 if is_log else 0.55
+	for s in m.boy.skinned_sample_world(1000 if is_log else 650):
+		if s.distance_to(hips) > hip_r:
 			continue
-		if (s - hips).dot(face) > 0.20:
+		if (s - hips).dot(face) > (0.28 if is_log else 0.20):
 			continue
-		if s.y > hips.y + 0.04:
+		if s.y > hips.y + (0.06 if is_log else 0.04):
 			continue
 		var lat: float = (s - top).dot(side)
 		var along: float = (s - top).dot(-face)
-		if absf(lat) > 0.55 or along < -0.12 or along > 0.35:
+		if absf(lat) > lat_max or along < (-0.22 if is_log else -0.12) or along > (0.45 if is_log else 0.35):
 			continue
 		hit = true
 		deepest = minf(deepest, s.y - top.y)

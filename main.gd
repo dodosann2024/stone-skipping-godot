@@ -1522,35 +1522,44 @@ func _snap_sit_contact() -> void:
 	var top: Vector3 = st["top"]
 	var face: Vector3 = seat_face.normalized()
 	# Iterate in-place so one call settles even when process is ticking.
-	for _iter in 6:
+	# Logs (坐木) need a wider contact cloud + more passes: short Tripo butt can
+	# miss a tight hip sphere, leaving a 3–4 cm hover or a 2 cm dig from the back.
+	var is_log := String(st.get("name", "")) == "坐木"
+	var passes := 12 if is_log else 8
+	for _iter in passes:
 		boy.activity("seat", 1.0, 0.0, gt)
 		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 		var hips: Vector3 = boy.lie_bone_world("mixamorig_Hips")
-		var samples: Array[Vector3] = boy.skinned_sample_world(800)
+		var samples: Array[Vector3] = boy.skinned_sample_world(1000)
 		var deepest := 1e9
 		var hit := false
+		var hip_r := 0.38 if is_log else 0.32
+		var lat_max := 0.70 if is_log else 0.55
 		for s in samples:
 			# Contact cloud: butt + proximal thighs above the board.
-			if s.distance_to(hips) > 0.32:
+			if s.distance_to(hips) > hip_r:
 				continue
-			if (s - hips).dot(face) > 0.22:
+			if (s - hips).dot(face) > 0.28:
 				continue
-			if s.y > hips.y + 0.05:
+			if s.y > hips.y + 0.06:
 				continue
 			var lat: float = (s - top).dot(rest_side)
 			var along: float = (s - top).dot(-face)
-			if absf(lat) > 0.55 or along < -0.12 or along > 0.40:
+			# Allow a little behind the top for round logs (back/end approaches).
+			if absf(lat) > lat_max or along < (-0.22 if is_log else -0.12) or along > 0.45:
 				continue
 			hit = true
 			deepest = minf(deepest, s.y - top.y)
 		if not hit:
-			deepest = (hips.y - 0.10) - top.y
-		# Kiss the board (~0.5 cm). Logs need a tighter settle so he is not hovering.
-		var target := 0.005
+			# Tripo ischia hang ~12–14 cm below the hip bone.
+			deepest = (hips.y - 0.13) - top.y
+		# Kiss the board (~0.3 cm). Stay inside selftest −1 cm … 3 cm window.
+		var target := 0.003
 		var err := target - deepest
 		if absf(err) < 0.002:
+			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
 			return
-		var step := clampf(err, -0.06, 0.06)
+		var step := clampf(err, -0.07, 0.07)
 		rest_root_sit.y += step
 		rest_seat.y += step
 	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
@@ -2043,9 +2052,49 @@ func _rest_tick(delta: float) -> void:
 			else:
 				root = rest_approach.lerp(rest_root_sit, ks)
 				# Clear the seat board mid-lerp; settle by snap near the end.
-				root.y += 0.14 * sin(PI * ks)
+				var is_log_exit := rest_kind == "seat" and seat_i >= 0 and seat_i < island.seats.size() \
+					and String(island.seats[seat_i].get("name", "")) == "坐木"
+				root.y += (0.20 if is_log_exit else 0.14) * sin(PI * ks)
+				if rest_phase == 6:
+					# Hold seat-height Y until the sit clip has mostly stood up.
+					var stand_u := smoothstep(0.08, 0.55, 1.0 - ks)
+					var y_pad := 0.14 if is_log_exit else 0.05
+					var y_hold := lerpf(rest_root_sit.y + y_pad, rest_approach.y, stand_u)
+					root.y = maxf(root.y, y_hold)
+					# Slide further off the seat so standing legs don't clip the log volume.
+					var away: Vector3 = rest_approach - rest_seat
+					away.y = 0.0
+					if away.length() > 0.05:
+						root += away.normalized() * ((0.28 if is_log_exit else 0.12) * (1.0 - ks))
 			swing = island.swing_hammock(swing_amp * sin(gt * 1.3)) if sleep else Transform3D.IDENTITY
 			boy.global_transform = swing * Transform3D(rest_sit_b, root)
+			# Seat exit: live mesh clearance against the seat top footprint.
+			if rest_kind == "seat" and rest_phase == 6 and seat_i >= 0 and seat_i < island.seats.size():
+				var st_ex: Dictionary = island.seats[seat_i]
+				var top_ex: Vector3 = st_ex["top"]
+				var face_ex: Vector3 = seat_face.normalized()
+				var side_ex: Vector3 = rest_side.normalized() if rest_side.length() > 0.1 else face_ex.cross(Vector3.UP).normalized()
+				var hips_ex: Vector3 = boy.lie_bone_world("mixamorig_Hips")
+				var dig_ex := 1e9
+				var hit_ex := false
+				for s_ex in boy.skinned_sample_world(500):
+					if s_ex.distance_to(hips_ex) > 0.38:
+						continue
+					if s_ex.y > hips_ex.y + 0.05:
+						continue
+					var lat_ex: float = (s_ex - top_ex).dot(side_ex)
+					var along_ex: float = (s_ex - top_ex).dot(-face_ex)
+					if absf(lat_ex) > 0.70 or along_ex < -0.22 or along_ex > 0.45:
+						continue
+					hit_ex = true
+					dig_ex = minf(dig_ex, s_ex.y - top_ex.y)
+				if hit_ex and dig_ex < -0.008:
+					root.y += minf(-dig_ex + 0.02, 0.16)
+					var away2: Vector3 = rest_approach - rest_seat
+					away2.y = 0.0
+					if away2.length() > 0.05:
+						root += away2.normalized() * minf(-dig_ex, 0.10)
+					boy.global_transform = Transform3D(rest_sit_b, root)
 			if rest_kind == "seat" and rest_phase == 2 and ks > 0.72:
 				_snap_sit_contact()
 				pl = boy.activity("seat", 1.0, 0.0, gt)
@@ -2095,8 +2144,13 @@ func _rest_tick(delta: float) -> void:
 			var b := rest_sit_b.slerp(rest_lie_b, ks2)
 			var w := rest_seat.lerp(rest_lie, ks2) + Vector3(0, 0.10 * sin(PI * k2), 0)
 			if rest_kind == "sun":
-				# Keep butt/back above the lounger foam during the tip-back.
-				w.y += 0.06 * sin(PI * k2)
+				# Keep butt/back/hat clear of lounger foam during tip-back AND tip-up (exit).
+				# Prior lifts still dug ~11 cm into the pad mid-exit — clear the foam fully.
+				w.y += 0.24 * sin(PI * k2)
+				var back_n: Vector3 = (-rest_lie_b.z).normalized()
+				if back_n.y < 0.15:
+					back_n = Vector3.UP
+				w += back_n * (0.14 * sin(PI * k2))
 			if rest_kind == "seat" and island.seats[seat_i]["name"] == "长椅":
 				# shuffles forward on the seat as he turns to lie back: head (and hat) clear of the backrest
 				w += seat_face * 0.18 * sin(PI * k2)
@@ -2108,6 +2162,12 @@ func _rest_tick(delta: float) -> void:
 				swing = island.swing_hammock(swing_amp * sin(gt * 1.3))
 				_update_hammock_load()
 			boy.global_transform = swing * Transform3D(b, w - b * pl2)
+			# Lounger tip (enter+exit): if mid-blend still penetrates, lift fully clear.
+			if rest_kind == "sun" and rest_phase in [3, 5] and rest_t > 0.15:
+				var dig: float = lie_mesh_penetration_depth(true)
+				if dig < -0.008:
+					w += Vector3.UP * minf(-dig + 0.01, 0.14)
+					boy.global_transform = Transform3D(b, w - b * pl2)
 			if rest_t >= dur2:
 				if sleep and rest_phase == 5:
 					island.set_hammock_load([] as Array[Vector3])
