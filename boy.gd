@@ -343,58 +343,90 @@ func _split_baked_hat() -> void:
 	var head_i := skel.find_bone(B_HEAD)
 	if head_i < 0:
 		return
+	var neck_i := skel.find_bone("mixamorig_Neck")
 	var head_rest: Transform3D = skel.get_bone_global_rest(head_i)
 	var head_inv := head_rest.affine_inverse()
+	var albedo_img: Image = null
+	var src_mat_early: Material = mi.get_active_material(0)
+	if src_mat_early == null and mesh.get_surface_count() > 0:
+		src_mat_early = mesh.surface_get_material(0)
+	if src_mat_early is BaseMaterial3D:
+		var at: Texture2D = (src_mat_early as BaseMaterial3D).albedo_texture
+		if at:
+			albedo_img = at.get_image()
+			if albedo_img and albedo_img.is_compressed():
+				albedo_img.decompress()
 	var mark := PackedByteArray()
 	mark.resize(verts.size())
+	var rear_straw := PackedByteArray()
+	rear_straw.resize(verts.size())
 	for i in verts.size():
 		var wh := 0.0
+		var wn := 0.0
 		for j in 4:
-			if int(bones_a[i * 4 + j]) == head_i:
-				wh += float(weights_a[i * 4 + j])
+			var bi := int(bones_a[i * 4 + j])
+			var bw := float(weights_a[i * 4 + j])
+			if bi == head_i:
+				wh += bw
+			if neck_i >= 0 and bi == neck_i:
+				wn += bw
 		var local: Vector3 = head_inv * verts[i]
 		var r := Vector2(local.x, local.z).length()
-		# Cut brim + crown. Generous face/cheek shell — keep cheeks; strip rear brim leftovers.
-		var hat_vert := false
 		var face_shell := local.y < 0.16 and r < 0.13 and local.z > -0.02
+		var hat_vert := false
 		if (not face_shell) and wh > 0.32:
 			if local.y > 0.08 and r > 0.09:
-				hat_vert = true  # brim (incl. rear crescent leftovers)
+				hat_vert = true
 			elif local.y > 0.15 and r > 0.055:
-				hat_vert = true  # crown wall
+				hat_vert = true
 			elif local.y > 0.22:
-				hat_vert = true  # crown top
+				hat_vert = true
 		mark[i] = 1 if hat_vert else 0
+		# Rear/nape brim band (z<0.05, r>0.08). Face stays on z>0.06 & r<0.10.
+		var rs := false
+		var face_keep := local.z > 0.06 and r < 0.10 and local.y > 0.02
+		if (not face_keep) and local.z < 0.05 and local.y < 0.12 and local.y > -0.10 and r > 0.08 and r < 0.22 and (wh > 0.1 or wn > 0.1) and albedo_img != null and uvs != null and i < uvs.size():
+			var uv: Vector2 = uvs[i]
+			var col: Color = albedo_img.get_pixel(
+				int(fposmod(uv.x, 1.0) * float(albedo_img.get_width() - 1)),
+				int(fposmod(uv.y, 1.0) * float(albedo_img.get_height() - 1)))
+			var straw := col.r > 0.70 and col.g > 0.25 and col.b < 0.48 and col.r > col.b + 0.22
+			var ribbon := col.r > 0.68 and col.g < 0.42 and col.b < 0.28 and col.r > col.g + 0.28
+			var warm := col.r > 0.58 and col.b < 0.45 and col.r > col.b + 0.12
+			rs = straw or ribbon or warm
+		rear_straw[i] = 1 if rs else 0
 	var body_idx := PackedInt32Array()
 	var hat_idx := PackedInt32Array()
+	var hair_idx := PackedInt32Array()
 	for t in range(0, indices.size(), 3):
 		var ia := indices[t]
 		var ib := indices[t + 1]
 		var ic := indices[t + 2]
 		var hat_n := int(mark[ia]) + int(mark[ib]) + int(mark[ic])
-		# Majority-hat → detachable hat. Rear-brim leftovers (any marked vert, behind ears)
-		# are deleted from the body so no straw crescent stays on the scalp.
 		var rear_leftover := false
 		if hat_n >= 1:
 			for ii in [ia, ib, ic]:
 				var loc2: Vector3 = head_inv * verts[ii]
-				if loc2.y > 0.08 and Vector2(loc2.x, loc2.z).length() > 0.08 and loc2.z < 0.02:
+				if mark[ii] != 0 and loc2.y > 0.06 and Vector2(loc2.x, loc2.z).length() > 0.08 and loc2.z < 0.04:
 					rear_leftover = true
 					break
+		var rear_tex := (int(rear_straw[ia]) + int(rear_straw[ib]) + int(rear_straw[ic])) >= 1
 		if hat_n >= 2:
 			hat_idx.append(ia)
 			hat_idx.append(ib)
 			hat_idx.append(ic)
 		elif rear_leftover:
-			pass  # drop from body — don't keep a brim shard on the head
+			pass
+		elif rear_tex:
+			hair_idx.append(ia)
+			hair_idx.append(ib)
+			hair_idx.append(ic)
 		else:
 			body_idx.append(ia)
 			body_idx.append(ib)
 			body_idx.append(ic)
 	if hat_idx.size() < 30:
 		return
-	# Keep the Tripo PBR material — rebuilding ArrayMesh drops surface materials otherwise
-	# and the boy renders as a flat grey clay (night albedo / emission then also no-op).
 	var src_mat: Material = mi.get_active_material(0)
 	if src_mat == null and mesh.get_surface_count() > 0:
 		src_mat = mesh.surface_get_material(0)
@@ -404,6 +436,16 @@ func _split_baked_hat() -> void:
 	body_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, body_arr)
 	if src_mat:
 		body_mesh.surface_set_material(0, src_mat)
+	if hair_idx.size() >= 3:
+		var hair_arr := arr.duplicate()
+		hair_arr[Mesh.ARRAY_INDEX] = hair_idx
+		body_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, hair_arr)
+		var hair_mat := StandardMaterial3D.new()
+		hair_mat.albedo_color = Color(0.12, 0.08, 0.05)
+		hair_mat.roughness = 0.95
+		hair_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		body_mesh.surface_set_material(1, hair_mat)
+		print("hat_split hair_cover_tris=", hair_idx.size() / 3)
 	mi.mesh = body_mesh
 	var remap := {}
 	var hv := PackedVector3Array()
@@ -441,24 +483,27 @@ func _split_baked_hat() -> void:
 	_hat_on_head_xf = hat.transform
 	_skin_ready = false
 	hat_mode = "head"
-	# Skin-colored scalp dome covers the cut when the hat is off the head.
+	# Small crown cap. Nape straw is recolored via surface 1; a large cover blacked the face.
 	_scalp_cover = MeshInstance3D.new()
 	_scalp_cover.name = "ScalpCover"
 	var sm := SphereMesh.new()
-	# Small crown cap only — a large sphere bled through the forehead as a beige smear.
-	sm.radius = 0.075
-	sm.height = 0.09
-	sm.radial_segments = 12
-	sm.rings = 6
+	sm.radius = 0.06
+	sm.height = 0.07
+	sm.radial_segments = 10
+	sm.rings = 5
 	_scalp_cover.mesh = sm
 	var scalp_mat := StandardMaterial3D.new()
-	scalp_mat.albedo_color = Color(0.45, 0.28, 0.18)  # hair-brown, not skin
-	scalp_mat.roughness = 0.9
+	scalp_mat.albedo_color = Color(0.13, 0.08, 0.05)
+	scalp_mat.roughness = 0.95
 	_scalp_cover.material_override = scalp_mat
-	_scalp_cover.position = Vector3(0.0, 0.125, 0.0)
-	# Hidden by default — a visible scalp sphere reads as a straw remnant on the head.
+	_scalp_cover.position = Vector3(0.0, 0.15, -0.02)
 	_scalp_cover.visible = false
 	_hat_attach.add_child(_scalp_cover)
+	var brim_cover := MeshInstance3D.new()
+	brim_cover.name = "BrimCover"
+	brim_cover.visible = false
+	_hat_attach.add_child(brim_cover)
+	_scalp_cover.set_meta("brim_cover", brim_cover)
 
 
 ## Hat mesh verts sit near bind-pose head height (AABB centre ~+0.86 local Y). Place the
@@ -469,8 +514,9 @@ func _hat_mesh_center_local() -> Vector3:
 	return hat.mesh.get_aabb().get_center()
 
 
-## Detached chest/face pose in ChestAttach-local space. Uses the live face normal so the
-## brim rests ON the sternum / over the face — Mixamo Spine2 +Z is lateral when supine.
+## Detached chest/face pose in ChestAttach-local space.
+## Hat mesh: brim in local XZ, crown along local +Y. Flat on a supine chest =
+## brim // chest, crown away from the body (mesh +Y = face).
 func _hat_chest_local(face_tip: bool) -> Transform3D:
 	if _chest_attach == null or not is_instance_valid(_chest_attach):
 		return Transform3D(Basis.from_euler(Vector3(1.05, 0.0, 0.0)), Vector3(0.0, 0.02, 0.09))
@@ -482,21 +528,32 @@ func _hat_chest_local(face_tip: bool) -> Transform3D:
 	if along.length_squared() < 1e-6:
 		along = _chest_attach.global_transform.basis.y
 	along = along.normalized()
-	# Visual centre pressed onto the sternum/belly (toward the feet).
-	var want_center: Vector3 = lie_bone_world("mixamorig_Spine2") + face * (0.045 if face_tip else 0.04)
-	want_center -= along * (0.04 if face_tip else 0.06)
-	var hz := face
-	var hy := along - hz * along.dot(hz)
-	if hy.length_squared() < 1e-6:
-		hy = _chest_attach.global_transform.basis.y
-	hy = hy.normalized()
-	var hx := hy.cross(hz).normalized()
-	hy = hz.cross(hx).normalized()
-	var tip := 0.55 if face_tip else 0.25
+	var hy := face
+	var hx := along.cross(hy)
+	if hx.length_squared() < 1e-6:
+		hx = Vector3.RIGHT.cross(hy)
+		if hx.length_squared() < 1e-6:
+			hx = Vector3.FORWARD.cross(hy)
+	hx = hx.normalized()
+	var along_flat: Vector3 = (along - hy * along.dot(hy))
+	if along_flat.length_squared() > 1e-6:
+		along_flat = along_flat.normalized()
+		hx = along_flat.cross(hy).normalized()
+	var hz := hx.cross(hy).normalized()
+	var tip := 0.08 if face_tip else 0.04
 	var world_b := Basis(hx, hy, hz) * Basis.from_euler(Vector3(tip, 0.0, 0.0))
-	# origin so that origin + basis * mesh_center = want_center
-	var world_origin: Vector3 = want_center - world_b * _hat_mesh_center_local()
-	return _chest_attach.global_transform.affine_inverse() * Transform3D(world_b, world_origin)
+	var sc: float = 0.82
+	var half_h: float = 0.06
+	if hat and hat.mesh:
+		half_h = maxf(hat.mesh.get_aabb().size.y * 0.5, 0.04)
+	var want_center: Vector3 = lie_bone_world("mixamorig_Spine2") + face * (half_h * sc + 0.015)
+	if along_flat.length_squared() > 1e-6:
+		want_center -= along_flat * (0.02 if face_tip else 0.04)
+	else:
+		want_center -= along * 0.03
+	var world_origin: Vector3 = want_center - world_b * (_hat_mesh_center_local() * sc)
+	var world_xf := Transform3D(world_b.scaled(Vector3(sc, sc, sc)), world_origin)
+	return _chest_attach.global_transform.affine_inverse() * world_xf
 
 
 func _hat_beside_xf(beside_world: Vector3) -> Transform3D:
@@ -521,9 +578,6 @@ func set_hat_mode(mode: String, beside_world: Vector3 = Vector3.ZERO) -> void:
 		return
 	hat_mode = mode
 	hat.visible = true
-	if _scalp_cover:
-		# Keep scalp cover off — it looked like a floating hat fragment on the head.
-		_scalp_cover.visible = false
 	if mode == "head":
 		if hat.get_parent() != _hat_attach:
 			if hat.get_parent():
@@ -531,16 +585,17 @@ func set_hat_mode(mode: String, beside_world: Vector3 = Vector3.ZERO) -> void:
 			_hat_attach.add_child(hat)
 		hat.transform = _hat_on_head_xf
 		_hat_blend = 0.0
+		_set_scalp_cover_visible(false)
 	elif mode == "face" or mode == "chest":
 		# Always on the chest bone so the brim rests ON the body (not through fabric).
 		if hat.get_parent() != _chest_attach:
 			if hat.get_parent():
 				hat.get_parent().remove_child(hat)
 			_chest_attach.add_child(hat)
+		# Scale is baked into _hat_chest_local — do not set hat.scale after.
 		hat.transform = _hat_chest_local(mode == "face")
-		# Slightly smaller on the chest so it doesn't swallow the frame.
-		hat.scale = Vector3.ONE * 0.82
 		_hat_blend = 1.0
+		_set_scalp_cover_visible(true)  # hair cap hides the crown cut + straw ring
 	elif mode == "beside":
 		# Parent to the scene root so the hat stays on the sand when the boy moves.
 		var root: Node = get_tree().current_scene if get_tree() else self
@@ -553,8 +608,19 @@ func set_hat_mode(mode: String, beside_world: Vector3 = Vector3.ZERO) -> void:
 		hat.global_transform = _hat_beside_xf(beside_world)
 		hat.scale = Vector3.ONE
 		_hat_blend = 1.0
+		_set_scalp_cover_visible(true)
 	if mode == "head":
 		hat.scale = Vector3.ONE
+
+
+func _set_scalp_cover_visible(on: bool) -> void:
+	if _scalp_cover == null or not is_instance_valid(_scalp_cover):
+		return
+	_scalp_cover.visible = on
+	if _scalp_cover.has_meta("brim_cover"):
+		var bc: Node3D = _scalp_cover.get_meta("brim_cover")
+		if bc and is_instance_valid(bc):
+			bc.visible = on
 
 
 ## Blend hat on/off the head over the sit↔lie window (same 0.6 s as LIE_BLEND_DUR).
@@ -565,8 +631,7 @@ func sync_hat_lie(kind: String, lie_k: float) -> void:
 	var b := smoothstep(0.12, 0.92, lie_k)
 	_hat_blend = b
 	hat.visible = true
-	if _scalp_cover:
-		_scalp_cover.visible = false
+	_set_scalp_cover_visible(b > 0.35)  # hair cap once the hat has mostly left the head
 	if b <= 0.001:
 		set_hat_mode("head")
 		return
@@ -698,9 +763,16 @@ func _tune_boy_material() -> void:
 		# Tripo/Mixamo can flip face/limb normals; back-face cull blacks out the face under
 		# the brim while the vest still lights. Match the old boy.gdshader (cull_disabled).
 		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		mi.material_override = mat
-		if mi.mesh != null and mi.mesh.get_surface_count() > 0:
+		# Per-surface materials when the hat split added a dark-hair cover surface;
+		# a single material_override would paint the straw ring yellow again.
+		if mi.mesh != null and mi.mesh.get_surface_count() > 1:
+			mi.material_override = null
 			mi.mesh.surface_set_material(0, mat)
+			# surface 1 keeps the dark hair StandardMaterial from _split_baked_hat
+		else:
+			mi.material_override = mat
+			if mi.mesh != null and mi.mesh.get_surface_count() > 0:
+				mi.mesh.surface_set_material(0, mat)
 		_boy_mat = mat
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mi.transparency = 0
