@@ -219,20 +219,33 @@ void fragment() {
 		col *= 1.0 - rk;
 		emis += R * rk;
 	}
-	// Night: always paint a moon glitter path (planar refl has no moon disk) + warm lamp streaks.
+	// Night: moon glitter path (visible from dock/overview) + warm lamp/torch streaks.
 	if (night > 0.001) {
 		float ry = max(rw.y, 0.0);
-		float ma = acos(clamp(dot(rw, normalize(glint_dir)), -1.0, 1.0));
-		// Broad glitter path + tight disk; readable from dock / overview.
-		vec3 moon = vec3(0.82, 0.88, 1.0) * (exp(-ma / 0.11) * 0.34 + exp(-ma / 0.48) * 0.14);
-		moon += vec3(0.95, 0.97, 1.0) * (1.0 - smoothstep(0.025, 0.06, ma)) * 0.75;
-		float sc = step(0.94, hash12(gc + 11.0 + floor(t * 0.7 + hash12(gc + 5.0) * 3.0))) * (1.0 - smoothstep(0.03, 0.14, length(gf)));
-		moon += vec3(0.86, 0.90, 1.0) * sc * 0.28 * smoothstep(0.02, 0.35, ry);
+		vec3 gd_n = normalize(glint_dir);
+		float ma = acos(clamp(dot(rw, gd_n), -1.0, 1.0));
+		// Specular moon blob + glitter.
+		vec3 moon = vec3(0.82, 0.88, 1.0) * (exp(-ma / 0.12) * 0.45 + exp(-ma / 0.55) * 0.18);
+		moon += vec3(0.95, 0.97, 1.0) * (1.0 - smoothstep(0.02, 0.07, ma)) * 0.95;
+		float sc = step(0.92, hash12(gc + 11.0 + floor(t * 0.7 + hash12(gc + 5.0) * 3.0))) * (1.0 - smoothstep(0.03, 0.14, length(gf)));
+		moon += vec3(0.86, 0.90, 1.0) * sc * 0.38 * smoothstep(0.02, 0.35, ry);
+		// Explicit moon path on the water plane: streak from camera toward moon azimuth.
+		vec2 mdir = normalize(gd_n.xz + vec2(1e-4));
+		vec2 from_cam = wpos.xz - CAMERA_POSITION_WORLD.xz;
+		float along = dot(from_cam, mdir);
+		vec2 perp = from_cam - mdir * along;
+		float path_w = 0.55 + 0.035 * max(along, 0.0);
+		float path = exp(-dot(perp, perp) / (path_w * path_w))
+			* smoothstep(-2.0, 6.0, along)
+			* smoothstep(90.0, 18.0, along);
+		float spark = step(0.88, hash12(gc + 19.0 + floor(t * 3.5 + hash12(gc + 2.0) * 4.0)))
+			* (1.0 - smoothstep(0.02, 0.11, length(gf)));
+		moon += vec3(0.82, 0.90, 1.0) * path * (0.75 + 1.05 * spark);
 		if (refl_on < 0.5) {
 			vec3 nsky = mix(vec3(0.11, 0.16, 0.28), vec3(0.04, 0.07, 0.16), smoothstep(0.0, 0.5, ry));
 			col = mix(col, nsky, fr * night * (1.0 - foam_v));
 		}
-		emis += moon * (0.38 + 0.70 * fr) * night * (1.0 - foam_v) * glint_gain;
+		emis += moon * (0.70 + 0.95 * fr) * night * (1.0 - foam_v) * glint_gain;
 		vec3 streak = vec3(0.0);
 		for (int i = 0; i < 12; i++) {
 			vec4 lp = lamp_pos[i];
@@ -241,11 +254,12 @@ void fragment() {
 				float dl = length(L);
 				vec3 h = normalize(L / dl + vw);
 				float nh = max(dot(nw, h), 0.0);
-				float s = pow(nh, 700.0) * tw * 4.0 + pow(nh, 160.0) * 0.36 + pow(nh, 28.0) * 0.035;
-				streak += lamp_col[i].rgb * s * lp.w / (1.0 + dl * dl * 0.02);
+				float s = pow(nh, 700.0) * tw * 5.0 + pow(nh, 140.0) * 0.45 + pow(nh, 24.0) * 0.05;
+				streak += lamp_col[i].rgb * s * lp.w / (1.0 + dl * dl * 0.018);
 			}
 		}
-		emis += streak * night * (1.0 - foam_v) * 1.15;
+		// Warm shore glints near dock/path torches.
+		emis += streak * night * (1.0 - foam_v) * 1.85;
 	}
 
 	ALBEDO = col;

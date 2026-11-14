@@ -895,6 +895,29 @@ func _crate(c: Vector3, s: float, yaw: float) -> void:
 			boxb(SB, Vector3(s * 1.02, s * 0.1, s * 0.1), xf * Transform3D(Basis.IDENTITY, (e + f) * 0.96), dark)
 	boxb(SB, Vector3(s * 1.02, s * 0.1, s * 1.15), xf * Transform3D(Basis(Vector3.FORWARD, 0.78), Vector3.ZERO), dark)
 
+
+## Path lamp head: wood cage + small glass bulb (not a bare untextured glow box).
+func _path_lantern(lp: Vector3) -> void:
+	# Oversized lantern head so the wood/metal cage reads at explore distance.
+	# Amber glass is SB (lit by Omni). Flame is a tiny MeshInstance in night.gd — no GB/halo.
+	var metal := Color(0.12, 0.10, 0.09)
+	var wood := Color(0.28, 0.17, 0.08)
+	var glass := Color(0.55, 0.36, 0.12)
+	box(SB, Vector3(0.48, 0.06, 0.48), lp + Vector3(0, 0.28, 0), Vector3.ZERO, metal)
+	box(SB, Vector3(0.28, 0.10, 0.28), lp + Vector3(0, 0.38, 0), Vector3.ZERO, metal)
+	box(SB, Vector3(0.46, 0.055, 0.46), lp + Vector3(0, -0.26, 0), Vector3.ZERO, metal)
+	for sx in [-1.0, 1.0]:
+		for sz in [-1.0, 1.0]:
+			box(SB, Vector3(0.055, 0.52, 0.055), lp + Vector3(sx * 0.18, 0.01, sz * 0.18), Vector3.ZERO, wood)
+	for a in [0.0, PI * 0.5, PI, PI * 1.5]:
+		var xf := Transform3D(Basis(Vector3.UP, a), lp)
+		boxb(SB, Vector3(0.38, 0.035, 0.035), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.18, 0.18)), wood)
+		boxb(SB, Vector3(0.38, 0.035, 0.035), xf * Transform3D(Basis.IDENTITY, Vector3(0, -0.14, 0.18)), wood)
+		boxb(SB, Vector3(0.035, 0.38, 0.035), xf * Transform3D(Basis.IDENTITY, Vector3(0.0, 0.02, 0.18)), wood)
+		# Dim amber glass — wood cage silhouette must read; Omni lights the panes (no unshaded sprite).
+		boxb(SB, Vector3(0.28, 0.34, 0.018), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.02, 0.155)), Color(0.45, 0.28, 0.10))
+	cyl(SB, 0.04, 0.03, 0.14, 7, lp + Vector3(0, 0.0, 0), Vector3.ZERO, Color(0.85, 0.55, 0.20))
+
 func _barrel(p: Vector3) -> void:
 	wall_c(Vector2(p.x, p.z), 0.3, p.y - 0.1, p.y + 0.8, "木桶")
 	cyl(SB, 0.27, 0.27, 0.8, 9, p + Vector3(0, 0.4, 0), Vector3.ZERO, Color(0.55, 0.36, 0.2))
@@ -2498,11 +2521,13 @@ func _build_vegetation() -> void:
 		var q: Vector2 = bp[i]
 		var o: Vector2 = (bp[i] - bp[i - 1]).normalized().orthogonal() * 1.0
 		var g = gp(q.x + o.x, q.y + o.y)
-		tube(SB, g, g + Vector3(0, 1.1, 0), 0.04, 0.035, 5, Color(0.4, 0.28, 0.16))
+		tube(SB, g, g + Vector3(0, 1.05, 0), 0.04, 0.035, 5, Color(0.4, 0.28, 0.16))
 		wall_c(Vector2(g.x, g.z), 0.06, g.y - 0.2, g.y + 1.35, "路灯")
-		box(GB, Vector3(0.14, 0.2, 0.14), g + Vector3(0, 1.2, 0), Vector3.ZERO, Color(1.0, 0.78, 0.4))
-		lamps.append([g + Vector3(0, 1.2, 0), "path"])
-		box(SB, Vector3(0.18, 0.03, 0.18), g + Vector3(0, 1.32, 0), Vector3.ZERO, Color(0.2, 0.2, 0.22))
+		var lp: Vector3 = g + Vector3(0, 1.18, 0)
+		_path_lantern(lp)
+		lamps.append([lp, "path"])
+		# Keep explore cam from sitting inside path crates / fence boxes near the lamps.
+		cam_blockers.append([g + Vector3(0, 0.45, 0), 0.85])
 
 # ------------------------------------------------------------------ far scenery
 

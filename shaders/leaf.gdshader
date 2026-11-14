@@ -8,6 +8,7 @@ render_mode cull_disabled, diffuse_lambert_wrap, specular_disabled;
 uniform sampler2D leaf_tex : source_color, filter_linear_mipmap, repeat_disable;
 uniform float game_time = 0.0;
 uniform float wind = 1.0;
+global uniform float night_k;
 #include "res://shaders/cutout.gdshaderinc"
 #include "res://shaders/refl_clip.gdshaderinc"
 varying vec3 wpos;
@@ -51,5 +52,5 @@ void fragment() {
 	AO_LIGHT_AFFECT = 0.35;
 	ROUGHNESS = 0.75;
 	NORMAL = normalize((VIEW_MATRIX * vec4(nrm, 0.0)).xyz);
-	BACKLIGHT = c * (0.35 + 0.45 * ao);
+	BACKLIGHT = c * (0.35 + 0.45 * ao) * (1.0 - night_k * 0.92);
 }

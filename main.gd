@@ -3548,20 +3548,18 @@ func _update_night(delta: float, force := false) -> void:
 	var qn := Basis.from_euler(MOON_NIGHT * PI / 180.0).get_rotation_quaternion()
 	var q_mid := qd.slerp(qs, clampf(sunset * 2.0, 0.0, 1.0))
 	sun.basis = Basis(q_mid.slerp(qn, clampf((k - 0.35) / 0.55, 0.0, 1.0)))
-	# Moon: readable cool key (0.3–0.4). Blue-white, low saturation — not cyan.
-	# Middle ground between v25 (too bright) and the crushed 112a3ef pass.
-	var moon_e := lerpf(1.0, 0.36, k)
+	# Moon: soft cool key + ambient fill so boy and sand share the same exposure.
+	var moon_e := lerpf(1.0, 0.32, k)
 	sun.light_energy = lerpf(moon_e, 1.15, sunset * 0.55)
 	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(1.0, 0.48, 0.22), sunset).lerp(Color(0.91, 0.93, 1.0), k)
-	sun.shadow_blur = lerpf(2.5, 4.8, k)
-	sun.light_angular_distance = lerpf(1.2, 3.0, k)
-	# Soft moon shadows so canopy paths don't crush to pure black.
-	sun.shadow_opacity = lerpf(1.0, 0.36, k)
+	sun.shadow_blur = lerpf(2.5, 5.0, k)
+	sun.light_angular_distance = lerpf(1.2, 3.5, k)
+	# Soft moon shadows — sand at his feet stays close to his lit side.
+	sun.shadow_opacity = lerpf(1.0, 0.30, k)
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.55 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
 	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.34, 0.36, 0.44), k)
-	env.ambient_light_sky_contribution = lerpf(1.0, 0.45, k)
-	# Soft fill: open sand/paths stay ≥ ~8–10/255 (software GL underexposes vs iPhone).
-	env.ambient_light_energy = lerpf(0.55, 0.56, k)
+	env.ambient_light_sky_contribution = lerpf(1.0, 0.42, k)
+	env.ambient_light_energy = lerpf(0.55, 0.54, k)
 	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.18, 0.20, 0.28), k)
 	env.fog_density = lerpf(0.0045, 0.0024, k)
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES if k > 0.55 else Environment.TONE_MAPPER_FILMIC
@@ -3573,10 +3571,11 @@ func _update_night(delta: float, force := false) -> void:
 	var moon := sun.global_basis.z.normalized()
 	island.water_mat.set_shader_parameter("glint_dir", moon)
 	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(1.0, 0.55, 0.28), sunset).lerp(Color(0.90, 0.93, 1.0), k))
-	island.water_mat.set_shader_parameter("glint_gain", lerpf(1.0, 1.55, k))
+	island.water_mat.set_shader_parameter("glint_gain", lerpf(1.0, 2.15, k))
 	island.water_mat.set_shader_parameter("night", k)
 	# Lantern glass / hut window panes: visible warm sources at night.
-	island.glow_mat.set_shader_parameter("boost", lerpf(0.35, 3.4, k))
+	# Keep boost modest — high values turn path/dock bulbs into flat billboards.
+	island.glow_mat.set_shader_parameter("boost", lerpf(0.35, 1.15, k))
 	island.cloud_mat.set_shader_parameter("tint", Color(1, 1, 1).lerp(Color(0.10, 0.12, 0.20), k))
 	island.campfire.night = k
 	for tn in island.torches:

@@ -668,8 +668,8 @@ func _build_face_fill() -> void:
 	face_fill.omni_attenuation = 1.4
 	face_fill.shadow_enabled = false
 	face_fill.light_specular = 0.0
-	# Boy mesh only (layer 2) — lighting the world made a moving hotspot on sand/seats.
-	face_fill.light_cull_mask = 1 << 1
+	# Boy mesh only (layer 1). Off at night so he shares moon/ambient with the sand.
+	face_fill.light_cull_mask = 1
 	parts["head"].add_child(face_fill)
 	face_fill.position = Vector3(0.0, -0.02, -0.1)
 	# Cool moonlight rim — only on at night, opposite the fill so edges read without flattening him.
@@ -710,27 +710,37 @@ func _build_face_fill() -> void:
 func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 	k = clampf(k, 0.0, 1.0)
 	if face_fill:
-		# Day: warm under-brim fill. Night: off — moon/fire are the only keys.
+		# Day: warm under-brim fill. Night: fully off — same lights as the sand only.
 		face_fill.light_color = Color(1.0, 0.92, 0.78)
 		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.0, k)
-		face_fill.omni_range = lerpf(0.4, 0.4, k)
+		face_fill.omni_range = 0.4
 		face_fill.omni_attenuation = lerpf(1.4, 1.6, k)
 		face_fill.position = Vector3(0.0, -0.04, -0.16)
 		face_fill.light_specular = 0.0
+		face_fill.visible = k < 0.45
+		# Cull mask 0 at night so a stray frame can't key the boy alone.
+		face_fill.light_cull_mask = 1 if k < 0.45 else 0
 	if _night_rim:
-		# Off at night — cool rim was the blue eye halo. Moon directional is enough.
 		_night_rim.light_energy = 0.0
 		_night_rim.light_specular = 0.0
-		_night_rim.visible = k < 0.05
+		_night_rim.visible = false
 	if _night_body:
 		_night_body.light_energy = 0.0
 		_night_body.light_specular = 0.0
 		_night_body.visible = false
-	# Keep day albedo (no cool tint — that greys skin / blues sclera). Match sand via rough/spec.
+	# Same world lights as the ground. Pale Tripo albedo (esp. yellow shorts / straw)
+	# outshines wet sand — neutral luminance scale so boy/sand mean L ≈ 1.0–1.3.
+	# Soft moon/ambient flatten the key. Tiny albedo trim — pale Tripo shorts/straw stay ≤ ~1.3× sand.
+	var lum_scale := lerpf(1.0, 0.92, k)
 	for mat in _boy_mats:
 		if mat == null:
 			continue
-		mat.albedo_color = _boy_albedo_day
+		mat.albedo_color = Color(
+			_boy_albedo_day.r * lum_scale,
+			_boy_albedo_day.g * lum_scale,
+			_boy_albedo_day.b * lum_scale,
+			1.0
+		)
 		mat.metallic_specular = lerpf(0.2, 0.04, k)
 		mat.roughness = lerpf(0.78, 0.94, k)
 		mat.emission_enabled = false
@@ -759,7 +769,8 @@ func _tune_boy_material() -> void:
 		_body_mi = mi
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mi.transparency = 0
-		mi.layers = 1 | 2
+		# Layer 1 only — same lights as terrain (no private layer-2 key).
+		mi.layers = 1
 		# Prefer per-surface materials so a face slot can swap without touching clothes/hat.
 		mi.material_override = null
 		for si in nsurf:

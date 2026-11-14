@@ -8,7 +8,9 @@ var dome_mat: ShaderMaterial
 var dome: MeshInstance3D
 var lamp_lights: Array[OmniLight3D] = []
 var lamp_energy: Array[float] = []
+var lamp_kinds: Array[String] = []
 var halos: Array[ShaderMaterial] = []
+var halo_kinds: Array[String] = []
 var beam_pivot: Node3D
 var beam_mat: ShaderMaterial
 var beacon_light: OmniLight3D
@@ -37,25 +39,37 @@ func build(island: Island) -> void:
 		var h := _mi(quad, hm)
 		h.position = p
 		hm.set_shader_parameter("color", Color(1.0, 0.78, 0.42))
-		# Slightly larger halos so bulbs/flames read as visible sources at night.
-		h.scale = Vector3.ONE * (2.8 if kind == "porch" else (2.2 if kind != "path" else 1.5))
+		# Soft bloom — path lamps: no halo (cage + glass mesh is the source).
+		h.scale = Vector3.ONE * (2.4 if kind == "porch" else (1.8 if kind == "dock" else 0.01))
+		h.visible = kind != "path"
 		halos.append(hm)
-		# Path lamps stay halo-only: Compatibility only lights each mesh with a handful of
-		# OmniLights, so keep real lights for dock / porch / beacon where the boy stands.
-		if kind != "path":
-			var ol := OmniLight3D.new()
-			ol.light_color = Color(1.0, 0.64, 0.30) if kind == "dock" else Color(1.0, 0.72, 0.38)
-			# Dock: warm pool that falls off within a few metres — not a floodlight.
-			ol.omni_range = 2.4 if kind == "dock" else 4.2
-			ol.omni_attenuation = 1.6 if kind == "dock" else 1.0
-			ol.shadow_enabled = false
-			ol.light_specular = 0.12 if kind == "dock" else 0.25
-			ol.position = p + Vector3(0, -0.05, 0)
-			ol.visible = false
-			add_child(ol)
-			lamp_lights.append(ol)
-			lamp_energy.append(0.85 if kind == "dock" else 2.1)
-			# No deck flood — one lantern pool only (two corner posts share the dock).
+		halo_kinds.append(kind)
+		# Real omni for every lamp (path included) so glass panes read as a lit source.
+		var ol := OmniLight3D.new()
+		if kind == "dock":
+			ol.light_color = Color(1.0, 0.64, 0.30)
+			ol.omni_range = 2.4
+			ol.omni_attenuation = 1.6
+			ol.light_specular = 0.12
+			lamp_energy.append(0.85)
+		elif kind == "path":
+			ol.light_color = Color(1.0, 0.70, 0.38)
+			ol.omni_range = 2.8
+			ol.omni_attenuation = 1.45
+			ol.light_specular = 0.08
+			lamp_energy.append(0.85)
+		else:
+			ol.light_color = Color(1.0, 0.72, 0.38)
+			ol.omni_range = 4.2
+			ol.omni_attenuation = 1.0
+			ol.light_specular = 0.25
+			lamp_energy.append(2.1)
+		ol.shadow_enabled = false
+		ol.position = p + Vector3(0, -0.05, 0)
+		ol.visible = false
+		add_child(ol)
+		lamp_lights.append(ol)
+		lamp_kinds.append(kind)
 	# lighthouse: glow, a local light on the tower top and two opposite beams sweeping round
 	var bh := ShaderMaterial.new()
 	bh.shader = halo_sh
@@ -64,6 +78,7 @@ func build(island: Island) -> void:
 	bq.position = island.beacon_pos
 	bq.scale = Vector3.ONE * 3.2
 	halos.append(bh)
+	halo_kinds.append("beacon")
 	beacon_light = OmniLight3D.new()
 	beacon_light.light_color = Color(1.0, 0.85, 0.55)
 	beacon_light.omni_range = 4.5
@@ -149,8 +164,10 @@ func apply(k: float, cam_pos: Vector3, moon_dir: Vector3, delta: float) -> void:
 		ol.visible = near
 		if near:
 			ol.light_energy = lamp_energy[i] * k * (1.0 + 0.05 * sin(t * 7.0 + i * 2.0))
-	for hm in halos:
-		hm.set_shader_parameter("k", k)
+	for i in halos.size():
+		var hk := halo_kinds[i] if i < halo_kinds.size() else ""
+		# Path: no billboard bloom — the lantern mesh carries the glow.
+		halos[i].set_shader_parameter("k", 0.0 if hk == "path" else k)
 	beam_pivot.visible = true
 	beam_pivot.rotation.y = t * 0.55
 	beam_mat.set_shader_parameter("k", k * 0.85)

@@ -3,6 +3,7 @@ render_mode cull_disabled, diffuse_lambert;
 // Vertex colour RGB = albedo (sRGB), A = sway weight.
 uniform float game_time = 0.0;
 uniform float wind = 1.0;
+global uniform float night_k;
 #include "res://shaders/cutout.gdshaderinc"
 #include "res://shaders/refl_clip.gdshaderinc"
 varying vec3 wpos;
@@ -31,5 +32,6 @@ void fragment() {
 	}
 	ALBEDO = pow(COLOR.rgb, vec3(2.2));
 	ROUGHNESS = 0.8;
-	BACKLIGHT = vec3(0.25, 0.35, 0.12) * COLOR.a;
+	// Kill the green subsurface glow at night — it read as a lantern bloom blob.
+	BACKLIGHT = vec3(0.25, 0.35, 0.12) * COLOR.a * (1.0 - night_k * 0.92);
 }
