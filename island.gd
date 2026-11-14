@@ -2220,7 +2220,10 @@ func set_hammock_clip_frame(clip: String, frame: int) -> void:
 	var V: int = int(info["verts"])
 	var off: int = int(info["offset"])
 	frame = clampi(frame, 0, F - 1)
-	var need := V * 3 * 4
+	# float16 pack (v29 web): 6 bytes/vert; legacy float32: 12 bytes/vert.
+	var f16 := str(hammock_cloth_meta.get("dtype", info.get("dtype", "float32"))) == "float16"
+	var stride := 6 if f16 else 12
+	var need := V * stride
 	var start := off + frame * need
 	if start + need > hammock_cloth_bytes.size():
 		return
@@ -2230,14 +2233,34 @@ func set_hammock_clip_frame(clip: String, frame: int) -> void:
 	verts.resize(hammock_cloth_bind.size())
 	for i in hammock_cloth_bind.size():
 		var src: int = hammock_cloth_remap[i]
-		var b := start + src * 12
-		verts[i] = Vector3(
-			hammock_cloth_bytes.decode_float(b),
-			hammock_cloth_bytes.decode_float(b + 4),
-			hammock_cloth_bytes.decode_float(b + 8))
+		var b := start + src * stride
+		if f16:
+			verts[i] = Vector3(
+				_half_to_float(hammock_cloth_bytes.decode_u16(b)),
+				_half_to_float(hammock_cloth_bytes.decode_u16(b + 2)),
+				_half_to_float(hammock_cloth_bytes.decode_u16(b + 4)))
+		else:
+			verts[i] = Vector3(
+				hammock_cloth_bytes.decode_float(b),
+				hammock_cloth_bytes.decode_float(b + 4),
+				hammock_cloth_bytes.decode_float(b + 8))
 	_apply_hammock_verts(verts)
 	hammock_clip = clip
 	_hammock_last_key = key
+
+
+## IEEE-754 binary16 → float32 (hammock cloth web pack).
+func _half_to_float(h: int) -> float:
+	var sign := 1.0 if (h & 0x8000) == 0 else -1.0
+	var exp := (h >> 10) & 0x1F
+	var mant := h & 0x3FF
+	if exp == 0:
+		if mant == 0:
+			return 0.0 * sign
+		return sign * pow(2.0, -14.0) * (float(mant) / 1024.0)
+	if exp == 31:
+		return sign * INF if mant == 0 else NAN
+	return sign * pow(2.0, float(exp - 15)) * (1.0 + float(mant) / 1024.0)
 
 
 func _apply_hammock_verts(verts: PackedVector3Array) -> void:

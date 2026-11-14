@@ -1,22 +1,27 @@
 {
  "hammock_enter": {
-  "frames": 222,
+  "frames": 74,
   "verts": 2465,
   "offset": 0,
-  "bytes": 6566760
+  "bytes": 1094460,
+  "dtype": "float16"
  },
  "hammock_sleep": {
-  "frames": 193,
+  "frames": 65,
   "verts": 2465,
-  "offset": 6566760,
-  "bytes": 5708940
+  "offset": 1094460,
+  "bytes": 961350,
+  "dtype": "float16"
  },
  "hammock_exit": {
-  "frames": 123,
+  "frames": 41,
   "verts": 2465,
-  "offset": 12275700,
-  "bytes": 3638340
+  "offset": 2055810,
+  "bytes": 606390,
+  "dtype": "float16"
  },
  "bind_auth": "hammock_cloth_bind_auth.bin",
- "bind_verts": 2465
+ "bind_verts": 2465,
+ "dtype": "float16",
+ "stride_note": "subsampled x3 from authored fp16"
 }
