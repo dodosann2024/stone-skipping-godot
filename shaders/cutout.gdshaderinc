@@ -17,15 +17,19 @@ float cut_amount(vec3 wpos, vec3 cam) {
 		return 0.0;
 	}
 	vec3 seg = focus - cam;
-	float len = length(seg);
+	float len = max(length(seg), 0.001);
 	float k = clamp(dot(wpos - cam, seg) / (len * len), 0.0, 1.0);
 	float dist = length(wpos - (cam + seg * k));
-	float r = cut_radius * mix(0.45, 1.25, smoothstep(0.0, 0.9, k));
-	float hide = (1.0 - smoothstep(r * 0.45, r, dist)) * (1.0 - smoothstep(0.88, 0.985, k));
-	// Anything right in front of the lens (crates / posts / stairs that hide the boy).
-	float near = 1.0 - smoothstep(len * 0.15, len * 0.50, length(wpos - cam));
-	hide = max(hide, near * (1.0 - smoothstep(r * 1.0, r * 1.7, dist)));
-	// Near occluders: cut down to ground. Far ones: still prefer above-waist (keep decks).
-	float y0 = mix(focus.y - 1.55, focus.y - 0.20, smoothstep(0.12, 0.55, k));
-	return hide * smoothstep(y0, focus.y + 0.40, wpos.y);
+	// Keep the cone tight — a wide dithered cut read as a grey translucent rectangle
+	// through the canopy on iPhone (day path). Prefer spring-arm pull-in over a big hole.
+	float r = cut_radius * mix(0.40, 0.95, smoothstep(0.0, 0.85, k));
+	float hide = (1.0 - smoothstep(r * 0.35, r, dist)) * (1.0 - smoothstep(0.86, 0.985, k));
+	// Only cut true near occluders right on the camera→boy axis (posts / crates), not a
+	// broad near-field disc that punches sky holes into side foliage.
+	float along = length(wpos - cam);
+	float near = (1.0 - smoothstep(len * 0.08, len * 0.28, along))
+		* (1.0 - smoothstep(r * 0.55, r * 0.95, dist));
+	hide = max(hide, near);
+	float y0 = mix(focus.y - 1.35, focus.y - 0.15, smoothstep(0.12, 0.55, k));
+	return hide * smoothstep(y0, focus.y + 0.35, wpos.y);
 }

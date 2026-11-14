@@ -102,6 +102,7 @@ func _embers() -> void:
 	p.position = Vector3(0, 0.08, 0)
 	p.local_coords = false
 	p.layers = 1 | 16
+	p.add_to_group("v27_particles")
 	add_child(p)
 
 func _smoke() -> void:
@@ -130,6 +131,7 @@ func _smoke() -> void:
 	p.position = Vector3(0, 0.32, 0)
 	p.local_coords = false
 	p.layers = 1 | 16
+	p.add_to_group("v27_particles")
 	add_child(p)
 
 func _noise1(x: float) -> float:

@@ -119,7 +119,7 @@ func build(island: Island) -> void:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.mesh = quad
-	mm.instance_count = 46
+	mm.instance_count = 28
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
 	var c := island.campfire_pos

@@ -34,6 +34,7 @@ var hammock_cloth_bytes: PackedByteArray = PackedByteArray()
 var hammock_cloth_fmt: int = 0
 var hammock_cloth_mat: Material
 var hammock_clip := ""
+var _hammock_last_key := ""
 var hammock_cloth_bind: PackedVector3Array = PackedVector3Array()
 ## Godot import may reorder verts; remap[i] = authoring/npz index for mesh vertex i.
 var hammock_cloth_remap: PackedInt32Array = PackedInt32Array()
@@ -341,14 +342,18 @@ func _build_leaves() -> void:
 		# visibility ranges measure to the centre of the whole island's bushes
 		mmi.layers = 1 | 16
 		if lod == 0:
-			mmi.visibility_range_end = 62.0
+			mmi.visibility_range_end = 42.0
 			mmi.visibility_range_end_margin = 4.0
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		elif lod == 1:
-			mmi.visibility_range_begin = 62.0
+			mmi.visibility_range_begin = 40.0
 			mmi.visibility_range_begin_margin = 4.0
+			mmi.visibility_range_end = 95.0
+			mmi.visibility_range_end_margin = 8.0
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		else:
+			mmi.visibility_range_end = 70.0
+			mmi.visibility_range_end_margin = 6.0
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
 		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 		add_child(mmi)
@@ -466,7 +471,10 @@ func _ground_color(x: float, z: float, h: float) -> Color:
 	else:
 		c = sand
 		var g = smoothstep(4.0, 7.0, -d + n1 * 1.5) * smoothstep(0.6, 1.2, h + n1 * 0.3)
-		var grass = Color(0.45, 0.68, 0.3).lerp(Color(0.33, 0.57, 0.25), 0.5 + 0.5 * sin(x * 0.8 + z * 0.6))
+		# Cooler, less neon grass (iPhone day path looked flat/saturated).
+		var grass = Color(0.34, 0.48, 0.29).lerp(Color(0.28, 0.40, 0.25), 0.5 + 0.5 * sin(x * 0.8 + z * 0.6))
+		grass = grass.lerp(Color(0.36, 0.44, 0.31), 0.22 + 0.14 * sin(x * 2.1 - z * 1.7))
+		grass = grass.lerp(Color(0.40, 0.42, 0.30), 0.12 * (0.5 + 0.5 * sin(x * 5.3 + z * 3.1)))
 		c = c.lerp(grass, g)
 		var pd = path_dist(x, z)
 		if pd < 1.1:
@@ -2082,13 +2090,20 @@ func _build_hammock_cloth_remap() -> void:
 
 
 ## Drive cloth vertices from authored npz frames (hammock-local). clip="" / "empty" = bind pose.
+## Skips rebuild when the same frame is requested again (rest idle) — ArrayMesh rebuild was a hitch.
 func set_hammock_clip_frame(clip: String, frame: int) -> void:
 	if not hammock_use_v25 or hammock_cloth_mi == null:
 		return
 	if clip == "" or clip == "empty" or not hammock_cloth_meta.has(clip):
+		if _hammock_last_key == "empty":
+			return
 		hammock_clip = ""
+		_hammock_last_key = "empty"
 		if hammock_cloth_bind.size() > 0:
 			_apply_hammock_verts(hammock_cloth_bind)
+		return
+	var key := "%s:%d" % [clip, frame]
+	if key == _hammock_last_key:
 		return
 	var info: Dictionary = hammock_cloth_meta[clip]
 	var F: int = int(info["frames"])
@@ -2112,6 +2127,7 @@ func set_hammock_clip_frame(clip: String, frame: int) -> void:
 			hammock_cloth_bytes.decode_float(b + 8))
 	_apply_hammock_verts(verts)
 	hammock_clip = clip
+	_hammock_last_key = key
 
 
 func _apply_hammock_verts(verts: PackedVector3Array) -> void:
@@ -2357,6 +2373,8 @@ func swing_hammock(ang: float) -> Transform3D:
 func _bush(p: Vector3, s: float) -> void:
 	wall_c(Vector2(p.x, p.z), 0.34 * s, p.y - 0.3, p.y + 0.8 * s, "灌木")
 	bush_spots.append([p, s])
+	# Keep the follow camera out of the leafy near-field (flat card walls on iPhone).
+	cam_blockers.append([p + Vector3(0, 0.55 * s, 0), 0.55 * s + 0.35])
 	var g = [Color(0.36, 0.64, 0.28), Color(0.42, 0.7, 0.3), Color(0.3, 0.58, 0.3)][rng.randi() % 3]
 	# the old lobes still draw their random numbers (into a mesh that is thrown away) so everything placed
 	# after a bush stays where it was; they shape the leafy bush
@@ -2394,7 +2412,8 @@ func _leafy_bush(p: Vector3, s: float, lobes: Array, g: Color) -> void:
 			var mid := base.lerp(tip, 0.5) + Vector3(lr.randf_range(-0.08, 0.08), 0.0, lr.randf_range(-0.08, 0.08)) * s
 			tube(FB, base, mid, 0.028 * s, 0.02 * s, 4, bark, 0.0, 0.0)
 			tube(FB, mid, tip, 0.02 * s, 0.008 * s, 4, bark, 0.0, 0.04)
-		var n := int(12.0 * (r.x * r.z) / (0.3 * s * s) * s) + 7
+		# Fewer leaf cards (was the biggest MultiMesh cost on iPhone); volume still reads.
+		var n := maxi(5, int((12.0 * (r.x * r.z) / (0.3 * s * s) * s + 7.0) * 0.62))
 		for k in n:
 			# a point in the outer shell of the lobe, never under the ground
 			var d := Vector3(lr.randf_range(-1, 1), lr.randf_range(-0.8, 1), lr.randf_range(-1, 1)).normalized()

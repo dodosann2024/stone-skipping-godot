@@ -65,7 +65,7 @@ func _particle_mat(additive: bool) -> ShaderMaterial:
 
 func _sparks() -> void:
 	var p := CPUParticles3D.new()
-	p.amount = 26
+	p.amount = 14
 	p.lifetime = 1.7
 	p.randomness = 0.6
 	p.lifetime_randomness = 0.5
@@ -93,11 +93,12 @@ func _sparks() -> void:
 	p.position = Vector3(0, 0.25, 0)
 	p.local_coords = false
 	p.layers = 1 | 16
+	p.add_to_group("v27_particles")
 	add_child(p)
 
 func _smoke() -> void:
 	var p := CPUParticles3D.new()
-	p.amount = 12
+	p.amount = 7
 	p.lifetime = 4.5
 	p.lifetime_randomness = 0.3
 	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
@@ -121,6 +122,7 @@ func _smoke() -> void:
 	p.position = Vector3(0, 0.95, 0)
 	p.local_coords = false
 	p.layers = 1 | 16
+	p.add_to_group("v27_particles")
 	add_child(p)
 
 func _noise1(x: float) -> float:

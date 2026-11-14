@@ -18,6 +18,8 @@ uniform vec3 glint_dir = vec3(0.45, 0.62, -0.64);   // towards the sun / moon (w
 uniform vec3 glint_col : source_color = vec3(1.0, 0.95, 0.85);
 uniform float glint_gain = 1.0;
 uniform float night = 0.0;
+// 0 full foam/glint/boat work; 1 skips lace loops + boat collar (phones).
+uniform float cheap = 0.0;
 // planar reflection (reflection.gd): the scene mirrored about the water plane, flipped vertically
 uniform sampler2D refl_tex : source_color, filter_linear, repeat_disable, hint_default_black;
 uniform float refl_on = 0.0;
@@ -144,14 +146,19 @@ void fragment() {
 		vec2 q = p * 3.6 + rn * (roll * 6.0) + vec2(t * 0.04, 0.0);
 		// every term goes to zero at both ends of the cycle: the phase wraps (fract) along a moving seam
 		float form = smoothstep(0.5, 0.68, c) * (1.0 - smoothstep(0.9, 1.0, c));
-		float band = exp(-pow((d - dl) / 0.22, 2.0)) * (0.55 + 0.45 * lace(q * 0.7, 0.0));
-		band *= smoothstep(0.15, 0.5, vnoise(p * 1.7 + vec2(t * 0.12, 0.0)) + 0.1);
-		float wake = lace(q, 0.35) * smoothstep(dl, dl + 0.15, d) * (1.0 - smoothstep(dl + 0.3, dl + 1.6, d));
-		foam = (band * 0.9 + wake * 0.45) * form;
-		// after the wave has broken, lace spreads over the shallows and slowly pops
-		float spent = smoothstep(0.0, 0.06, c) * (1.0 - smoothstep(0.06, 0.55, c));
-		float drift = lace(p * 3.1 + vec2(t * 0.05, t * 0.03), mix(0.3, 0.9, 1.0 - spent));
-		foam = max(foam, drift * (1.0 - smoothstep(0.1, 1.4, d)) * smoothstep(-0.3, 0.1, d) * (0.15 + 0.35 * spent));
+		float band = exp(-pow((d - dl) / 0.22, 2.0));
+		if (cheap < 0.5) {
+			band *= (0.55 + 0.45 * lace(q * 0.7, 0.0));
+			band *= smoothstep(0.15, 0.5, vnoise(p * 1.7 + vec2(t * 0.12, 0.0)) + 0.1);
+			float wake = lace(q, 0.35) * smoothstep(dl, dl + 0.15, d) * (1.0 - smoothstep(dl + 0.3, dl + 1.6, d));
+			foam = (band * 0.9 + wake * 0.45) * form;
+			float spent = smoothstep(0.0, 0.06, c) * (1.0 - smoothstep(0.06, 0.55, c));
+			float drift = lace(p * 3.1 + vec2(t * 0.05, t * 0.03), mix(0.3, 0.9, 1.0 - spent));
+			foam = max(foam, drift * (1.0 - smoothstep(0.1, 1.4, d)) * smoothstep(-0.3, 0.1, d) * (0.15 + 0.35 * spent));
+		} else {
+			// Mobile: soft breaker band only (no lace noise loops).
+			foam = band * 0.75 * form;
+		}
 	}
 
 	// --- foam around posts / rocks (baked distance map, 0..3 m)
@@ -162,7 +169,7 @@ void fragment() {
 	objf += (1.0 - smoothstep(0.0, 1.4, od)) * smoothstep(0.62, 0.95, 0.5 + 0.5 * sin(od * 7.0 - t * 2.0)) * 0.45 * smoothstep(0.3, 0.6, nO);
 	foam = max(foam, objf);
 	// --- the rowboat: a lacy collar hugging the hull at the waterline, and faint rings it rocks off
-	if (boat_on > 0.5) {
+	if (boat_on > 0.5 && cheap < 0.75) {
 		vec2 dv = p - boat_c.xy;
 		vec2 q = vec2(dv.x * boat_c.z - dv.y * boat_c.w, dv.x * boat_c.w + dv.y * boat_c.z);
 		if (abs(q.x) < boat_box.x && abs(q.y) < boat_box.y) {

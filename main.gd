@@ -218,6 +218,7 @@ var night_amb: AudioStreamPlayer
 var env: Environment
 var sky_mat: ProceduralSkyMaterial
 var sun: DirectionalLight3D
+var mq = preload("res://mobile_quality.gd").new()
 const SUN_DAY := Vector3(-38, 135, 0)
 const MOON_NIGHT := Vector3(-14, 206, 0)
 var demo_release_pending := 0
@@ -232,6 +233,7 @@ func _ready() -> void:
 	# After boy (priority 10): move then camera so follow uses the same-frame pose.
 	process_priority = 20
 	is_web = OS.has_feature("web")
+	RenderingServer.set_default_clear_color(Color(0.02, 0.05, 0.08))
 	ui_font = load("res://fonts/ui.otf")
 	_load_best()
 	_build_environment()
@@ -396,19 +398,26 @@ func _build_environment() -> void:
 	sun.light_energy = 1.0
 	sun.light_color = Color(1.0, 0.93, 0.82)
 	sun.shadow_enabled = true
-	sun.shadow_blur = 2.5
+	sun.shadow_blur = 2.8
 	# slight sun disk — soft enough for the brim, not so wide that the boy goes flat/pastel
 	sun.light_angular_distance = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
-	if is_web:
-		# phones: one shadow map pass instead of two; the far split only shaded palms 40+ m away
+	sun.shadow_bias = 0.03
+	sun.shadow_normal_bias = 1.2
+	if is_web or _opt("mobile") == "1":
+		# phones: one cascade, shorter range, softer filter (blocky shadows were the day-path complaint)
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-		sun.directional_shadow_max_distance = 50.0
+		sun.directional_shadow_max_distance = 32.0
+		sun.shadow_blur = 3.6
+		sun.shadow_bias = 0.045
+		sun.shadow_normal_bias = 1.7
+		sun.directional_shadow_pancake_size = 4.0
 	add_child(sun)
 	camera = Camera3D.new()
 	camera.fov = 55.0
-	camera.near = 0.1
+	# Slightly larger near plane avoids bush-card z-fight filling the lens on phones.
+	camera.near = 0.18
 	camera.far = 900.0
 	add_child(camera)
 	camera.current = true
@@ -3828,17 +3837,21 @@ func _process(delta: float) -> void:
 	island.leaf_mat.set_shader_parameter("focus", focus)
 	island.static_mat.set_shader_parameter("focus", focus)
 	island.torch_mat.set_shader_parameter("focus", focus)
-	# Wider foliage cut in explore so bushes between cam and boy fade (forest path).
-	# Static props keep a tighter cone so lantern posts / crates don't vanish wholesale.
-	var cr_foliage := 5.2 if mode == Mode.EXPLORE else 1.8
-	var cr_static := 2.4 if mode == Mode.EXPLORE else 1.5
+	# Keep the see-through cone tight. Explore used to punch a solid grey sky-hole through
+	# the canopy on iPhone (cut_radius 5.2); spring-arm pull-in handles occlusion instead.
+	var cr_foliage := 2.2 if mode == Mode.EXPLORE else 1.6
+	var cr_static := 1.7 if mode == Mode.EXPLORE else 1.4
 	island.foliage_mat.set_shader_parameter("cut_radius", cr_foliage)
 	island.leaf_mat.set_shader_parameter("cut_radius", cr_foliage)
 	island.static_mat.set_shader_parameter("cut_radius", cr_static)
 	island.torch_mat.set_shader_parameter("cut_radius", cr_static)
+	if island.leaf_mat:
+		island.leaf_mat.set_shader_parameter("near_fade", mq.leaf_near_fade if mq else 1.1)
 	_update_prints()
 	_update_audio(delta)
 	_audio_tick(delta)
+	if mq:
+		mq.watch_frame(delta, get_viewport(), sun, refl_level, _set_refl_level)
 
 func _physics_process(delta: float) -> void:
 	if state == State.FLYING:
@@ -4416,9 +4429,15 @@ func _build_reflection() -> void:
 	refl.setup(camera, sun)
 	island.water_mat.set_shader_parameter("refl_tex", refl.texture())
 	island.water_mat.set_shader_parameter("refl_guard", WaterReflection.GUARD)
+	# Mobile / web: drop internal 3D res so UI stays crisp while GPU fill falls (~DPR 3 → ~1.5–2×).
+	mq.setup(is_web, _opt("mobile") == "1", get_viewport(), sun)
+	mq.changed.connect(func(_t: int) -> void: _apply_mq_materials())
+	_apply_mq_materials()
 	var want := _opt("refl", "auto")
 	refl_auto = want == "auto"
-	_set_refl_level({"0": 2, "low": 1}.get(want, 0))
+	# On phones start one step lighter so the first walk doesn't hitch on full reflection.
+	var start_l := 1 if mq.mobile else 0
+	_set_refl_level({"0": 2, "low": 1}.get(want, start_l))
 	if _opt("shadow") == "0":
 		_set_refl_level(3)
 	# lights whose glitter streaks across the waves at night: the campfire, the lighthouse, then the lamps
@@ -4446,14 +4465,28 @@ func _build_reflection() -> void:
 
 func _set_refl_level(l: int) -> void:
 	refl_level = l
-	refl.scale = 0.35 if l == 0 else 0.25
-	refl.every = 1 if l == 0 else 2
+	refl.scale = 0.35 if l == 0 else (0.22 if l == 1 else 0.18)
+	refl.every = 1 if l == 0 else (2 if l == 1 else 3)
 	refl.set_enabled(l < 2)
 	island.water_mat.set_shader_parameter("refl_on", 1.0 if l < 2 else 0.0)
 	sun.shadow_enabled = l < 3
 
-## a phone that cannot keep up drops the reflection to the lighter setting, then to the approximations,
-## then the sun's shadow maps
+func _apply_mq_materials() -> void:
+	if island and island.water_mat:
+		island.water_mat.set_shader_parameter("cheap", mq.water_cheap)
+	if island and island.leaf_mat:
+		island.leaf_mat.set_shader_parameter("near_fade", mq.leaf_near_fade)
+	_scale_particles(mq.particle_mul)
+
+func _scale_particles(mul: float) -> void:
+	for n in get_tree().get_nodes_in_group("v27_particles") if get_tree() else []:
+		if n is CPUParticles3D:
+			var p := n as CPUParticles3D
+			if not p.has_meta("base_amount"):
+				p.set_meta("base_amount", p.amount)
+			p.amount = maxi(1, int(round(float(p.get_meta("base_amount")) * mul)))
+
+## FPS label + desktop reflection auto-drop (mobile ladder is MobileQuality.watch_frame).
 func _watch_fps(delta: float) -> void:
 	fps_t += delta
 	fps_n += 1
@@ -4462,18 +4495,20 @@ func _watch_fps(delta: float) -> void:
 	fps_avg = fps_n / fps_t
 	fps_t = 0.0
 	fps_n = 0
-	# two slow windows in a row (4 s), so one hitch such as a first-use shader compile does not count
 	fps_low = fps_low + 1 if fps_avg < 26.0 else 0
-	if refl_auto and not demo_mode and gt > 5.0 and fps_low >= 2 and refl_level < 3:
+	if (not mq.mobile) and refl_auto and not demo_mode and gt > 5.0 and fps_low >= 2 and refl_level < 3:
 		_set_refl_level(refl_level + 1)
 		fps_low = 0
 	if lbl_fps:
-		lbl_fps.text = "%.0f fps · 倒影 %s" % [fps_avg, ["高", "低", "关", "关 · 无阴影"][refl_level]]
+		lbl_fps.text = "%.0f fps · 倒影 %s · 画质 %s" % [
+			fps_avg, ["高", "低", "关", "关 · 无阴影"][refl_level], mq.tier_name()]
 		var dc := Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME
 		var vt := Viewport.RENDER_INFO_TYPE_VISIBLE
-		print("FPS %.1f refl %d night %d draws %d+%d size %s" % [fps_avg, refl_level, int(night_on),
-			get_viewport().get_render_info(vt, dc), refl.vp.get_render_info(vt, dc) if refl_level < 2 else 0,
-			str(refl.vp.size)])
+		print("FPS %.1f refl %d tier %d night %d draws %d+%d scale %.2f size %s" % [
+			fps_avg, refl_level, mq.tier, int(night_on),
+			get_viewport().get_render_info(vt, dc),
+			refl.vp.get_render_info(vt, dc) if refl_level < 2 else 0,
+			get_viewport().scaling_3d_scale, str(refl.vp.size)])
 
 # ------------------------------------------------------------------ save
 
