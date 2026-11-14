@@ -39,12 +39,12 @@ func build(island: Island) -> void:
 		var h := _mi(quad, hm)
 		h.position = p
 		hm.set_shader_parameter("color", Color(1.0, 0.78, 0.42))
-		# Soft bloom — path lamps: no halo (cage + glass mesh is the source).
+		# Soft bloom — path lamps use the hanging glass + tiny GB flame (no halo billboard).
 		h.scale = Vector3.ONE * (2.4 if kind == "porch" else (1.8 if kind == "dock" else 0.01))
 		h.visible = kind != "path"
 		halos.append(hm)
 		halo_kinds.append(kind)
-		# Real omni for every lamp (path included) so glass panes read as a lit source.
+		# Real omni for every lamp. Path: short warm pool that falls off fast.
 		var ol := OmniLight3D.new()
 		if kind == "dock":
 			ol.light_color = Color(1.0, 0.64, 0.30)
@@ -53,11 +53,14 @@ func build(island: Island) -> void:
 			ol.light_specular = 0.12
 			lamp_energy.append(0.85)
 		elif kind == "path":
-			ol.light_color = Color(1.0, 0.70, 0.38)
-			ol.omni_range = 2.8
-			ol.omni_attenuation = 1.45
-			ol.light_specular = 0.08
-			lamp_energy.append(0.85)
+			# Warm local pool on the path; glass glow is the GB tip + faint pane emission.
+			ol.light_color = Color(1.0, 0.68, 0.40)
+			ol.omni_range = 1.9
+			ol.omni_attenuation = 2.2
+			ol.light_specular = 0.015
+			lamp_energy.append(0.34)
+
+
 		else:
 			ol.light_color = Color(1.0, 0.72, 0.38)
 			ol.omni_range = 4.2
@@ -65,7 +68,9 @@ func build(island: Island) -> void:
 			ol.light_specular = 0.25
 			lamp_energy.append(2.1)
 		ol.shadow_enabled = false
-		ol.position = p + Vector3(0, -0.05, 0)
+		# Path: Omni near the lit ground pool (not inside the glass) so the cage keeps its silhouette
+		# and the boy isn't keyed like a chest-height studio light.
+		ol.position = p + (Vector3(0, -1.05, 0) if kind == "path" else Vector3(0, -0.05, 0))
 		ol.visible = false
 		add_child(ol)
 		lamp_lights.append(ol)
@@ -166,7 +171,7 @@ func apply(k: float, cam_pos: Vector3, moon_dir: Vector3, delta: float) -> void:
 			ol.light_energy = lamp_energy[i] * k * (1.0 + 0.05 * sin(t * 7.0 + i * 2.0))
 	for i in halos.size():
 		var hk := halo_kinds[i] if i < halo_kinds.size() else ""
-		# Path: no billboard bloom — the lantern mesh carries the glow.
+		# Path: no halo bloom — hanging glass + flame tip carry the source.
 		halos[i].set_shader_parameter("k", 0.0 if hk == "path" else k)
 	beam_pivot.visible = true
 	beam_pivot.rotation.y = t * 0.55

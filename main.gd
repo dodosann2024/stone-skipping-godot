@@ -3574,8 +3574,8 @@ func _update_night(delta: float, force := false) -> void:
 	island.water_mat.set_shader_parameter("glint_gain", lerpf(1.0, 2.15, k))
 	island.water_mat.set_shader_parameter("night", k)
 	# Lantern glass / hut window panes: visible warm sources at night.
-	# Keep boost modest — high values turn path/dock bulbs into flat billboards.
-	island.glow_mat.set_shader_parameter("boost", lerpf(0.35, 1.15, k))
+	# Keep boost modest — path flame tip is tiny; high boost reads as a billboard.
+	island.glow_mat.set_shader_parameter("boost", lerpf(0.35, 1.05, k))
 	island.cloud_mat.set_shader_parameter("tint", Color(1, 1, 1).lerp(Color(0.10, 0.12, 0.20), k))
 	island.campfire.night = k
 	for tn in island.torches:

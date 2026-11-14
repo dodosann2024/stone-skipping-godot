@@ -110,34 +110,44 @@ func g() -> void:
 	if m.mode == m.Mode.VIEW:
 		m._toggle_view()
 
-	# Night: path lantern — stand clear of the post; cage left of head; cut foliage/crates.
+	# Night: path lantern — first inland lamp; hanging open-cage lantern midground.
+	# LB / static_nocut so cut-out never dissolves the cage. Dim porch so only path Omni keys.
 	m.mode = m.Mode.EXPLORE
-	var lamp_p := Vector3(-2.90, 0, -8.78)
+	var lamp_p := Vector3(-3.08, 2.42, -9.02)
 	for L in m.island.lamps:
 		if str(L[1]) == "path":
 			lamp_p = L[0] as Vector3
 			break
-	var path_p := Vector3(lamp_p.x + 1.6, 0.0, lamp_p.z + 0.7)
+	for i in m.night_fx.lamp_kinds.size():
+		if m.night_fx.lamp_kinds[i] == "porch":
+			m.night_fx.lamp_energy[i] = 0.0
+	var path_p := lamp_p
+	var best_pd := 999.0
+	for i in 24:
+		var a := float(i) * TAU / 24.0
+		var t := Vector3(lamp_p.x + cos(a) * 1.35, 0.0, lamp_p.z + sin(a) * 1.35)
+		var pd: float = m.island.path_dist(t.x, t.z)
+		if pd < best_pd:
+			best_pd = pd
+			path_p = t
 	path_p.y = m._surface(path_p.x, path_p.z)
 	var to_lamp: Vector3 = lamp_p - path_p
-	m._place(path_p, atan2(-to_lamp.x, -to_lamp.z))
-	m.ex_yaw = m.face_yaw + PI + 0.2
-	m.ex_pitch = 0.32
-	m.ex_dist = 4.2
-	m._cam_arm_k = 1.0
-	m._cam_arm_want = 1.0
-	m.cam_yaw = m.ex_yaw
-	m.cam_pitch = m.ex_pitch
-	m.cam_dist = m.ex_dist
-	m.cam_target = m.player.global_position + Vector3(-0.35, 0.75, 0)
-	m.island.foliage_mat.set_shader_parameter("cut_radius", 6.0)
-	m.island.leaf_mat.set_shader_parameter("cut_radius", 6.0)
-	m.island.static_mat.set_shader_parameter("cut_radius", 6.0)
+	to_lamp.y = 0.0
+	m._place(path_p, atan2(-to_lamp.x, -to_lamp.z) + 0.15)
+	var along := Vector3(-to_lamp.z, 0.0, to_lamp.x).normalized()
+	var mid := path_p.lerp(Vector3(lamp_p.x, path_p.y, lamp_p.z), 0.30) + Vector3(0, 0.78, 0)
+	var yaw := atan2(-along.x, -along.z) + PI * 0.92
+	m.island.foliage_mat.set_shader_parameter("cut_radius", 7.5)
+	m.island.leaf_mat.set_shader_parameter("cut_radius", 7.5)
+	m.island.static_mat.set_shader_parameter("cut_radius", 1.4)
+	m._fixed_cam(mid, yaw, 0.32, 5.2)
+	m.cam_fixed = true
 	for _i in 55:
-		m._cam_arm_k = 1.0
-		m._cam_arm_want = 1.0
-		m.cam_dist = m.ex_dist
-		m.cam_pitch = m.ex_pitch
+		for i in m.night_fx.lamp_kinds.size():
+			if m.night_fx.lamp_kinds[i] == "porch":
+				m.night_fx.lamp_energy[i] = 0.0
+				m.night_fx.lamp_lights[i].light_energy = 0.0
+		m._fixed_cam(mid, yaw, 0.32, 5.2)
 		await process_frame
 	await _shot(vp, "night_forest_path.png")
 
