@@ -110,44 +110,61 @@ func g() -> void:
 	if m.mode == m.Mode.VIEW:
 		m._toggle_view()
 
-	# Night: path lantern — first inland lamp; hanging open-cage lantern midground.
-	# LB / static_nocut so cut-out never dissolves the cage. Dim porch so only path Omni keys.
+	# Night: forest path — same spot as screenshots/v26/ref/night_forest_path_b3ec.png.
+	# Default follow cam, boy facing the camera (3/4-front), face visible; lantern pool beside him.
+	# Foliage cut is handled by explore cut_radius (not a special fixed cam).
 	m.mode = m.Mode.EXPLORE
-	var lamp_p := Vector3(-3.08, 2.42, -9.02)
+	m.cam_fixed = false
+	m.demo_cam = false
+	m.demo_track = []
+	# Geographic match to the user ref (fence path on the lighthouse climb).
+	var ref_p := Vector3(-0.8, 0, 6.5)
+	var lamp_p := ref_p
+	var best_ld := 999.0
 	for L in m.island.lamps:
-		if str(L[1]) == "path":
-			lamp_p = L[0] as Vector3
-			break
-	for i in m.night_fx.lamp_kinds.size():
-		if m.night_fx.lamp_kinds[i] == "porch":
-			m.night_fx.lamp_energy[i] = 0.0
-	var path_p := lamp_p
-	var best_pd := 999.0
-	for i in 24:
-		var a := float(i) * TAU / 24.0
-		var t := Vector3(lamp_p.x + cos(a) * 1.35, 0.0, lamp_p.z + sin(a) * 1.35)
-		var pd: float = m.island.path_dist(t.x, t.z)
-		if pd < best_pd:
-			best_pd = pd
-			path_p = t
+		if str(L[1]) != "path":
+			continue
+		var lp: Vector3 = L[0]
+		var ld := Vector2(lp.x - ref_p.x, lp.z - ref_p.z).length()
+		if ld < best_ld:
+			best_ld = ld
+			lamp_p = lp
+	# Stand on the ref path ~1.05 m from the lantern so the pool reads at his feet.
+	var away: Vector3 = Vector3(ref_p.x - lamp_p.x, 0.0, ref_p.z - lamp_p.z)
+	if away.length_squared() < 1e-6:
+		away = Vector3(-0.6, 0.0, -0.4)
+	var path_p: Vector3 = Vector3(lamp_p.x, 0.0, lamp_p.z) + away.normalized() * 1.05
+	# Bias toward the ref geographic spot so the fence / uphill path matches the screenshot.
+	path_p = path_p.lerp(Vector3(ref_p.x, 0.0, ref_p.z), 0.55)
 	path_p.y = m._surface(path_p.x, path_p.z)
+	# Face so the camera (3/4-front) sees him and the lantern keys one side.
 	var to_lamp: Vector3 = lamp_p - path_p
 	to_lamp.y = 0.0
-	m._place(path_p, atan2(-to_lamp.x, -to_lamp.z) + 0.15)
-	var along := Vector3(-to_lamp.z, 0.0, to_lamp.x).normalized()
-	var mid := path_p.lerp(Vector3(lamp_p.x, path_p.y, lamp_p.z), 0.30) + Vector3(0, 0.78, 0)
-	var yaw := atan2(-along.x, -along.z) + PI * 0.92
-	m.island.foliage_mat.set_shader_parameter("cut_radius", 7.5)
-	m.island.leaf_mat.set_shader_parameter("cut_radius", 7.5)
-	m.island.static_mat.set_shader_parameter("cut_radius", 1.4)
-	m._fixed_cam(mid, yaw, 0.32, 5.2)
-	m.cam_fixed = true
+	# Prefer looking down-path (seaward) so the uphill fence stays behind like the ref.
+	var face := atan2(-(path_p.x - 2.0), -(path_p.z - 2.5))
+	if to_lamp.length_squared() > 1e-6:
+		var side := atan2(-to_lamp.x, -to_lamp.z) + PI * 0.55
+		face = lerp_angle(face, side, 0.55)
+	m._place(path_p, face)
+	# Default follow, 3/4-front, closer so he fills the frame like the ref (not tiny in foliage).
+	m.ex_yaw = m.face_yaw + PI + 0.35
+	m.ex_pitch = 0.18
+	m.ex_dist = 3.9
+	m._cam_arm_k = 1.0
+	m._cam_arm_want = 1.0
+	m._cam_slide = 0.0
+	m._cam_slide_want = 0.0
+	m.cam_yaw = m.ex_yaw
+	m.cam_pitch = m.ex_pitch
+	m.cam_dist = m.ex_dist
+	m.cam_target = m.player.global_position + Vector3(0, 0.72, 0)
 	for _i in 55:
-		for i in m.night_fx.lamp_kinds.size():
-			if m.night_fx.lamp_kinds[i] == "porch":
-				m.night_fx.lamp_energy[i] = 0.0
-				m.night_fx.lamp_lights[i].light_energy = 0.0
-		m._fixed_cam(mid, yaw, 0.32, 5.2)
+		m.ex_yaw = m.face_yaw + PI + 0.35
+		m.ex_pitch = 0.18
+		m.ex_dist = 3.9
+		m.cam_yaw = m.ex_yaw
+		m.cam_pitch = m.ex_pitch
+		m.cam_dist = m.ex_dist
 		await process_frame
 	await _shot(vp, "night_forest_path.png")
 

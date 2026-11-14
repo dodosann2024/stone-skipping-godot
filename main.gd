@@ -1261,7 +1261,20 @@ func _explore_tick(delta: float) -> void:
 	s = move_toward(s, spd_t, acc * delta)
 	move_vel = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * s
 	var from := player.position
-	var to := _try_move(from, move_vel * delta)
+	var wish_step := move_vel * delta
+	var to := _try_move(from, wish_step)
+	# Cap per-frame lateral shove from wall slide (lighthouse / rock first contact). A sudden
+	# sideways pop reads as a multi-pixel screen spike even when the spring-arm is smooth.
+	var step := to - from
+	step.y = 0.0
+	if wish_step.length_squared() > 1e-8 and step.length_squared() > 1e-8:
+		var along := wish_step.normalized()
+		var lat := step - along * step.dot(along)
+		var max_lat := maxf(wish_step.length() * 0.45, 0.012)
+		if lat.length() > max_lat:
+			to = from + along * step.dot(along) + lat.limit_length(max_lat)
+			# Re-resolve so the capped slide doesn't re-penetrate.
+			to = _try_move(from, to - from)
 	var real := (to - from) / maxf(delta, 1e-4)
 	real.y = 0.0
 	if real.length() < move_vel.length() * 0.5:
@@ -3698,7 +3711,13 @@ func _hat_probe_place(at: String) -> void:
 			break
 	_snap_explore_cam()
 
+## When > 0, timing/selftest scripts force this as the sim delta so soft-GL
+## (slow frames) still advances at the requested fps instead of walking 10× farther.
+var sim_dt_override := 0.0
+
 func _process(delta: float) -> void:
+	if sim_dt_override > 0.0:
+		delta = sim_dt_override
 	if OS.has_feature("web"):
 		safe_t += delta
 		if safe_t > 1.0:
@@ -3782,12 +3801,14 @@ func _process(delta: float) -> void:
 	island.leaf_mat.set_shader_parameter("focus", focus)
 	island.static_mat.set_shader_parameter("focus", focus)
 	island.torch_mat.set_shader_parameter("focus", focus)
-	# Wider cut cone in explore so porch crates/posts don't hide the boy.
-	var cr := 2.6 if mode == Mode.EXPLORE else 1.5
-	island.foliage_mat.set_shader_parameter("cut_radius", cr)
-	island.leaf_mat.set_shader_parameter("cut_radius", cr)
-	island.static_mat.set_shader_parameter("cut_radius", cr)
-	island.torch_mat.set_shader_parameter("cut_radius", cr)
+	# Wider foliage cut in explore so bushes between cam and boy fade (forest path).
+	# Static props keep a tighter cone so lantern posts / crates don't vanish wholesale.
+	var cr_foliage := 5.2 if mode == Mode.EXPLORE else 1.8
+	var cr_static := 2.4 if mode == Mode.EXPLORE else 1.5
+	island.foliage_mat.set_shader_parameter("cut_radius", cr_foliage)
+	island.leaf_mat.set_shader_parameter("cut_radius", cr_foliage)
+	island.static_mat.set_shader_parameter("cut_radius", cr_static)
+	island.torch_mat.set_shader_parameter("cut_radius", cr_static)
 	_update_prints()
 	_update_audio(delta)
 	_audio_tick(delta)
@@ -4270,15 +4291,18 @@ func _cam_blocked(q: Vector3) -> bool:
 
 var _cam_arm_k := 1.0
 var _cam_arm_want := 1.0
+## Smoothed lateral dodge (m along camera-right). Never snaps — was the walk_120 boy_ds spike.
+var _cam_slide := 0.0
+var _cam_slide_want := 0.0
 
 func _apply_camera(delta: float = 1.0 / 60.0) -> void:
-	var off := Vector3(sin(cam_yaw) * cos(cam_pitch), sin(cam_pitch), cos(cam_yaw) * cos(cam_pitch)) * cam_dist
+	var full_off := Vector3(sin(cam_yaw) * cos(cam_pitch), sin(cam_pitch), cos(cam_yaw) * cos(cam_pitch)) * cam_dist
 	# Soft spring arm: frame-rate independent pull-in (no constant-α snap at 120Hz).
 	var want_k := 1.0
 	var orbiting := dragging or orbit_pending.length_squared() > 1e-10 or _orbit_ease > 0.05
 	if cam_dist < 20.0 and (not demo_cam or demo_track.size() > 0):
 		for i in range(2, 28):
-			var q := cam_target + off * (i / 27.0)
+			var q := cam_target + full_off * (i / 27.0)
 			if _cam_blocked(q):
 				want_k = maxf((i - 1) / 27.0, 1.35 / maxf(cam_dist, 0.01))
 				break
@@ -4286,29 +4310,38 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	if orbiting:
 		want_k = _cam_arm_k
 	# Hysteresis: don't chatter when the probe flips a step.
-	if absf(want_k - _cam_arm_want) > 0.02:
+	if absf(want_k - _cam_arm_want) > 0.035:
 		_cam_arm_want = want_k
-	var arm_rate := 4.0 if orbiting else 12.0
+	# Pull-in limited/smoothed; recover (push out) even slower so clearance doesn't ping-pong.
+	var arm_rate := 2.8 if orbiting else (3.4 if _cam_arm_want < _cam_arm_k - 0.01 else 2.0)
 	_cam_arm_k = lerpf(_cam_arm_k, _cam_arm_want, 1.0 - exp(-delta * arm_rate))
-	off *= _cam_arm_k
-	var pos := cam_target + off
-	# Prefer a lateral slide before accepting a near occluder in the default beach framing.
+	var off := full_off * _cam_arm_k
+	var right := Vector3(cos(cam_yaw), 0, -sin(cam_yaw))
+	# Lateral dodge only while nearly idle. During walk/run a sideways hop shoves the boy
+	# across the screen (walk_120 spike); prefer smoothed arm pull-in along the look axis
+	# so look_at(cam_target) keeps him centred. Follow target is never rewritten here.
+	_cam_slide_want = 0.0
+	var moving := cur_speed > 0.12
 	if mode == Mode.EXPLORE and not orbiting:
-		var right := Vector3(cos(cam_yaw), 0, -sin(cam_yaw))
-		if _cam_blocked(pos):
-			for s in [0.55, -0.55, 1.1, -1.1, 1.8, -1.8, 2.6, -2.6]:
-				var try_p: Vector3 = pos + right * s
-				if not _cam_blocked(try_p):
-					pos = try_p
-					break
-		# Still blocked: pull in harder so the boy stays visible.
-		if _cam_blocked(pos):
-			for kk in [0.72, 0.55, 0.40, 0.28]:
-				var try2: Vector3 = cam_target + off * kk
-				if not _cam_blocked(try2):
-					pos = try2
-					_cam_arm_k = minf(_cam_arm_k, kk)
-					break
+		var probe := cam_target + off
+		if _cam_blocked(probe):
+			if not moving:
+				for s in [0.55, -0.55, 1.1, -1.1, 1.8, -1.8, 2.4, -2.4]:
+					if not _cam_blocked(probe + right * s):
+						_cam_slide_want = s
+						break
+			# Deeper arm pull (smoothed) — never teleport.
+			if _cam_slide_want == 0.0:
+				for kk in [0.82, 0.68, 0.54, 0.42, 0.32]:
+					if not _cam_blocked(cam_target + full_off * kk):
+						_cam_arm_want = minf(_cam_arm_want, kk)
+						break
+	# Idle dodge eases in/out slowly; while moving, bleed any leftover slide away.
+	var slide_rate := (1.6 if absf(_cam_slide_want) > absf(_cam_slide) else 2.4) if not moving else 4.0
+	if moving:
+		_cam_slide_want = 0.0
+	_cam_slide = lerpf(_cam_slide, _cam_slide_want, 1.0 - exp(-delta * slide_rate))
+	var pos := cam_target + off + right * _cam_slide
 	var floor_y: float = max(Island.ground_h(pos.x, pos.z), 0.0) + 0.55
 	if _on_dock(pos.x, pos.z):
 		floor_y = maxf(floor_y, Island.DECK_Y + 0.4)
@@ -4572,6 +4605,10 @@ func _place(p: Vector3, yaw: float) -> void:
 	face_yaw = yaw
 	player.rotation = Vector3(0, yaw, 0)
 	move_vel = Vector3.ZERO
+	_cam_slide = 0.0
+	_cam_slide_want = 0.0
+	_cam_arm_k = 1.0
+	_cam_arm_want = 1.0
 	_snap_explore_cam()
 	_update_action_kind()
 

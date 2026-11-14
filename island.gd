@@ -2556,6 +2556,17 @@ func _build_vegetation() -> void:
 		lamps.append([body, "path"])
 		# Keep explore cam from sitting inside path posts / fence boxes near the lamps.
 		cam_blockers.append([g + Vector3(0, 0.45, 0), 0.55])
+	# Forest-path lantern on the lighthouse climb (user night_forest_path spot ~(-0.8, 6.5)).
+	var fq := Vector2(-0.55, 6.7)
+	var fdir := Vector2(0.5, 8.0) - Vector2(1.6, 4.4)
+	var fo := fdir.normalized().orthogonal() * 0.95
+	var fg := gp(fq.x + fo.x, fq.y + fo.y)
+	tube(SB, fg, fg + Vector3(0, 1.05, 0), 0.04, 0.035, 5, Color(0.4, 0.28, 0.16))
+	wall_c(Vector2(fg.x, fg.z), 0.06, fg.y - 0.2, fg.y + 1.35, "路灯")
+	var flp: Vector3 = fg + Vector3(0, 1.12, 0)
+	var fhang := Vector3(-fo.x, 0.0, -fo.y).normalized()
+	lamps.append([_path_lantern(flp, fhang), "path"])
+	cam_blockers.append([fg + Vector3(0, 0.45, 0), 0.55])
 
 # ------------------------------------------------------------------ far scenery
 

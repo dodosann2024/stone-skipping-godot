@@ -46,9 +46,9 @@ def main() -> None:
         out = os.path.join(ROOT, base + ".png")
         fig.savefig(out, dpi=120)
         plt.close(fig)
-        # Match Godot harness: ignore near-idle frames so max/median isn't inflated.
-        b = [x for x in boy if x > 0.02]
-        c = [x for x in cam if x > 0.001]
+        # Skip the first sample (no previous frame) and true zeros from idle holds.
+        b = [x for x in boy[1:] if x > 1e-6]
+        c = [x for x in cam[1:] if x > 1e-6]
         def ratio(xs):
             if not xs:
                 return 0.0, 0.0, 0.0

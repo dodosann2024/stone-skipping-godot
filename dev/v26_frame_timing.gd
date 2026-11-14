@@ -20,6 +20,7 @@ func g() -> void:
 	DisplayServer.window_set_size(Vector2i(W, H))
 	var vp := get_root().get_viewport()
 	vp.size = Vector2i(W, H)
+	Engine.max_fps = fps
 	DirAccess.make_dir_recursive_absolute(OUT)
 
 	var m = (load("res://main.tscn") as PackedScene).instantiate()
@@ -32,6 +33,10 @@ func g() -> void:
 	m.demo_mode = false
 	m.demo_cam = false
 	m.cam_fixed = false
+	# Soft-GL frames are ~100ms; without a fixed sim dt the warm walk overshoots into
+	# rocks/lighthouse and the boy_ds spike is a wall shove, not a camera event.
+	var dt := 1.0 / float(fps)
+	m.sim_dt_override = dt
 	if m.night_on:
 		m.night_btn.pressed.emit()
 		for _i in 60:
@@ -39,10 +44,12 @@ func g() -> void:
 	m.night_k = 0.0
 	m._update_night(0.0, true)
 
-	# Open flat beach, facing along the shore (+X) so walk/run don't climb into the hill/fire.
-	var open_p: Vector3 = m.island.shore_pt(0.2, 2.4)
+	# Flat beach: face +X, camera behind on a palm-clear line with ≥7 m sand ahead
+	# (covers walk+run warm). Face-camera (ex_yaw=face+PI) walked into the lighthouse.
+	var open_p := Vector3(15.0, 0.0, 4.0)
+	open_p.y = m._surface(open_p.x, open_p.z)
 	m._place(open_p, -PI * 0.5)
-	m.ex_yaw = m.face_yaw + PI
+	m.ex_yaw = m.face_yaw
 	m.ex_pitch = 0.20
 	m.ex_dist = 4.8
 	m.mode = m.Mode.EXPLORE
@@ -52,10 +59,10 @@ func g() -> void:
 	m.cam_target = m.player.global_position + Vector3(0, 0.68, 0)
 	m._cam_arm_k = 1.0
 	m._cam_arm_want = 1.0
+	m._cam_slide = 0.0
+	m._cam_slide_want = 0.0
 	for _i in 20:
 		await process_frame
-
-	var dt := 1.0 / float(fps)
 
 	await _prep_move(m, open_p, -PI * 0.5, Vector2(0, -0.55), fps, 1.4)
 	await _seq(m, vp, "walk", fps, dt, 1.2, Vector2(0, -0.55), false)
@@ -68,7 +75,7 @@ func g() -> void:
 		m.joy.active = false
 	# Fresh place for orbit so drag-start has no lag / collision to correct.
 	m._place(open_p, -PI * 0.5)
-	m.ex_yaw = m.face_yaw + PI
+	m.ex_yaw = m.face_yaw
 	m.ex_pitch = 0.20
 	m.ex_dist = 4.8
 	m.cam_yaw = m.ex_yaw
@@ -96,7 +103,8 @@ func g() -> void:
 func _prep_move(m, pos: Vector3, yaw: float, stick: Vector2, fps: int, warm_s: float) -> void:
 	## Re-place on open sand and warm the stick so each seq starts at steady speed.
 	m._place(pos, yaw)
-	m.ex_yaw = m.face_yaw + PI
+	# Follow-behind: stick-forward walks along face_yaw (clear +X shore), not into the lighthouse.
+	m.ex_yaw = m.face_yaw
 	m.ex_pitch = 0.20
 	m.ex_dist = 4.8
 	m.cam_yaw = m.ex_yaw
@@ -105,6 +113,8 @@ func _prep_move(m, pos: Vector3, yaw: float, stick: Vector2, fps: int, warm_s: f
 	m.cam_target = m.player.global_position + Vector3(0, 0.68, 0)
 	m._cam_arm_k = 1.0
 	m._cam_arm_want = 1.0
+	m._cam_slide = 0.0
+	m._cam_slide_want = 0.0
 	m._orbit_ease = 0.0
 	m.move_vel = Vector3.ZERO
 	m.cur_speed = 0.0
@@ -120,7 +130,7 @@ func _seq(m, vp, tag: String, fps: int, dt: float, secs: float, stick: Vector2, 
 	var n := int(ceil(secs * float(fps)))
 	var path := "%s/%s_%dfps.csv" % [OUT, tag, fps]
 	var f := FileAccess.open(path, FileAccess.WRITE)
-	f.store_line("frame,dt,boy_sx,boy_sy,boy_ds,cam_x,cam_y,cam_z,cam_ds,yaw,pitch,dist")
+	f.store_line("frame,dt,boy_sx,boy_sy,boy_ds,cam_x,cam_y,cam_z,cam_ds,yaw,pitch,dist,arm,slide,spd,px,pz,tx,tz")
 	var prev_s := Vector2.ZERO
 	var prev_c := Vector3.ZERO
 	var have := false
@@ -153,8 +163,10 @@ func _seq(m, vp, tag: String, fps: int, dt: float, secs: float, stick: Vector2, 
 		have = true
 		prev_s = s
 		prev_c = c
-		f.store_line("%d,%.6f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.5f,%.4f,%.4f,%.4f" % [
-			i, use_dt, s.x, s.y, bds, c.x, c.y, c.z, cds, m.cam_yaw, m.cam_pitch, m.cam_dist
+		f.store_line("%d,%.6f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.5f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f" % [
+			i, use_dt, s.x, s.y, bds, c.x, c.y, c.z, cds, m.cam_yaw, m.cam_pitch, m.cam_dist,
+			m._cam_arm_k, m._cam_slide, m.cur_speed, m.player.global_position.x, m.player.global_position.z,
+			m.cam_target.x, m.cam_target.z
 		])
 	f.close()
 	m.dragging = false

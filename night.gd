@@ -53,12 +53,12 @@ func build(island: Island) -> void:
 			ol.light_specular = 0.12
 			lamp_energy.append(0.85)
 		elif kind == "path":
-			# Warm local pool on the path; glass glow is the GB tip + faint pane emission.
-			ol.light_color = Color(1.0, 0.68, 0.40)
-			ol.omni_range = 1.9
-			ol.omni_attenuation = 2.2
-			ol.light_specular = 0.015
-			lamp_energy.append(0.34)
+			# Soft warm pool on the path (boy/path L ≤ ~1.3); glass glow is GB tip + pane emission.
+			ol.light_color = Color(1.0, 0.70, 0.42)
+			ol.omni_range = 2.35
+			ol.omni_attenuation = 1.55
+			ol.light_specular = 0.02
+			lamp_energy.append(0.40)
 
 
 		else:
