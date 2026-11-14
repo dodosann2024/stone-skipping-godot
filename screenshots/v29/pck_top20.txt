@@ -1,0 +1,43 @@
+BEFORE (game_v28.pck = 43.05 MB)
+ 15.914 MB  props/hammock_cloth_frames.bin
+  4.898 MB  hammock_v25.glb.scn
+  2.780 MB  boy.glb.scn
+  1.269 MB  albedo_smile.ctex
+  1.266 MB  albedo_idle.ctex
+  1.265 MB  albedo_cheer.ctex
+  1.263 MB  boy_child_basecolor.ctex
+  1.263 MB  albedo_sleep.ctex
+  1.225 MB  mr_idle.ctex
+  1.224 MB  mr_smile.ctex
+  1.222 MB  mr_sleep.ctex
+  1.222 MB  mr_closed.ctex
+  1.222 MB  mr_cheer.ctex
+  1.212 MB  boy_child_rm.ctex
+  0.667 MB  boy_child_normal.ctex
+  0.659 MB  normal_idle.ctex
+  0.658 MB  normal_smile.ctex
+  0.642 MB  normal_sleep.ctex
+  0.642 MB  normal_closed.ctex
+  0.642 MB  normal_cheer.ctex
+
+AFTER (game_v29.pck = 10.07 MB)
+  2.780 MB  boy.glb.scn
+  2.662 MB  hammock_cloth_frames.bin (fp16, every 3rd frame)
+  0.445 MB  albedo_smile.ctex (512)
+  0.445 MB  albedo_idle.ctex
+  0.444 MB  albedo_cheer.ctex
+  0.443 MB  albedo_sleep.ctex
+  0.410 MB  mr_idle.ctex
+  0.409 MB  mr_closed.ctex
+  0.213 MB  normal_idle.ctex
+  0.208 MB  normal_closed.ctex
+  0.199 MB  main.gdc
+  0.194 MB  ocean_loop
+  0.190 MB  hammock_v25_static.glb.scn
+  0.134 MB  sign_board
+  0.132 MB  ui.otf
+  0.129 MB  leaf_cluster
+  0.103 MB  island.gdc
+  0.093 MB  night_loop
+  0.077 MB  fire_loop
+  0.052 MB  boy.gdc
