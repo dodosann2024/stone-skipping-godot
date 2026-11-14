@@ -84,24 +84,34 @@ async def main():
 		await page.screenshot(path=str(OUT / "boot.png"), full_page=False)
 
 		# Parse Godot FPS console lines: "FPS … tier N … scale S"
-		tier, scale = None, None
+		# Mobile starts at MID (tier=1, scale=0.78); adaptive may step down on slow GL.
+		samples = []
 		for line in logs:
 			m = re.search(r"tier\s+(\d+).*scale\s+([0-9.]+)", line)
 			if m:
-				tier, scale = int(m.group(1)), float(m.group(2))
+				samples.append((int(m.group(1)), float(m.group(2))))
+		tier = samples[-1][0] if samples else None
+		scale = samples[-1][1] if samples else None
+		first = samples[0] if samples else (None, None)
+		# Mobile ladder activated if we ever saw MID (1/0.78) or any non-HIGH tier.
+		saw_mid = any(t == 1 and 0.74 <= s <= 0.82 for t, s in samples)
+		mobile_on = saw_mid or (first[0] is not None and first[0] >= 1)
 
-		# Fallback: on-screen FPS label text via canvas is opaque; rely on console.
 		result = {
 			"url": helpers["href"],
 			"helpers": helpers,
 			"tier": tier,
 			"scale": scale,
+			"first_tier": first[0],
+			"first_scale": first[1],
+			"samples": samples,
 			"pageerrors": errors,
 			"reqfails": [f for f in fails if "favicon" not in f][:20],
 			"console_error": [l for l in logs if l.startswith("[error]")],
 			"booted": bool(helpers.get("canvas")),
 			"is_v27": "game_v27" in helpers["href"],
-			"mid_ok": tier == 1 or (scale is not None and 0.74 <= scale <= 0.82),
+			"mid_ok": mobile_on,
+			"saw_mid": saw_mid,
 		}
 		(OUT / "result.json").write_text(json.dumps(result, indent=2))
 		print("RESULT", json.dumps(result, indent=2))
