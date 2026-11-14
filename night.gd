@@ -53,13 +53,13 @@ func build(island: Island) -> void:
 			ol.light_specular = 0.12
 			lamp_energy.append(0.85)
 		elif kind == "path":
-			# Soft warm pool on the path (boy/path L ~1.0–1.4). `p` is the cage body center
-			# (~0.95 m above ground) — do NOT drop a full metre or the Omni ends underground.
-			ol.light_color = Color(1.0, 0.72, 0.44)
-			ol.omni_range = 3.0
-			ol.omni_attenuation = 1.05
-			ol.light_specular = 0.02
-			lamp_energy.append(0.72)
+			# Boy/cage key only (chest height, short range). Ground pool is shader emission —
+			# any strong Omni on the dirt corridor reads as a hard orange stripe.
+			ol.light_color = Color(1.0, 0.74, 0.48)
+			ol.omni_range = 1.35
+			ol.omni_attenuation = 2.4
+			ol.light_specular = 0.0
+			lamp_energy.append(0.30)
 		else:
 			ol.light_color = Color(1.0, 0.72, 0.38)
 			ol.omni_range = 4.2
@@ -67,9 +67,8 @@ func build(island: Island) -> void:
 			ol.light_specular = 0.25
 			lamp_energy.append(2.1)
 		ol.shadow_enabled = false
-		# Path: Omni ~0.5 m above the ground so the pool lights dirt/grass at his feet
-		# without sitting inside the glass (cage silhouette stays readable).
-		ol.position = p + (Vector3(0, -0.45, 0) if kind == "path" else Vector3(0, -0.05, 0))
+		# Path: keep Omni near the cage (boy key); do not drop it onto the ground.
+		ol.position = p + (Vector3(0, -0.08, 0) if kind == "path" else Vector3(0, -0.05, 0))
 		ol.visible = false
 		add_child(ol)
 		lamp_lights.append(ol)

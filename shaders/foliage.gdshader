@@ -30,7 +30,11 @@ void fragment() {
 			discard;
 		}
 	}
-	ALBEDO = pow(COLOR.rgb, vec3(2.2));
+	vec3 c = pow(COLOR.rgb, vec3(2.2));
+	// Night: desaturate daytime leaf green toward cool blue-green (no neon canopy).
+	float lum = dot(c, vec3(0.30, 0.59, 0.11));
+	c = mix(c, vec3(0.10, 0.14, 0.12) * (0.7 + lum), night_k * 0.88);
+	ALBEDO = c;
 	ROUGHNESS = 0.8;
 	// Kill the green subsurface glow at night — it read as a lantern bloom blob.
 	BACKLIGHT = vec3(0.25, 0.35, 0.12) * COLOR.a * (1.0 - night_k * 0.92);

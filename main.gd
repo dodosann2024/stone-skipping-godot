@@ -3309,6 +3309,30 @@ func _upload_prints() -> void:
 	island.terrain_mat.set_shader_parameter("print_wash", print_wash)
 	island.terrain_mat.set_shader_parameter("print_box", box)
 
+## Nearest path lantern → soft radial ground pool in the terrain shader (round falloff,
+## not the dirt-path strip lit by a hard Omni).
+func _update_path_lamp_pool() -> void:
+	var k := smoothstep(0.0, 1.0, night_k)
+	if k < 0.02 or island == null or island.terrain_mat == null:
+		if island and island.terrain_mat:
+			island.terrain_mat.set_shader_parameter("lamp_pool", 0.0)
+		return
+	var focus := player.global_position if player else camera.global_position
+	var best := Vector3(9999.0, 0.0, 9999.0)
+	var best_d := 1e9
+	for L in island.lamps:
+		if str(L[1]) != "path":
+			continue
+		var lp: Vector3 = L[0]
+		var d := Vector2(lp.x - focus.x, lp.z - focus.z).length()
+		if d < best_d:
+			best_d = d
+			best = lp
+	# Fade in only when a path lamp is nearby so beach/campfire scenes stay untouched.
+	var near := 1.0 - smoothstep(6.0, 14.0, best_d)
+	island.terrain_mat.set_shader_parameter("lamp_xz", Vector2(best.x, best.z))
+	island.terrain_mat.set_shader_parameter("lamp_pool", k * near)
+
 func _add_ripple(p: Vector3, strength: float, delay := 0.0) -> void:
 	ripple_buf[ripple_i] = Vector4(p.x, p.z, gt + delay, strength)
 	ripple_i = (ripple_i + 1) % 8
@@ -3754,6 +3778,7 @@ func _process(delta: float) -> void:
 	_watch_fps(delta)
 	_update_night(delta)
 	night_fx.apply(night_k, camera.global_position, sun.global_basis.z.normalized(), delta)
+	_update_path_lamp_pool()
 	if toast_timer > 0.0:
 		toast_timer -= delta
 		if toast_timer < 0.5:

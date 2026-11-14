@@ -47,6 +47,8 @@ void fragment() {
 		}
 	}
 	vec3 c = pow(COLOR.rgb, vec3(2.2)) * tx.rgb;
+	float lum = dot(c, vec3(0.30, 0.59, 0.11));
+	c = mix(c, vec3(0.10, 0.14, 0.12) * (0.7 + lum), night_k * 0.88);
 	ALBEDO = c * mix(0.75, 1.3, ao);
 	AO = ao;
 	AO_LIGHT_AFFECT = 0.35;

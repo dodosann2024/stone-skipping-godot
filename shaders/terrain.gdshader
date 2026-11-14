@@ -43,6 +43,9 @@ float caustic(vec2 p, float t) {
 }
 
 global uniform float night_k;
+// Soft radial lantern pool (world XZ + strength). Set each frame from the nearest path lamp.
+uniform vec2 lamp_xz = vec2(9999.0);
+uniform float lamp_pool = 0.0; // 0..1
 
 void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -128,11 +131,17 @@ void fragment() {
 			c = c * tr + vec3(0.30, 0.52, 0.47) * (1.0 - tr);
 		}
 	}
+	// Night: flat cool moonlit albedo (kill path-dirt vs grass contrast). Round lantern
+	// pool = soft radial EMISSION only — no warm Omni on the dirt corridor.
+	float nk = night_k;
+	vec3 moon_ground = vec3(0.09, 0.135, 0.155); // desaturated blue-green
+	c = mix(c, moon_ground, nk);
+	float ld = length(p - lamp_xz);
+	// Soft Gaussian ~2.5 m; modest peak — radial pool, not a blazing dirt stripe.
+	float pool = lamp_pool * exp(-(ld * ld) / (1.60 * 1.60));
+	pool *= smoothstep(2.8, 0.85, ld);
 	ALBEDO = c;
-	ROUGHNESS = rough;
-	SPECULAR = 0.5 * (1.0 - night_k);
-	// Night canopy fill: plain Lambert + ACES was crushing path/grass to 0/255.
-	// A soft albedo-tinted emission keeps dirt, grass and roots readable in moon shadow;
-	// the path Omni still supplies the warm pool near lanterns.
-	EMISSION = c * vec3(0.055, 0.062, 0.085) * night_k;
+	ROUGHNESS = mix(rough, 0.92, nk);
+	SPECULAR = 0.5 * (1.0 - nk);
+	EMISSION = moon_ground * 0.38 * nk + vec3(0.13, 0.09, 0.05) * pool;
 }
