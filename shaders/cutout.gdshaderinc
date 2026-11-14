@@ -20,10 +20,12 @@ float cut_amount(vec3 wpos, vec3 cam) {
 	float len = length(seg);
 	float k = clamp(dot(wpos - cam, seg) / (len * len), 0.0, 1.0);
 	float dist = length(wpos - (cam + seg * k));
-	float r = cut_radius * mix(0.25, 1.0, smoothstep(0.0, 0.9, k));
-	float hide = (1.0 - smoothstep(r * 0.6, r, dist)) * (1.0 - smoothstep(0.88, 0.97, k));
-	// and anything right in front of the lens
-	hide = max(hide, 1.0 - smoothstep(len * 0.35, len * 0.6, length(wpos - cam)));
-	// only things above the kid's waist get in the way of a high camera; keep decks, rails, rocks
-	return hide * smoothstep(focus.y - 0.3, focus.y + 0.4, wpos.y);
+	float r = cut_radius * mix(0.45, 1.25, smoothstep(0.0, 0.9, k));
+	float hide = (1.0 - smoothstep(r * 0.45, r, dist)) * (1.0 - smoothstep(0.88, 0.985, k));
+	// Anything right in front of the lens (crates / posts / stairs that hide the boy).
+	float near = 1.0 - smoothstep(len * 0.15, len * 0.50, length(wpos - cam));
+	hide = max(hide, near * (1.0 - smoothstep(r * 1.0, r * 1.7, dist)));
+	// Near occluders: cut down to ground. Far ones: still prefer above-waist (keep decks).
+	float y0 = mix(focus.y - 1.55, focus.y - 0.20, smoothstep(0.12, 0.55, k));
+	return hide * smoothstep(y0, focus.y + 0.40, wpos.y);
 }

@@ -1,3 +1,3 @@
 tag=walk fps=60
-boy_ds median=0.3293 p95=1.2383 max=1.3009 max/median=3.951
-cam_ds median=0.01299 p95=0.01586 max=0.01589 max/median=1.223
+boy_ds median=0.0234 p95=0.0250 max=0.0251 max/median=1.000
+cam_ds median=0.01595 p95=0.01606 max=0.01606 max/median=1.000

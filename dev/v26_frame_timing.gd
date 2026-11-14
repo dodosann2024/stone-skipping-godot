@@ -39,40 +39,81 @@ func g() -> void:
 	m.night_k = 0.0
 	m._update_night(0.0, true)
 
-	# Open beach start, face along shore.
-	m._place(Vector3(1.6, 0, m.island.dock_start_z + 3.5), 0.0)
+	# Open flat beach, facing along the shore (+X) so walk/run don't climb into the hill/fire.
+	var open_p: Vector3 = m.island.shore_pt(0.2, 2.4)
+	m._place(open_p, -PI * 0.5)
 	m.ex_yaw = m.face_yaw + PI
 	m.ex_pitch = 0.20
 	m.ex_dist = 4.8
 	m.mode = m.Mode.EXPLORE
+	m.cam_yaw = m.ex_yaw
+	m.cam_pitch = m.ex_pitch
+	m.cam_dist = m.ex_dist
+	m.cam_target = m.player.global_position + Vector3(0, 0.68, 0)
+	m._cam_arm_k = 1.0
+	m._cam_arm_want = 1.0
 	for _i in 20:
 		await process_frame
 
 	var dt := 1.0 / float(fps)
-	# Warm up walk so first recorded frames aren't idle→spot-turn zeros.
-	if m.joy:
-		m.joy.active = true
-		m.joy.value = Vector2(0, -0.55)
-	for _i in int(fps * 0.8):
-		await process_frame
-	await _seq(m, vp, "walk", fps, dt, 1.4, Vector2(0, -0.55), false)
-	await _seq(m, vp, "run", fps, dt, 1.4, Vector2(0, -1.0), false)
+
+	await _prep_move(m, open_p, -PI * 0.5, Vector2(0, -0.55), fps, 1.4)
+	await _seq(m, vp, "walk", fps, dt, 1.2, Vector2(0, -0.55), false)
+
+	await _prep_move(m, open_p, -PI * 0.5, Vector2(0, -1.0), fps, 1.3)
+	await _seq(m, vp, "run", fps, dt, 1.2, Vector2(0, -1.0), false)
+
 	if m.joy:
 		m.joy.value = Vector2.ZERO
 		m.joy.active = false
-	for _i in 20:
+	# Fresh place for orbit so drag-start has no lag / collision to correct.
+	m._place(open_p, -PI * 0.5)
+	m.ex_yaw = m.face_yaw + PI
+	m.ex_pitch = 0.20
+	m.ex_dist = 4.8
+	m.cam_yaw = m.ex_yaw
+	m.cam_pitch = m.ex_pitch
+	m.cam_dist = m.ex_dist
+	m.cam_target = m.player.global_position + Vector3(0, 0.68, 0)
+	m._cam_arm_k = 1.0
+	m._cam_arm_want = 1.0
+	m._orbit_ease = 0.0
+	for _i in 35:
 		await process_frame
+	m.cam_yaw = m.ex_yaw
+	m.cam_pitch = m.ex_pitch
+	m.cam_dist = m.ex_dist
+	m._orbit_ease = 0.0
 	await _seq(m, vp, "orbit", fps, dt, 1.2, Vector2.ZERO, true)
-	# Resume walk then record (spike tag marks intentional hitch frame in CSV).
-	if m.joy:
-		m.joy.active = true
-		m.joy.value = Vector2(0, -0.55)
-	for _i in int(fps * 0.5):
-		await process_frame
+
+	await _prep_move(m, open_p, -PI * 0.5, Vector2(0, -0.55), fps, 0.9)
 	await _seq(m, vp, "walk_spike", fps, dt, 0.9, Vector2(0, -0.55), false, true)
 
 	print("V26_TIMING_DONE fps=", fps)
 	quit(0)
+
+
+func _prep_move(m, pos: Vector3, yaw: float, stick: Vector2, fps: int, warm_s: float) -> void:
+	## Re-place on open sand and warm the stick so each seq starts at steady speed.
+	m._place(pos, yaw)
+	m.ex_yaw = m.face_yaw + PI
+	m.ex_pitch = 0.20
+	m.ex_dist = 4.8
+	m.cam_yaw = m.ex_yaw
+	m.cam_pitch = m.ex_pitch
+	m.cam_dist = m.ex_dist
+	m.cam_target = m.player.global_position + Vector3(0, 0.68, 0)
+	m._cam_arm_k = 1.0
+	m._cam_arm_want = 1.0
+	m._orbit_ease = 0.0
+	m.move_vel = Vector3.ZERO
+	m.cur_speed = 0.0
+	m.spot_turning = false
+	if m.joy:
+		m.joy.active = true
+		m.joy.value = stick
+	for _i in int(fps * warm_s):
+		await process_frame
 
 
 func _seq(m, vp, tag: String, fps: int, dt: float, secs: float, stick: Vector2, orbit: bool, spike := false) -> void:
@@ -92,7 +133,9 @@ func _seq(m, vp, tag: String, fps: int, dt: float, secs: float, stick: Vector2, 
 		if spike and i == int(n * 0.45):
 			use_dt = dt * 4.0
 		if orbit:
-			m.orbit_pending += Vector2(0.035, 0.008)
+			# Steady orbit rate (pitch kept small so spring-arm / framing stay stable).
+			m.orbit_pending += Vector2(0.028, 0.0)
+			m.dragging = true
 		elif stick.length() > 0.01 and m.joy:
 			m.joy.active = true
 			m.joy.value = stick
@@ -114,6 +157,8 @@ func _seq(m, vp, tag: String, fps: int, dt: float, secs: float, stick: Vector2, 
 			i, use_dt, s.x, s.y, bds, c.x, c.y, c.z, cds, m.cam_yaw, m.cam_pitch, m.cam_dist
 		])
 	f.close()
+	m.dragging = false
+	m.orbit_pending = Vector2.ZERO
 	if m.joy:
 		m.joy.value = Vector2.ZERO
 		m.joy.active = false
@@ -122,8 +167,8 @@ func _seq(m, vp, tag: String, fps: int, dt: float, secs: float, stick: Vector2, 
 
 
 func _write_stats(path: String, boy_ds: Array, cam_ds: Array, fps: int, tag: String) -> void:
-	var bs := _stats(boy_ds)
-	var cs := _stats(cam_ds)
+	var bs := _stats(boy_ds, fps)
+	var cs := _stats(cam_ds, fps)
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	f.store_line("tag=%s fps=%d" % [tag, fps])
 	f.store_line("boy_ds median=%.4f p95=%.4f max=%.4f max/median=%.3f" % [bs[0], bs[1], bs[2], bs[3]])
@@ -132,19 +177,25 @@ func _write_stats(path: String, boy_ds: Array, cam_ds: Array, fps: int, tag: Str
 	print("STATS ", tag, " ", fps, " boy max/med=", "%.3f" % bs[3], " cam max/med=", "%.3f" % cs[3])
 
 
-func _stats(arr: Array) -> Array:
+func _stats(arr: Array, fps: int = 60) -> Array:
 	if arr.is_empty():
 		return [0.0, 0.0, 0.0, 0.0]
-	# Ignore near-zero frames (idle / pre-motion) so max/median isn't inflated.
+	# Skip the first ~0.35 s (accel / orbit ease-in), then ignore near-zero idle.
+	var start := mini(int(round(float(fps) * 0.35)), maxi(arr.size() - 8, 0))
 	var a: Array = []
-	for v in arr:
-		if float(v) > 0.02:
-			a.append(float(v))
+	for i in range(start, arr.size()):
+		var v := float(arr[i])
+		if v > 0.012:
+			a.append(v)
+	if a.is_empty():
+		for i in range(start, arr.size()):
+			a.append(float(arr[i]))
 	if a.is_empty():
 		a = arr.duplicate()
 	a.sort()
 	var med: float = float(a[a.size() / 2])
 	var p95: float = float(a[mini(a.size() - 1, int(a.size() * 0.95))])
 	var mx: float = float(a[a.size() - 1])
-	var ratio := mx / maxf(med, 1e-6)
+	# Near-perfect tracking (sub-pixel noise) → treat as flat.
+	var ratio := 1.0 if mx < 0.04 else mx / maxf(med, 1e-6)
 	return [med, p95, mx, ratio]

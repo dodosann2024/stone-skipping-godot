@@ -759,6 +759,18 @@ func _build_dock() -> void:
 		[Vector3(-2.6, DECK_Y + 1.85, dock_end_z + 0.15), 0.5], [Vector3(2.6, DECK_Y + 1.85, dock_end_z + 0.15), 0.5],
 		[Vector3(-3.0, DECK_Y + 1.4, dock_end_z + 0.15), 0.35], [Vector3(3.0, DECK_Y + 1.4, dock_end_z + 0.15), 0.35],
 	]
+	# Hut porch crate / posts — explore camera must not sit behind them on the beach.
+	var hth := -2.3
+	var hxf := Transform3D(Basis(Vector3.UP, atan2(dir_at(hth).x, dir_at(hth).z)), hut_pos)
+	var crate_p: Vector3 = hxf * Vector3(-2.6, 0.0, 2.6)
+	crate_p.y = ground_h(crate_p.x, crate_p.z) + 0.3
+	cam_blockers.append([crate_p, 1.15])
+	cam_blockers.append([hxf * Vector3(-1.95, 1.65, 2.85), 0.75])
+	cam_blockers.append([hxf * Vector3(1.95, 1.65, 2.85), 0.75])
+	cam_blockers.append([hxf * Vector3(0.0, 1.4, 2.6), 0.85])
+	# Porch stair / post volume — default beach framing often sits behind these.
+	cam_blockers.append([hxf * Vector3(-1.2, 0.9, 2.4), 0.7])
+	cam_blockers.append([hxf * Vector3(1.2, 0.9, 2.4), 0.7])
 	wall_c(Vector2(1.8, dock_end_z + 3.3), 0.18, DECK_Y, DECK_Y + 0.32, "水桶")
 	wall_s(Vector2(-1.6, dock_end_z + 3.3), Vector2(-1.95, dock_end_z + 3.39), 0.04, DECK_Y, DECK_Y + 1.6, "鱼竿")
 	_crate(pc + Vector3(0, 0.3, 0), 0.6, 0.2)
@@ -1223,6 +1235,10 @@ func _build_hut(th: float) -> void:
 	box(SB, Vector3(0.2, 0.04, 0.2), hp + Vector3(0, 0.16, 0), Vector3.ZERO, Color(0.2, 0.2, 0.22))
 	box(GB, Vector3(0.15, 0.25, 0.15), hp, Vector3.ZERO, Color(1.0, 0.8, 0.45))
 	lamps.append([hp, "porch"])
+	# Lit window pane (warm bulb glow visible from the beach at night).
+	var win: Vector3 = xf * Vector3(-0.9, floor_y + 1.15, 1.52)
+	box(GB, Vector3(0.85, 0.95, 0.04), win, Vector3(0, yaw, 0), Color(1.0, 0.78, 0.42))
+	lamps.append([win, "porch"])
 	_barrel(xf * Vector3(2.4, 0, 2.2) + Vector3(0, ground_h((xf * Vector3(2.4, 0, 2.2)).x, (xf * Vector3(2.4, 0, 2.2)).z) - base.y, 0))
 	_crate(xf * Vector3(-2.6, 0.0, 2.6) + Vector3(0, ground_h((xf * Vector3(-2.6, 0, 2.6)).x, (xf * Vector3(-2.6, 0, 2.6)).z) - base.y + 0.3, 0), 0.6, 0.4)
 	# fishing net drying between two poles beside the hut

@@ -1,8 +1,35 @@
-orbit_120fps: boy med=0.406 max=1.689 max/med=4.16 | cam med=0.1300 max=0.1570 max/med=1.21
-orbit_60fps: boy med=0.215 max=2.102 max/med=9.78 | cam med=0.1608 max=0.1705 max/med=1.06
-run_120fps: boy med=0.331 max=0.833 max/med=2.52 | cam med=0.0225 max=0.0238 max/med=1.06
-run_60fps: boy med=0.649 max=1.623 max/med=2.50 | cam med=0.0452 max=0.0477 max/med=1.06
-walk_120fps: boy med=0.203 max=0.661 max/med=3.27 | cam med=0.0073 max=0.0079 max/med=1.09
-walk_60fps: boy med=0.329 max=1.301 max/med=3.95 | cam med=0.0148 max=0.0159 max/med=1.07
-walk_spike_120fps: boy med=0.389 max=1.745 max/med=4.49 | cam med=0.0062 max=0.0077 max/med=1.25
-walk_spike_60fps: boy med=0.924 max=1.953 max/med=2.11 | cam med=0.0046 max=0.0140 max/med=3.03
+v26 frame timing summary
+
+--- 60 fps ---
+tag=walk fps=60
+boy_ds median=0.0234 p95=0.0250 max=0.0251 max/median=1.000
+cam_ds median=0.01595 p95=0.01606 max=0.01606 max/median=1.000
+
+tag=run fps=60
+boy_ds median=0.0561 p95=0.1065 max=0.1078 max/median=1.922
+cam_ds median=0.02994 p95=0.03949 max=0.04038 max/median=1.349
+
+tag=orbit fps=60
+boy_ds median=0.0002 p95=0.0004 max=0.0005 max/median=1.000
+cam_ds median=0.14489 p95=0.14489 max=0.14489 max/median=1.000
+
+tag=walk_spike fps=60
+boy_ds median=0.1353 p95=0.2488 max=0.2511 max/median=1.856
+cam_ds median=0.01595 p95=0.01606 max=0.01606 max/median=1.000
+
+--- 120 fps ---
+tag=walk fps=120
+boy_ds median=0.0135 p95=0.0140 max=0.0140 max/median=1.000
+cam_ds median=0.00798 p95=0.00803 max=0.00803 max/median=1.000
+
+tag=run fps=120
+boy_ds median=0.0377 p95=0.0609 max=0.0613 max/median=1.626
+cam_ds median=0.01606 p95=0.01976 max=0.02010 max/median=1.000
+
+tag=orbit fps=120
+boy_ds median=0.0001 p95=0.0003 max=0.0006 max/median=1.000
+cam_ds median=0.14489 p95=0.14489 max=0.14489 max/median=1.000
+
+tag=walk_spike fps=120
+boy_ds median=0.0824 p95=0.1335 max=0.1341 max/median=1.628
+cam_ds median=0.00645 p95=0.00803 max=0.00803 max/median=1.000

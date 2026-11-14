@@ -675,25 +675,27 @@ func _build_face_fill() -> void:
 	# Cool moonlight rim — only on at night, opposite the fill so edges read without flattening him.
 	_night_rim = OmniLight3D.new()
 	_night_rim.name = "NightRim"
-	_night_rim.light_color = Color(0.55, 0.68, 0.98)
+	_night_rim.light_color = Color(0.90, 0.92, 1.0)
 	_night_rim.light_energy = 0.0
 	_night_rim.omni_range = 0.75
 	_night_rim.omni_attenuation = 1.2
 	_night_rim.shadow_enabled = false
-	_night_rim.light_specular = 0.08
+	_night_rim.light_specular = 0.0
 	_night_rim.light_cull_mask = 1 << 1
+	_night_rim.visible = false
 	parts["head"].add_child(_night_rim)
 	_night_rim.position = Vector3(0.0, 0.04, 0.12)
-	# Soft torso fill at night so vest/shorts match the moonlit ground (head fill alone leaves the body black).
+	# Kept for API compatibility; energy stays 0 (albedo tint / body fill greys the skin).
 	_night_body = OmniLight3D.new()
 	_night_body.name = "NightBody"
-	_night_body.light_color = Color(0.70, 0.80, 1.0)
+	_night_body.light_color = Color(0.90, 0.92, 1.0)
 	_night_body.light_energy = 0.0
 	_night_body.omni_range = 1.4
 	_night_body.omni_attenuation = 0.85
 	_night_body.shadow_enabled = false
 	_night_body.light_specular = 0.0
 	_night_body.light_cull_mask = 1 << 1
+	_night_body.visible = false
 	if parts.has("pelvis"):
 		parts["pelvis"].add_child(_night_body)
 		_night_body.position = Vector3(0.0, 0.12, -0.08)
@@ -704,43 +706,33 @@ func _build_face_fill() -> void:
 
 ## Blend the character-only fill with the world night look. k=0 day, k=1 full night.
 ## moon_dir: world direction toward the moon disk (sun.global_basis.z); used to place the rim.
-## v26: keep fills tiny — moonlight + fire/torches light the boy; no daylight-bright private Omni stack.
+## v26: lights do the night look — do NOT tint albedo (that greys skin / blues sclera).
 func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 	k = clampf(k, 0.0, 1.0)
 	if face_fill:
-		# Day: warm under-brim fill. Night: tiny cool under-hat only (no daylight lift).
-		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.70, 0.80, 1.0), k)
-		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.05, k)
-		face_fill.omni_range = lerpf(0.4, 0.42, k)
-		face_fill.omni_attenuation = lerpf(1.4, 1.7, k)
-		face_fill.position = Vector3(0.0, -0.04, -0.16).lerp(Vector3(0.0, -0.05, -0.12), k)
+		# Day: warm under-brim fill. Night: off — moon/fire are the only keys.
+		face_fill.light_color = Color(1.0, 0.92, 0.78)
+		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.0, k)
+		face_fill.omni_range = lerpf(0.4, 0.4, k)
+		face_fill.omni_attenuation = lerpf(1.4, 1.6, k)
+		face_fill.position = Vector3(0.0, -0.04, -0.16)
+		face_fill.light_specular = 0.0
 	if _night_rim:
-		# Soft cool edge only — moonlight DirectionalLight does the real key.
-		_night_rim.light_color = Color(0.55, 0.68, 0.98)
-		_night_rim.light_energy = lerpf(0.0, 0.10, k)
-		_night_rim.omni_range = lerpf(0.55, 0.80, k)
-		var local_off := Vector3(0.0, 0.04, 0.14)
-		if moon_dir.length_squared() > 0.01 and parts.has("head") and parts["head"] is Node3D:
-			var head := parts["head"] as Node3D
-			var world_off: Vector3 = moon_dir.normalized() * 0.18 + Vector3(0, 0.04, 0)
-			local_off = head.global_transform.basis.inverse() * world_off
-			if local_off.length() < 0.06:
-				local_off = Vector3(0.0, 0.04, 0.14)
-			else:
-				local_off = local_off.normalized() * 0.18
-		_night_rim.position = local_off
+		# Off at night — cool rim was the blue eye halo. Moon directional is enough.
+		_night_rim.light_energy = 0.0
+		_night_rim.light_specular = 0.0
+		_night_rim.visible = k < 0.05
 	if _night_body:
-		_night_body.light_energy = lerpf(0.0, 0.05, k)
-		_night_body.omni_range = lerpf(0.8, 1.0, k)
-		_night_body.light_color = Color(0.62, 0.72, 0.95)
-	# Cool darkening on every surface — pale Tripo albedo needs a hard pull to match sand.
-	var night_alb := Color(0.58, 0.64, 0.78, 1.0)
+		_night_body.light_energy = 0.0
+		_night_body.light_specular = 0.0
+		_night_body.visible = false
+	# Keep day albedo (no cool tint — that greys skin / blues sclera). Match sand via rough/spec.
 	for mat in _boy_mats:
 		if mat == null:
 			continue
-		mat.albedo_color = _boy_albedo_day.lerp(night_alb, k)
-		mat.metallic_specular = lerpf(0.2, 0.08, k)
-		mat.roughness = lerpf(0.78, 0.88, k)
+		mat.albedo_color = _boy_albedo_day
+		mat.metallic_specular = lerpf(0.2, 0.04, k)
+		mat.roughness = lerpf(0.78, 0.94, k)
 		mat.emission_enabled = false
 		mat.emission_energy_multiplier = 0.0
 		mat.emission = Color(0, 0, 0, 1)

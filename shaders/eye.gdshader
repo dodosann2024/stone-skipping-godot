@@ -18,18 +18,18 @@ void fragment() {
 		discard;
 	}
 	vec3 c = COLOR.rgb;
-	c = mix(c, vec3(dot(c, vec3(0.3, 0.55, 0.15))) * 0.9, 0.15 * night_k);
 	if (wp0.y < 0.12) {
 		c = uw_tint(c, wp0);
 	}
 	ALBEDO = c;
-	ROUGHNESS = 0.42;
-	SPECULAR = 0.06;
+	// Night: matte sclera, tiny natural highlight only — no emission halo.
+	ROUGHNESS = mix(0.42, 0.62, night_k);
+	SPECULAR = mix(0.06, 0.02, night_k);
 	AO = 1.0;
-	// soft fill only — catchlights are baked into COLOR so they stay round (not square holes)
 	float facing = smoothstep(0.0, 0.55, NORMAL.z);
 	float lit = smoothstep(0.55, 0.92, max(c.r, max(c.g, c.b))); // bright = sclera / catchlight
-	EMISSION = c * 0.18 * facing * (1.0 - 0.35 * night_k)
-		+ vec3(0.10, 0.08, 0.05) * (1.0 - 0.4 * night_k)
-		+ vec3(1.0, 0.99, 0.96) * lit * 0.15 * catchlight * facing * (1.0 - 0.3 * night_k);
+	float day_e = (1.0 - night_k);
+	EMISSION = (c * 0.18 * facing
+		+ vec3(0.10, 0.08, 0.05)
+		+ vec3(1.0, 0.99, 0.96) * lit * 0.15 * catchlight * facing) * day_e;
 }

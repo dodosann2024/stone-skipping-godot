@@ -148,11 +148,11 @@ func _process(delta: float) -> void:
 	var dip := smoothstep(0.82, 1.0, _noise1(s * 0.55 + 2.0))
 	var k := 1.0 + 0.22 * f - 0.22 * dip
 	# Small-radius warm omnis — falloff keeps moonlight dominant away from the torch.
-	light.light_energy = k * lerpf(0.45, 1.35, night)
-	light.omni_range = lerpf(2.4, 4.2, night)
-	light.omni_attenuation = lerpf(1.1, 1.5, night)
+	light.light_energy = k * lerpf(0.45, 1.55, night)
+	light.omni_range = lerpf(2.4, 4.4, night)
+	light.omni_attenuation = lerpf(1.1, 1.45, night)
 	light.position = Vector3(0.012 * _noise1(s * 3.1), 0.12 + 0.018 * f, 0.012 * _noise1(s * 2.4 + 5.0))
-	glow.set_shader_parameter("k", k * lerpf(0.18, 0.55, night))
+	glow.set_shader_parameter("k", k * lerpf(0.22, 0.85, night))
 	if wood_mat and slot < flame_data.size():
 		var fp := global_position + Vector3(0, 0.06, 0)
 		flame_data[slot] = Vector4(fp.x, fp.y, fp.z, k * night * SELF_LIT)

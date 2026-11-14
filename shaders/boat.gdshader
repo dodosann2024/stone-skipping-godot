@@ -36,8 +36,11 @@ void fragment() {
 		if (COLOR.a < 0.5) {
 			base = hull_col;
 		}
-	} else if (!IN_SHADOW_PASS && cut_amount(wpos, CAMERA_POSITION_WORLD) > bayer4(FRAGCOORD.xy)) {
-		discard;
+	} else if (!IN_SHADOW_PASS) {
+		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
+		if (cut > 0.55 || cut > bayer4(FRAGCOORD.xy)) {
+			discard;
+		}
 	}
 	// a painted hull reads through more water than a leg does: tint it as if a little deeper
 	ALBEDO = uw_tint_d(base, wpos, d > 0.0 ? d * 1.8 + 0.04 * smoothstep(0.0, 0.03, d) : d);

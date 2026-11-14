@@ -39,8 +39,11 @@ void fragment() {
 		if (wpos.y < 0.0) {
 			discard;
 		}
-	} else if (!IN_SHADOW_PASS && cut_amount(wpos, CAMERA_POSITION_WORLD) > bayer4(FRAGCOORD.xy)) {
-		discard;
+	} else if (!IN_SHADOW_PASS) {
+		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
+		if (cut > 0.55 || cut > bayer4(FRAGCOORD.xy)) {
+			discard;
+		}
 	}
 	vec3 c = pow(COLOR.rgb, vec3(2.2)) * tx.rgb;
 	ALBEDO = c * mix(0.75, 1.3, ao);

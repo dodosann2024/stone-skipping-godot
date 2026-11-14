@@ -45,20 +45,36 @@ func g() -> void:
 		await process_frame
 	await _shot(vp, "sunset_beach.png")
 
-	# Night: boy on wet sand near hammock (match user night_beach_boy framing)
+	# Night: boy on wet sand near hammock — open-sand camera (no porch crate in front).
 	await _set_tod(m, "night")
-	var beach: Vector3 = m.island.shore_pt(-2.15, 0.55)
-	m._place(beach, 1.15)
+	var beach: Vector3 = m.island.shore_pt(-1.35, 0.85)
+	m._place(beach, 0.55)
 	m.player.position.y = m._surface(m.player.position.x, m.player.position.z)
 	m.ground_y = m.player.position.y
 	m.boy.global_position = m.player.global_position
-	# Camera inland-side, looking across boy toward sea + hammock left.
-	m.ex_yaw = m.face_yaw + PI + 0.55
-	m.ex_pitch = 0.16
-	m.ex_dist = 4.2
-	for _i in 30:
+	# Sea-side camera looking inland slightly — keeps hut posts out of the lens.
+	m.ex_yaw = m.face_yaw + PI - 0.15
+	m.ex_pitch = 0.20
+	m.ex_dist = 5.0
+	m._cam_arm_k = 1.0
+	m._cam_arm_want = 1.0
+	for _i in 45:
 		await process_frame
 	await _shot(vp, "night_beach_boy.png")
+	# Clear moonlit beach — open stretch, no porch crate between lens and boy.
+	var clear_b: Vector3 = m.island.shore_pt(-0.85, 1.35)
+	m._place(clear_b, 0.15)
+	m.player.position.y = m._surface(m.player.position.x, m.player.position.z)
+	m.ground_y = m.player.position.y
+	m.boy.global_position = m.player.global_position
+	m.ex_yaw = m.face_yaw + PI + 0.15
+	m.ex_pitch = 0.20
+	m.ex_dist = 5.0
+	m._cam_arm_k = 1.0
+	m._cam_arm_want = 1.0
+	for _i in 35:
+		await process_frame
+	await _shot(vp, "night_beach_clear.png")
 
 	# Night: near campfire — face the flames so warm Omni keys the skin
 	var fire: Vector3 = m.island.campfire_pos
@@ -74,28 +90,30 @@ func g() -> void:
 		await process_frame
 	await _shot(vp, "night_campfire.png")
 
-	# Night: dock overview (观景-like framing toward island)
+	# Night: dock overview — include open sea so the moon glitter path reads.
 	m._place(Vector3(1.35, 0, m.island.dock_start_z + 4.0), 0.15)
 	if m.mode != m.Mode.VIEW:
 		m._toggle_view()
-	m.view_yaw = 2.95
-	m.view_pitch = 0.28
-	m.view_dist = 32.0
-	for _i in 30:
+	m.view_yaw = 3.55
+	m.view_pitch = 0.22
+	m.view_dist = 28.0
+	for _i in 35:
 		await process_frame
 	await _shot(vp, "night_dock_overview.png")
 	if m.mode == m.Mode.VIEW:
 		m._toggle_view()
 
-	# Night: forest path (inland path toward palms, match user framing)
+	# Night: forest / beach path near a path lamp (sand + silhouettes readable, not canopy crush).
 	m.mode = m.Mode.EXPLORE
-	var path_p := Vector3(-1.2, 0, 5.2)
+	var path_p := Vector3(-3.2, 0, -8.2)
 	path_p.y = m._surface(path_p.x, path_p.z)
-	m._place(path_p, -0.2)
-	m.ex_yaw = m.face_yaw + PI + 0.35
-	m.ex_pitch = 0.22
-	m.ex_dist = 4.4
-	for _i in 30:
+	m._place(path_p, -0.4)
+	m.ex_yaw = m.face_yaw + PI + 0.15
+	m.ex_pitch = 0.24
+	m.ex_dist = 5.2
+	m._cam_arm_k = 1.0
+	m._cam_arm_want = 1.0
+	for _i in 40:
 		await process_frame
 	await _shot(vp, "night_forest_path.png")
 

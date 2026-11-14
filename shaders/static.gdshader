@@ -16,8 +16,12 @@ void fragment() {
 		if (wpos.y < 0.0) {
 			discard;
 		}
-	} else if (!IN_SHADOW_PASS && cut_amount(wpos, CAMERA_POSITION_WORLD) > bayer4(FRAGCOORD.xy)) {
-		discard;
+	} else if (!IN_SHADOW_PASS) {
+		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
+		// Strong occlusion: fully hide (not just dither) so porch crates don't mask the boy.
+		if (cut > 0.55 || cut > bayer4(FRAGCOORD.xy)) {
+			discard;
+		}
 	}
 	ALBEDO = COLOR.rgb;   // as the old StandardMaterial3D rendered them on the Compatibility renderer
 	if (wpos.y < 0.1) {
