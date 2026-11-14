@@ -59,7 +59,8 @@ func _drag(p: Vector2) -> void:
 		d = p - center
 	knob = d
 	value = d / radius
-	if value.length() < 0.12:
+	# Tight deadzone — must clear within one frame of a real drag.
+	if value.length() < 0.06:
 		value = Vector2.ZERO
 	queue_redraw()
 

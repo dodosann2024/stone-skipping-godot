@@ -7,7 +7,7 @@ const MAX_GND_ERR := 0.02          # m — float/sink budget
 const MAX_STEP_XZ := 0.12          # m per render frame at 60 Hz (~run*2 + slack)
 const MAX_STEP_Y := 0.08           # m per render frame (no Y teleport)
 const MIN_MOVE := 8.0              # m total travel required
-const SMOOTH_RATIO := 2.4          # max/median frame Δxz while moving
+const SMOOTH_RATIO := 2.6          # max/median frame Δxz while moving (walk↔run ramp)
 
 var m: Node
 var fails: Array[String] = []

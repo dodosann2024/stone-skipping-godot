@@ -128,9 +128,16 @@ static var site_k := 0.25
 static var site_r := 3.0
 static var site_l := 6.0
 
-## Terrain mesh vertex spacing. ≤0.45 m keeps bilinear/planar error under ~2 cm vs analytic.
-const TERRAIN_STEP := 0.45
+## Walkable/land mesh spacing. 0.5 m keeps bilinear/planar error ~2 cm vs analytic;
+## body uses mesh_h so feet match the drawn verts exactly.
+const TERRAIN_STEP := 0.5
+## Far/sea visual grid (3× TERRAIN_STEP so dense patches seam cleanly onto coarse verts).
+const TERRAIN_COARSE := 1.5
 const TERRAIN_HALF := 48.0
+## Coarse cell is "land/walkable" if any corner is inside this shore band (paths, beach,
+## forest floor, near-dock). Deep sea stays coarse or is skipped entirely.
+const TERRAIN_DENSE_SHORE := 3.0
+const TERRAIN_SKIP_SHORE := 14.0
 
 static func ground_h(x: float, z: float) -> float:
 	var h := _ground_raw(x, z)
@@ -147,20 +154,26 @@ static func ground_h(x: float, z: float) -> float:
 		h = lerpf(float(pd[2]), h, smoothstep(pad_flat, pad_flat + pad_blend, dist))
 	return h
 
-## Height of the walkable terrain mesh at (x,z): bilinear on TERRAIN_STEP verts (matches
-## vertex heights; triangle faces stay within a couple cm of this at TERRAIN_STEP≤0.45).
-static func mesh_h(x: float, z: float) -> float:
-	var step := TERRAIN_STEP
+## True where the boy can walk/wade — dense visual + mesh_h use TERRAIN_STEP here.
+static func terrain_dense_at(x: float, z: float) -> bool:
+	return shore_d(x, z) < TERRAIN_DENSE_SHORE
+
+static func _bilinear_h(x: float, z: float, step: float) -> float:
 	var half := TERRAIN_HALF
 	var gx0 := floorf((x + half) / step) * step - half
 	var gz0 := floorf((z + half) / step) * step - half
 	var tx := clampf((x - gx0) / step, 0.0, 1.0)
 	var tz := clampf((z - gz0) / step, 0.0, 1.0)
-	var h00 := ground_h(gx0, gz0)
-	var h10 := ground_h(gx0 + step, gz0)
-	var h01 := ground_h(gx0, gz0 + step)
-	var h11 := ground_h(gx0 + step, gz0 + step)
-	return lerpf(lerpf(h00, h10, tx), lerpf(h01, h11, tx), tz)
+	return lerpf(
+		lerpf(ground_h(gx0, gz0), ground_h(gx0 + step, gz0), tx),
+		lerpf(ground_h(gx0, gz0 + step), ground_h(gx0 + step, gz0 + step), tx),
+		tz)
+
+## Height of the drawn terrain at (x,z). Dense land uses TERRAIN_STEP; far sea uses coarse.
+static func mesh_h(x: float, z: float) -> float:
+	if terrain_dense_at(x, z):
+		return _bilinear_h(x, z, TERRAIN_STEP)
+	return _bilinear_h(x, z, TERRAIN_COARSE)
 
 ## Signed gap: positive = feet above the mesh (floating), negative = into the mesh (sinking).
 static func ground_err(x: float, z: float, body_y: float) -> float:
@@ -570,82 +583,89 @@ func _build_terrain() -> void:
 	var st = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var half := TERRAIN_HALF
-	# Dense enough that mesh_h ≈ analytic (<~2 cm). Fine patches still cover sit pads.
-	var step := TERRAIN_STEP
-	var n := int(half * 2.0 / step)
+	var coarse := TERRAIN_COARSE
+	var dense := TERRAIN_STEP
+	var sub := int(round(coarse / dense))  # 3 — dense verts land on coarse verts
+	var n := int(half * 2.0 / coarse)
+	# Coarse verts (shared by sea ring + dense-patch seams).
 	for j in n + 1:
 		for i in n + 1:
-			var x := -half + i * step
-			var z := -half + j * step
+			var x := -half + i * coarse
+			var z := -half + j * coarse
 			var h := ground_h(x, z)
 			st.set_color(_ground_color(x, z, h))
 			st.set_uv(Vector2(x, z))
 			st.add_vertex(Vector3(x, h, z))
-	# Fine patches over campfire logs + lighthouse bench so flatten pads draw cleanly.
-	# Cell indices are in TERRAIN_STEP units (not metres).
-	var fine_rects: Array = []
-	var cf_i := int(floor((campfire_pos.x + half) / step))
-	var cf_j := int(floor((campfire_pos.z + half) / step))
-	fine_rects.append([cf_i - 8, cf_j - 8, 16, 16])
+	# Per coarse cell: skip deep sea, emit one coarse quad for the near-shore ring,
+	# or a dense sub-grid on walkable land (beach / paths / forest / dock apron).
+	var pad_cells: Dictionary = {}  # Vector2i coarse cell → true for sit-pad densify
+	var cf_i := int(floor((campfire_pos.x + half) / coarse))
+	var cf_j := int(floor((campfire_pos.z + half) / coarse))
+	for jj in range(cf_j - 3, cf_j + 4):
+		for ii in range(cf_i - 3, cf_i + 4):
+			pad_cells[Vector2i(ii, jj)] = true
 	var lh_xz := gp(2.0, 3.0) + Vector3(-2.2, 0, -2.0)
-	var lh_i := int(floor((lh_xz.x + half) / step))
-	var lh_j := int(floor((lh_xz.z + half) / step))
-	fine_rects.append([lh_i - 6, lh_j - 6, 12, 12])
-	# Dirt-path climb: denser strip so pad flats stay clean.
-	var path_i := int(floor((0.2 + half) / step))
-	var path_j := int(floor((6.0 + half) / step))
-	fine_rects.append([path_i - 6, path_j - 8, 14, 16])
+	var lh_i := int(floor((lh_xz.x + half) / coarse))
+	var lh_j := int(floor((lh_xz.z + half) / coarse))
+	for jj in range(lh_j - 2, lh_j + 3):
+		for ii in range(lh_i - 2, lh_i + 3):
+			pad_cells[Vector2i(ii, jj)] = true
+	var dense_list: Array = []  # coarse cells that need TERRAIN_STEP fill
 	for j in n:
 		for i in n:
-			var skip := false
-			for fr in fine_rects:
-				if i >= int(fr[0]) and i < int(fr[0]) + int(fr[2]) and j >= int(fr[1]) and j < int(fr[1]) + int(fr[3]):
-					skip = true
-					break
-			if skip:
+			var x0 := -half + i * coarse
+			var z0 := -half + j * coarse
+			var d00 := shore_d(x0, z0)
+			var d10 := shore_d(x0 + coarse, z0)
+			var d01 := shore_d(x0, z0 + coarse)
+			var d11 := shore_d(x0 + coarse, z0 + coarse)
+			var dmin := minf(minf(d00, d10), minf(d01, d11))
+			if dmin > TERRAIN_SKIP_SHORE:
+				continue  # deep ocean — bed plane covers it
+			var want_dense := dmin < TERRAIN_DENSE_SHORE or pad_cells.has(Vector2i(i, j))
+			# Near-dock apron always dense so the pier approach matches feet.
+			if absf(x0 + coarse * 0.5) < 4.0 and z0 < dock_start_z + 2.0 and z0 > dock_end_z - 1.0:
+				want_dense = true
+			if want_dense:
+				dense_list.append(Vector2i(i, j))
 				continue
+			# Coarse ring (shallow sea / far reef).
 			var a := j * (n + 1) + i
 			var b := a + 1
 			var c := a + n + 1
 			var d := c + 1
 			st.add_index(a); st.add_index(b); st.add_index(c)
 			st.add_index(b); st.add_index(d); st.add_index(c)
-	var sub := 3
+	# Dense fill: sub×sub quads per coarse cell; border verts = coarse (mesh_h seam).
 	var base: int = (n + 1) * (n + 1)
-	for fr in fine_rects:
-		var fi0: int = int(fr[0])
-		var fj0: int = int(fr[1])
-		var fi1: int = fi0 + int(fr[2])
-		var fj1: int = fj0 + int(fr[3])
-		var fn := (fi1 - fi0) * sub
+	for cell: Vector2i in dense_list:
+		var fi0: int = cell.x
+		var fj0: int = cell.y
 		var patch_base := base
-		for j in fn + 1:
-			for i in fn + 1:
-				var x: float = -half + (float(fi0) + float(i) / float(sub)) * step
-				var z: float = -half + (float(fj0) + float(j) / float(sub)) * step
-				var h: float
-				if i == 0 or i == fn or j == 0 or j == fn:
-					# Seam to coarse verts: bilinear on TERRAIN_STEP (same as mesh_h).
-					h = mesh_h(x, z)
-				else:
-					h = ground_h(x, z)
+		for j in sub + 1:
+			for i in sub + 1:
+				var x: float = -half + (float(fi0) + float(i) / float(sub)) * coarse
+				var z: float = -half + (float(fj0) + float(j) / float(sub)) * coarse
+				# All dense verts on the TERRAIN_STEP lattice (incl. borders) so mesh_h matches.
+				# Corners coincide with coarse verts; land/sea T-junctions are outside walkables.
+				var h := ground_h(x, z)
 				st.set_color(_ground_color(x, z, h))
 				st.set_uv(Vector2(x, z))
 				st.add_vertex(Vector3(x, h, z))
-		for j in fn:
-			for i in fn:
-				var a2 := patch_base + j * (fn + 1) + i
+		for j in sub:
+			for i in sub:
+				var a2 := patch_base + j * (sub + 1) + i
 				var b2 := a2 + 1
-				var c2 := a2 + fn + 1
+				var c2 := a2 + sub + 1
 				var d2 := c2 + 1
 				st.add_index(a2); st.add_index(b2); st.add_index(c2)
 				st.add_index(b2); st.add_index(d2); st.add_index(c2)
-		base += (fn + 1) * (fn + 1)
+		base += (sub + 1) * (sub + 1)
 	st.generate_normals()
 	terrain_mat = ShaderMaterial.new()
 	terrain_mat.shader = load("res://shaders/terrain.gdshader")
 	terrain_mi = _mi(st.commit(), terrain_mat)
-	# the island's gentle slopes never shade anything worth a shadow-map pass of the whole terrain
+	# Never cast — island slopes don't pay for a full terrain shadow pass on mobile.
 	terrain_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	# deep floor beyond the terrain patch
 	var bed = PlaneMesh.new()

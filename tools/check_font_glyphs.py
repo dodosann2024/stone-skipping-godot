@@ -21,8 +21,9 @@ def main() -> int:
 		return 2
 	chars = collect_chars()
 	cmap = TTFont(str(OUT)).getBestCmap() or {}
+	# Cover EVERY non-space used char (Latin, CJK, Greek Δ, punctuation) — not only >0x7F.
 	missing = sorted(
-		{c for c in chars if ord(c) > 0x7F and not c.isspace() and ord(c) not in cmap},
+		{c for c in chars if not c.isspace() and ord(c) not in cmap},
 		key=lambda c: ord(c),
 	)
 	print(f"checked chars={len(chars)} font_glyphs={len(cmap)} missing={len(missing)}")
@@ -31,12 +32,25 @@ def main() -> int:
 		print(" ".join(f"U+{ord(c):04X}" for c in missing), file=sys.stderr)
 		print("Run: python3 tools/make_font.py", file=sys.stderr)
 		return 1
-	# Explicit regression checks for the v30 tofu bugs.
-	for s in ("固定视角", "复制数据"):
-		bad = [c for c in s if ord(c) not in cmap]
+	# Explicit regression checks for past tofu bugs (CJK + HUD symbols).
+	for s in ("固定视角", "复制数据", "maxΔ", "gnd 0.0cm"):
+		bad = [c for c in s if not c.isspace() and ord(c) not in cmap]
 		if bad:
 			print(f"ERROR: {s!r} still missing {bad}", file=sys.stderr)
 			return 1
+	# Δ must be present even if a future HUD rename drops the literal from sources.
+	if ord("Δ") not in cmap:
+		print("ERROR: Greek Δ (U+0394) missing from font subset", file=sys.stderr)
+		return 1
+	# Latin/Greek companion (Godot shapes these via FontFile.fallbacks).
+	latin = ROOT / "fonts" / "ui_latin.otf"
+	if not latin.is_file():
+		print(f"ERROR: latin fallback missing: {latin}", file=sys.stderr)
+		return 1
+	lcmap = TTFont(str(latin)).getBestCmap() or {}
+	if ord("Δ") not in lcmap:
+		print("ERROR: Greek Δ missing from fonts/ui_latin.otf", file=sys.stderr)
+		return 1
 	print("OK")
 	return 0
 

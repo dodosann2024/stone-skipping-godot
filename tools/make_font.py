@@ -20,9 +20,11 @@ SRC = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 OUT = ROOT / "fonts" / "ui.otf"
 CHARS_TXT = ROOT / "tools" / "_chars.txt"
 
-# Always keep basic Latin + common punctuation used in UI/readouts.
+# Always keep basic Latin + common punctuation / symbols used in UI/readouts.
+# Greek Δ (debug HUD maxΔ) and friends must stay even if a source scan is stale.
 BASE = set(chr(c) for c in range(0x20, 0x7F)) | set(
 	"·°→←↑↓、，。！？：；（）「」『』【】%“”‘’—…×÷±≤≥≈≠"
+	"Δδµπ∞√∑∂∇"
 )
 
 SKIP_DIRS = {
@@ -92,7 +94,7 @@ def build(chars: set[str]) -> list[str]:
 def main() -> int:
 	chars = collect_chars()
 	# Sanity: known UI strings that previously tofu'd must be present as inputs.
-	for sample in ("固定视角", "复制数据", "正在加载", "网络较慢"):
+	for sample in ("固定视角", "复制数据", "正在加载", "网络较慢", "maxΔ", "gnd"):
 		for c in sample:
 			if c not in chars and ord(c) > 0x7F:
 				print(f"ERROR: expected char {c!r} from {sample!r} not found in scan", file=sys.stderr)
