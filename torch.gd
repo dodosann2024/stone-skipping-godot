@@ -102,6 +102,7 @@ func _embers() -> void:
 	p.position = Vector3(0, 0.08, 0)
 	p.local_coords = false
 	p.layers = 1 | 16
+	p.add_to_group("v27_particles")
 	add_child(p)
 
 func _smoke() -> void:
@@ -130,6 +131,7 @@ func _smoke() -> void:
 	p.position = Vector3(0, 0.32, 0)
 	p.local_coords = false
 	p.layers = 1 | 16
+	p.add_to_group("v27_particles")
 	add_child(p)
 
 func _noise1(x: float) -> float:
@@ -147,11 +149,16 @@ func _process(delta: float) -> void:
 	var f := 0.5 * _noise1(s * 4.2) + 0.3 * _noise1(s * 9.1 + 3.0) + 0.2 * _noise1(s * 15.0 + 8.0)
 	var dip := smoothstep(0.82, 1.0, _noise1(s * 0.55 + 2.0))
 	var k := 1.0 + 0.22 * f - 0.22 * dip
-	# Small-radius warm omnis — falloff keeps moonlight dominant away from the torch.
-	light.light_energy = k * lerpf(0.45, 1.55, night)
-	light.omni_range = lerpf(2.4, 4.4, night)
-	light.omni_attenuation = lerpf(1.1, 1.45, night)
-	light.position = Vector3(0.012 * _noise1(s * 3.1), 0.12 + 0.018 * f, 0.012 * _noise1(s * 2.4 + 5.0))
+	# Day: Omni off. Night: small warm omni (capped globally to 2–3 near player).
+	if night < 0.08:
+		light.visible = false
+		light.light_energy = 0.0
+	else:
+		light.visible = true
+		light.light_energy = k * lerpf(0.0, 1.55, night)
+		light.omni_range = lerpf(2.4, 4.4, night)
+		light.omni_attenuation = lerpf(1.1, 1.45, night)
+		light.position = Vector3(0.012 * _noise1(s * 3.1), 0.12 + 0.018 * f, 0.012 * _noise1(s * 2.4 + 5.0))
 	glow.set_shader_parameter("k", k * lerpf(0.22, 0.85, night))
 	if wood_mat and slot < flame_data.size():
 		var fp := global_position + Vector3(0, 0.06, 0)

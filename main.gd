@@ -218,6 +218,7 @@ var night_amb: AudioStreamPlayer
 var env: Environment
 var sky_mat: ProceduralSkyMaterial
 var sun: DirectionalLight3D
+var mq = preload("res://mobile_quality.gd").new()
 const SUN_DAY := Vector3(-38, 135, 0)
 const MOON_NIGHT := Vector3(-14, 206, 0)
 var demo_release_pending := 0
@@ -232,6 +233,7 @@ func _ready() -> void:
 	# After boy (priority 10): move then camera so follow uses the same-frame pose.
 	process_priority = 20
 	is_web = OS.has_feature("web")
+	RenderingServer.set_default_clear_color(Color(0.02, 0.05, 0.08))
 	ui_font = load("res://fonts/ui.otf")
 	_load_best()
 	_build_environment()
@@ -396,19 +398,26 @@ func _build_environment() -> void:
 	sun.light_energy = 1.0
 	sun.light_color = Color(1.0, 0.93, 0.82)
 	sun.shadow_enabled = true
-	sun.shadow_blur = 2.5
+	sun.shadow_blur = 2.8
 	# slight sun disk — soft enough for the brim, not so wide that the boy goes flat/pastel
 	sun.light_angular_distance = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
-	if is_web:
-		# phones: one shadow map pass instead of two; the far split only shaded palms 40+ m away
+	sun.shadow_bias = 0.03
+	sun.shadow_normal_bias = 1.2
+	if is_web or _opt("mobile") == "1":
+		# phones: orthogonal + soft blur (2-splits doubled shadow primitives on WebGL2)
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-		sun.directional_shadow_max_distance = 50.0
+		sun.directional_shadow_max_distance = 26.0
+		sun.shadow_blur = 4.5
+		sun.shadow_bias = 0.035
+		sun.shadow_normal_bias = 1.4
+		sun.directional_shadow_pancake_size = 3.0
 	add_child(sun)
 	camera = Camera3D.new()
 	camera.fov = 55.0
-	camera.near = 0.1
+	# Slightly larger near plane avoids bush-card z-fight filling the lens on phones.
+	camera.near = 0.18
 	camera.far = 900.0
 	add_child(camera)
 	camera.current = true
@@ -431,6 +440,7 @@ func _build_stone() -> void:
 	m.albedo_color = Color(0.45, 0.47, 0.52)
 	m.roughness = 0.5
 	stone.material_override = m
+	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	stone.scale = Vector3(0.7, 0.24, 0.6)
 	add_child(stone)
 	stone.visible = false
@@ -523,7 +533,9 @@ func _btn(text: String, size: int, primary := false) -> Button:
 			sb.bg_color = Color(1.0, 0.82, 0.3, 0.95) if st_name != "pressed" else Color(1.0, 0.92, 0.6, 1.0)
 			sb.border_color = Color(0.55, 0.3, 0.05)
 		else:
-			sb.bg_color = Color(1, 1, 1, 0.82) if st_name != "pressed" else Color(0.85, 0.95, 1, 0.95)
+			# Slightly less opaque — over the lighthouse climb the old 0.82 white pills
+			# fused with the tower into one "ghost panel" on iPhone Safari.
+			sb.bg_color = Color(1, 1, 1, 0.72) if st_name != "pressed" else Color(0.85, 0.95, 1, 0.90)
 			sb.border_color = Color(0.1, 0.45, 0.65)
 		sb.set_corner_radius_all(40)
 		sb.set_border_width_all(3)
@@ -3309,6 +3321,40 @@ func _upload_prints() -> void:
 	island.terrain_mat.set_shader_parameter("print_wash", print_wash)
 	island.terrain_mat.set_shader_parameter("print_box", box)
 
+## Night: at most 2–3 OmniLights near the player (campfire + nearest lamps/torches).
+## Day: every Omni stays off (Compatibility forward multi-pass).
+func _cap_night_omnis() -> void:
+	if island == null or camera == null:
+		return
+	var cam_p := camera.global_position
+	var night := night_k > 0.08
+	# Torches: off by day; at night only the single nearest within range.
+	var best_torch: Node = null
+	var best_td := 1e9
+	for tn in island.torches:
+		if tn == null or tn.light == null:
+			continue
+		tn.light.visible = false
+		tn.light.light_energy = 0.0
+		if not night:
+			continue
+		var d: float = tn.global_position.distance_to(cam_p)
+		if d < best_td and d < tn.light.omni_range + 8.0:
+			best_td = d
+			best_torch = tn
+	if best_torch:
+		best_torch.light.visible = true
+		# energy already set in Torch._process from night; re-enable only.
+		best_torch.light.light_energy = maxf(best_torch.light.light_energy, 0.35)
+	# Campfire Omni: on at night only when the player is near the ring.
+	if island.campfire and island.campfire.light:
+		var fd: float = island.campfire.global_position.distance_to(cam_p)
+		if (not night) or fd > 14.0:
+			island.campfire.light.visible = false
+			island.campfire.light.light_energy = 0.0
+			island.campfire.light.shadow_enabled = false
+
+
 ## Nearest path lantern → soft radial ground pool in the terrain shader (round falloff,
 ## not the dirt-path strip lit by a hard Omni).
 func _update_path_lamp_pool() -> void:
@@ -3589,28 +3635,33 @@ func _update_night(delta: float, force := false) -> void:
 	var moon_e := lerpf(1.0, 0.32, k)
 	sun.light_energy = lerpf(moon_e, 1.15, sunset * 0.55)
 	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(1.0, 0.48, 0.22), sunset).lerp(Color(0.91, 0.93, 1.0), k)
-	sun.shadow_blur = lerpf(2.5, 5.0, k)
+	# Keep MobileQuality's softer PCF blur as a floor (was resetting to 2.5 and re-blocking path shadows).
+	var base_blur: float = mq.shadow_blur if mq else 2.5
+	sun.shadow_blur = lerpf(base_blur, maxf(base_blur, 5.0), k)
 	sun.light_angular_distance = lerpf(1.2, 3.5, k)
-	# Soft moon shadows — canopy mustn't crush the path to pure black.
-	sun.shadow_opacity = lerpf(1.0, 0.22, k)
+	# Soft moon shadows — extra palm proxies must not crush path to pure black.
+	sun.shadow_opacity = lerpf(1.0, 0.16, k)
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.55 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
-	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.38, 0.40, 0.48), k)
-	env.ambient_light_sky_contribution = lerpf(1.0, 0.28, k)
-	# Stronger constant ambient fill so path/grass/roots still read under foliage.
-	env.ambient_light_energy = lerpf(0.55, 0.78, k)
-	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.18, 0.20, 0.28), k)
+	# v26 night env — cool ambient; warmth = fire/lantern only (not ground albedo).
+	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.36, 0.40, 0.50), k)
+	env.ambient_light_sky_contribution = lerpf(1.0, 0.26, k)
+	env.ambient_light_energy = lerpf(0.55, 0.88, k)
+	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.16, 0.20, 0.30), k)
 	env.fog_density = lerpf(0.0045, 0.0024, k)
-	# Filmic at night — ACES was crushing dim terrain to 0/255 under the canopy.
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = lerpf(0.95, 1.12, k)
-	env.tonemap_white = lerpf(3.2, 4.2, k)
-	env.adjustment_saturation = lerpf(1.05, 0.98, k)
-	env.adjustment_contrast = lerpf(1.02, 0.97, k)
-	env.adjustment_brightness = lerpf(0.98, 1.04, k)
+	# Exposure lift offsets 0.78 scale + shadow casters — keep cool, do not warm albedo.
+	var expo_n := 1.18
+	if mq and mq.mobile:
+		expo_n = 1.22
+	env.tonemap_exposure = lerpf(0.95, expo_n, k)
+	env.tonemap_white = lerpf(3.2, 4.4, k)
+	env.adjustment_saturation = lerpf(1.05, 0.96, k)
+	env.adjustment_contrast = lerpf(1.02, 0.96, k)
+	env.adjustment_brightness = lerpf(0.98, 1.06, k)
 	var moon := sun.global_basis.z.normalized()
 	island.water_mat.set_shader_parameter("glint_dir", moon)
 	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(1.0, 0.55, 0.28), sunset).lerp(Color(0.90, 0.93, 1.0), k))
-	island.water_mat.set_shader_parameter("glint_gain", lerpf(1.0, 2.15, k))
+	island.water_mat.set_shader_parameter("glint_gain", lerpf(1.0, 1.65, k))
 	island.water_mat.set_shader_parameter("night", k)
 	# Lantern glass / hut window panes: visible warm sources at night.
 	# Keep boost modest — path flame tip is tiny; high boost reads as a billboard.
@@ -3778,6 +3829,7 @@ func _process(delta: float) -> void:
 	_watch_fps(delta)
 	_update_night(delta)
 	night_fx.apply(night_k, camera.global_position, sun.global_basis.z.normalized(), delta)
+	_cap_night_omnis()
 	_update_path_lamp_pool()
 	if toast_timer > 0.0:
 		toast_timer -= delta
@@ -3828,17 +3880,21 @@ func _process(delta: float) -> void:
 	island.leaf_mat.set_shader_parameter("focus", focus)
 	island.static_mat.set_shader_parameter("focus", focus)
 	island.torch_mat.set_shader_parameter("focus", focus)
-	# Wider foliage cut in explore so bushes between cam and boy fade (forest path).
-	# Static props keep a tighter cone so lantern posts / crates don't vanish wholesale.
-	var cr_foliage := 5.2 if mode == Mode.EXPLORE else 1.8
-	var cr_static := 2.4 if mode == Mode.EXPLORE else 1.5
+	# Keep the see-through cone tight. Explore used to punch a solid grey sky-hole through
+	# the canopy on iPhone (cut_radius 5.2); spring-arm pull-in handles occlusion instead.
+	var cr_foliage := 2.2 if mode == Mode.EXPLORE else 1.6
+	var cr_static := 1.7 if mode == Mode.EXPLORE else 1.4
 	island.foliage_mat.set_shader_parameter("cut_radius", cr_foliage)
 	island.leaf_mat.set_shader_parameter("cut_radius", cr_foliage)
 	island.static_mat.set_shader_parameter("cut_radius", cr_static)
 	island.torch_mat.set_shader_parameter("cut_radius", cr_static)
+	if island.leaf_mat:
+		island.leaf_mat.set_shader_parameter("near_fade", mq.leaf_near_fade if mq else 1.1)
 	_update_prints()
 	_update_audio(delta)
 	_audio_tick(delta)
+	if mq:
+		mq.watch_frame(delta, get_viewport(), sun, refl_level, _set_refl_level)
 
 func _physics_process(delta: float) -> void:
 	if state == State.FLYING:
@@ -4328,10 +4384,10 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	var want_k := 1.0
 	var orbiting := dragging or orbit_pending.length_squared() > 1e-10 or _orbit_ease > 0.05
 	if cam_dist < 20.0 and (not demo_cam or demo_track.size() > 0):
-		for i in range(2, 28):
-			var q := cam_target + full_off * (i / 27.0)
+		for i in range(2, 12):
+			var q := cam_target + full_off * (i / 11.0)
 			if _cam_blocked(q):
-				want_k = maxf((i - 1) / 27.0, 1.35 / maxf(cam_dist, 0.01))
+				want_k = maxf((i - 1) / 11.0, 1.35 / maxf(cam_dist, 0.01))
 				break
 	# During orbit, hold arm length — probe flicker was the cam_ds spike source.
 	if orbiting:
@@ -4416,9 +4472,16 @@ func _build_reflection() -> void:
 	refl.setup(camera, sun)
 	island.water_mat.set_shader_parameter("refl_tex", refl.texture())
 	island.water_mat.set_shader_parameter("refl_guard", WaterReflection.GUARD)
+	# Mobile / web: drop internal 3D res so UI stays crisp while GPU fill falls (~DPR 3 → ~1.5–2×).
+	mq.setup(is_web, _opt("mobile") == "1", get_viewport(), sun)
+	mq.changed.connect(func(_t: int) -> void: _apply_mq_materials())
+	_apply_mq_materials()
 	var want := _opt("refl", "auto")
 	refl_auto = want == "auto"
-	_set_refl_level({"0": 2, "low": 1}.get(want, 0))
+	# On phones start one step lighter so the first walk doesn't hitch on full reflection.
+	# Mobile: reflection off by default (inland path); adaptive can leave it off.
+	var start_l := 2 if mq.mobile else 0
+	_set_refl_level({"0": 2, "low": 1}.get(want, start_l))
 	if _opt("shadow") == "0":
 		_set_refl_level(3)
 	# lights whose glitter streaks across the waves at night: the campfire, the lighthouse, then the lamps
@@ -4446,14 +4509,28 @@ func _build_reflection() -> void:
 
 func _set_refl_level(l: int) -> void:
 	refl_level = l
-	refl.scale = 0.35 if l == 0 else 0.25
-	refl.every = 1 if l == 0 else 2
+	refl.scale = 0.35 if l == 0 else (0.22 if l == 1 else 0.18)
+	refl.every = 1 if l == 0 else (2 if l == 1 else 3)
 	refl.set_enabled(l < 2)
 	island.water_mat.set_shader_parameter("refl_on", 1.0 if l < 2 else 0.0)
 	sun.shadow_enabled = l < 3
 
-## a phone that cannot keep up drops the reflection to the lighter setting, then to the approximations,
-## then the sun's shadow maps
+func _apply_mq_materials() -> void:
+	if island and island.water_mat:
+		island.water_mat.set_shader_parameter("cheap", mq.water_cheap)
+	if island and island.leaf_mat:
+		island.leaf_mat.set_shader_parameter("near_fade", mq.leaf_near_fade)
+	_scale_particles(mq.particle_mul)
+
+func _scale_particles(mul: float) -> void:
+	for n in get_tree().get_nodes_in_group("v27_particles") if get_tree() else []:
+		if n is CPUParticles3D:
+			var p := n as CPUParticles3D
+			if not p.has_meta("base_amount"):
+				p.set_meta("base_amount", p.amount)
+			p.amount = maxi(1, int(round(float(p.get_meta("base_amount")) * mul)))
+
+## FPS label + desktop reflection auto-drop (mobile ladder is MobileQuality.watch_frame).
 func _watch_fps(delta: float) -> void:
 	fps_t += delta
 	fps_n += 1
@@ -4462,18 +4539,20 @@ func _watch_fps(delta: float) -> void:
 	fps_avg = fps_n / fps_t
 	fps_t = 0.0
 	fps_n = 0
-	# two slow windows in a row (4 s), so one hitch such as a first-use shader compile does not count
 	fps_low = fps_low + 1 if fps_avg < 26.0 else 0
-	if refl_auto and not demo_mode and gt > 5.0 and fps_low >= 2 and refl_level < 3:
+	if (not mq.mobile) and refl_auto and not demo_mode and gt > 5.0 and fps_low >= 2 and refl_level < 3:
 		_set_refl_level(refl_level + 1)
 		fps_low = 0
 	if lbl_fps:
-		lbl_fps.text = "%.0f fps · 倒影 %s" % [fps_avg, ["高", "低", "关", "关 · 无阴影"][refl_level]]
+		lbl_fps.text = "%.0f fps · 倒影 %s · 画质 %s" % [
+			fps_avg, ["高", "低", "关", "关 · 无阴影"][refl_level], mq.tier_name()]
 		var dc := Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME
 		var vt := Viewport.RENDER_INFO_TYPE_VISIBLE
-		print("FPS %.1f refl %d night %d draws %d+%d size %s" % [fps_avg, refl_level, int(night_on),
-			get_viewport().get_render_info(vt, dc), refl.vp.get_render_info(vt, dc) if refl_level < 2 else 0,
-			str(refl.vp.size)])
+		print("FPS %.1f refl %d tier %d night %d draws %d+%d scale %.2f size %s" % [
+			fps_avg, refl_level, mq.tier, int(night_on),
+			get_viewport().get_render_info(vt, dc),
+			refl.vp.get_render_info(vt, dc) if refl_level < 2 else 0,
+			get_viewport().scaling_3d_scale, str(refl.vp.size)])
 
 # ------------------------------------------------------------------ save
 

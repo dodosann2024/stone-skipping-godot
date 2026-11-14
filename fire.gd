@@ -37,15 +37,16 @@ func build() -> void:
 		mi.extra_cull_margin = 1.0
 		add_child(mi)
 		flames.append(mi)
-	# coal bed
+	# Coal bed on a plane; shader discards outside a circle → round glowing disc.
 	var bed := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(0.95, 0.95)
+	pm.size = Vector2(0.88, 0.88)
 	bed.mesh = pm
 	var bm := ShaderMaterial.new()
 	bm.shader = load("res://shaders/ember_bed.gdshader")
 	bed.material_override = bm
-	bed.position = Vector3(0, 0.035, 0)
+	bed.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	bed.position = Vector3(0, 0.032, 0)
 	add_child(bed)
 	_sparks()
 	_smoke()
@@ -53,7 +54,8 @@ func build() -> void:
 	light.light_color = Color(1.0, 0.62, 0.3)
 	light.omni_range = 6.5
 	light.omni_attenuation = 1.4
-	light.light_energy = 1.6
+	light.light_energy = 0.0
+	light.visible = false
 	light.shadow_enabled = false
 	light.position = Vector3(0, 0.55, 0)
 	add_child(light)
@@ -65,7 +67,7 @@ func _particle_mat(additive: bool) -> ShaderMaterial:
 
 func _sparks() -> void:
 	var p := CPUParticles3D.new()
-	p.amount = 26
+	p.amount = 14
 	p.lifetime = 1.7
 	p.randomness = 0.6
 	p.lifetime_randomness = 0.5
@@ -93,11 +95,12 @@ func _sparks() -> void:
 	p.position = Vector3(0, 0.25, 0)
 	p.local_coords = false
 	p.layers = 1 | 16
+	p.add_to_group("v27_particles")
 	add_child(p)
 
 func _smoke() -> void:
 	var p := CPUParticles3D.new()
-	p.amount = 12
+	p.amount = 7
 	p.lifetime = 4.5
 	p.lifetime_randomness = 0.3
 	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
@@ -121,6 +124,7 @@ func _smoke() -> void:
 	p.position = Vector3(0, 0.95, 0)
 	p.local_coords = false
 	p.layers = 1 | 16
+	p.add_to_group("v27_particles")
 	add_child(p)
 
 func _noise1(x: float) -> float:
@@ -136,10 +140,17 @@ func _noise1(x: float) -> float:
 func _process(delta: float) -> void:
 	t += delta
 	var f := 0.55 * _noise1(t * 3.1) + 0.30 * _noise1(t * 7.4 + 17.0) + 0.15 * _noise1(t * 13.2 + 41.0)
-	# Night: warm key near the fire with falloff; far ground stays moonlit.
-	light.light_energy = (1.0 + 0.28 * f) * lerpf(2.0, 2.15, night)
-	light.omni_range = lerpf(4.0, 6.0, night)
-	light.omni_attenuation = lerpf(1.05, 1.5, night)
-	# Omni shadows only at night — one campfire is within Compatibility mobile budget.
-	light.shadow_enabled = night > 0.45
-	light.position = Vector3(0.03 * _noise1(t * 2.2), 0.55 + 0.035 * f, 0.03 * _noise1(t * 1.7 + 9.0))
+	# Day: Omni fully off (Compatibility multi-pass). Night: warm key near the fire.
+	if night < 0.08:
+		light.visible = false
+		light.light_energy = 0.0
+		light.shadow_enabled = false
+	else:
+		light.visible = true
+		# Warm key — short falloff so stone near-faces read warm and far faces stay dark.
+		light.light_energy = (1.0 + 0.18 * f) * lerpf(1.05, 1.25, night)
+		light.omni_range = lerpf(3.2, 4.2, night)
+		light.omni_attenuation = lerpf(1.5, 2.1, night)
+		# No omni shadows — positional atlas dithered the stone ring into dotted grey.
+		light.shadow_enabled = false
+		light.position = Vector3(0.03 * _noise1(t * 2.2), 0.55 + 0.035 * f, 0.03 * _noise1(t * 1.7 + 9.0))

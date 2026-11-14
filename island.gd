@@ -34,6 +34,7 @@ var hammock_cloth_bytes: PackedByteArray = PackedByteArray()
 var hammock_cloth_fmt: int = 0
 var hammock_cloth_mat: Material
 var hammock_clip := ""
+var _hammock_last_key := ""
 var hammock_cloth_bind: PackedVector3Array = PackedVector3Array()
 ## Godot import may reorder verts; remap[i] = authoring/npz index for mesh vertex i.
 var hammock_cloth_remap: PackedInt32Array = PackedInt32Array()
@@ -245,6 +246,55 @@ func build(font: Font) -> void:
 	_index_walls()
 	_flush()
 	_build_water()
+	# Mobile WebGL2: kill small-prop/particle shadows, then add cheap palm canopy proxies.
+	_disable_shadows_recursive(self)
+	_build_palm_shadow_proxies()
+
+
+func _disable_shadows_recursive(n: Node) -> void:
+	if n is GeometryInstance3D:
+		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for c in n.get_children():
+		_disable_shadows_recursive(c)
+
+
+## Shadow-only crown clusters — chunky 3D blobs (not flat discs/cards).
+## Flat discs elongated into hard bars under a low sun; sphere clusters → soft dapples.
+## Ropes/fence stay off the shadow pass.
+func _build_palm_shadow_proxies() -> void:
+	# Unit sphere; each instance is a small blotch at the crown.
+	var sm := SphereMesh.new()
+	sm.radius = 0.5
+	sm.height = 1.0
+	sm.radial_segments = 8
+	sm.rings = 4
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = sm
+	var xfs: Array = []
+	for pts in trunks:
+		if pts.is_empty():
+			continue
+		var crown: Vector3 = pts[pts.size() - 1]
+		# Fewer/smaller crown spheres → soft dapples without stacking into dark bars.
+		for k in 3:
+			var a := float(k) * TAU / 3.0 + float(pts.size()) * 0.21
+			var r := 0.22 + 0.08 * float(k % 2)
+			var off := Vector3(cos(a) * r, -0.04 * float(k % 2), sin(a) * r)
+			var sc := 0.42 + 0.08 * float((k + pts.size()) % 3)
+			var xf := Transform3D(Basis.IDENTITY.scaled(Vector3(sc, sc * 0.50, sc)), crown + off)
+			xfs.append(xf)
+	mm.instance_count = xfs.size()
+	for j in xfs.size():
+		mm.set_instance_transform(j, xfs[j])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.name = "PalmShadowProxies"
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+	mmi.visibility_range_end = 24.0
+	mmi.visibility_range_end_margin = 4.0
+	add_child(mmi)
+
 
 func _make_pads() -> void:
 	pads.clear()
@@ -282,23 +332,34 @@ func _flush() -> void:
 		tn.wood_mat = torch_mat
 	foliage_mat = ShaderMaterial.new()
 	foliage_mat.shader = load("res://shaders/foliage.gdshader")
-	_mi(FB.commit(), foliage_mat)
+	# Fronds / bushes: no shadow. Palm trunks stay in FB too — accept no trunk shadow on mobile.
+	var foliage_mi := _mi(FB.commit(), foliage_mat)
+	foliage_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	foliage_mi.visibility_range_end = 55.0
+	foliage_mi.visibility_range_end_margin = 8.0
+	foliage_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 	glow_mat = ShaderMaterial.new()
 	glow_mat.shader = load("res://shaders/sky_tint.gdshader")
 	glow_mat.set_shader_parameter("boost", 1.5)
 	_mi(GB.commit(), glow_mat).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	lantern_mat = ShaderMaterial.new()
 	lantern_mat.shader = load("res://shaders/static_nocut.gdshader")
-	_mi(LB.commit(), lantern_mat)
+	_mi(LB.commit(), lantern_mat).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	cloud_mat = ShaderMaterial.new()
 	cloud_mat.shader = load("res://shaders/sky_tint.gdshader")
 	cloud_mat.set_shader_parameter("boost", 1.3)
 	_mi(CB.commit(), cloud_mat).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_build_leaves()
+	# Static props: only large casters (hut/lighthouse/dock) — skip tiny fence ropes for shadow budget.
+	# Torch wood still casts a thin pole; turn shadow off on the combined static batch for mobile fill.
+	for c in get_children():
+		if c is MeshInstance3D and (c as MeshInstance3D).material_override == static_mat:
+			(c as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if c is MeshInstance3D and (c as MeshInstance3D).material_override == torch_mat:
+			(c as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
-## the bushes' leaf sprays: one MultiMesh of two crossed cards (a twig from each half of the texture);
-## from far off (the sea) a third of them, larger, stand in for the rest, and that sparse set also casts
-## the bushes' shadows (dappled all the same, a third of the shadow-pass work). The mirror skips them
+## Fewer, larger leaf clusters (crossed cards). No shadow casting — palm trunks only.
+## LOD0 near / LOD1 mid-far; skip the old shadows-only MultiMesh entirely.
 func _build_leaves() -> void:
 	leaf_mat = ShaderMaterial.new()
 	leaf_mat.shader = load("res://shaders/leaf.gdshader")
@@ -316,40 +377,45 @@ func _build_leaves() -> void:
 			st.set_uv(Vector2(v[2], v[3]))
 			st.add_vertex(ax * float(v[0]) + Vector3.UP * float(v[1]))
 	var card := st.commit()
-	for lod in 3:
+	# Keep ~25% of authored sprays as larger cards.
+	var kept: Array = []
+	for i in leaves.size():
+		if i % 4 != 0:
+			continue
+		kept.append(leaves[i])
+	for lod in 2:
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
 		mm.use_colors = true
 		mm.use_custom_data = true
 		mm.mesh = card
 		var pick: Array = []
-		for i in leaves.size():
-			if lod == 0 or i % 3 == 0:
+		for i in kept.size():
+			if lod == 0 or i % 2 == 0:
 				pick.append(i)
 		mm.instance_count = pick.size()
 		for j in pick.size():
-			var lf: Array = leaves[pick[j]]
+			var lf: Array = kept[pick[j]]
 			var xf: Transform3D = lf[0]
-			if lod > 0:
-				xf.basis = xf.basis.scaled(Vector3.ONE * 1.45)
+			# Larger clusters so fewer cards still read as canopy.
+			var scl := 2.15 if lod == 0 else 2.7
+			xf.basis = xf.basis.scaled(Vector3.ONE * scl)
 			mm.set_instance_transform(j, xf)
 			mm.set_instance_color(j, lf[1])
 			mm.set_instance_custom_data(j, lf[2])
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		mmi.material_override = leaf_mat
-		# visibility ranges measure to the centre of the whole island's bushes
 		mmi.layers = 1 | 16
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if lod == 0:
-			mmi.visibility_range_end = 62.0
-			mmi.visibility_range_end_margin = 4.0
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		elif lod == 1:
-			mmi.visibility_range_begin = 62.0
-			mmi.visibility_range_begin_margin = 4.0
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mmi.visibility_range_end = 28.0
+			mmi.visibility_range_end_margin = 3.0
 		else:
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+			mmi.visibility_range_begin = 26.0
+			mmi.visibility_range_begin_margin = 3.0
+			mmi.visibility_range_end = 70.0
+			mmi.visibility_range_end_margin = 8.0
 		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 		add_child(mmi)
 
@@ -466,7 +532,10 @@ func _ground_color(x: float, z: float, h: float) -> Color:
 	else:
 		c = sand
 		var g = smoothstep(4.0, 7.0, -d + n1 * 1.5) * smoothstep(0.6, 1.2, h + n1 * 0.3)
-		var grass = Color(0.45, 0.68, 0.3).lerp(Color(0.33, 0.57, 0.25), 0.5 + 0.5 * sin(x * 0.8 + z * 0.6))
+		# Cooler, less neon grass (iPhone day path looked flat/saturated).
+		var grass = Color(0.34, 0.48, 0.29).lerp(Color(0.28, 0.40, 0.25), 0.5 + 0.5 * sin(x * 0.8 + z * 0.6))
+		grass = grass.lerp(Color(0.36, 0.44, 0.31), 0.22 + 0.14 * sin(x * 2.1 - z * 1.7))
+		grass = grass.lerp(Color(0.40, 0.42, 0.30), 0.12 * (0.5 + 0.5 * sin(x * 5.3 + z * 3.1)))
 		c = c.lerp(grass, g)
 		var pd = path_dist(x, z)
 		if pd < 1.1:
@@ -477,8 +546,9 @@ func _ground_color(x: float, z: float, h: float) -> Color:
 func _build_terrain() -> void:
 	var st = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var half = 58.0
-	var step = 1.0
+	var half = 48.0
+	# Coarser terrain grid — path fine-patches cover the climb; saves terrain fill.
+	var step = 1.5
 	var n = int(half * 2.0 / step)
 	for j in n + 1:
 		for i in n + 1:
@@ -489,10 +559,13 @@ func _build_terrain() -> void:
 			st.set_uv(Vector2(x, z))
 			st.add_vertex(Vector3(x, h, z))
 	# Fine patches over campfire logs + lighthouse bench so flatten pads draw cleanly.
+	# Also densify the dirt-path climb so 1 m triangles don't cast knife-edge shadow wedges.
 	var fine_rects: Array = []
 	fine_rects.append([int(floor(campfire_pos.x + half)) - 6, int(floor(campfire_pos.z + half)) - 6, 12, 12])
 	var lh_xz := gp(2.0, 3.0) + Vector3(-2.2, 0, -2.0)
 	fine_rects.append([int(floor(lh_xz.x + half)) - 4, int(floor(lh_xz.z + half)) - 4, 8, 8])
+	# One denser strip on the forest climb (was 5 overlapping patches).
+	fine_rects.append([int(floor(0.2 + half)) - 4, int(floor(6.0 + half)) - 5, 9, 10])
 	for j in n:
 		for i in n:
 			var skip := false
@@ -560,8 +633,12 @@ func _build_terrain() -> void:
 func _build_water() -> void:
 	var pm = PlaneMesh.new()
 	pm.size = Vector2(1200, 1200)
-	pm.subdivide_width = 160
-	pm.subdivide_depth = 160
+	# Waves are shader-driven; dense mesh mostly burns fill on mobile WebGL2.
+	var sub := 64
+	if OS.has_feature("web") or OS.get_environment("MOBILE") == "1" or DisplayServer.window_get_size().x <= 480:
+		sub = 32
+	pm.subdivide_width = sub
+	pm.subdivide_depth = sub
 	water_mat = ShaderMaterial.new()
 	water_mat.shader = load("res://shaders/water.gdshader")
 	water_mat.set_shader_parameter("obj_foam", _bake_obstacle_foam())
@@ -912,35 +989,37 @@ func _path_lantern(lp: Vector3, hang: Vector3) -> Vector3:
 		h = Vector3(1, 0, 0)
 	h = h.normalized()
 	var side := Vector3(-h.z, 0.0, h.x)
-	var metal := Color(0.42, 0.38, 0.34)
-	var wood := Color(0.28, 0.17, 0.09)
-	# Long hook arm (lighter metal) so the gap from post → hanging glass reads clearly.
-	tube(LB, lp + Vector3(0, 0.04, 0), lp + h * 0.30 + Vector3(0, 0.04, 0), 0.014, 0.014, 5, metal)
-	# Drop hook ring.
-	tube(LB, lp + h * 0.30 + Vector3(0, 0.04, 0), lp + h * 0.30 + Vector3(0, -0.03, 0), 0.01, 0.01, 4, metal)
-	cyl(LB, 0.016, 0.016, 0.032, 6, lp + h * 0.30 + Vector3(0, -0.03, 0), Vector3(PI * 0.5, 0, 0), metal)	# Body center hangs below the hook; total height ≈ 0.25 m.
-	var c := lp + h * 0.30 + Vector3(0, -0.17, 0)
-	# Peaked roof + thin base — open cage silhouette (not a solid crate).
-	box(LB, Vector3(0.11, 0.016, 0.11), c + Vector3(0, 0.11, 0), Vector3.ZERO, metal)
-	box(LB, Vector3(0.045, 0.04, 0.045), c + Vector3(0, 0.14, 0), Vector3.ZERO, metal)
-	box(LB, Vector3(0.022, 0.025, 0.022), c + Vector3(0, 0.168, 0), Vector3.ZERO, metal)
-	box(LB, Vector3(0.09, 0.014, 0.09), c + Vector3(0, -0.115, 0), Vector3.ZERO, metal)
-	# Four slender corner posts only — leave the faces open for glass.
+	# Dark metal cage (shaded via lantern_mat) — keep out of the amber-glass emission band.
+	var metal := Color(0.30, 0.28, 0.26)
+	var wood := Color(0.22, 0.14, 0.08)
+	# Glass tint matches static_nocut soft-emission band (r 0.35–0.55, g 0.20–0.40, b < 0.22).
+	var glass := Color(0.46, 0.30, 0.12)
+	tube(LB, lp + Vector3(0, 0.04, 0), lp + h * 0.48 + Vector3(0, 0.04, 0), 0.014, 0.014, 5, metal)
+	tube(LB, lp + h * 0.48 + Vector3(0, 0.04, 0), lp + h * 0.48 + Vector3(0, -0.03, 0), 0.01, 0.01, 4, metal)
+	cyl(LB, 0.016, 0.016, 0.032, 6, lp + h * 0.48 + Vector3(0, -0.03, 0), Vector3(PI * 0.5, 0, 0), metal)
+	var c := lp + h * 0.48 + Vector3(0, -0.19, 0)
+	# Peaked roof + thin base — open cage silhouette.
+	box(LB, Vector3(0.12, 0.016, 0.12), c + Vector3(0, 0.120, 0), Vector3.ZERO, metal)
+	box(LB, Vector3(0.048, 0.040, 0.048), c + Vector3(0, 0.155, 0), Vector3.ZERO, metal)
+	box(LB, Vector3(0.022, 0.026, 0.022), c + Vector3(0, 0.185, 0), Vector3.ZERO, metal)
+	box(LB, Vector3(0.100, 0.014, 0.100), c + Vector3(0, -0.125, 0), Vector3.ZERO, metal)
 	for sx in [-1.0, 1.0]:
 		for sz in [-1.0, 1.0]:
-			box(LB, Vector3(0.012, 0.21, 0.012), c + h * (sx * 0.044) + side * (sz * 0.044), Vector3.ZERO, wood)
+			box(LB, Vector3(0.013, 0.23, 0.013), c + h * (sx * 0.050) + side * (sz * 0.050), Vector3.ZERO, wood)
 	for a in [0.0, PI * 0.5, PI, PI * 1.5]:
 		var outward := h * cos(a) + side * sin(a)
 		var xf := Transform3D(Basis(Vector3.UP, atan2(outward.x, outward.z)), c)
-		boxb(LB, Vector3(0.082, 0.01, 0.01), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.09, 0.044)), wood)
-		boxb(LB, Vector3(0.082, 0.01, 0.01), xf * Transform3D(Basis.IDENTITY, Vector3(0, -0.09, 0.044)), wood)
-		# Mid crossbar only — leave faces open so the flame tip reads through the cage
-		# (filled amber panes collapsed into a solid glow box at night).
-		boxb(LB, Vector3(0.082, 0.01, 0.01), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.044)), wood)
-	# Flame / bulb nested inside the open cage — the bright point that sells "lantern".
-	GB.prim(_sphm(5, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.018, 0.032, 0.018)), c + Vector3(0, 0.01, 0)), Color(1.0, 0.86, 0.48))
-	# Soft glass suggestion: thin amber card behind the flame (one face only).
-	box(LB, Vector3(0.06, 0.12, 0.005), c + h * 0.02 + Vector3(0, 0.0, 0), Vector3.ZERO, Color(0.45, 0.30, 0.12))
+		boxb(LB, Vector3(0.090, 0.011, 0.011), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.095, 0.050)), wood)
+		boxb(LB, Vector3(0.090, 0.011, 0.011), xf * Transform3D(Basis.IDENTITY, Vector3(0, -0.095, 0.050)), wood)
+		boxb(LB, Vector3(0.090, 0.011, 0.011), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.050)), wood)
+	# Tiny flame tip only (no big unshaded yellow blobs that read as flat lantern).
+	GB.prim(_sphm(5, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.026, 0.040, 0.026)), c + Vector3(0, 0.01, 0)), Color(1.0, 0.86, 0.48))
+	# Softly emissive amber glass panes (lantern_mat emission band).
+	box(LB, Vector3(0.078, 0.155, 0.005), c + h * 0.02, Vector3.ZERO, glass)
+	for a in [0.0, PI * 0.5, PI, PI * 1.5]:
+		var outward2 := h * cos(a) + side * sin(a)
+		var xf2 := Transform3D(Basis(Vector3.UP, atan2(outward2.x, outward2.z)), c)
+		boxb(LB, Vector3(0.084, 0.16, 0.004), xf2 * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.052)), glass)
 	return c
 
 func _barrel(p: Vector3) -> void:
@@ -1333,14 +1412,27 @@ func _build_hut(th: float) -> void:
 
 func _build_lighthouse() -> void:
 	var p = lighthouse_pos + Vector3(0, -0.15, 0)
-	cyl(SB, 1.25, 1.35, 0.5, 10, p + Vector3(0, 0.2, 0), Vector3.ZERO, Color(0.62, 0.6, 0.56))
-	var h = 0.45
+	# Base plinth: darker stone + contact AO so it isn't a flat white slab.
+	cyl(SB, 1.30, 1.40, 0.55, 12, p + Vector3(0, 0.22, 0), Vector3.ZERO, Color(0.36, 0.34, 0.30))
+	# Facet shade: darker inset ring mid-plinth.
+	cyl(SB, 1.22, 1.26, 0.12, 12, p + Vector3(0, 0.42, 0), Vector3.ZERO, Color(0.26, 0.24, 0.22))
+	cyl(SB, 1.16, 1.18, 0.08, 12, p + Vector3(0, 0.52, 0), Vector3.ZERO, Color(0.22, 0.20, 0.18))
+	# Soft contact AO rings on the ground + plinth/tower junction.
+	cyl(SB, 1.70, 1.70, 0.03, 14, p + Vector3(0, 0.012, 0), Vector3.ZERO, Color(0.16, 0.18, 0.14))
+	cyl(SB, 1.48, 1.48, 0.028, 14, p + Vector3(0, 0.035, 0), Vector3.ZERO, Color(0.24, 0.25, 0.21))
+	var h = 0.48
 	var bands = 6
+	# Weathered cream / brick — chalk-white reads as a flat slab on the dirt-path climb.
 	for i in bands:
 		var r0 = 0.95 - i * 0.07
 		var r1 = 0.95 - (i + 1) * 0.07
-		var col = Color(0.96, 0.95, 0.92) if i % 2 == 0 else Color(0.86, 0.25, 0.22)
-		cyl(SB, r1, r0, 0.9, 10, p + Vector3(0, h + 0.45, 0), Vector3.ZERO, col)
+		var col = Color(0.72, 0.68, 0.60) if i % 2 == 0 else Color(0.54, 0.26, 0.22)
+		# Stronger vertical AO on lower bands + thin darker groove under each band.
+		col = col.darkened(0.07 * float(bands - 1 - i))
+		cyl(SB, r0 + 0.015, r0 + 0.015, 0.06, 12, p + Vector3(0, h + 0.02, 0), Vector3.ZERO, col.darkened(0.22))
+		# Slightly darker "south" notch via a thin darker half-band at the lower third of each drum.
+		cyl(SB, r1 + 0.01, r0 + 0.01, 0.12, 12, p + Vector3(0, h + 0.18, 0), Vector3.ZERO, col.darkened(0.12))
+		cyl(SB, r1, r0, 0.9, 12, p + Vector3(0, h + 0.45, 0), Vector3.ZERO, col)
 		h += 0.9
 	cyl(SB, 0.95, 0.95, 0.12, 12, p + Vector3(0, h + 0.06, 0), Vector3.ZERO, Color(0.25, 0.25, 0.27))
 	for i in 12:
@@ -1349,7 +1441,7 @@ func _build_lighthouse() -> void:
 	cyl(SB, 0.9, 0.9, 0.04, 12, p + Vector3(0, h + 0.55, 0), Vector3.ZERO, Color(0.25, 0.25, 0.27))
 	cyl(GB, 0.45, 0.45, 0.75, 8, p + Vector3(0, h + 0.5, 0), Vector3.ZERO, Color(1.0, 0.9, 0.55))
 	beacon_pos = p + Vector3(0, h + 0.5, 0)
-	cyl(SB, 0.0, 0.7, 0.75, 10, p + Vector3(0, h + 1.25, 0), Vector3.ZERO, Color(0.86, 0.25, 0.22))
+	cyl(SB, 0.0, 0.7, 0.75, 10, p + Vector3(0, h + 1.25, 0), Vector3.ZERO, Color(0.62, 0.30, 0.26))
 	blob(SB, p + Vector3(0, h + 1.68, 0), Vector3(0.08, 0.08, 0.08), Color(0.9, 0.8, 0.3), 0.0, 6, 3, 0.0)
 	cyl(SB, 0.06, 0.06, 0.6, 6, p + Vector3(0.35, 0.9, 0.95), Vector3.ZERO, Color(0.3, 0.22, 0.15))
 	box(SB, Vector3(0.55, 1.0, 0.06), p + Vector3(0.0, 0.95, 0.96), Vector3.ZERO, Color(0.35, 0.5, 0.62))
@@ -1382,10 +1474,35 @@ func _build_lighthouse() -> void:
 func _build_campfire() -> void:
 	var c = campfire_pos
 	wall_c(Vector2(c.x, c.z), 0.82, c.y - 0.5, c.y + 0.9, "篝火")
+	# Normally lit mid-grey stones — fire Omni warms the near face, far side stays dark.
+	var ring := Node3D.new()
+	ring.name = "CampfireStoneRing"
+	add_child(ring)
 	for i in 9:
-		var a = TAU * i / 9.0
-		blob(SB, gp(c.x + cos(a) * 0.65, c.z + sin(a) * 0.65) + Vector3(0, 0.08, 0), Vector3(0.17, 0.12, 0.15), Color(0.5, 0.48, 0.45))
-	# charred logs in a little teepee: black where they burn, grey ash further out, glowing tips in the coals
+		var a = TAU * i / 9.0 + 0.05
+		var sp := gp(c.x + cos(a) * 0.66, c.z + sin(a) * 0.66) + Vector3(0, 0.07, 0)
+		# Mid-grey rock: fire Omni warms the near face; far side stays dark.
+		var stone_col := Color(0.20, 0.19, 0.18).darkened(0.025 * float(i % 3))
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = stone_col
+		mat.roughness = 0.97
+		mat.metallic = 0.0
+		mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+		mat.disable_receive_shadows = true
+		var body := MeshInstance3D.new()
+		var cm := SphereMesh.new()
+		cm.radius = 0.145
+		cm.height = 0.17
+		cm.radial_segments = 10
+		cm.rings = 5
+		body.mesh = cm
+		body.material_override = mat
+		body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		body.position = sp
+		body.scale = Vector3(1.30, 0.72, 1.15)
+		ring.add_child(body)
+	# Charred logs (SB cast already off). Glowing tips stay in GB.
 	var char_c := Color(0.09, 0.075, 0.065)
 	var rs := rng.state   # keep the rest of the island's random layout as it was
 	for i in 5:
@@ -1821,7 +1938,7 @@ func _frond(b: MeshBuilder, base: Vector3, dir: Vector3, length: float, rise: fl
 		var s0 = float(i) / seg
 		tube(b, pts[i], pts[i + 1], 0.035 * (1.0 - s0), 0.035 * (1.0 - s0 - 1.0 / seg), 3, cv.darkened(0.15), sway_base + s0 * 0.6, sway_base + (s0 + 1.0 / seg) * 0.6)
 
-func palm(b: MeshBuilder, base: Vector3, height: float, lean_dir: Vector3, lean: float, bend: float, leaf_scale := 1.0, nfr := 11) -> Vector3:
+func palm(b: MeshBuilder, base: Vector3, height: float, lean_dir: Vector3, lean: float, bend: float, leaf_scale := 1.0, nfr := 5) -> Vector3:
 	var segs = 13
 	var pts: Array[Vector3] = []
 	for i in segs + 1:
@@ -1860,19 +1977,20 @@ func palm(b: MeshBuilder, base: Vector3, height: float, lean_dir: Vector3, lean:
 		var cd = dark if not old else Color(0.55, 0.52, 0.2)
 		var cl = light if not old else Color(0.68, 0.62, 0.25)
 		var L = rng.randf_range(2.5, 3.3) * leaf_scale
-		_frond(b, crown + d * 0.12, d, L, rng.randf_range(0.6, 1.0) * leaf_scale, rng.randf_range(2.0, 2.8) * leaf_scale * (1.3 if old else 1.0), 0.48 * leaf_scale, 11, cd, cl, vein, sw)
+		_frond(b, crown + d * 0.12, d, L, rng.randf_range(0.6, 1.0) * leaf_scale, rng.randf_range(2.0, 2.8) * leaf_scale * (1.3 if old else 1.0), 0.55 * leaf_scale, 4, cd, cl, vein, sw)
 	for k in 3:
 		var a = start + k * 2.1 + 0.5
 		var d = Vector3(cos(a), 0, sin(a))
-		_frond(b, crown + Vector3(0, 0.05, 0), d, 1.6 * leaf_scale, 1.4 * leaf_scale, 0.9 * leaf_scale, 0.35 * leaf_scale, 8, Color(0.3, 0.62, 0.22), Color(0.42, 0.7, 0.25), vein, sw)
+		_frond(b, crown + Vector3(0, 0.05, 0), d, 1.6 * leaf_scale, 1.4 * leaf_scale, 0.9 * leaf_scale, 0.35 * leaf_scale, 5, Color(0.3, 0.62, 0.22), Color(0.42, 0.7, 0.25), vein, sw)
 	add_obstacle(Vector2(base.x, base.z), 0.3, base.y + height, "椰子树")
 	return crown
 
 func _build_palms() -> void:
 	var specs: Array = []
 	# clusters around the beach ring (theta, inset, count)
-	var ring = [[-1.25, 3.5, 2], [-0.95, 5.0, 1], [-0.45, 3.0, 3], [0.3, 5.5, 1], [0.75, 3.2, 2], [1.15, 4.5, 1], [1.5, 3.0, 2],
-			[2.05, 4.0, 3], [2.5, 3.0, 1], [2.95, 4.5, 2], [-2.75, 3.2, 2], [-2.0, 4.8, 1], [-1.85, 2.8, 1], [-2.55, 6.5, 1], [0.95, 7.5, 1], [2.4, 7.5, 2], [-0.2, 7.5, 1]]
+	# Fewer palms (was denser ring) — each crown is still a heavy FB frond batch.
+	var ring = [[-1.25, 3.5, 1], [-0.95, 5.0, 1], [-0.45, 3.0, 2], [0.3, 5.5, 1], [0.75, 3.2, 1], [1.15, 4.5, 1], [1.5, 3.0, 1],
+			[2.05, 4.0, 2], [2.5, 3.0, 1], [2.95, 4.5, 1], [-2.75, 3.2, 1], [-2.0, 4.8, 1], [-2.55, 6.5, 1], [0.95, 7.5, 1], [2.4, 7.5, 1], [-0.2, 7.5, 1]]
 	for r in ring:
 		var th: float = r[0]
 		var base = shore_pt(th, r[1])
@@ -1890,8 +2008,8 @@ func _build_palms() -> void:
 	var h2 = shore_pt(hth + 0.33, 2.6)
 	specs.append([h1 + Vector3(0, -0.05, 0), 5.6, dir_at(hth), 0.18, 0.4])
 	specs.append([h2 + Vector3(0, -0.05, 0), 6.1, dir_at(hth + 0.3), 0.22, 0.5])
-	# palms on the hill flanks
-	for hp in [Vector2(-4.5, 6.0), Vector2(7.5, 6.5), Vector2(-6.0, -1.5), Vector2(8.0, -2.0), Vector2(-1.0, 11.0), Vector2(5.0, 11.5)]:
+	# palms on the hill flanks (fewer)
+	for hp in [Vector2(-4.5, 6.0), Vector2(7.5, 6.5), Vector2(8.0, -2.0), Vector2(5.0, 11.5)]:
 		var p = gp(hp.x, hp.y)
 		specs.append([p + Vector3(0, -0.05, 0), rng.randf_range(4.5, 6.5), Vector3(hp.x - 2.0, 0, hp.y - 3.0).normalized(), rng.randf_range(0.15, 0.4), 0.5])
 	for s in specs:
@@ -1947,7 +2065,7 @@ func _spawn_prop_glb(path: String, xf: Transform3D, wood_tint := Color(0.55, 0.3
 		for c in n.find_children("*", "MeshInstance3D", true, false):
 			var mi := c as MeshInstance3D
 			mi.material_override = mat
-			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(n)
 	return n
 
@@ -2082,13 +2200,20 @@ func _build_hammock_cloth_remap() -> void:
 
 
 ## Drive cloth vertices from authored npz frames (hammock-local). clip="" / "empty" = bind pose.
+## Skips rebuild when the same frame is requested again (rest idle) — ArrayMesh rebuild was a hitch.
 func set_hammock_clip_frame(clip: String, frame: int) -> void:
 	if not hammock_use_v25 or hammock_cloth_mi == null:
 		return
 	if clip == "" or clip == "empty" or not hammock_cloth_meta.has(clip):
+		if _hammock_last_key == "empty":
+			return
 		hammock_clip = ""
+		_hammock_last_key = "empty"
 		if hammock_cloth_bind.size() > 0:
 			_apply_hammock_verts(hammock_cloth_bind)
+		return
+	var key := "%s:%d" % [clip, frame]
+	if key == _hammock_last_key:
 		return
 	var info: Dictionary = hammock_cloth_meta[clip]
 	var F: int = int(info["frames"])
@@ -2112,6 +2237,7 @@ func set_hammock_clip_frame(clip: String, frame: int) -> void:
 			hammock_cloth_bytes.decode_float(b + 8))
 	_apply_hammock_verts(verts)
 	hammock_clip = clip
+	_hammock_last_key = key
 
 
 func _apply_hammock_verts(verts: PackedVector3Array) -> void:
@@ -2357,6 +2483,8 @@ func swing_hammock(ang: float) -> Transform3D:
 func _bush(p: Vector3, s: float) -> void:
 	wall_c(Vector2(p.x, p.z), 0.34 * s, p.y - 0.3, p.y + 0.8 * s, "灌木")
 	bush_spots.append([p, s])
+	# Keep the follow camera out of the leafy near-field (flat card walls on iPhone).
+	cam_blockers.append([p + Vector3(0, 0.55 * s, 0), 0.55 * s + 0.35])
 	var g = [Color(0.36, 0.64, 0.28), Color(0.42, 0.7, 0.3), Color(0.3, 0.58, 0.3)][rng.randi() % 3]
 	# the old lobes still draw their random numbers (into a mesh that is thrown away) so everything placed
 	# after a bush stays where it was; they shape the leafy bush
@@ -2394,7 +2522,9 @@ func _leafy_bush(p: Vector3, s: float, lobes: Array, g: Color) -> void:
 			var mid := base.lerp(tip, 0.5) + Vector3(lr.randf_range(-0.08, 0.08), 0.0, lr.randf_range(-0.08, 0.08)) * s
 			tube(FB, base, mid, 0.028 * s, 0.02 * s, 4, bark, 0.0, 0.0)
 			tube(FB, mid, tip, 0.02 * s, 0.008 * s, 4, bark, 0.0, 0.04)
-		var n := int(12.0 * (r.x * r.z) / (0.3 * s * s) * s) + 7
+		# Fewer leaf cards (was the biggest MultiMesh cost on iPhone); volume still reads.
+		# Fewer sprays per lobe; Multimesh scales cards up to keep canopy fill.
+		var n := maxi(2, int((12.0 * (r.x * r.z) / (0.3 * s * s) * s + 7.0) * 0.22))
 		for k in n:
 			# a point in the outer shell of the lobe, never under the ground
 			var d := Vector3(lr.randf_range(-1, 1), lr.randf_range(-0.8, 1), lr.randf_range(-1, 1)).normalized()
@@ -2486,7 +2616,7 @@ func _near_beach_prop(x: float, z: float) -> bool:
 func _build_vegetation() -> void:
 	var placed = 0
 	var tries = 0
-	while placed < 260 and tries < 3000:
+	while placed < 140 and tries < 2200:
 		tries += 1
 		var x = rng.randf_range(-24.0, 24.0)
 		var z = rng.randf_range(-24.0, 24.0)
@@ -2518,7 +2648,7 @@ func _build_vegetation() -> void:
 			_grass(p, rng.randf_range(0.8, 1.4))
 		placed += 1
 	# a few beach grass tufts and low bushes framing the sand
-	for i in 40:
+	for i in 18:
 		var th = rng.randf() * TAU
 		var p = shore_pt(th, rng.randf_range(3.5, 5.5))
 		if path_dist(p.x, p.z) > 1.0 and absf(wrapf(th + PI / 2.0, -PI, PI)) > 0.2 \
@@ -2556,33 +2686,30 @@ func _build_vegetation() -> void:
 		lamps.append([body, "path"])
 		# Keep explore cam from sitting inside path posts / fence boxes near the lamps.
 		cam_blockers.append([g + Vector3(0, 0.45, 0), 0.55])
-	# Forest-path lantern on the lighthouse climb (user night_forest_path spot ~(-0.8, 6.5)).
-	var fq := Vector2(-0.55, 6.7)
-	var fdir := Vector2(0.5, 8.0) - Vector2(1.6, 4.4)
-	var fo := fdir.normalized().orthogonal() * 0.95
-	var fg := gp(fq.x + fo.x, fq.y + fo.y)
-	tube(SB, fg, fg + Vector3(0, 1.05, 0), 0.04, 0.035, 5, Color(0.4, 0.28, 0.16))
-	wall_c(Vector2(fg.x, fg.z), 0.06, fg.y - 0.2, fg.y + 1.35, "路灯")
-	var flp: Vector3 = fg + Vector3(0, 1.12, 0)
-	var fhang := Vector3(-fo.x, 0.0, -fo.y).normalized()
-	lamps.append([_path_lantern(flp, fhang), "path"])
+	# Forest-path lantern beside the v26/7b65342 night_forest spot (~(-0.8, 6.5)).
+	# Post on the uphill/+X side; arm hangs toward path centre so the cage sits in open air.
+	var fq := Vector2(0.35, 6.45)
+	var fg := gp(fq.x, fq.y)
+	tube(SB, fg, fg + Vector3(0, 1.18, 0), 0.048, 0.040, 5, Color(0.4, 0.28, 0.16))
+	wall_c(Vector2(fg.x, fg.z), 0.06, fg.y - 0.2, fg.y + 1.4, "路灯")
+	var flp: Vector3 = fg + Vector3(0, 1.22, 0)
+	var fhang := Vector3(-1.0, 0.0, -0.10).normalized()
+	var fbody: Vector3 = _path_lantern(flp, fhang)
+	lamps.append([fbody, "path"])
 	cam_blockers.append([fg + Vector3(0, 0.45, 0), 0.55])
+	print("ISLAND forest_lamp post=", fg, " body=", fbody)
 
 # ------------------------------------------------------------------ far scenery
 
 func _build_far() -> void:
-	for isl in [[Vector3(-110, 0, -150), 16.0], [Vector3(95, 0, -175), 11.0], [Vector3(-30, 0, -235), 22.0], [Vector3(170, 0, 30), 18.0], [Vector3(-160, 0, 90), 14.0], [Vector3(40, 0, 210), 20.0]]:
+	# Fewer far islands, no far palms (was a large share of visible primitives).
+	for isl in [[Vector3(-110, 0, -150), 16.0], [Vector3(95, 0, -175), 11.0], [Vector3(-30, 0, -235), 22.0]]:
 		var c: Vector3 = isl[0]
 		var r: float = isl[1]
-		SB.prim(_cylm(r * 1.0, r * 1.2, 0.9, 14), Transform3D(Basis.IDENTITY, c + Vector3(0, 0.0, 0)), Color(0.92, 0.84, 0.64))
-		blob(SB, c + Vector3(rng.randf_range(-2, 2), 0.2, 0), Vector3(r * 0.82, r * 0.28, r * 0.72), Color(0.3, 0.56, 0.28), r * 0.015, 12, 6, 0.03)
-		blob(SB, c + Vector3(r * 0.3, 0.2, r * 0.2), Vector3(r * 0.45, r * 0.38, r * 0.4), Color(0.27, 0.52, 0.26), r * 0.015, 10, 5, 0.03)
-		for k in 4:
-			var a = rng.randf() * TAU
-			var pp = c + Vector3(cos(a) * r * 0.75, 0.3, sin(a) * r * 0.75)
-			palm(SB, pp, rng.randf_range(5.0, 8.0) * r / 14.0, Vector3(cos(a), 0, sin(a)), 0.3, 0.6, r / 14.0, 7)
+		SB.prim(_cylm(r * 1.0, r * 1.2, 0.9, 10), Transform3D(Basis.IDENTITY, c + Vector3(0, 0.0, 0)), Color(0.92, 0.84, 0.64))
+		blob(SB, c + Vector3(rng.randf_range(-2, 2), 0.2, 0), Vector3(r * 0.82, r * 0.28, r * 0.72), Color(0.3, 0.56, 0.28), r * 0.015, 8, 4, 0.03)
 	# clouds
-	for k in 14:
+	for k in 7:
 		var a = rng.randf() * TAU
 		var dist = rng.randf_range(170, 300)
 		var cp = Vector3(cos(a) * dist, rng.randf_range(45, 85), sin(a) * dist)

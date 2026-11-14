@@ -18,8 +18,8 @@ void fragment() {
 		}
 	} else if (!IN_SHADOW_PASS) {
 		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
-		// Strong occlusion: fully hide (not just dither) so porch crates don't mask the boy.
-		if (cut > 0.55 || cut > bayer4(FRAGCOORD.xy)) {
+		// Strong occlusion still fully hides crates; mild occlusion only dithers.
+		if (cut > 0.72 || (cut > 0.12 && cut > bayer4(FRAGCOORD.xy))) {
 			discard;
 		}
 	}

@@ -1,0 +1,44 @@
+metric,value
+canvas_size,390x844
+window_size,(390, 844)
+vp_size,(390, 844)
+scaling_3d_scale,0.780
+msaa_3d,0
+positional_shadow_atlas_size,1024
+render_info_objects_visible,42
+render_info_draw_calls_visible,42
+render_info_primitives_visible,102311
+render_info_objects_shadow,0
+render_info_draw_calls_shadow,0
+render_info_primitives_shadow,12406
+perf_draw_calls,70
+perf_objects,171
+perf_primitives,117111
+perf_video_mem_mb,57.26
+perf_texture_mem_mb,43.19
+perf_buffer_mem_mb,14.07
+time_fps,24.00
+time_process_ms,75.514
+time_physics_ms,0.034
+lights_directional,2
+lights_directional_shadow,1
+lights_omni,15
+lights_omni_visible,3
+lights_omni_shadow,0
+lights_spot,0
+lights_spot_shadow,0
+particle_systems,6
+multimesh_instances,257
+mesh_instances,102
+draw_calls_visible,42
+draw_calls_shadow,0
+sun_shadow_mode,0
+sun_shadow_max_distance,22.0
+sun_shadow_blur,7.00
+refl_enabled,false
+refl_scale,0.180
+refl_every,3
+refl_vp_size,(86, 186)
+refl_level,2
+night_on,true
+player_pos,3.32,4.56,0.52

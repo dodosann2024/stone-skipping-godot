@@ -1,0 +1,11 @@
+rank,name_before,ms_before,name_after,ms_after
+1,time_process (compat render),149.0,time_process (compat/llvmpipe),48.4
+2,leaf+water+shadow fill,~140,apply_camera,0.16
+3,explore_tick,~2.4,explore_tick,0.08
+4,apply_camera,~1.2,boy_tick,0.07
+5,boy_tick,~0.8,time_physics,0.04
+6,water_refl,~0.6,night_fx,0.04
+7,island_set_time,~0.2,update_night,0.03
+8,prints,~0.15,island_set_time,0.02
+9,night_fx,~0.1,wade,0.01
+10,wade,~0.05,path_lamp_pool,0.01

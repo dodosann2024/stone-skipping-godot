@@ -450,25 +450,20 @@ func _setup_tree() -> void:
 
 
 func _build_blob() -> void:
+	# No alpha contact quad — Compatibility Bayer-dithers alpha into a hard square underfoot.
+	# Real sun/moon shadow from the boy mesh (high bias + soft blur) grounds him instead.
 	blob = MeshInstance3D.new()
 	blob.name = "Blob"
-	var q := QuadMesh.new()
-	q.size = Vector2(0.35, 0.35)
-	blob.mesh = q
-	var m := StandardMaterial3D.new()
-	m.albedo_color = Color(0, 0, 0, 0.25)
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	blob.material_override = m
-	blob.rotation.x = -PI * 0.5
+	blob.visible = false
 	blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(blob)
+	# Stub only — sit/lie toggles still reference blob.
+
 
 
 func _build_stone() -> void:
 	stone = MeshInstance3D.new()
 	stone.name = "Stone"
+	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var sm := SphereMesh.new()
 	sm.radius = 0.028
 	sm.height = 0.05
@@ -492,7 +487,7 @@ func _build_hat_proxy() -> void:
 	hat = MeshInstance3D.new()
 	hat.name = "Hat"
 	hat.visible = false
-	hat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	hat.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_hat_attach.add_child(hat)
 	hat.position = Vector3(0, 0.08, 0)
 	hat_mode = "head"
@@ -550,6 +545,7 @@ func _build_procedural_hat_fallback() -> void:
 		_scalp_cover.material_override = scalp_mat
 		_scalp_cover.position = Vector3(0, 0.06, 0)
 		_scalp_cover.visible = false
+		_scalp_cover.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_hat_attach.add_child(_scalp_cover)
 
 
@@ -663,13 +659,13 @@ func _build_face_fill() -> void:
 	face_fill = OmniLight3D.new()
 	face_fill.name = "FaceFill"
 	face_fill.light_color = Color(1.0, 0.92, 0.78)
-	face_fill.light_energy = 0.35
+	face_fill.light_energy = 0.0
 	face_fill.omni_range = 0.4
 	face_fill.omni_attenuation = 1.4
 	face_fill.shadow_enabled = false
 	face_fill.light_specular = 0.0
-	# Boy mesh only (layer 1). Off at night so he shares moon/ambient with the sand.
-	face_fill.light_cull_mask = 1
+	face_fill.visible = false
+	face_fill.light_cull_mask = 0
 	parts["head"].add_child(face_fill)
 	face_fill.position = Vector3(0.0, -0.02, -0.1)
 	# Cool moonlight rim — only on at night, opposite the fill so edges read without flattening him.
@@ -709,29 +705,25 @@ func _build_face_fill() -> void:
 ## v26: lights do the night look — do NOT tint albedo (that greys skin / blues sclera).
 func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 	k = clampf(k, 0.0, 1.0)
+	# Mobile WebGL2: no boy OmniLights — each adds a Compatibility forward pass.
 	if face_fill:
-		# Day: warm under-brim fill. Night: fully off — same lights as the sand only.
-		face_fill.light_color = Color(1.0, 0.92, 0.78)
-		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.0, k)
-		face_fill.omni_range = 0.4
-		face_fill.omni_attenuation = lerpf(1.4, 1.6, k)
-		face_fill.position = Vector3(0.0, -0.04, -0.16)
-		face_fill.light_specular = 0.0
-		face_fill.visible = k < 0.45
-		# Cull mask 0 at night so a stray frame can't key the boy alone.
-		face_fill.light_cull_mask = 1 if k < 0.45 else 0
+		face_fill.light_energy = 0.0
+		face_fill.visible = false
+		face_fill.light_cull_mask = 0
 	if _night_rim:
 		_night_rim.light_energy = 0.0
 		_night_rim.light_specular = 0.0
 		_night_rim.visible = false
+		_night_rim.light_cull_mask = 0
 	if _night_body:
 		_night_body.light_energy = 0.0
 		_night_body.light_specular = 0.0
 		_night_body.visible = false
-	# Same world lights as the ground. Pale Tripo albedo (esp. yellow shorts / straw)
-	# outshines wet sand — neutral luminance scale so boy/sand mean L ≈ 1.0–1.3.
-	# Soft moon/ambient flatten the key. Tiny albedo trim — pale Tripo shorts/straw stay ≤ ~1.3× sand.
-	var lum_scale := lerpf(1.0, 0.92, k)
+		_night_body.light_cull_mask = 0
+	# Same world lights as the ground. Pale Tripo albedo outshines moonlit sand —
+	# stronger night trim so boy/ground stays ≈ 1.0–1.4 (v26), not a bright key.
+	# Pale Tripo albedo outshines cool moon sand — trim so boy/ground ≈ 1.0–1.4.
+	var lum_scale := lerpf(1.0, 0.55, k)
 	for mat in _boy_mats:
 		if mat == null:
 			continue
@@ -767,6 +759,7 @@ func _tune_boy_material() -> void:
 		if nsurf < 1:
 			continue
 		_body_mi = mi
+		# Soft directional silhouette (bias/blur in MobileQuality kill the flat-sandal contact plate).
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mi.transparency = 0
 		# Layer 1 only — same lights as terrain (no private layer-2 key).
@@ -1043,7 +1036,7 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 		ab_w = float(cur_slot)
 	hat_s = 1.0 if lie_k > 0.7 else 0.0
 	glasses.visible = kind == "sun" and lie_k > 0.5
-	blob.visible = sit_k < 0.3 and lie_k <= 0.0
+	blob.visible = false
 	show_stone(false)
 	model.rotation.x = 0.0
 	# lie_settle used to nudge model.position.y, but once rest_lie_b is applied that local +Y
@@ -1091,7 +1084,7 @@ func end_activity() -> void:
 	hat_hold = 0.0
 	set_hat_mode("head")
 	glasses.visible = false
-	blob.visible = true
+	blob.visible = false
 	model.rotation.x = 0.0
 	lie_settle = 0.0
 	act_kind = ""
@@ -2041,8 +2034,7 @@ func _apply_mixer() -> void:
 func _update_blob() -> void:
 	if blob == null:
 		return
-	blob.position = Vector3(0, 0.01, 0)
-	blob.visible = blob.visible and anim != "activity"
+	blob.visible = false
 
 
 static func twist_spine(sk: Skeleton3D, tw: float) -> void:
@@ -2154,6 +2146,9 @@ func _load_face_albedos() -> void:
 		closed_mr = _load_face_tex(root + "mr_cheer.jpg")
 	face_textures = {}
 	_face_alb = {}
+	# One normal/MR base (idle) + closed-eye set — avoid four full 2K PBR packs in VRAM.
+	var idle_n: Texture2D = _load_face_tex(root + "normal_idle.jpg")
+	var idle_mr: Texture2D = _load_face_tex(root + "mr_idle.jpg")
 	for kind in ["idle", "smile", "cheer", "sleep"]:
 		var alb: Texture2D = _load_face_tex(root + "albedo_%s.jpg" % kind)
 		if alb == null:
@@ -2161,11 +2156,12 @@ func _load_face_albedos() -> void:
 		var nrm: Texture2D
 		var mr: Texture2D
 		if kind == "cheer" or kind == "sleep":
-			nrm = closed_n
-			mr = closed_mr
+			nrm = closed_n if closed_n else idle_n
+			mr = closed_mr if closed_mr else idle_mr
 		else:
-			nrm = _load_face_tex(root + "normal_%s.jpg" % kind)
-			mr = _load_face_tex(root + "mr_%s.jpg" % kind)
+			# smile shares idle normal/MR (albedo carries the expression).
+			nrm = idle_n
+			mr = idle_mr
 		if alb == null:
 			alb = _boy_albedo_tex_day
 		face_textures[kind] = {"albedo": alb, "normal": nrm, "mr": mr}

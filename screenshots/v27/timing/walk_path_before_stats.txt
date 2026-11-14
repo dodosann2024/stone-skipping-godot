@@ -1,0 +1,2 @@
+tag=walk_path_before n=55 note=softGL_cpu2x_60f
+dt_ms median=5283.100 p95=7116.300 p99=7349.700 max=7349.700 hitches_gt33=55

@@ -1,7 +1,10 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v25
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v27
 
 低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩为 Tripo Mixamo 网格；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+## v27 改动
+手机画质档（MID 起跳）+ 夜景/阴影抛光：脚底硬方阴影去掉，白天路径/海滩阴影更干净，森林灯笼可读、篝火石圈正常受光。在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/?v=27>（`docs/game_v27`，保留 `__unlockAudio` / `__safeArea`，VRAM 压缩开）。截图见 `screenshots/v27/`。
 
 ## v25 改动
 Blender 坐 / 躺剪辑（长椅·木头·吊床）+ 三图表情包 + 脸朝前的休息机位；吊床布料 `.bin` 打进 web pck。在线试玩：<https://dodosann2024.github.io/stone-skipping-godot/?v=25>（`docs/game_v25`，保留 `__unlockAudio` / `__safeArea`）。终局截图：`screenshots/v25/final/`。`--selftest` PASS。

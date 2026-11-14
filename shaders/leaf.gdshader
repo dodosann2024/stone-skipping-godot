@@ -8,6 +8,8 @@ render_mode cull_disabled, diffuse_lambert_wrap, specular_disabled;
 uniform sampler2D leaf_tex : source_color, filter_linear_mipmap, repeat_disable;
 uniform float game_time = 0.0;
 uniform float wind = 1.0;
+// Hide leaf cards that fill the near field as flat blurry planes (iPhone follow cam).
+uniform float near_fade = 1.1;
 global uniform float night_k;
 #include "res://shaders/cutout.gdshaderinc"
 #include "res://shaders/refl_clip.gdshaderinc"
@@ -36,13 +38,18 @@ void fragment() {
 	if (tx.a < 0.5) {
 		discard;
 	}
+	// Near-field: drop oversized cards so the follow cam doesn't clip into a flat bush wall.
+	float cam_d = length(wpos - CAMERA_POSITION_WORLD);
+	if (!IN_SHADOW_PASS && cam_d < near_fade) {
+		discard;
+	}
 	if (!IN_SHADOW_PASS && refl_pass(CAMERA_POSITION_WORLD)) {
 		if (wpos.y < 0.0) {
 			discard;
 		}
 	} else if (!IN_SHADOW_PASS) {
 		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
-		if (cut > 0.55 || cut > bayer4(FRAGCOORD.xy)) {
+		if (cut > 0.82 || (cut > 0.08 && cut > bayer4(FRAGCOORD.xy))) {
 			discard;
 		}
 	}

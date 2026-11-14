@@ -1,0 +1,11 @@
+rank,name,avg_ms
+1,time_process,149.0000
+2,render_compat_leaf_water_shadow,140.0000
+3,explore_tick,2.4000
+4,apply_camera,1.2000
+5,boy_tick,0.8000
+6,water_refl,0.6000
+7,island_set_time,0.2000
+8,prints,0.1500
+9,night_fx,0.1000
+10,wade,0.0500

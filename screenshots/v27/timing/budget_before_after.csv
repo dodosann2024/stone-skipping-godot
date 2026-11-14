@@ -1,0 +1,14 @@
+metric,before_2880d0a,after,target
+render_info_primitives_visible,316000,100283,<=120000
+render_info_primitives_shadow,215000,11798,<=60000
+perf_primitives,747000,114475,
+perf_texture_mem_mb,234,43.32,<=80
+time_process_ms,149,40.56,
+lights_omni_total,15,15,
+lights_omni_visible_day,15,0,0 day
+lights_omni_visible_night,,3,<=3
+multimesh_instances,4428,219,
+scaling_3d_scale,0.65,0.78,0.75-0.8
+draw_calls_visible,,37,
+draw_calls_shadow,,0,
+sun_shadow_blur,2.5,6.0,
