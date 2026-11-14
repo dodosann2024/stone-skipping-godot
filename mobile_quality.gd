@@ -47,22 +47,23 @@ func _apply(vp: Viewport, sun: DirectionalLight3D) -> void:
 			leaf_near_fade = 0.85
 		Tier.MID:
 			scale_3d = 0.78
-			shadow_dist = 22.0
-			shadow_blur = 7.0
+			# Shorter range + 2-split → denser near-player shadow texels (softer dapples).
+			shadow_dist = 12.0
+			shadow_blur = 10.0
 			particle_mul = 0.45
 			water_cheap = 0.7
 			leaf_near_fade = 1.7
 		Tier.LOW:
 			scale_3d = 0.70
-			shadow_dist = 18.0
-			shadow_blur = 7.2
+			shadow_dist = 11.0
+			shadow_blur = 10.0
 			particle_mul = 0.3
 			water_cheap = 0.9
 			leaf_near_fade = 1.95
 		Tier.MIN:
 			scale_3d = 0.58
-			shadow_dist = 14.0
-			shadow_blur = 7.5
+			shadow_dist = 9.0
+			shadow_blur = 10.5
 			particle_mul = 0.18
 			water_cheap = 1.0
 			leaf_near_fade = 2.2
@@ -71,8 +72,8 @@ func _apply(vp: Viewport, sun: DirectionalLight3D) -> void:
 		vp.scaling_3d_scale = scale_3d
 		# Compatibility has no FSR1 — stay on bilinear; sharpen via slightly higher scale.
 		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
-		# Keep positional atlas small — only campfire may cast omni shadows.
-		vp.positional_shadow_atlas_size = 1024 if tier <= Tier.MID else 512
+		# Positional atlas unused (campfire omni shadows off); keep tiny.
+		vp.positional_shadow_atlas_size = 512
 		# Prefer lower mesh LODs on phones when available.
 		vp.mesh_lod_threshold = 2.5
 	else:
@@ -82,12 +83,20 @@ func _apply(vp: Viewport, sun: DirectionalLight3D) -> void:
 		sun.directional_shadow_max_distance = shadow_dist
 		sun.shadow_blur = shadow_blur
 		if mobile:
-			# One orthogonal map (half the shadow primitives of 2-splits) + high blur ≈ soft PCF.
-			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-			sun.shadow_bias = 0.04
-			sun.shadow_normal_bias = 1.5
-			sun.directional_shadow_pancake_size = 3.0
-			sun.light_angular_distance = maxf(sun.light_angular_distance, 2.8)
+			# MID: 2-split for near texel density; LOW/MIN stay orthogonal to save fill.
+			if tier <= Tier.MID:
+				sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+			else:
+				sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+			# Bias lifts the flat-sandal contact plate; blur/angular softens the silhouette.
+			sun.shadow_bias = 0.09
+			sun.shadow_normal_bias = 2.8
+			sun.directional_shadow_pancake_size = 1.2
+			sun.light_angular_distance = maxf(sun.light_angular_distance, 5.0)
+			if tier <= Tier.MID:
+				# Near split for dense player texels; blend kills the hard CSM bar across the path.
+				sun.directional_shadow_split_1 = 0.22
+				sun.directional_shadow_blend_splits = true
 	changed.emit(tier)
 
 

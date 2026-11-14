@@ -137,12 +137,12 @@ void fragment() {
 	vec3 moon_ground = vec3(0.09, 0.135, 0.155); // desaturated blue-green
 	c = mix(c, moon_ground, nk);
 	float ld = length(p - lamp_xz);
-	// Soft Gaussian ~2.5 m; modest peak — radial pool, not a blazing dirt stripe.
-	float pool = lamp_pool * exp(-(ld * ld) / (1.60 * 1.60));
-	pool *= smoothstep(2.8, 0.85, ld);
+	// Soft Gaussian ~3.2 m — clear warm pool under the hanging forest lantern.
+	float pool = lamp_pool * exp(-(ld * ld) / (2.35 * 2.35));
+	pool *= smoothstep(3.6, 0.55, ld);
 	ALBEDO = c;
 	ROUGHNESS = mix(rough, 0.92, nk);
 	SPECULAR = 0.5 * (1.0 - nk);
-	// Cool fill for open sand; lantern pool stays local (keep peak modest so forest ≠ dusk).
-	EMISSION = moon_ground * 0.88 * nk + vec3(0.11, 0.08, 0.045) * pool;
+	// Cool fill for open sand; lantern pool stays local (warm, readable).
+	EMISSION = moon_ground * 0.88 * nk + vec3(0.34, 0.20, 0.07) * pool;
 }

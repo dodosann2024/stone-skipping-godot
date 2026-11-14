@@ -26,19 +26,24 @@ func g() -> void:
 	m.demo_mode = false
 	m.demo_cam = false
 	m.cam_fixed = false
-	# Desktop resolution for numeric v26 compare; force soft ortho PCF so day foliage isn't blocky.
+	# Desktop resolution for stills; MID-like soft 2-split + short range for dense near dapples.
 	m.mq.setup(false, false, vp, m.sun)
 	if m.sun:
-		m.sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-		m.sun.shadow_blur = 7.0
-		m.sun.light_angular_distance = 3.2
-		m.sun.shadow_bias = 0.04
-		m.sun.shadow_normal_bias = 1.5
-		m.sun.directional_shadow_pancake_size = 3.0
+		m.sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+		m.sun.directional_shadow_max_distance = 12.0
+		m.sun.directional_shadow_split_1 = 0.22
+		m.sun.directional_shadow_blend_splits = true
+		m.sun.shadow_blur = 10.0
+		m.sun.light_angular_distance = 4.5
+		m.sun.shadow_bias = 0.09
+		m.sun.shadow_normal_bias = 2.8
+		m.sun.directional_shadow_pancake_size = 1.2
+		m.sun.light_angular_distance = 5.0
 	m.refl_auto = false
 	m._set_refl_level(0)
 	if m.boy:
 		m.boy.show_stone(false)
+		# Soft radial contact blob stays visible (replaces hard foot-square cast).
 
 	# Day path — user iPhone: behind boy on lighthouse climb, rope fence left, lighthouse top-right.
 	await _set_tod(m, "day")
@@ -47,7 +52,6 @@ func g() -> void:
 	to_lh.y = 0.0
 	var face := atan2(-to_lh.x, -to_lh.z) if to_lh.length_squared() > 1e-6 else -0.4
 	m._place(path_p, face)
-	# Camera behind boy looking uphill (see his back, lighthouse ahead-right).
 	m.ex_yaw = m.face_yaw
 	m.ex_pitch = 0.16
 	m.ex_dist = 3.8
@@ -63,8 +67,11 @@ func g() -> void:
 		m.ex_pitch = 0.16
 		m.ex_dist = 3.8
 		if m.sun:
-			m.sun.shadow_blur = 7.0
-			m.sun.light_angular_distance = 3.2
+			m.sun.shadow_blur = 10.0
+			m.sun.light_angular_distance = 4.5
+			m.sun.directional_shadow_max_distance = 12.0
+			m.sun.directional_shadow_split_1 = 0.22
+			m.sun.directional_shadow_blend_splits = true
 		await process_frame
 	await _shot(vp, "day_path.png")
 
@@ -123,38 +130,33 @@ func g() -> void:
 		await process_frame
 	await _shot(vp, "night_campfire.png")
 
-	# Night forest path — same placement as v26 (lantern pool at feet, hanging cage in frame).
+	# Night forest — boy on path; hanging lantern clearly beside him (screen-left) + warm pool.
 	m.mode = m.Mode.EXPLORE
 	m.cam_fixed = false
 	m.demo_cam = false
 	m.demo_track = []
-	var ref_p := Vector3(-0.8, 0, 6.5)
-	var lamp_p := ref_p
+	var lamp_p := Vector3(0.05, 1.0, 6.40)
 	var best_ld := 999.0
 	for L in m.island.lamps:
 		if str(L[1]) != "path":
 			continue
 		var lp: Vector3 = L[0]
-		var ld := Vector2(lp.x - ref_p.x, lp.z - ref_p.z).length()
+		var ld := Vector2(lp.x - 0.05, lp.z - 6.40).length()
 		if ld < best_ld:
 			best_ld = ld
 			lamp_p = lp
-	var away: Vector3 = Vector3(ref_p.x - lamp_p.x, 0.0, ref_p.z - lamp_p.z)
-	if away.length_squared() < 1e-6:
-		away = Vector3(-0.6, 0.0, -0.4)
-	var forest_p: Vector3 = Vector3(lamp_p.x, 0.0, lamp_p.z) + away.normalized() * 1.05
-	forest_p = forest_p.lerp(Vector3(ref_p.x, 0.0, ref_p.z), 0.55)
+	# Stand slightly downhill/left of the post so the cage sits open-air to his left.
+	var forest_p := Vector3(-0.95, 0.0, 6.55)
 	forest_p.y = m._surface(forest_p.x, forest_p.z)
-	var to_lamp: Vector3 = lamp_p - forest_p
-	to_lamp.y = 0.0
-	var face_f := atan2(-(forest_p.x - 2.0), -(forest_p.z - 2.5))
-	if to_lamp.length_squared() > 1e-6:
-		var side := atan2(-to_lamp.x, -to_lamp.z) + PI * 0.55
-		face_f = lerp_angle(face_f, side, 0.55)
-	m._place(forest_p, face_f)
-	m.ex_yaw = m.face_yaw + PI + 0.35
-	m.ex_pitch = 0.18
-	m.ex_dist = 3.9
+	# Face mostly along +Z (up the path); lantern stays on his left shoulder.
+	m._place(forest_p, -0.15)
+	# Camera from his right/front so the hanging cage + post read on screen-left.
+	var mid := (forest_p + Vector3(lamp_p.x, forest_p.y, lamp_p.z)) * 0.5
+	var cam_from := forest_p + Vector3(-1.55, 0.0, 1.35)
+	var look := mid + Vector3(0.15, 0.55, 0.0) - cam_from
+	m.ex_yaw = atan2(-look.x, -look.z)
+	m.ex_pitch = 0.20
+	m.ex_dist = 3.6
 	m._cam_arm_k = 1.0
 	m._cam_arm_want = 1.0
 	m._cam_slide = 0.0
@@ -162,14 +164,21 @@ func g() -> void:
 	m.cam_yaw = m.ex_yaw
 	m.cam_pitch = m.ex_pitch
 	m.cam_dist = m.ex_dist
-	m.cam_target = m.player.global_position + Vector3(0, 0.72, 0)
-	for _i in 55:
-		m.ex_yaw = m.face_yaw + PI + 0.35
-		m.ex_pitch = 0.18
-		m.ex_dist = 3.9
+	m.cam_target = mid + Vector3(0.0, 0.72, 0.0)
+	m.island.foliage_mat.set_shader_parameter("cut_radius", 5.5)
+	m.island.leaf_mat.set_shader_parameter("cut_radius", 5.5)
+	m.island.static_mat.set_shader_parameter("cut_radius", 5.5)
+	print("FOREST lamp=", lamp_p, " boy=", forest_p, " dist=", forest_p.distance_to(Vector3(lamp_p.x, forest_p.y, lamp_p.z)))
+	for _i in 60:
+		m.ex_yaw = atan2(-look.x, -look.z)
+		m.ex_pitch = 0.20
+		m.ex_dist = 3.6
 		m.cam_yaw = m.ex_yaw
 		m.cam_pitch = m.ex_pitch
 		m.cam_dist = m.ex_dist
+		m.cam_target = mid + Vector3(0.0, 0.72, 0.0)
+		m._cap_night_omnis()
+		m._update_path_lamp_pool()
 		await process_frame
 	await _shot(vp, "night_forest_path.png")
 
@@ -191,11 +200,9 @@ func g() -> void:
 ## Mid-segment of the lighthouse fence path (paths[1]) — rope left when facing the tower.
 func _lighthouse_climb_spot(m) -> Vector3:
 	var pl: Array = m.island.paths[1]
-	# Segment toward the lighthouse end: pl[2]→pl[3] or pl[3]→pl[4]
 	var a: Vector2 = pl[mini(3, pl.size() - 2)]
 	var b: Vector2 = pl[mini(4, pl.size() - 1)]
 	var xz: Vector2 = a.lerp(b, 0.55)
-	# Nudge off the rope (fence is on +orthogonal of path dir).
 	var n := (b - a).normalized().orthogonal() * -0.15
 	var p := Vector3(xz.x + n.x, 0.0, xz.y + n.y)
 	p.y = m._surface(p.x, p.z)
@@ -217,7 +224,6 @@ func _set_tod(m, tod: String) -> void:
 				await process_frame
 		m.night_k = 1.0
 		m._update_night(0.0, true)
-	# Apply lantern omnis + ground pools (main._process would, but stills freeze TOD).
 	m._cap_night_omnis()
 	m._update_path_lamp_pool()
 	if m.night_fx and m.camera and m.sun:
@@ -231,7 +237,6 @@ func _set_tod(m, tod: String) -> void:
 
 
 func _shot(vp: Viewport, name: String) -> void:
-	# Refresh night FX at the final camera pose so pools/omnis match the frame.
 	var m = root.get_child(root.get_child_count() - 1)
 	if m and m.get("night_k") != null and float(m.night_k) > 0.5:
 		m._cap_night_omnis()

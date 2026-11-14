@@ -450,20 +450,14 @@ func _setup_tree() -> void:
 
 
 func _build_blob() -> void:
+	# No alpha contact quad — Compatibility Bayer-dithers alpha into a hard square underfoot.
+	# Real sun/moon shadow from the boy mesh (high bias + soft blur) grounds him instead.
 	blob = MeshInstance3D.new()
 	blob.name = "Blob"
-	var q := QuadMesh.new()
-	q.size = Vector2(0.35, 0.35)
-	blob.mesh = q
-	var m := StandardMaterial3D.new()
-	m.albedo_color = Color(0, 0, 0, 0.25)
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	blob.material_override = m
-	blob.rotation.x = -PI * 0.5
+	blob.visible = false
 	blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(blob)
+	# Stub only — sit/lie toggles still reference blob.
+
 
 
 func _build_stone() -> void:
@@ -765,6 +759,7 @@ func _tune_boy_material() -> void:
 		if nsurf < 1:
 			continue
 		_body_mi = mi
+		# Soft directional silhouette (bias/blur in MobileQuality kill the flat-sandal contact plate).
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mi.transparency = 0
 		# Layer 1 only — same lights as terrain (no private layer-2 key).
@@ -1041,7 +1036,7 @@ func activity(kind: String, sit_k: float, lie_k: float, tt: float) -> Vector3:
 		ab_w = float(cur_slot)
 	hat_s = 1.0 if lie_k > 0.7 else 0.0
 	glasses.visible = kind == "sun" and lie_k > 0.5
-	blob.visible = sit_k < 0.3 and lie_k <= 0.0
+	blob.visible = false
 	show_stone(false)
 	model.rotation.x = 0.0
 	# lie_settle used to nudge model.position.y, but once rest_lie_b is applied that local +Y
@@ -1089,7 +1084,7 @@ func end_activity() -> void:
 	hat_hold = 0.0
 	set_hat_mode("head")
 	glasses.visible = false
-	blob.visible = true
+	blob.visible = false
 	model.rotation.x = 0.0
 	lie_settle = 0.0
 	act_kind = ""
@@ -2039,8 +2034,7 @@ func _apply_mixer() -> void:
 func _update_blob() -> void:
 	if blob == null:
 		return
-	blob.position = Vector3(0, 0.01, 0)
-	blob.visible = blob.visible and anim != "activity"
+	blob.visible = false
 
 
 static func twist_spine(sk: Skeleton3D, tw: float) -> void:

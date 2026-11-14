@@ -440,6 +440,7 @@ func _build_stone() -> void:
 	m.albedo_color = Color(0.45, 0.47, 0.52)
 	m.roughness = 0.5
 	stone.material_override = m
+	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	stone.scale = Vector3(0.7, 0.24, 0.6)
 	add_child(stone)
 	stone.visible = false

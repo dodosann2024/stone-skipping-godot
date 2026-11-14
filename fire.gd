@@ -37,14 +37,15 @@ func build() -> void:
 		mi.extra_cull_margin = 1.0
 		add_child(mi)
 		flames.append(mi)
-	# coal bed
+	# coal bed — slightly smaller opaque disc (no alpha rim dither).
 	var bed := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(0.95, 0.95)
+	pm.size = Vector2(0.78, 0.78)
 	bed.mesh = pm
 	var bm := ShaderMaterial.new()
 	bm.shader = load("res://shaders/ember_bed.gdshader")
 	bed.material_override = bm
+	bed.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	bed.position = Vector3(0, 0.035, 0)
 	add_child(bed)
 	_sparks()
@@ -150,5 +151,6 @@ func _process(delta: float) -> void:
 		light.light_energy = (1.0 + 0.25 * f) * lerpf(1.85, 1.95, night)
 		light.omni_range = lerpf(4.0, 5.6, night)
 		light.omni_attenuation = lerpf(1.1, 1.55, night)
-		light.shadow_enabled = night > 0.45
+		# No omni shadows — positional atlas dithered the stone ring into dotted grey.
+		light.shadow_enabled = false
 		light.position = Vector3(0.03 * _noise1(t * 2.2), 0.55 + 0.035 * f, 0.03 * _noise1(t * 1.7 + 9.0))

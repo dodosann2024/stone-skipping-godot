@@ -258,57 +258,32 @@ func _disable_shadows_recursive(n: Node) -> void:
 		_disable_shadows_recursive(c)
 
 
-## Low-poly shadow-only proxies for palm trunks + canopies (and a few big bush blobs).
-## Keeps grass/leaf cards off the shadow pass while restoring soft dappled day-path shade.
+## Shadow-only crown clusters — chunky 3D blobs (not flat discs/cards).
+## Flat discs elongated into hard bars under a low sun; sphere clusters → soft dapples.
+## Ropes/fence stay off the shadow pass.
 func _build_palm_shadow_proxies() -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	# Narrow trunk card + several thin radial frond cards (dappled, not one big triangle).
-	for q in 2:
-		var ax := Vector3.RIGHT if q == 0 else Vector3.BACK
-		var nn := Vector3.BACK if q == 0 else Vector3.LEFT
-		var c := [[-0.5, 0.0], [0.5, 0.0], [0.5, 1.0], [-0.5, 1.0]]
-		for i: int in [0, 1, 2, 0, 2, 3]:
-			var v: Array = c[i]
-			st.set_normal(nn)
-			st.add_vertex(ax * float(v[0]) * 0.16 + Vector3.UP * float(v[1]))
-	# 6 thin frond wedges around the crown (soft blobs under high shadow_blur).
-	for fi in 6:
-		var ang := float(fi) * TAU / 6.0
-		var ax2 := Vector3(cos(ang), 0.0, sin(ang))
-		var nn2 := Vector3(-sin(ang), 0.0, cos(ang))
-		var tip := ax2 * 1.15 + Vector3.UP * 1.05
-		var a := ax2 * 0.12 + Vector3.UP * 0.92
-		var b := -ax2 * 0.08 + Vector3.UP * 0.88 + nn2 * 0.35
-		var d := -ax2 * 0.08 + Vector3.UP * 0.88 - nn2 * 0.35
-		for tri in [[a, b, tip], [a, tip, d]]:
-			for p3: Vector3 in tri:
-				st.set_normal(nn2)
-				st.add_vertex(p3)
-	var card := st.commit()
+	# Unit sphere; each instance is a small blotch at the crown.
+	var sm := SphereMesh.new()
+	sm.radius = 0.5
+	sm.height = 1.0
+	sm.radial_segments = 8
+	sm.rings = 4
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.mesh = card
+	mm.mesh = sm
 	var xfs: Array = []
 	for pts in trunks:
 		if pts.is_empty():
 			continue
-		var base: Vector3 = pts[0]
 		var crown: Vector3 = pts[pts.size() - 1]
-		var ht := maxf(crown.y - base.y, 2.5)
-		var yaw := float(hash(base) % 628) * 0.01
-		var xf := Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3(1.0, ht, 1.0)), base)
-		xfs.append(xf)
-	# Elevated canopy blobs along the lighthouse climb + forest path (dappled shade on dirt).
-	for bp in [
-		Vector3(4.8, 3.2, -4.2), Vector3(4.4, 3.6, -2.0), Vector3(4.0, 3.4, -0.6),
-		Vector3(3.4, 3.8, 0.8), Vector3(2.6, 3.5, 1.8), Vector3(1.6, 3.2, 2.8),
-		Vector3(3.8, 2.8, -5.5), Vector3(5.2, 3.0, -3.0), Vector3(2.2, 3.0, 0.4),
-		Vector3(-1.0, 3.4, 5.8), Vector3(1.5, 3.2, 5.2), Vector3(-2.2, 3.0, 7.0),
-		Vector3(0.6, 3.2, 7.4), Vector3(-0.4, 2.8, 3.8),
-	]:
-		var yaw2 := float(hash(bp) % 628) * 0.01
-		xfs.append(Transform3D(Basis(Vector3.UP, yaw2).scaled(Vector3(2.4, 1.1, 2.4)), bp))
+		# Fewer/smaller crown spheres → soft dapples without stacking into dark bars.
+		for k in 3:
+			var a := float(k) * TAU / 3.0 + float(pts.size()) * 0.21
+			var r := 0.22 + 0.08 * float(k % 2)
+			var off := Vector3(cos(a) * r, -0.04 * float(k % 2), sin(a) * r)
+			var sc := 0.42 + 0.08 * float((k + pts.size()) % 3)
+			var xf := Transform3D(Basis.IDENTITY.scaled(Vector3(sc, sc * 0.50, sc)), crown + off)
+			xfs.append(xf)
 	mm.instance_count = xfs.size()
 	for j in xfs.size():
 		mm.set_instance_transform(j, xfs[j])
@@ -316,8 +291,8 @@ func _build_palm_shadow_proxies() -> void:
 	mmi.name = "PalmShadowProxies"
 	mmi.multimesh = mm
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
-	mmi.visibility_range_end = 42.0
-	mmi.visibility_range_end_margin = 6.0
+	mmi.visibility_range_end = 24.0
+	mmi.visibility_range_end_margin = 4.0
 	add_child(mmi)
 
 
@@ -1016,38 +991,37 @@ func _path_lantern(lp: Vector3, hang: Vector3) -> Vector3:
 	var side := Vector3(-h.z, 0.0, h.x)
 	var metal := Color(0.42, 0.38, 0.34)
 	var wood := Color(0.28, 0.17, 0.09)
-	# Long hook arm (lighter metal) so the gap from post → hanging glass reads clearly.
-	tube(LB, lp + Vector3(0, 0.04, 0), lp + h * 0.30 + Vector3(0, 0.04, 0), 0.014, 0.014, 5, metal)
+	# Longer hook arm so the hanging cage clears the post and reads in frame.
+	tube(LB, lp + Vector3(0, 0.04, 0), lp + h * 0.52 + Vector3(0, 0.04, 0), 0.014, 0.014, 5, metal)
 	# Drop hook ring.
-	tube(LB, lp + h * 0.30 + Vector3(0, 0.04, 0), lp + h * 0.30 + Vector3(0, -0.03, 0), 0.01, 0.01, 4, metal)
-	cyl(LB, 0.016, 0.016, 0.032, 6, lp + h * 0.30 + Vector3(0, -0.03, 0), Vector3(PI * 0.5, 0, 0), metal)	# Body center hangs below the hook; total height ≈ 0.25 m.
-	var c := lp + h * 0.30 + Vector3(0, -0.17, 0)
+	tube(LB, lp + h * 0.52 + Vector3(0, 0.04, 0), lp + h * 0.52 + Vector3(0, -0.03, 0), 0.01, 0.01, 4, metal)
+	cyl(LB, 0.016, 0.016, 0.032, 6, lp + h * 0.52 + Vector3(0, -0.03, 0), Vector3(PI * 0.5, 0, 0), metal)
+	# Body center hangs below the hook; slightly larger cage (~30 cm) so it reads at night.
+	var c := lp + h * 0.52 + Vector3(0, -0.19, 0)
 	# Peaked roof + thin base — open cage silhouette (not a solid crate).
-	box(LB, Vector3(0.11, 0.016, 0.11), c + Vector3(0, 0.11, 0), Vector3.ZERO, metal)
-	box(LB, Vector3(0.045, 0.04, 0.045), c + Vector3(0, 0.14, 0), Vector3.ZERO, metal)
-	box(LB, Vector3(0.022, 0.025, 0.022), c + Vector3(0, 0.168, 0), Vector3.ZERO, metal)
-	box(LB, Vector3(0.09, 0.014, 0.09), c + Vector3(0, -0.115, 0), Vector3.ZERO, metal)
+	box(LB, Vector3(0.13, 0.018, 0.13), c + Vector3(0, 0.125, 0), Vector3.ZERO, metal)
+	box(LB, Vector3(0.05, 0.045, 0.05), c + Vector3(0, 0.16, 0), Vector3.ZERO, metal)
+	box(LB, Vector3(0.024, 0.028, 0.024), c + Vector3(0, 0.19, 0), Vector3.ZERO, metal)
+	box(LB, Vector3(0.105, 0.016, 0.105), c + Vector3(0, -0.13, 0), Vector3.ZERO, metal)
 	# Four slender corner posts only — leave the faces open for glass.
 	for sx in [-1.0, 1.0]:
 		for sz in [-1.0, 1.0]:
-			box(LB, Vector3(0.012, 0.21, 0.012), c + h * (sx * 0.044) + side * (sz * 0.044), Vector3.ZERO, wood)
+			box(LB, Vector3(0.014, 0.24, 0.014), c + h * (sx * 0.052) + side * (sz * 0.052), Vector3.ZERO, wood)
 	for a in [0.0, PI * 0.5, PI, PI * 1.5]:
 		var outward := h * cos(a) + side * sin(a)
 		var xf := Transform3D(Basis(Vector3.UP, atan2(outward.x, outward.z)), c)
-		boxb(LB, Vector3(0.082, 0.01, 0.01), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.09, 0.044)), wood)
-		boxb(LB, Vector3(0.082, 0.01, 0.01), xf * Transform3D(Basis.IDENTITY, Vector3(0, -0.09, 0.044)), wood)
-		# Mid crossbar only — leave faces open so the flame tip reads through the cage
-		# (filled amber panes collapsed into a solid glow box at night).
-		boxb(LB, Vector3(0.082, 0.01, 0.01), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.044)), wood)
+		boxb(LB, Vector3(0.095, 0.012, 0.012), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.10, 0.052)), wood)
+		boxb(LB, Vector3(0.095, 0.012, 0.012), xf * Transform3D(Basis.IDENTITY, Vector3(0, -0.10, 0.052)), wood)
+		boxb(LB, Vector3(0.095, 0.012, 0.012), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.052)), wood)
 	# Flame / bulb nested inside the open cage — the bright point that sells "lantern".
-	GB.prim(_sphm(5, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.028, 0.045, 0.028)), c + Vector3(0, 0.01, 0)), Color(1.0, 0.86, 0.48))
+	GB.prim(_sphm(5, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.036, 0.055, 0.036)), c + Vector3(0, 0.01, 0)), Color(1.0, 0.88, 0.50))
 	# Soft glass suggestion: thin amber card behind the flame (one face only).
-	box(LB, Vector3(0.07, 0.14, 0.006), c + h * 0.02 + Vector3(0, 0.0, 0), Vector3.ZERO, Color(0.48, 0.32, 0.12))
-	# Outer amber panes (open faces) so the hanging body reads as a lantern, not a bare post.
+	box(LB, Vector3(0.085, 0.17, 0.006), c + h * 0.02 + Vector3(0, 0.0, 0), Vector3.ZERO, Color(0.50, 0.34, 0.12))
+	# Outer amber panes so the hanging body reads as a lantern, not a bare post.
 	for a in [0.0, PI * 0.5, PI, PI * 1.5]:
 		var outward2 := h * cos(a) + side * sin(a)
 		var xf2 := Transform3D(Basis(Vector3.UP, atan2(outward2.x, outward2.z)), c)
-		boxb(LB, Vector3(0.078, 0.16, 0.004), xf2 * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.048)), Color(0.42, 0.28, 0.12))
+		boxb(LB, Vector3(0.092, 0.18, 0.005), xf2 * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.055)), Color(0.45, 0.30, 0.12))
 	return c
 
 func _barrel(p: Vector3) -> void:
@@ -1502,10 +1476,48 @@ func _build_lighthouse() -> void:
 func _build_campfire() -> void:
 	var c = campfire_pos
 	wall_c(Vector2(c.x, c.z), 0.82, c.y - 0.5, c.y + 0.9, "篝火")
-	for i in 9:
-		var a = TAU * i / 9.0
-		blob(SB, gp(c.x + cos(a) * 0.65, c.z + sin(a) * 0.65) + Vector3(0, 0.08, 0), Vector3(0.17, 0.12, 0.15), Color(0.5, 0.48, 0.45))
-	# charred logs in a little teepee: black where they burn, grey ash further out, glowing tips in the coals
+	# Solid stone ring — unshaded custom shader (no Compatibility dither stipple).
+	var ring := Node3D.new()
+	ring.name = "CampfireStoneRing"
+	add_child(ring)
+	var stone_sh: Shader = load("res://shaders/stone.gdshader")
+	for i in 10:
+		var a = TAU * i / 10.0 + 0.08
+		var sp := gp(c.x + cos(a) * 0.68, c.z + sin(a) * 0.68) + Vector3(0, 0.08, 0)
+		# Warm solid stones — bright enough to read clean (no mid-grey stipple look).
+		var stone_col := Color(0.62, 0.58, 0.52).darkened(0.03 * float(i % 3))
+		var mat := ShaderMaterial.new()
+		mat.shader = stone_sh
+		mat.set_shader_parameter("albedo_color", Vector3(stone_col.r, stone_col.g, stone_col.b))
+		var body := MeshInstance3D.new()
+		var cm := SphereMesh.new()
+		cm.radius = 0.17
+		cm.height = 0.22
+		cm.radial_segments = 12
+		cm.rings = 6
+		body.mesh = cm
+		body.material_override = mat
+		body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		body.position = sp
+		body.scale = Vector3(1.15, 0.72, 1.05)
+		ring.add_child(body)
+		var cap := MeshInstance3D.new()
+		var cm2 := SphereMesh.new()
+		cm2.radius = 0.12
+		cm2.height = 0.10
+		cm2.radial_segments = 10
+		cm2.rings = 4
+		cap.mesh = cm2
+		var mat2 := ShaderMaterial.new()
+		mat2.shader = stone_sh
+		var top := stone_col.lightened(0.14)
+		mat2.set_shader_parameter("albedo_color", Vector3(top.r, top.g, top.b))
+		cap.material_override = mat2
+		cap.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		cap.position = sp + Vector3(0, 0.08, 0)
+		cap.scale = Vector3(1.1, 0.50, 1.05)
+		ring.add_child(cap)
+	# Charred logs (SB cast already off). Glowing tips stay in GB.
 	var char_c := Color(0.09, 0.075, 0.065)
 	var rs := rng.state   # keep the rest of the island's random layout as it was
 	for i in 5:
@@ -2689,17 +2701,21 @@ func _build_vegetation() -> void:
 		lamps.append([body, "path"])
 		# Keep explore cam from sitting inside path posts / fence boxes near the lamps.
 		cam_blockers.append([g + Vector3(0, 0.45, 0), 0.55])
-	# Forest-path lantern on the lighthouse climb (user night_forest_path spot ~(-0.8, 6.5)).
-	var fq := Vector2(-0.55, 6.7)
-	var fdir := Vector2(0.5, 8.0) - Vector2(1.6, 4.4)
-	var fo := fdir.normalized().orthogonal() * 0.95
-	var fg := gp(fq.x + fo.x, fq.y + fo.y)
-	tube(SB, fg, fg + Vector3(0, 1.05, 0), 0.04, 0.035, 5, Color(0.4, 0.28, 0.16))
-	wall_c(Vector2(fg.x, fg.z), 0.06, fg.y - 0.2, fg.y + 1.35, "路灯")
-	var flp: Vector3 = fg + Vector3(0, 1.12, 0)
-	var fhang := Vector3(-fo.x, 0.0, -fo.y).normalized()
-	lamps.append([_path_lantern(flp, fhang), "path"])
+	# Forest-path lantern — post on the boy's left (+X) so the hanging cage reads in frame.
+	# Boy stands near (-0.9, 6.55); cage hangs toward -X into open air beside him.
+	var fq := Vector2(0.55, 6.40)
+	var fg := gp(fq.x, fq.y)
+	tube(SB, fg, fg + Vector3(0, 1.22, 0), 0.050, 0.042, 5, Color(0.4, 0.28, 0.16))
+	wall_c(Vector2(fg.x, fg.z), 0.06, fg.y - 0.2, fg.y + 1.45, "路灯")
+	var flp: Vector3 = fg + Vector3(0, 1.26, 0)
+	var fhang := Vector3(-1.0, 0.0, 0.05).normalized()
+	var fbody: Vector3 = _path_lantern(flp, fhang)
+	lamps.append([fbody, "path"])
+	# Extra warm glow so the hanging lantern reads even in a busy night frame.
+	GB.prim(_sphm(6, 4), Transform3D(Basis.IDENTITY.scaled(Vector3(0.10, 0.12, 0.10)), fbody + Vector3(0, 0.02, 0)), Color(1.0, 0.84, 0.45))
+	GB.prim(_sphm(5, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.16, 0.10, 0.16)), fbody + Vector3(0, -0.20, 0)), Color(1.0, 0.70, 0.32))
 	cam_blockers.append([fg + Vector3(0, 0.45, 0), 0.55])
+	print("ISLAND forest_lamp post=", fg, " body=", fbody)
 
 # ------------------------------------------------------------------ far scenery
 
