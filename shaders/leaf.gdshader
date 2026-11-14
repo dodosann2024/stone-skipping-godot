@@ -50,7 +50,7 @@ void fragment() {
 	} else if (!IN_SHADOW_PASS) {
 		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
 		// Lower dither threshold so mid-cone bush walls open before they hide the boy.
-		if (cut > 0.72 || (cut > 0.04 && cut > bayer4(FRAGCOORD.xy))) {
+		if (cut > 0.55 || (cut > 0.02 && cut > bayer4(FRAGCOORD.xy))) {
 			discard;
 		}
 	}

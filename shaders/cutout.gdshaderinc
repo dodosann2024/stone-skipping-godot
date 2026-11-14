@@ -24,17 +24,17 @@ float cut_amount(vec3 wpos, vec3 cam) {
 		return 0.0;
 	}
 	float dist = length(wpos - (cam + seg * k));
-	// Wider soft capsule while exploring so leaf walls can't swallow the kid.
-	// Tapers near the camera (avoid sky holes) and near the boy (keep bush silhouette at his feet).
-	float r = cut_radius * mix(0.55, 1.15, smoothstep(0.05, 0.55, k))
-		* mix(1.0, 0.72, smoothstep(0.70, 0.95, k));
-	float hide = (1.0 - smoothstep(r * 0.25, r, dist));
+	// Wide soft capsule so barrels / trunks / leaf walls between cam and boy dither open.
+	// Tapers near the camera (avoid sky holes) and near the boy (keep silhouette at his feet).
+	float r = cut_radius * mix(0.85, 1.55, smoothstep(0.03, 0.50, k))
+		* mix(1.0, 0.82, smoothstep(0.78, 0.97, k));
+	float hide = (1.0 - smoothstep(r * 0.12, r, dist));
 	// Soften the very near field so we don't punch grey rectangles into close foliage.
 	float along = length(wpos - cam);
-	hide *= smoothstep(0.35, 1.1, along);
-	// Vertical band covering head→feet so a bush can't cover his hat while leaving ankles.
-	float y0 = focus.y - 1.15;
-	float y1 = focus.y + 0.55;
-	hide *= smoothstep(y0 - 0.15, y0 + 0.25, wpos.y) * (1.0 - smoothstep(y1, y1 + 0.45, wpos.y));
+	hide *= smoothstep(0.18, 0.70, along);
+	// Vertical band covering head→feet so a bush/barrel can't cover him while leaving ankles.
+	float y0 = focus.y - 1.35;
+	float y1 = focus.y + 0.85;
+	hide *= smoothstep(y0 - 0.25, y0 + 0.15, wpos.y) * (1.0 - smoothstep(y1, y1 + 0.45, wpos.y));
 	return clamp(hide, 0.0, 1.0);
 }

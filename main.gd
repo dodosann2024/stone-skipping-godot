@@ -358,10 +358,8 @@ func _interp_body_pose() -> void:
 	# Critical: sample height at the *display* XZ. Lerping Y between physics samples
 	# chords under hills — boy looks buried while moving and pops up when stopped.
 	if mode == Mode.EXPLORE:
+		# Continuous `_surface` (incl. dock-lip ramp) — no chord under hills, no lip pop.
 		p.y = _surface(p.x, p.z)
-		# Keep soft dock-lip easing if physics is mid-step onto the deck.
-		if absf(p.y - ground_y) > 0.2 and (_on_dock(p.x, p.z) != _on_dock(_body_pos.x, _body_pos.z)):
-			p.y = lerpf(player.position.y, p.y, 0.5)
 	player.position = p
 	player.rotation.y = lerp_angle(_body_yaw_prev, _body_yaw, f)
 
@@ -1192,11 +1190,50 @@ func _leave_throw() -> void:
 func _on_dock(x: float, z: float) -> bool:
 	return (absf(x) < 1.15 and z < island.dock_start_z + 0.1 and z > island.dock_end_z + 3.6) or (absf(x) < 3.1 and z <= island.dock_end_z + 3.95 and z > island.dock_end_z - 0.12)
 
+## 0 = sand mesh, 1 = full deck. Soft envelope around the pier + platform so Y never pops.
+const DOCK_LIP_RAMP := 1.45
+
+func _dock_weight(x: float, z: float) -> float:
+	if _on_dock(x, z):
+		return 1.0
+	# Soft band outside the pier/platform AABB (distance-to-rect → smoothstep).
+	# Pier strip.
+	var pier_hw: float = 1.15
+	var pier_z0: float = island.dock_end_z + 3.6
+	var pier_z1: float = island.dock_start_z + 0.1
+	var dx_p: float = maxf(absf(x) - pier_hw, 0.0)
+	var dz_p: float = 0.0
+	if z > pier_z1:
+		dz_p = z - pier_z1
+	elif z < pier_z0:
+		dz_p = pier_z0 - z
+	var dist_p: float = sqrt(dx_p * dx_p + dz_p * dz_p)
+	# Wide platform at the sea end.
+	var plat_hw: float = 3.1
+	var plat_z0: float = island.dock_end_z - 0.12
+	var plat_z1: float = island.dock_end_z + 3.95
+	var dx_t: float = maxf(absf(x) - plat_hw, 0.0)
+	var dz_t: float = 0.0
+	if z > plat_z1:
+		dz_t = z - plat_z1
+	elif z < plat_z0:
+		dz_t = plat_z0 - z
+	var dist_t: float = sqrt(dx_t * dx_t + dz_t * dz_t)
+	var dist: float = minf(dist_p, dist_t)
+	if dist >= DOCK_LIP_RAMP:
+		return 0.0
+	return 1.0 - smoothstep(0.0, DOCK_LIP_RAMP, dist)
+
 ## walkable surface height (dock deck or terrain mesh — matches what you see)
 func _surface(x: float, z: float) -> float:
-	if _on_dock(x, z):
-		return Island.DECK_Y + 0.04
-	return Island.mesh_h(x, z)
+	var land: float = Island.mesh_h(x, z)
+	var deck: float = Island.DECK_Y + 0.04
+	var w: float = _dock_weight(x, z)
+	if w <= 0.001:
+		return land
+	if w >= 0.999:
+		return deck
+	return lerpf(land, deck, w)
 
 func _surface_kind(x: float, z: float) -> String:
 	if _on_dock(x, z):
@@ -1216,8 +1253,9 @@ func _can_stand(from_h: float, x: float, z: float) -> bool:
 	var h := _surface(x, z)
 	if not dock and h < -0.42:
 		return false   # too deep: the kid only wades in the shallows
-	if absf(h - from_h) > 0.42:
-		return false   # dock edge / big step
+	# Lip ramp is continuous — only reject real cliffs / reef jumps.
+	if absf(h - from_h) > 0.55:
+		return false
 	# keep off the far reef etc.: stay within the island's shallows
 	if not dock and Island.shore_d(x, z) > 6.0:
 		return false
@@ -1412,21 +1450,19 @@ func _explore_tick(delta: float) -> void:
 		move_vel = move_vel.lerp(real, 1.0 - exp(-delta * 14.0))
 	cur_speed = real.length()
 	var h := _surface(to.x, to.z)
-	# mesh_h is continuous — stick to it every tick (no |Δ|>0.5 snap; that was the run teleport).
-	# Only ease across the dock lip where the surface jumps by ~deck height.
-	var dock_now := _on_dock(to.x, to.z)
-	var dock_was := _on_dock(from.x, from.z)
-	if dock_now == dock_was and absf(h - ground_y) < 0.25:
+	# `_surface` is continuous (mesh_h + soft dock-lip ramp) — stick every tick.
+	# Tiny vertical rate limit only as a belt for hitch frames.
+	var max_dy := 3.2 * delta
+	if absf(h - ground_y) <= max_dy or absf(h - ground_y) < 0.04:
 		ground_y = h
 	else:
-		# Soft step onto/off the deck (~0.35 s at 2.4 m/s vertical).
-		var max_dy := 2.4 * delta
 		ground_y += clampf(h - ground_y, -max_dy, max_dy)
 	to.y = ground_y
 	# Physics-clock body; _process interpolates player for display + camera.
 	var step_xz := Vector2(to.x - from.x, to.z - from.z).length()
 	dbg_max_step = maxf(dbg_max_step, step_xz)
-	dbg_gnd_err = 0.0 if dock_now else Island.ground_err(to.x, to.z, to.y)
+	# Error vs the walkable surface (not raw mesh_h — that disagrees on the lip ramp).
+	dbg_gnd_err = absf(to.y - h)
 	_body_pos = to
 	_body_yaw = face_yaw
 	player.position = to
@@ -4141,8 +4177,10 @@ func _process(delta: float) -> void:
 		_cut_focus.y = -100.0
 	# Wider cone while moving so leaf walls dither open as he walks through.
 	var move_cut := clampf(cur_speed / maxf(WALK_MAX, 0.01), 0.0, 1.0)
-	_cut_cr_f = lerpf(2.4, 3.2, move_cut) if mode == Mode.EXPLORE else 1.7
-	_cut_cr_s = lerpf(1.8, 2.3, move_cut) if mode == Mode.EXPLORE else 1.45
+	_cut_cr_f = lerpf(3.0, 4.0, move_cut) if mode == Mode.EXPLORE else 2.0
+	# Static props (barrels, posts, trunks) need a generous cone — close dock cams
+	# used to hide the boy completely behind a barrel.
+	_cut_cr_s = lerpf(2.8, 3.8, move_cut) if mode == Mode.EXPLORE else 2.0
 	if island.foliage_mat:
 		island.foliage_mat.set_shader_parameter("focus", _cut_focus)
 		island.foliage_mat.set_shader_parameter("cut_radius", _cut_cr_f)
