@@ -131,4 +131,8 @@ void fragment() {
 	ALBEDO = c;
 	ROUGHNESS = rough;
 	SPECULAR = 0.5 * (1.0 - night_k);
+	// Night canopy fill: plain Lambert + ACES was crushing path/grass to 0/255.
+	// A soft albedo-tinted emission keeps dirt, grass and roots readable in moon shadow;
+	// the path Omni still supplies the warm pool near lanterns.
+	EMISSION = c * vec3(0.055, 0.062, 0.085) * night_k;
 }

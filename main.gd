@@ -3567,20 +3567,22 @@ func _update_night(delta: float, force := false) -> void:
 	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(1.0, 0.48, 0.22), sunset).lerp(Color(0.91, 0.93, 1.0), k)
 	sun.shadow_blur = lerpf(2.5, 5.0, k)
 	sun.light_angular_distance = lerpf(1.2, 3.5, k)
-	# Soft moon shadows — sand at his feet stays close to his lit side.
-	sun.shadow_opacity = lerpf(1.0, 0.30, k)
+	# Soft moon shadows — canopy mustn't crush the path to pure black.
+	sun.shadow_opacity = lerpf(1.0, 0.22, k)
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.55 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
-	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.34, 0.36, 0.44), k)
-	env.ambient_light_sky_contribution = lerpf(1.0, 0.42, k)
-	env.ambient_light_energy = lerpf(0.55, 0.54, k)
+	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.38, 0.40, 0.48), k)
+	env.ambient_light_sky_contribution = lerpf(1.0, 0.28, k)
+	# Stronger constant ambient fill so path/grass/roots still read under foliage.
+	env.ambient_light_energy = lerpf(0.55, 0.78, k)
 	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.18, 0.20, 0.28), k)
 	env.fog_density = lerpf(0.0045, 0.0024, k)
-	env.tonemap_mode = Environment.TONE_MAPPER_ACES if k > 0.55 else Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = lerpf(0.95, 1.08, k)
-	env.tonemap_white = lerpf(3.2, 5.2, k)
+	# Filmic at night — ACES was crushing dim terrain to 0/255 under the canopy.
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_exposure = lerpf(0.95, 1.12, k)
+	env.tonemap_white = lerpf(3.2, 4.2, k)
 	env.adjustment_saturation = lerpf(1.05, 0.98, k)
-	env.adjustment_contrast = lerpf(1.02, 0.99, k)
-	env.adjustment_brightness = lerpf(0.98, 1.02, k)
+	env.adjustment_contrast = lerpf(1.02, 0.97, k)
+	env.adjustment_brightness = lerpf(0.98, 1.04, k)
 	var moon := sun.global_basis.z.normalized()
 	island.water_mat.set_shader_parameter("glint_dir", moon)
 	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(1.0, 0.55, 0.28), sunset).lerp(Color(0.90, 0.93, 1.0), k))
