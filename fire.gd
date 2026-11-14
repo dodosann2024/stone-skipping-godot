@@ -53,7 +53,8 @@ func build() -> void:
 	light.light_color = Color(1.0, 0.62, 0.3)
 	light.omni_range = 6.5
 	light.omni_attenuation = 1.4
-	light.light_energy = 1.6
+	light.light_energy = 0.0
+	light.visible = false
 	light.shadow_enabled = false
 	light.position = Vector3(0, 0.55, 0)
 	add_child(light)
@@ -138,10 +139,15 @@ func _noise1(x: float) -> float:
 func _process(delta: float) -> void:
 	t += delta
 	var f := 0.55 * _noise1(t * 3.1) + 0.30 * _noise1(t * 7.4 + 17.0) + 0.15 * _noise1(t * 13.2 + 41.0)
-	# Night: warm key near the fire with falloff; far ground stays moonlit.
-	light.light_energy = (1.0 + 0.28 * f) * lerpf(2.0, 2.15, night)
-	light.omni_range = lerpf(4.0, 6.0, night)
-	light.omni_attenuation = lerpf(1.05, 1.5, night)
-	# Omni shadows only at night — one campfire is within Compatibility mobile budget.
-	light.shadow_enabled = night > 0.45
-	light.position = Vector3(0.03 * _noise1(t * 2.2), 0.55 + 0.035 * f, 0.03 * _noise1(t * 1.7 + 9.0))
+	# Day: Omni fully off (Compatibility multi-pass). Night: warm key near the fire.
+	if night < 0.08:
+		light.visible = false
+		light.light_energy = 0.0
+		light.shadow_enabled = false
+	else:
+		light.visible = true
+		light.light_energy = (1.0 + 0.28 * f) * lerpf(0.0, 2.15, night)
+		light.omni_range = lerpf(4.0, 6.0, night)
+		light.omni_attenuation = lerpf(1.05, 1.5, night)
+		light.shadow_enabled = night > 0.45
+		light.position = Vector3(0.03 * _noise1(t * 2.2), 0.55 + 0.035 * f, 0.03 * _noise1(t * 1.7 + 9.0))

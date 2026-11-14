@@ -35,18 +35,26 @@ func g() -> void:
 	m.mq._apply(vp, m.sun)
 	m._apply_mq_materials()
 	m.refl_auto = false
-	m._set_refl_level(1)
+	m._set_refl_level(2)
 
-	var path_p := Vector3(-0.6, 0.0, 6.2)
+	# Lighthouse climb (same spot as budget / user day_path).
+	var pl: Array = m.island.paths[1]
+	var a: Vector2 = pl[mini(3, pl.size() - 2)]
+	var b: Vector2 = pl[mini(4, pl.size() - 1)]
+	var xz: Vector2 = a.lerp(b, 0.55)
+	var path_p := Vector3(xz.x, 0.0, xz.y)
 	path_p.y = m._surface(path_p.x, path_p.z)
+	var to_lh: Vector3 = m.island.lighthouse_pos - path_p
+	to_lh.y = 0.0
+	var path_yaw := atan2(-to_lh.x, -to_lh.z) if to_lh.length_squared() > 1e-6 else 0.35
 
-	await _prep(m, path_p, 0.35, Vector2(0, -0.55))
+	await _prep(m, path_p, path_yaw, Vector2(0, -0.55))
 	await _seq(m, "walk_path", 10.0, Vector2(0, -0.55), false, false)
 
-	await _prep(m, path_p, 0.35, Vector2(0, -1.0))
+	await _prep(m, path_p, path_yaw, Vector2(0, -1.0))
 	await _seq(m, "run_path", 10.0, Vector2(0, -1.0), false, false)
 
-	await _prep(m, path_p, 0.35, Vector2.ZERO)
+	await _prep(m, path_p, path_yaw, Vector2.ZERO)
 	await _seq(m, "orbit_path", 10.0, Vector2.ZERO, true, false)
 
 	# Campfire night stand

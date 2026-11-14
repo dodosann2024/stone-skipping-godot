@@ -34,7 +34,7 @@ func g() -> void:
 	m.mq._apply(vp, m.sun)
 	m._apply_mq_materials()
 	m.refl_auto = false
-	m._set_refl_level(1)
+	m._set_refl_level(2)  # reflection off — matches mobile default
 
 	var night := false
 	for a in OS.get_cmdline_user_args():
@@ -51,20 +51,29 @@ func g() -> void:
 	m.night_k = 1.0 if night else 0.0
 	m._update_night(m.night_k, true)
 
-	# Dirt path near forest lantern (user iPhone spot / night_forest_path).
-	var p := Vector3(-0.6, 0.0, 6.2)
+	# Lighthouse climb (user iPhone day_path: rope fence + tower).
+	var pl: Array = m.island.paths[1]
+	var a: Vector2 = pl[mini(3, pl.size() - 2)]
+	var b: Vector2 = pl[mini(4, pl.size() - 1)]
+	var xz: Vector2 = a.lerp(b, 0.55)
+	var p := Vector3(xz.x, 0.0, xz.y)
 	p.y = m._surface(p.x, p.z)
-	m._place(p, 0.35)
+	var to_lh: Vector3 = m.island.lighthouse_pos - p
+	to_lh.y = 0.0
+	m._place(p, atan2(-to_lh.x, -to_lh.z) if to_lh.length_squared() > 1e-6 else 0.0)
 	m.ex_yaw = m.face_yaw
-	m.ex_pitch = 0.22
-	m.ex_dist = 4.2
+	m.ex_pitch = 0.16
+	m.ex_dist = 3.8
 	m.cam_yaw = m.ex_yaw
 	m.cam_pitch = m.ex_pitch
 	m.cam_dist = m.ex_dist
 	m._cam_arm_k = 1.0
 	m._cam_arm_want = 1.0
+	m._cap_night_omnis()
 	for _i in 40:
 		await process_frame
+	m._cap_night_omnis()
+	await process_frame
 
 	var rows: PackedStringArray = []
 	rows.append("metric,value")
@@ -91,19 +100,22 @@ func g() -> void:
 	_row(rows, "time_physics_ms", "%.3f" % (Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0))
 
 	var counts := {
-		"omni": 0, "omni_shadow": 0, "spot": 0, "spot_shadow": 0,
+		"omni": 0, "omni_visible": 0, "omni_shadow": 0, "spot": 0, "spot_shadow": 0,
 		"dir": 0, "dir_shadow": 0, "particles": 0, "mm_instances": 0, "mesh_instances": 0,
 	}
 	_count_scene(m, counts)
 	_row(rows, "lights_directional", str(counts["dir"]))
 	_row(rows, "lights_directional_shadow", str(counts["dir_shadow"]))
 	_row(rows, "lights_omni", str(counts["omni"]))
+	_row(rows, "lights_omni_visible", str(counts["omni_visible"]))
 	_row(rows, "lights_omni_shadow", str(counts["omni_shadow"]))
 	_row(rows, "lights_spot", str(counts["spot"]))
 	_row(rows, "lights_spot_shadow", str(counts["spot_shadow"]))
 	_row(rows, "particle_systems", str(counts["particles"]))
 	_row(rows, "multimesh_instances", str(counts["mm_instances"]))
 	_row(rows, "mesh_instances", str(counts["mesh_instances"]))
+	_row(rows, "draw_calls_visible", str(vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)))
+	_row(rows, "draw_calls_shadow", str(vp.get_render_info(Viewport.RENDER_INFO_TYPE_SHADOW, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)))
 	if m.sun:
 		_row(rows, "sun_shadow_mode", str(m.sun.directional_shadow_mode))
 		_row(rows, "sun_shadow_max_distance", "%.1f" % m.sun.directional_shadow_max_distance)
@@ -142,7 +154,10 @@ func _row(rows: PackedStringArray, k: String, v: String) -> void:
 func _count_scene(n: Node, counts: Dictionary) -> void:
 	if n is OmniLight3D:
 		counts["omni"] += 1
-		if (n as OmniLight3D).shadow_enabled:
+		var ol := n as OmniLight3D
+		if ol.visible and ol.light_energy > 0.01 and ol.light_cull_mask != 0:
+			counts["omni_visible"] += 1
+		if ol.shadow_enabled and ol.visible:
 			counts["omni_shadow"] += 1
 	elif n is SpotLight3D:
 		counts["spot"] += 1

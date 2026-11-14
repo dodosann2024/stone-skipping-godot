@@ -1,2 +1,2 @@
-tag=run_path_after n=40 note=softGL_cpu2x_45f
-dt_ms median=2099.900 p95=2699.800 p99=3066.600 max=3066.600 hitches_gt33=40
+tag=run_path n=570
+dt_ms median=37.500 p95=41.238 p99=45.815 max=49.083 hitches_gt33=570

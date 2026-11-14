@@ -246,6 +246,16 @@ func build(font: Font) -> void:
 	_index_walls()
 	_flush()
 	_build_water()
+	# Mobile WebGL2 shadow budget: only the boy (outside this tree) casts. Props/particles off.
+	_disable_shadows_recursive(self)
+
+
+func _disable_shadows_recursive(n: Node) -> void:
+	if n is GeometryInstance3D:
+		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for c in n.get_children():
+		_disable_shadows_recursive(c)
+
 
 func _make_pads() -> void:
 	pads.clear()
@@ -283,23 +293,34 @@ func _flush() -> void:
 		tn.wood_mat = torch_mat
 	foliage_mat = ShaderMaterial.new()
 	foliage_mat.shader = load("res://shaders/foliage.gdshader")
-	_mi(FB.commit(), foliage_mat)
+	# Fronds / bushes: no shadow. Palm trunks stay in FB too — accept no trunk shadow on mobile.
+	var foliage_mi := _mi(FB.commit(), foliage_mat)
+	foliage_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	foliage_mi.visibility_range_end = 55.0
+	foliage_mi.visibility_range_end_margin = 8.0
+	foliage_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 	glow_mat = ShaderMaterial.new()
 	glow_mat.shader = load("res://shaders/sky_tint.gdshader")
 	glow_mat.set_shader_parameter("boost", 1.5)
 	_mi(GB.commit(), glow_mat).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	lantern_mat = ShaderMaterial.new()
 	lantern_mat.shader = load("res://shaders/static_nocut.gdshader")
-	_mi(LB.commit(), lantern_mat)
+	_mi(LB.commit(), lantern_mat).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	cloud_mat = ShaderMaterial.new()
 	cloud_mat.shader = load("res://shaders/sky_tint.gdshader")
 	cloud_mat.set_shader_parameter("boost", 1.3)
 	_mi(CB.commit(), cloud_mat).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_build_leaves()
+	# Static props: only large casters (hut/lighthouse/dock) — skip tiny fence ropes for shadow budget.
+	# Torch wood still casts a thin pole; turn shadow off on the combined static batch for mobile fill.
+	for c in get_children():
+		if c is MeshInstance3D and (c as MeshInstance3D).material_override == static_mat:
+			(c as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if c is MeshInstance3D and (c as MeshInstance3D).material_override == torch_mat:
+			(c as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
-## the bushes' leaf sprays: one MultiMesh of two crossed cards (a twig from each half of the texture);
-## from far off (the sea) a third of them, larger, stand in for the rest, and that sparse set also casts
-## the bushes' shadows (dappled all the same, a third of the shadow-pass work). The mirror skips them
+## Fewer, larger leaf clusters (crossed cards). No shadow casting — palm trunks only.
+## LOD0 near / LOD1 mid-far; skip the old shadows-only MultiMesh entirely.
 func _build_leaves() -> void:
 	leaf_mat = ShaderMaterial.new()
 	leaf_mat.shader = load("res://shaders/leaf.gdshader")
@@ -317,44 +338,45 @@ func _build_leaves() -> void:
 			st.set_uv(Vector2(v[2], v[3]))
 			st.add_vertex(ax * float(v[0]) + Vector3.UP * float(v[1]))
 	var card := st.commit()
-	for lod in 3:
+	# Keep ~25% of authored sprays as larger cards.
+	var kept: Array = []
+	for i in leaves.size():
+		if i % 4 != 0:
+			continue
+		kept.append(leaves[i])
+	for lod in 2:
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
 		mm.use_colors = true
 		mm.use_custom_data = true
 		mm.mesh = card
 		var pick: Array = []
-		for i in leaves.size():
-			if lod == 0 or i % 3 == 0:
+		for i in kept.size():
+			if lod == 0 or i % 2 == 0:
 				pick.append(i)
 		mm.instance_count = pick.size()
 		for j in pick.size():
-			var lf: Array = leaves[pick[j]]
+			var lf: Array = kept[pick[j]]
 			var xf: Transform3D = lf[0]
-			if lod > 0:
-				xf.basis = xf.basis.scaled(Vector3.ONE * 1.45)
+			# Larger clusters so fewer cards still read as canopy.
+			var scl := 2.15 if lod == 0 else 2.7
+			xf.basis = xf.basis.scaled(Vector3.ONE * scl)
 			mm.set_instance_transform(j, xf)
 			mm.set_instance_color(j, lf[1])
 			mm.set_instance_custom_data(j, lf[2])
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		mmi.material_override = leaf_mat
-		# visibility ranges measure to the centre of the whole island's bushes
 		mmi.layers = 1 | 16
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if lod == 0:
-			mmi.visibility_range_end = 42.0
-			mmi.visibility_range_end_margin = 4.0
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		elif lod == 1:
-			mmi.visibility_range_begin = 40.0
-			mmi.visibility_range_begin_margin = 4.0
-			mmi.visibility_range_end = 95.0
-			mmi.visibility_range_end_margin = 8.0
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mmi.visibility_range_end = 28.0
+			mmi.visibility_range_end_margin = 3.0
 		else:
+			mmi.visibility_range_begin = 26.0
+			mmi.visibility_range_begin_margin = 3.0
 			mmi.visibility_range_end = 70.0
-			mmi.visibility_range_end_margin = 6.0
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+			mmi.visibility_range_end_margin = 8.0
 		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 		add_child(mmi)
 
@@ -485,8 +507,9 @@ func _ground_color(x: float, z: float, h: float) -> Color:
 func _build_terrain() -> void:
 	var st = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var half = 58.0
-	var step = 1.0
+	var half = 48.0
+	# Coarser terrain grid — path fine-patches cover the climb; saves terrain fill.
+	var step = 1.5
 	var n = int(half * 2.0 / step)
 	for j in n + 1:
 		for i in n + 1:
@@ -502,8 +525,8 @@ func _build_terrain() -> void:
 	fine_rects.append([int(floor(campfire_pos.x + half)) - 6, int(floor(campfire_pos.z + half)) - 6, 12, 12])
 	var lh_xz := gp(2.0, 3.0) + Vector3(-2.2, 0, -2.0)
 	fine_rects.append([int(floor(lh_xz.x + half)) - 4, int(floor(lh_xz.z + half)) - 4, 8, 8])
-	for pz in [4.4, 5.2, 6.0, 6.8, 7.6]:
-		fine_rects.append([int(floor(0.2 + half)) - 4, int(floor(pz + half)) - 3, 8, 6])
+	# One denser strip on the forest climb (was 5 overlapping patches).
+	fine_rects.append([int(floor(0.2 + half)) - 4, int(floor(6.0 + half)) - 5, 9, 10])
 	for j in n:
 		for i in n:
 			var skip := false
@@ -571,8 +594,12 @@ func _build_terrain() -> void:
 func _build_water() -> void:
 	var pm = PlaneMesh.new()
 	pm.size = Vector2(1200, 1200)
-	pm.subdivide_width = 160
-	pm.subdivide_depth = 160
+	# Waves are shader-driven; dense mesh mostly burns fill on mobile WebGL2.
+	var sub := 64
+	if OS.has_feature("web") or OS.get_environment("MOBILE") == "1" or DisplayServer.window_get_size().x <= 480:
+		sub = 32
+	pm.subdivide_width = sub
+	pm.subdivide_depth = sub
 	water_mat = ShaderMaterial.new()
 	water_mat.shader = load("res://shaders/water.gdshader")
 	water_mat.set_shader_parameter("obj_foam", _bake_obstacle_foam())
@@ -1834,7 +1861,7 @@ func _frond(b: MeshBuilder, base: Vector3, dir: Vector3, length: float, rise: fl
 		var s0 = float(i) / seg
 		tube(b, pts[i], pts[i + 1], 0.035 * (1.0 - s0), 0.035 * (1.0 - s0 - 1.0 / seg), 3, cv.darkened(0.15), sway_base + s0 * 0.6, sway_base + (s0 + 1.0 / seg) * 0.6)
 
-func palm(b: MeshBuilder, base: Vector3, height: float, lean_dir: Vector3, lean: float, bend: float, leaf_scale := 1.0, nfr := 11) -> Vector3:
+func palm(b: MeshBuilder, base: Vector3, height: float, lean_dir: Vector3, lean: float, bend: float, leaf_scale := 1.0, nfr := 5) -> Vector3:
 	var segs = 13
 	var pts: Array[Vector3] = []
 	for i in segs + 1:
@@ -1873,19 +1900,20 @@ func palm(b: MeshBuilder, base: Vector3, height: float, lean_dir: Vector3, lean:
 		var cd = dark if not old else Color(0.55, 0.52, 0.2)
 		var cl = light if not old else Color(0.68, 0.62, 0.25)
 		var L = rng.randf_range(2.5, 3.3) * leaf_scale
-		_frond(b, crown + d * 0.12, d, L, rng.randf_range(0.6, 1.0) * leaf_scale, rng.randf_range(2.0, 2.8) * leaf_scale * (1.3 if old else 1.0), 0.48 * leaf_scale, 11, cd, cl, vein, sw)
+		_frond(b, crown + d * 0.12, d, L, rng.randf_range(0.6, 1.0) * leaf_scale, rng.randf_range(2.0, 2.8) * leaf_scale * (1.3 if old else 1.0), 0.55 * leaf_scale, 4, cd, cl, vein, sw)
 	for k in 3:
 		var a = start + k * 2.1 + 0.5
 		var d = Vector3(cos(a), 0, sin(a))
-		_frond(b, crown + Vector3(0, 0.05, 0), d, 1.6 * leaf_scale, 1.4 * leaf_scale, 0.9 * leaf_scale, 0.35 * leaf_scale, 8, Color(0.3, 0.62, 0.22), Color(0.42, 0.7, 0.25), vein, sw)
+		_frond(b, crown + Vector3(0, 0.05, 0), d, 1.6 * leaf_scale, 1.4 * leaf_scale, 0.9 * leaf_scale, 0.35 * leaf_scale, 5, Color(0.3, 0.62, 0.22), Color(0.42, 0.7, 0.25), vein, sw)
 	add_obstacle(Vector2(base.x, base.z), 0.3, base.y + height, "椰子树")
 	return crown
 
 func _build_palms() -> void:
 	var specs: Array = []
 	# clusters around the beach ring (theta, inset, count)
-	var ring = [[-1.25, 3.5, 2], [-0.95, 5.0, 1], [-0.45, 3.0, 3], [0.3, 5.5, 1], [0.75, 3.2, 2], [1.15, 4.5, 1], [1.5, 3.0, 2],
-			[2.05, 4.0, 3], [2.5, 3.0, 1], [2.95, 4.5, 2], [-2.75, 3.2, 2], [-2.0, 4.8, 1], [-1.85, 2.8, 1], [-2.55, 6.5, 1], [0.95, 7.5, 1], [2.4, 7.5, 2], [-0.2, 7.5, 1]]
+	# Fewer palms (was denser ring) — each crown is still a heavy FB frond batch.
+	var ring = [[-1.25, 3.5, 1], [-0.95, 5.0, 1], [-0.45, 3.0, 2], [0.3, 5.5, 1], [0.75, 3.2, 1], [1.15, 4.5, 1], [1.5, 3.0, 1],
+			[2.05, 4.0, 2], [2.5, 3.0, 1], [2.95, 4.5, 1], [-2.75, 3.2, 1], [-2.0, 4.8, 1], [-2.55, 6.5, 1], [0.95, 7.5, 1], [2.4, 7.5, 1], [-0.2, 7.5, 1]]
 	for r in ring:
 		var th: float = r[0]
 		var base = shore_pt(th, r[1])
@@ -1903,8 +1931,8 @@ func _build_palms() -> void:
 	var h2 = shore_pt(hth + 0.33, 2.6)
 	specs.append([h1 + Vector3(0, -0.05, 0), 5.6, dir_at(hth), 0.18, 0.4])
 	specs.append([h2 + Vector3(0, -0.05, 0), 6.1, dir_at(hth + 0.3), 0.22, 0.5])
-	# palms on the hill flanks
-	for hp in [Vector2(-4.5, 6.0), Vector2(7.5, 6.5), Vector2(-6.0, -1.5), Vector2(8.0, -2.0), Vector2(-1.0, 11.0), Vector2(5.0, 11.5)]:
+	# palms on the hill flanks (fewer)
+	for hp in [Vector2(-4.5, 6.0), Vector2(7.5, 6.5), Vector2(8.0, -2.0), Vector2(5.0, 11.5)]:
 		var p = gp(hp.x, hp.y)
 		specs.append([p + Vector3(0, -0.05, 0), rng.randf_range(4.5, 6.5), Vector3(hp.x - 2.0, 0, hp.y - 3.0).normalized(), rng.randf_range(0.15, 0.4), 0.5])
 	for s in specs:
@@ -1960,7 +1988,7 @@ func _spawn_prop_glb(path: String, xf: Transform3D, wood_tint := Color(0.55, 0.3
 		for c in n.find_children("*", "MeshInstance3D", true, false):
 			var mi := c as MeshInstance3D
 			mi.material_override = mat
-			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(n)
 	return n
 
@@ -2418,7 +2446,8 @@ func _leafy_bush(p: Vector3, s: float, lobes: Array, g: Color) -> void:
 			tube(FB, base, mid, 0.028 * s, 0.02 * s, 4, bark, 0.0, 0.0)
 			tube(FB, mid, tip, 0.02 * s, 0.008 * s, 4, bark, 0.0, 0.04)
 		# Fewer leaf cards (was the biggest MultiMesh cost on iPhone); volume still reads.
-		var n := maxi(5, int((12.0 * (r.x * r.z) / (0.3 * s * s) * s + 7.0) * 0.62))
+		# Fewer sprays per lobe; Multimesh scales cards up to keep canopy fill.
+		var n := maxi(2, int((12.0 * (r.x * r.z) / (0.3 * s * s) * s + 7.0) * 0.22))
 		for k in n:
 			# a point in the outer shell of the lobe, never under the ground
 			var d := Vector3(lr.randf_range(-1, 1), lr.randf_range(-0.8, 1), lr.randf_range(-1, 1)).normalized()
@@ -2510,7 +2539,7 @@ func _near_beach_prop(x: float, z: float) -> bool:
 func _build_vegetation() -> void:
 	var placed = 0
 	var tries = 0
-	while placed < 260 and tries < 3000:
+	while placed < 140 and tries < 2200:
 		tries += 1
 		var x = rng.randf_range(-24.0, 24.0)
 		var z = rng.randf_range(-24.0, 24.0)
@@ -2542,7 +2571,7 @@ func _build_vegetation() -> void:
 			_grass(p, rng.randf_range(0.8, 1.4))
 		placed += 1
 	# a few beach grass tufts and low bushes framing the sand
-	for i in 40:
+	for i in 18:
 		var th = rng.randf() * TAU
 		var p = shore_pt(th, rng.randf_range(3.5, 5.5))
 		if path_dist(p.x, p.z) > 1.0 and absf(wrapf(th + PI / 2.0, -PI, PI)) > 0.2 \
@@ -2595,18 +2624,14 @@ func _build_vegetation() -> void:
 # ------------------------------------------------------------------ far scenery
 
 func _build_far() -> void:
-	for isl in [[Vector3(-110, 0, -150), 16.0], [Vector3(95, 0, -175), 11.0], [Vector3(-30, 0, -235), 22.0], [Vector3(170, 0, 30), 18.0], [Vector3(-160, 0, 90), 14.0], [Vector3(40, 0, 210), 20.0]]:
+	# Fewer far islands, no far palms (was a large share of visible primitives).
+	for isl in [[Vector3(-110, 0, -150), 16.0], [Vector3(95, 0, -175), 11.0], [Vector3(-30, 0, -235), 22.0]]:
 		var c: Vector3 = isl[0]
 		var r: float = isl[1]
-		SB.prim(_cylm(r * 1.0, r * 1.2, 0.9, 14), Transform3D(Basis.IDENTITY, c + Vector3(0, 0.0, 0)), Color(0.92, 0.84, 0.64))
-		blob(SB, c + Vector3(rng.randf_range(-2, 2), 0.2, 0), Vector3(r * 0.82, r * 0.28, r * 0.72), Color(0.3, 0.56, 0.28), r * 0.015, 12, 6, 0.03)
-		blob(SB, c + Vector3(r * 0.3, 0.2, r * 0.2), Vector3(r * 0.45, r * 0.38, r * 0.4), Color(0.27, 0.52, 0.26), r * 0.015, 10, 5, 0.03)
-		for k in 4:
-			var a = rng.randf() * TAU
-			var pp = c + Vector3(cos(a) * r * 0.75, 0.3, sin(a) * r * 0.75)
-			palm(SB, pp, rng.randf_range(5.0, 8.0) * r / 14.0, Vector3(cos(a), 0, sin(a)), 0.3, 0.6, r / 14.0, 7)
+		SB.prim(_cylm(r * 1.0, r * 1.2, 0.9, 10), Transform3D(Basis.IDENTITY, c + Vector3(0, 0.0, 0)), Color(0.92, 0.84, 0.64))
+		blob(SB, c + Vector3(rng.randf_range(-2, 2), 0.2, 0), Vector3(r * 0.82, r * 0.28, r * 0.72), Color(0.3, 0.56, 0.28), r * 0.015, 8, 4, 0.03)
 	# clouds
-	for k in 14:
+	for k in 7:
 		var a = rng.randf() * TAU
 		var dist = rng.randf_range(170, 300)
 		var cp = Vector3(cos(a) * dist, rng.randf_range(45, 85), sin(a) * dist)

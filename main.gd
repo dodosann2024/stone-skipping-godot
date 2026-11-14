@@ -406,13 +406,13 @@ func _build_environment() -> void:
 	sun.shadow_bias = 0.03
 	sun.shadow_normal_bias = 1.2
 	if is_web or _opt("mobile") == "1":
-		# phones: one cascade, shorter range, softer filter (blocky shadows were the day-path complaint)
+		# phones: orthogonal + soft blur (2-splits doubled shadow primitives on WebGL2)
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-		sun.directional_shadow_max_distance = 32.0
-		sun.shadow_blur = 3.6
-		sun.shadow_bias = 0.045
-		sun.shadow_normal_bias = 1.7
-		sun.directional_shadow_pancake_size = 4.0
+		sun.directional_shadow_max_distance = 26.0
+		sun.shadow_blur = 4.5
+		sun.shadow_bias = 0.035
+		sun.shadow_normal_bias = 1.4
+		sun.directional_shadow_pancake_size = 3.0
 	add_child(sun)
 	camera = Camera3D.new()
 	camera.fov = 55.0
@@ -3320,6 +3320,40 @@ func _upload_prints() -> void:
 	island.terrain_mat.set_shader_parameter("print_wash", print_wash)
 	island.terrain_mat.set_shader_parameter("print_box", box)
 
+## Night: at most 2–3 OmniLights near the player (campfire + nearest lamps/torches).
+## Day: every Omni stays off (Compatibility forward multi-pass).
+func _cap_night_omnis() -> void:
+	if island == null or camera == null:
+		return
+	var cam_p := camera.global_position
+	var night := night_k > 0.08
+	# Torches: off by day; at night only the single nearest within range.
+	var best_torch: Node = null
+	var best_td := 1e9
+	for tn in island.torches:
+		if tn == null or tn.light == null:
+			continue
+		tn.light.visible = false
+		tn.light.light_energy = 0.0
+		if not night:
+			continue
+		var d: float = tn.global_position.distance_to(cam_p)
+		if d < best_td and d < tn.light.omni_range + 8.0:
+			best_td = d
+			best_torch = tn
+	if best_torch:
+		best_torch.light.visible = true
+		# energy already set in Torch._process from night; re-enable only.
+		best_torch.light.light_energy = maxf(best_torch.light.light_energy, 0.35)
+	# Campfire Omni: on at night only when the player is near the ring.
+	if island.campfire and island.campfire.light:
+		var fd: float = island.campfire.global_position.distance_to(cam_p)
+		if (not night) or fd > 14.0:
+			island.campfire.light.visible = false
+			island.campfire.light.light_energy = 0.0
+			island.campfire.light.shadow_enabled = false
+
+
 ## Nearest path lantern → soft radial ground pool in the terrain shader (round falloff,
 ## not the dirt-path strip lit by a hard Omni).
 func _update_path_lamp_pool() -> void:
@@ -3600,24 +3634,26 @@ func _update_night(delta: float, force := false) -> void:
 	var moon_e := lerpf(1.0, 0.32, k)
 	sun.light_energy = lerpf(moon_e, 1.15, sunset * 0.55)
 	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(1.0, 0.48, 0.22), sunset).lerp(Color(0.91, 0.93, 1.0), k)
-	sun.shadow_blur = lerpf(2.5, 5.0, k)
+	# Keep MobileQuality's softer PCF blur as a floor (was resetting to 2.5 and re-blocking path shadows).
+	var base_blur: float = mq.shadow_blur if mq else 2.5
+	sun.shadow_blur = lerpf(base_blur, maxf(base_blur, 5.0), k)
 	sun.light_angular_distance = lerpf(1.2, 3.5, k)
-	# Soft moon shadows — canopy mustn't crush the path to pure black.
-	sun.shadow_opacity = lerpf(1.0, 0.22, k)
+	# Soft moon shadows — canopy mustn't crush the path to pure black (v26 readable sand).
+	sun.shadow_opacity = lerpf(1.0, 0.16, k)
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.55 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
-	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.38, 0.40, 0.48), k)
-	env.ambient_light_sky_contribution = lerpf(1.0, 0.28, k)
+	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.48, 0.42, 0.38), k)
+	env.ambient_light_sky_contribution = lerpf(1.0, 0.22, k)
 	# Stronger constant ambient fill so path/grass/roots still read under foliage.
-	env.ambient_light_energy = lerpf(0.55, 0.78, k)
-	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.18, 0.20, 0.28), k)
-	env.fog_density = lerpf(0.0045, 0.0024, k)
+	env.ambient_light_energy = lerpf(0.55, 0.95, k)
+	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.20, 0.22, 0.30), k)
+	env.fog_density = lerpf(0.0045, 0.0020, k)
 	# Filmic at night — ACES was crushing dim terrain to 0/255 under the canopy.
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = lerpf(0.95, 1.12, k)
+	env.tonemap_exposure = lerpf(0.95, 1.18, k)
 	env.tonemap_white = lerpf(3.2, 4.2, k)
 	env.adjustment_saturation = lerpf(1.05, 0.98, k)
-	env.adjustment_contrast = lerpf(1.02, 0.97, k)
-	env.adjustment_brightness = lerpf(0.98, 1.04, k)
+	env.adjustment_contrast = lerpf(1.02, 0.96, k)
+	env.adjustment_brightness = lerpf(0.98, 1.08, k)
 	var moon := sun.global_basis.z.normalized()
 	island.water_mat.set_shader_parameter("glint_dir", moon)
 	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(1.0, 0.55, 0.28), sunset).lerp(Color(0.90, 0.93, 1.0), k))
@@ -3789,6 +3825,7 @@ func _process(delta: float) -> void:
 	_watch_fps(delta)
 	_update_night(delta)
 	night_fx.apply(night_k, camera.global_position, sun.global_basis.z.normalized(), delta)
+	_cap_night_omnis()
 	_update_path_lamp_pool()
 	if toast_timer > 0.0:
 		toast_timer -= delta
@@ -4343,10 +4380,10 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	var want_k := 1.0
 	var orbiting := dragging or orbit_pending.length_squared() > 1e-10 or _orbit_ease > 0.05
 	if cam_dist < 20.0 and (not demo_cam or demo_track.size() > 0):
-		for i in range(2, 28):
-			var q := cam_target + full_off * (i / 27.0)
+		for i in range(2, 12):
+			var q := cam_target + full_off * (i / 11.0)
 			if _cam_blocked(q):
-				want_k = maxf((i - 1) / 27.0, 1.35 / maxf(cam_dist, 0.01))
+				want_k = maxf((i - 1) / 11.0, 1.35 / maxf(cam_dist, 0.01))
 				break
 	# During orbit, hold arm length — probe flicker was the cam_ds spike source.
 	if orbiting:
@@ -4438,7 +4475,8 @@ func _build_reflection() -> void:
 	var want := _opt("refl", "auto")
 	refl_auto = want == "auto"
 	# On phones start one step lighter so the first walk doesn't hitch on full reflection.
-	var start_l := 1 if mq.mobile else 0
+	# Mobile: reflection off by default (inland path); adaptive can leave it off.
+	var start_l := 2 if mq.mobile else 0
 	_set_refl_level({"0": 2, "low": 1}.get(want, start_l))
 	if _opt("shadow") == "0":
 		_set_refl_level(3)

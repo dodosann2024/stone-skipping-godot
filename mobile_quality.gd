@@ -31,7 +31,7 @@ func setup(is_web: bool, force_mobile: bool, vp: Viewport, sun: DirectionalLight
 		tier = Tier.HIGH
 		_apply(vp, sun)
 		return
-	# iPhone DPR≈3 → aim ~1.5–2× CSS pixels ⇒ scaling_3d ≈ 0.55–0.70
+	# Prefer geometry/light/texture cuts; keep scale ≥0.75 until adaptive steps down.
 	tier = Tier.MID
 	_apply(vp, sun)
 
@@ -46,41 +46,47 @@ func _apply(vp: Viewport, sun: DirectionalLight3D) -> void:
 			water_cheap = 0.0
 			leaf_near_fade = 0.85
 		Tier.MID:
-			scale_3d = 0.65
-			shadow_dist = 28.0
-			shadow_blur = 3.8
-			particle_mul = 0.55
-			water_cheap = 0.55
-			leaf_near_fade = 1.6
-		Tier.LOW:
-			scale_3d = 0.52
+			scale_3d = 0.78
 			shadow_dist = 22.0
-			shadow_blur = 4.0
-			particle_mul = 0.35
-			water_cheap = 0.85
-			leaf_near_fade = 1.85
+			shadow_blur = 6.0
+			particle_mul = 0.45
+			water_cheap = 0.7
+			leaf_near_fade = 1.7
+		Tier.LOW:
+			scale_3d = 0.70
+			shadow_dist = 18.0
+			shadow_blur = 6.2
+			particle_mul = 0.3
+			water_cheap = 0.9
+			leaf_near_fade = 1.95
 		Tier.MIN:
-			scale_3d = 0.45
-			shadow_dist = 16.0
-			shadow_blur = 4.2
-			particle_mul = 0.2
+			scale_3d = 0.58
+			shadow_dist = 14.0
+			shadow_blur = 6.5
+			particle_mul = 0.18
 			water_cheap = 1.0
-			leaf_near_fade = 2.1
+			leaf_near_fade = 2.2
 
 	if mobile:
 		vp.scaling_3d_scale = scale_3d
+		# Compatibility has no FSR1 — stay on bilinear; sharpen via slightly higher scale.
+		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
 		# Keep positional atlas small — only campfire may cast omni shadows.
 		vp.positional_shadow_atlas_size = 1024 if tier <= Tier.MID else 512
+		# Prefer lower mesh LODs on phones when available.
+		vp.mesh_lod_threshold = 2.5
 	else:
 		vp.scaling_3d_scale = 1.0
+		vp.mesh_lod_threshold = 1.0
 	if sun:
 		sun.directional_shadow_max_distance = shadow_dist
 		sun.shadow_blur = shadow_blur
 		if mobile:
+			# One orthogonal map (half the shadow primitives of 2-splits) + high blur ≈ soft PCF.
 			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-			sun.shadow_bias = 0.04
-			sun.shadow_normal_bias = 1.6
-			sun.directional_shadow_pancake_size = 4.0
+			sun.shadow_bias = 0.035
+			sun.shadow_normal_bias = 1.4
+			sun.directional_shadow_pancake_size = 3.0
 	changed.emit(tier)
 
 

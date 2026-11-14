@@ -1,2 +1,2 @@
 tag=campfire_night n=570
-dt_ms median=151.764 p95=171.365 p99=182.276 max=190.051 hitches_gt33=570
+dt_ms median=57.943 p95=62.957 p99=72.545 max=85.234 hitches_gt33=570

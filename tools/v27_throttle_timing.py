@@ -23,14 +23,15 @@ N_FRAMES = 120  # ~2s at 60fps; under soft-GL still finishes in <2 min
 
 async def main() -> None:
     async with async_playwright() as p:
+        # Prefer ANGLE→desktop GL / llvmpipe over SwiftShader (1.6s/frame is not a useful absolute).
         browser = await p.chromium.launch(
             executable_path="/usr/bin/google-chrome",
             headless=True,
             args=[
                 "--use-gl=angle",
-                "--use-angle=swiftshader",
-                "--enable-unsafe-swiftshader",
+                "--use-angle=gl-egl",
                 "--ignore-gpu-blocklist",
+                "--enable-webgl",
                 "--autoplay-policy=no-user-gesture-required",
             ],
         )

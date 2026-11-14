@@ -159,14 +159,24 @@ func apply(k: float, cam_pos: Vector3, moon_dir: Vector3, delta: float) -> void:
 	dome_mat.set_shader_parameter("k", k)
 	dome_mat.set_shader_parameter("moon_dir", moon_dir)
 	dome_mat.set_shader_parameter("time", t)
-	# Cull distant omnis — Compatibility only shades a handful of lights per mesh on mobile.
+	# Cap active night omnis to 2–3 nearest the player (plus fire/torch handled elsewhere).
+	var scored: Array = []
 	for i in lamp_lights.size():
 		var ol := lamp_lights[i]
 		var d := ol.global_position.distance_to(cam_pos)
-		var near := d < ol.omni_range + 18.0
-		ol.visible = near
-		if near:
-			ol.light_energy = lamp_energy[i] * k * (1.0 + 0.05 * sin(t * 7.0 + i * 2.0))
+		scored.append([d, i])
+		ol.visible = false
+		ol.light_energy = 0.0
+	scored.sort_custom(func(a, b): return a[0] < b[0])
+	var active_n := mini(3, scored.size())
+	for n in active_n:
+		var i: int = scored[n][1]
+		var d: float = scored[n][0]
+		var ol := lamp_lights[i]
+		if d > ol.omni_range + 10.0:
+			continue
+		ol.visible = true
+		ol.light_energy = lamp_energy[i] * k * (1.0 + 0.05 * sin(t * 7.0 + i * 2.0))
 	for i in halos.size():
 		var hk := halo_kinds[i] if i < halo_kinds.size() else ""
 		# Path: no halo bloom — hanging glass + flame tip carry the source.

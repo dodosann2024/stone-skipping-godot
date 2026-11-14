@@ -33,17 +33,28 @@ func g() -> void:
 	if m.boy:
 		m.boy.show_stone(false)
 
-	# Day path — user iPhone dirt-path spot
+	# Day path — user iPhone: behind boy on lighthouse climb, rope fence left, lighthouse top-right.
 	await _set_tod(m, "day")
-	var path_p := Vector3(-0.55, 0.0, 6.15)
-	path_p.y = m._surface(path_p.x, path_p.z)
-	m._place(path_p, 0.35)
+	var path_p := _lighthouse_climb_spot(m)
+	var to_lh: Vector3 = m.island.lighthouse_pos - path_p
+	to_lh.y = 0.0
+	var face := atan2(-to_lh.x, -to_lh.z) if to_lh.length_squared() > 1e-6 else -0.4
+	m._place(path_p, face)
+	# Camera behind boy looking uphill (see his back, lighthouse ahead-right).
 	m.ex_yaw = m.face_yaw
-	m.ex_pitch = 0.22
-	m.ex_dist = 4.2
+	m.ex_pitch = 0.16
+	m.ex_dist = 3.8
+	m.cam_yaw = m.ex_yaw
+	m.cam_pitch = m.ex_pitch
+	m.cam_dist = m.ex_dist
 	m._cam_arm_k = 1.0
 	m._cam_arm_want = 1.0
-	for _i in 35:
+	m._cam_slide = 0.0
+	m._cam_slide_want = 0.0
+	for _i in 45:
+		m.ex_yaw = m.face_yaw
+		m.ex_pitch = 0.16
+		m.ex_dist = 3.8
 		await process_frame
 	await _shot(vp, "day_path.png")
 
@@ -77,8 +88,10 @@ func g() -> void:
 		await process_frame
 	await _shot(vp, "night_campfire.png")
 
-	# Night forest path
-	m._place(path_p, 0.35)
+	# Night forest path (campfire-path lantern climb)
+	var forest_p := Vector3(-0.55, 0.0, 6.15)
+	forest_p.y = m._surface(forest_p.x, forest_p.z)
+	m._place(forest_p, 0.35)
 	m.ex_yaw = m.face_yaw + PI + 0.15
 	m.ex_pitch = 0.24
 	m.ex_dist = 4.0
@@ -99,6 +112,20 @@ func g() -> void:
 
 	print("V27_SHOTS_DONE")
 	quit(0)
+
+
+## Mid-segment of the lighthouse fence path (paths[1]) — rope left when facing the tower.
+func _lighthouse_climb_spot(m) -> Vector3:
+	var pl: Array = m.island.paths[1]
+	# Segment toward the lighthouse end: pl[2]→pl[3] or pl[3]→pl[4]
+	var a: Vector2 = pl[mini(3, pl.size() - 2)]
+	var b: Vector2 = pl[mini(4, pl.size() - 1)]
+	var xz: Vector2 = a.lerp(b, 0.55)
+	# Nudge off the rope (fence is on +orthogonal of path dir).
+	var n := (b - a).normalized().orthogonal() * -0.15
+	var p := Vector3(xz.x + n.x, 0.0, xz.y + n.y)
+	p.y = m._surface(p.x, p.z)
+	return p
 
 
 func _set_tod(m, tod: String) -> void:
@@ -125,4 +152,4 @@ func _shot(vp: Viewport, name: String) -> void:
 	await process_frame
 	var img: Image = vp.get_texture().get_image()
 	img.save_png("%s/%s" % [OUT, name])
-	print("SHOT ", name)
+	print("WROTE ", name)

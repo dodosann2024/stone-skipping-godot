@@ -1,2 +1,2 @@
-tag=orbit_path_after n=40 note=softGL_cpu2x_45f
-dt_ms median=1099.900 p95=1383.300 p99=1399.900 max=1399.900 hitches_gt33=40
+tag=orbit_path n=570
+dt_ms median=42.921 p95=48.676 p99=101.687 max=671.722 hitches_gt33=570
