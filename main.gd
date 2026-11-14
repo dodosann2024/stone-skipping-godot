@@ -124,9 +124,12 @@ var _body_pos_prev := Vector3.ZERO
 var _body_yaw := 0.0
 var _body_yaw_prev := 0.0
 var _body_sync := false
-## Camera mode blend (观景 / 固定视角 / sit-stand): ease-in-out over ~0.35 s.
+## True until the first physics tick of a render frame — so multi-step physics
+## keeps prev = pose at last display, not the mid-frame intermediate.
+var _body_new_frame := true
+## Camera mode blend (观景 / 固定视角 / sit-stand): ease-in-out over ~0.55 s.
 var _cam_blend_t := 0.0
-var _cam_blend_dur := 0.35
+var _cam_blend_dur := 0.55
 var _cam_blend_from_t := Vector3.ZERO
 var _cam_blend_from_yaw := 0.0
 var _cam_blend_from_pitch := 0.0
@@ -138,6 +141,9 @@ var _cut_cr_f := 2.2
 var _cut_cr_s := 1.7
 ## On-device debug HUD (?debug=1).
 var dbg = null
+## Debug: max |Δxz| this session (m/physics tick) and feet-vs-mesh gap (m).
+var dbg_max_step := 0.0
+var dbg_gnd_err := 0.0
 var _orbit_smooth := Vector2.ZERO
 var keys_run := false
 
@@ -1163,11 +1169,11 @@ func _leave_throw() -> void:
 func _on_dock(x: float, z: float) -> bool:
 	return (absf(x) < 1.15 and z < island.dock_start_z + 0.1 and z > island.dock_end_z + 3.6) or (absf(x) < 3.1 and z <= island.dock_end_z + 3.95 and z > island.dock_end_z - 0.12)
 
-## walkable surface height (dock deck or terrain)
+## walkable surface height (dock deck or terrain mesh — matches what you see)
 func _surface(x: float, z: float) -> float:
 	if _on_dock(x, z):
 		return Island.DECK_Y + 0.04
-	return Island.ground_h(x, z)
+	return Island.mesh_h(x, z)
 
 func _surface_kind(x: float, z: float) -> String:
 	if _on_dock(x, z):
@@ -1356,9 +1362,21 @@ func _explore_tick(delta: float) -> void:
 		move_vel = move_vel.lerp(real, 1.0 - exp(-delta * 14.0))
 	cur_speed = real.length()
 	var h := _surface(to.x, to.z)
-	ground_y = h if absf(h - ground_y) > 0.5 else lerpf(ground_y, h, 1.0 - exp(-delta * 18.0))
+	# mesh_h is continuous — stick to it every tick (no |Δ|>0.5 snap; that was the run teleport).
+	# Only ease across the dock lip where the surface jumps by ~deck height.
+	var dock_now := _on_dock(to.x, to.z)
+	var dock_was := _on_dock(from.x, from.z)
+	if dock_now == dock_was and absf(h - ground_y) < 0.25:
+		ground_y = h
+	else:
+		# Soft step onto/off the deck (~0.35 s at 2.4 m/s vertical).
+		var max_dy := 2.4 * delta
+		ground_y += clampf(h - ground_y, -max_dy, max_dy)
 	to.y = ground_y
 	# Physics-clock body; _process interpolates player for display + camera.
+	var step_xz := Vector2(to.x - from.x, to.z - from.z).length()
+	dbg_max_step = maxf(dbg_max_step, step_xz)
+	dbg_gnd_err = 0.0 if dock_now else Island.ground_err(to.x, to.z, to.y)
 	_body_pos = to
 	_body_yaw = face_yaw
 	player.position = to
@@ -3886,6 +3904,8 @@ func _process(delta: float) -> void:
 	island.set_time(gt)
 	# Display pose = lerp between physics states (camera follows this).
 	_interp_body_pose()
+	# Next physics burst starts a new display interval from the current body.
+	_body_new_frame = true
 	var tall := _tall()
 	camera.keep_aspect = Camera3D.KEEP_HEIGHT
 	var fov_want := (66.0 if tall else 52.0)
@@ -3988,15 +4008,21 @@ func _process(delta: float) -> void:
 	if mq:
 		mq.watch_frame(delta, get_viewport(), sun, refl_level, _set_refl_level)
 	if dbg:
+		dbg.gnd_err = dbg_gnd_err
+		dbg.max_step = dbg_max_step
 		dbg.end_process()
 		dbg.note_frame(delta, mq.scale_3d if mq else 1.0, mq.tier_name() if mq else "?")
 
 func _physics_process(delta: float) -> void:
 	if dbg:
 		dbg.begin_physics()
-	# Advance body prev→curr for render interpolation.
-	_body_pos_prev = _body_pos
-	_body_yaw_prev = _body_yaw
+	# Only latch prev on the first physics tick of this render frame. If we
+	# overwrite prev every tick, a 2-step frame drops the first Δ and the boy
+	# teleports by one physics step on hitch/ProMotion catch-up.
+	if _body_new_frame:
+		_body_pos_prev = _body_pos
+		_body_yaw_prev = _body_yaw
+		_body_new_frame = false
 	if mode == Mode.EXPLORE:
 		_explore_tick(delta)
 	if state == State.FLYING:
@@ -4490,7 +4516,7 @@ func _update_camera(delta: float) -> void:
 		cam_yaw = lerp_angle(cam_yaw, want[1], k)
 		cam_pitch = lerp(cam_pitch, want[2], k)
 		cam_dist = lerp(cam_dist, want[3], k)
-	# Mode switch ease-in-out (~0.35 s) — no snap / stall.
+	# Mode switch ease-in-out (~0.55 s) — no snap / stall.
 	_mix_cam_blend()
 	_apply_camera(delta)
 
