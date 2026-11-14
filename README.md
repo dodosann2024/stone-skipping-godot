@@ -1,7 +1,10 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v30
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v31
 
 低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩为 Tripo Mixamo 网格；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+## v31 改动（字体缺字 + debug HUD 布局）
+补全 `fonts/ui.otf` 子集：扫描全部 `.gd/.tscn/.tres` 与 `web/*.html` 中文字符（含「固定视角」「复制数据」）；`tools/check_font_glyphs.py` 缺字即失败。debug HUD 下移到标题下方（~y=90）半透明窄面板，不挡右侧按钮。在线：`?v=31`（`docs/game_v31`），保留 v26–v30。
 
 ## v30 改动（真机流畅 + 诊断）
 走路发顿 / 视角手感差：走路改到物理时钟（60 Hz，max 2 steps），显示与相机按 `get_physics_interpolation_fraction()` 插值；触摸摇杆与相机分指；观景/固定视角 0.35 s ease；砍掉每帧重活（cutout/omni/脚印 ~15 Hz，相机探针减半）。`?debug=1` 左上角 HUD（FPS、帧时图、p50/p95、phys/f、GPU 字符串、复制数据）；`?q=high|mid|low|min` 强制画质（min=0.5 无阴影/反射/波浪/粒子/omni）。iOS 默认 LOW，p95 自适应。jsDelivr 无法镜像整包（仓库 >50 MB 限制，wasm 403）。在线：`?v=30`（`docs/game_v30`），保留 v26–v29。

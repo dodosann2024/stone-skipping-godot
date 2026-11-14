@@ -316,7 +316,7 @@ func _ready() -> void:
 	if _opt("debug") == "1":
 		dbg = preload("res://debug_hud.gd").new()
 		add_child(dbg)
-		dbg.setup()
+		dbg.setup(ui_font)
 	_apply_camera()
 	_update_ui()
 
