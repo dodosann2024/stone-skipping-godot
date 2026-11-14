@@ -18,8 +18,8 @@ void fragment() {
 		}
 	} else if (!IN_SHADOW_PASS) {
 		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
-		// Strong occlusion still fully hides crates; mild occlusion only dithers.
-		if (cut > 0.72 || (cut > 0.12 && cut > bayer4(FRAGCOORD.xy))) {
+		// Barrels / crates / posts between cam and boy: dither open like foliage.
+		if (cut > 0.52 || (cut > 0.02 && cut > bayer4(FRAGCOORD.xy))) {
 			discard;
 		}
 	}

@@ -26,8 +26,8 @@ void fragment() {
 		}
 	} else if (!IN_SHADOW_PASS) {
 		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
-		// Prefer dither over a solid sky-hole (solid cut >0.55 read as a grey rectangle on iPhone).
-		if (cut > 0.82 || (cut > 0.08 && cut > bayer4(FRAGCOORD.xy))) {
+		// Prefer dither over a solid sky-hole; open earlier so he stays readable in bushes.
+		if (cut > 0.55 || (cut > 0.02 && cut > bayer4(FRAGCOORD.xy))) {
 			discard;
 		}
 	}

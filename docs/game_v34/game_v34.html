@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, viewport-fit=cover">
+		<title>海岛打水漂 Stone Skipping</title>
+		<style>
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+body {
+	color: #f2f5f7;
+	background: #0b1520;
+	overflow: hidden;
+	touch-action: none;
+	font-family: "PingFang SC", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif;
+}
+#canvas { display: block; }
+#canvas:focus { outline: none; }
+#status {
+	position: absolute; inset: 0;
+	background: linear-gradient(180deg, #0b1520 0%, #122033 55%, #0b1520 100%);
+	display: flex; flex-direction: column; justify-content: center; align-items: center;
+	visibility: hidden; z-index: 20; padding: 1.5rem;
+	box-sizing: border-box;
+}
+#status-splash { display: none !important; }
+#load-title {
+	font-size: 1.35rem; font-weight: 600; letter-spacing: 0.04em; margin: 0 0 0.35rem;
+}
+#load-sub {
+	font-size: 0.95rem; opacity: 0.85; margin: 0 0 1.1rem; text-align: center;
+}
+#status-progress {
+	display: none;
+	width: min(78vw, 320px); height: 10px;
+	appearance: none; border: none; border-radius: 999px; overflow: hidden;
+	background: rgba(255,255,255,0.12);
+}
+#status-progress::-webkit-progress-bar { background: rgba(255,255,255,0.12); border-radius: 999px; }
+#status-progress::-webkit-progress-value { background: #6ec8ff; border-radius: 999px; }
+#status-progress::-moz-progress-bar { background: #6ec8ff; border-radius: 999px; }
+#load-bytes {
+	margin-top: 0.7rem; font-size: 0.9rem; opacity: 0.9;
+}
+#status-notice {
+	display: none;
+	background: #5b3943; border-radius: 0.6rem; border: 1px solid #9b3943;
+	color: #f0e6e8; line-height: 1.45; margin: 1rem 0 0; max-width: min(90vw, 420px);
+	overflow: hidden; padding: 0.9rem 1rem; text-align: center; white-space: pre-wrap; word-break: break-word;
+}
+#retry-btn {
+	display: none; margin-top: 1rem; padding: 0.7rem 1.2rem; border-radius: 999px;
+	border: 1px solid rgba(255,255,255,0.35); background: rgba(110,200,255,0.18);
+	color: #fff; font-size: 1rem;
+}
+		</style>
+		<link id="-gd-engine-icon" rel="icon" type="image/png" href="game_v34.icon.png" />
+<link rel="apple-touch-icon" href="game_v34.apple-touch-icon.png"/>
+<meta name="apple-mobile-web-app-capable" content="yes"><style>html,body,#canvas{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;overscroll-behavior:none}</style><script>(function(){var C=window.AudioContext||window.webkitAudioContext;var L=window.__ctxs=[];var el=null;function chk(){for(var i=0;i<L.length;i++){if(L[i].state==='running'){window.__audioUnlocked=true;}}}if(C){var W=function(a,b){var c=(b!==undefined)?new C(a,b):((a!==undefined)?new C(a):new C());L.push(c);try{c.addEventListener('statechange',chk);}catch(e){}return c;};W.prototype=C.prototype;window.AudioContext=W;if(window.webkitAudioContext){window.webkitAudioContext=W;}}window.__unlockAudio=function(){try{if(navigator.audioSession){navigator.audioSession.type='playback';}}catch(e){}if(!navigator.audioSession){try{if(!el){el=document.createElement('audio');el.setAttribute('playsinline','');el.setAttribute('webkit-playsinline','');el.loop=true;el.preload='auto';el.src='data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';}var p=el.play();if(p&&p.catch){p.catch(function(){});}}catch(e){}}for(var i=0;i<L.length;i++){var c=L[i];if(c.state==='closed'){continue;}if(!c.__poked){try{var s=c.createBufferSource();s.buffer=c.createBuffer(1,1,22050);s.connect(c.destination);s.start(0);c.__poked=true;}catch(e){}}if(c.state!=='running'){try{var r=c.resume();if(r&&r.then){r.then(chk,function(){});}}catch(e){}}}chk();};['touchend','pointerup','mouseup','click','keydown'].forEach(function(t){document.addEventListener(t,window.__unlockAudio,true);});document.addEventListener('visibilitychange',function(){if(!document.hidden){window.__unlockAudio();}});window.addEventListener('pageshow',function(){window.__unlockAudio();});})();</script><script>(function(){var m=document.querySelector('meta[name=viewport]');if(m&&m.content.indexOf('viewport-fit')<0){m.content+=', viewport-fit=cover';}window.__safeArea=function(){var d=document.getElementById('__sa');if(!d){d=document.createElement('div');d.id='__sa';d.style.cssText='position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';document.body.appendChild(d);}var s=getComputedStyle(d);return [parseFloat(s.paddingTop)||0,parseFloat(s.paddingRight)||0,parseFloat(s.paddingBottom)||0,parseFloat(s.paddingLeft)||0,window.innerWidth,window.innerHeight].join(',');};})();</script>
+	</head>
+	<body>
+		<canvas id="canvas">Your browser does not support the canvas tag.</canvas>
+		<noscript>请开启 JavaScript 后再试。</noscript>
+
+		<div id="status">
+			<img id="status-splash" class="show-image--true fullsize--true use-filter--true" src="game_v34.png" alt="">
+			<div id="load-title">海岛打水漂</div>
+			<div id="load-sub">正在加载…</div>
+			<progress id="status-progress"></progress>
+			<div id="load-bytes">准备中</div>
+			<div id="status-notice"></div>
+			<button id="retry-btn" type="button">网络较慢，点此重试</button>
+		</div>
+
+		<script src="game_v34.js"></script>
+		<script>
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"game_v34","experimentalVK":false,"fileSizes":{"game_v34.pck":11191912,"game_v34.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_THREADS_ENABLED = false;
+// Single-threaded build: never install COOP/COEP service worker (can hang iOS loads).
+GODOT_CONFIG.ensureCrossOriginIsolationHeaders = false;
+GODOT_CONFIG.serviceWorker = null;
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+	const statusOverlay = document.getElementById('status');
+	const statusProgress = document.getElementById('status-progress');
+	const statusNotice = document.getElementById('status-notice');
+	const loadSub = document.getElementById('load-sub');
+	const loadBytes = document.getElementById('load-bytes');
+	const retryBtn = document.getElementById('retry-btn');
+
+	let initializing = true;
+	let statusMode = '';
+	let lastProgressAt = Date.now();
+	let lastCurrent = 0;
+	let stallTimer = null;
+	let started = false;
+
+	function mb(n) {
+		return (n / (1024 * 1024)).toFixed(1);
+	}
+
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			if (stallTimer) clearInterval(stallTimer);
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusProgress.style.display = (mode === 'progress') ? 'block' : 'none';
+		statusNotice.style.display = (mode === 'notice') ? 'block' : 'none';
+		if (mode !== 'notice') {
+			retryBtn.style.display = 'none';
+		}
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		statusNotice.textContent = text;
+	}
+
+	function zhError(err) {
+		let msg = '';
+		if (err instanceof Error) msg = err.message || String(err);
+		else if (typeof err === 'string') msg = err;
+		else msg = '未知错误';
+		if (/webgl|WebGL|context/i.test(msg)) {
+			return 'WebGL 初始化失败（设备或浏览器不支持）。\n' + msg;
+		}
+		if (/memory|OOM|out of memory|Array buffer/i.test(msg)) {
+			return '内存不足，无法加载。请关闭其他 App 后重试。\n' + msg;
+		}
+		if (/Failed to fetch|NetworkError|Load failed|download/i.test(msg)) {
+			return '网络下载失败。请检查网络后重试。\n' + msg;
+		}
+		return '加载失败：\n' + msg;
+	}
+
+	function displayFailureNotice(err) {
+		console.error(err);
+		loadSub.textContent = '加载失败';
+		loadBytes.textContent = '';
+		setStatusNotice(zhError(err));
+		setStatusMode('notice');
+		retryBtn.style.display = 'inline-block';
+		retryBtn.textContent = '点此重试';
+		initializing = false;
+		if (stallTimer) clearInterval(stallTimer);
+	}
+
+	function showStallRetry() {
+		if (!initializing || statusMode === 'notice') return;
+		loadSub.textContent = '网络较慢';
+		retryBtn.style.display = 'inline-block';
+		retryBtn.textContent = '网络较慢，点此重试';
+	}
+
+	function boot() {
+		if (started) return;
+		started = true;
+		lastProgressAt = Date.now();
+		setStatusMode('progress');
+		loadSub.textContent = '正在加载…';
+		retryBtn.style.display = 'none';
+		stallTimer = setInterval(function () {
+			if (!initializing) return;
+			if (Date.now() - lastProgressAt > 15000) {
+				showStallRetry();
+			}
+		}, 1000);
+
+		engine.startGame({
+			onProgress: function (current, total) {
+				if (current > lastCurrent) {
+					lastProgressAt = Date.now();
+					lastCurrent = current;
+					if (retryBtn.style.display !== 'none' && statusMode === 'progress') {
+						retryBtn.style.display = 'none';
+						loadSub.textContent = '正在加载…';
+					}
+				}
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+					loadBytes.textContent = mb(current) + ' MB / ' + mb(total) + ' MB';
+				} else if (current > 0) {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+					loadBytes.textContent = '已下载 ' + mb(current) + ' MB…';
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+					loadBytes.textContent = '连接中…';
+				}
+			},
+		}).then(function () {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+
+	retryBtn.addEventListener('click', function () {
+		window.location.reload();
+	});
+
+	window.addEventListener('error', function (ev) {
+		if (!initializing) return;
+		displayFailureNotice(ev.error || ev.message || '页面脚本错误');
+	});
+	window.addEventListener('unhandledrejection', function (ev) {
+		if (!initializing) return;
+		displayFailureNotice(ev.reason || 'Promise 被拒绝');
+	});
+
+	// Unregister any stale service workers from earlier builds (can intercept / stall).
+	var swReady = Promise.resolve();
+	if ('serviceWorker' in navigator) {
+		swReady = navigator.serviceWorker.getRegistrations().then(function (regs) {
+			return Promise.all(regs.map(function (r) { return r.unregister(); }));
+		}).catch(function () {});
+	}
+
+	swReady.then(function () {
+		const missing = Engine.getMissingFeatures({ threads: GODOT_THREADS_ENABLED });
+		if (missing.length !== 0) {
+			displayFailureNotice('当前浏览器缺少运行所需功能：\n' + missing.join('\n'));
+			return;
+		}
+		boot();
+	});
+}());
+		</script>
+	</body>
+</html>
+

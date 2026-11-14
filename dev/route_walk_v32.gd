@@ -81,10 +81,9 @@ func _go() -> void:
 			max_step_y = maxf(max_step_y, dy)
 			if dxz > 0.004:
 				steps_xz.append(dxz)
-			# Ground error vs terrain mesh (dock is flat — skip).
-			if not m._on_dock(cur.x, cur.z):
-				var err: float = absf(Island.ground_err(cur.x, cur.z, cur.y))
-				max_gnd = maxf(max_gnd, err)
+			# Ground error vs walkable `_surface` (includes soft dock-lip ramp).
+			var err: float = absf(cur.y - m._surface(cur.x, cur.z))
+			max_gnd = maxf(max_gnd, err)
 			if dxz > MAX_STEP_XZ:
 				_fail("xz snap %.3f m at (%.2f,%.2f) leg %d" % [dxz, cur.x, cur.z, wi])
 			if dy > MAX_STEP_Y:
