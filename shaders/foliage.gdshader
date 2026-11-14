@@ -26,8 +26,8 @@ void fragment() {
 		}
 	} else if (!IN_SHADOW_PASS) {
 		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
-		// Prefer dither over a solid sky-hole; open earlier so he stays readable in bushes.
-		if (cut > 0.55 || (cut > 0.02 && cut > bayer4(FRAGCOORD.xy))) {
+		// Hard open in the cone core + coarse Bayer rim so the web build reads as dither.
+		if (cut > 0.12 || (cut > 0.004 && cut * 1.35 > bayer4(FRAGCOORD.xy))) {
 			discard;
 		}
 	}

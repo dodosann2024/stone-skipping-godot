@@ -1,7 +1,12 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v31
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v35
 
 低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩为 Tripo Mixamo 网格；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
+
+**Standing bar (v35+):** AAA production quality — replayability, control detail, and visuals polished to an extreme degree until that bar is genuinely reached. No new gameplay modes; deepen what exists. See [`docs/AAA_BAR.md`](docs/AAA_BAR.md).
+
+## v35 改动（坡地沉脚 + 遮挡 dither + 全岛路线）
+根因：v34 `SOLE_NUDGE=+7.5 cm` 把整模压进 mesh，坡地跟随机位看起来像埋到短裤；另有低俯仰上坡机位被山体剪影挡住小腿。v35：`SOLE_NUDGE=-1.4 cm` + 更软的 per-foot plant（只拉浮空、可微抬埋脚）+ 上坡踝线清障抬机；foliage/leaf/static cutout 加粗；路线测试恢复 ≥70 m。测试：`route_walk_v32`、`slope_drag_v35`、`touch_cdp_v35`、`cdp_touch_v35.mjs`、`bush_cut_v35`、`sit_stand_v34`。在线：`?v=35`（`docs/game_v35`）。
 
 ## v31 改动（字体缺字 + debug HUD 布局）
 补全 `fonts/ui.otf` 子集：扫描全部 `.gd/.tscn/.tres` 与 `web/*.html` 中文字符（含「固定视角」「复制数据」）；`tools/check_font_glyphs.py` 缺字即失败。debug HUD 下移到标题下方（~y=90）半透明窄面板，不挡右侧按钮。在线：`?v=31`（`docs/game_v31`），保留 v26–v30。

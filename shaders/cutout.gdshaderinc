@@ -19,22 +19,22 @@ float cut_amount(vec3 wpos, vec3 cam) {
 	vec3 seg = focus - cam;
 	float len = max(length(seg), 0.001);
 	float k = clamp(dot(wpos - cam, seg) / (len * len), 0.0, 1.0);
-	// Only occluders BETWEEN camera and boy (not behind him).
-	if (k < 0.02 || k > 0.98) {
+	// Occluders from just in front of the lens to the boy's silhouette.
+	// Was k>0.99 → 0, which left bush leaves on his shoulders solid (v34 web).
+	if (k < 0.01 || k > 0.999) {
 		return 0.0;
 	}
 	float dist = length(wpos - (cam + seg * k));
-	// Wide soft capsule so barrels / trunks / leaf walls between cam and boy dither open.
-	// Tapers near the camera (avoid sky holes) and near the boy (keep silhouette at his feet).
-	float r = cut_radius * mix(0.85, 1.55, smoothstep(0.03, 0.50, k))
-		* mix(1.0, 0.82, smoothstep(0.78, 0.97, k));
-	float hide = (1.0 - smoothstep(r * 0.12, r, dist));
-	// Soften the very near field so we don't punch grey rectangles into close foliage.
+	// Fat soft capsule — leaf walls / bushes must open in the web follow cam.
+	float r = cut_radius * mix(1.2, 2.2, smoothstep(0.01, 0.40, k))
+		* mix(1.0, 0.92, smoothstep(0.88, 0.999, k));
+	float hide = (1.0 - smoothstep(r * 0.03, r, dist));
+	// Soften only the extreme near field (avoid grey rectangles in the lens).
 	float along = length(wpos - cam);
-	hide *= smoothstep(0.18, 0.70, along);
-	// Vertical band covering head→feet so a bush/barrel can't cover him while leaving ankles.
-	float y0 = focus.y - 1.35;
-	float y1 = focus.y + 0.85;
-	hide *= smoothstep(y0 - 0.25, y0 + 0.15, wpos.y) * (1.0 - smoothstep(y1, y1 + 0.45, wpos.y));
+	hide *= smoothstep(0.06, 0.32, along);
+	// Vertical band covering crown→soles so a bush can't cover torso while ankles stay.
+	float y0 = focus.y - 1.85;
+	float y1 = focus.y + 1.25;
+	hide *= smoothstep(y0 - 0.40, y0 + 0.06, wpos.y) * (1.0 - smoothstep(y1, y1 + 0.30, wpos.y));
 	return clamp(hide, 0.0, 1.0);
 }

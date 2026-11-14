@@ -21,7 +21,7 @@ void fragment() {
 			discard;
 		}
 	}
-	float k = clamp(core * strength, 0.35, 0.95);
-	// Opaque dark stain sitting on the terrain.
-	ALBEDO = mix(vec3(0.18, 0.14, 0.11), vec3(0.03, 0.025, 0.02), k);
+	float k = clamp(core * strength, 0.22, 0.78);
+	// Soft brown stain on the terrain (not a hard black plate under the shorts).
+	ALBEDO = mix(vec3(0.22, 0.18, 0.12), vec3(0.06, 0.05, 0.035), k);
 }
