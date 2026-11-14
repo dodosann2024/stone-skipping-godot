@@ -1,0 +1,17 @@
+{
+  "url": "https://dodosann2024.github.io/stone-skipping-godot/game_v29/game_v29.html?v=29",
+  "load_seconds": 102.03,
+  "reached_game": true,
+  "pageerrors": [],
+  "console_error": [],
+  "godotish": [
+    "[log] Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org",
+    "[log] Island: hammock cloth remap max dist 0.0000 m"
+  ],
+  "loader_mid": {
+    "sub": "正在加载…",
+    "bytes": "0.6 MB / 48.3 MB",
+    "visible": "visible",
+    "retry": "none"
+  }
+}
