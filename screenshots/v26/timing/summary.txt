@@ -1,0 +1,8 @@
+orbit_120fps: boy med=0.000 max=0.021 max/med=212.00 | cam med=0.1449 max=0.1498 max/med=1.03
+orbit_60fps: boy med=0.000 max=0.021 max/med=211.00 | cam med=0.1449 max=0.1498 max/med=1.03
+run_120fps: boy med=0.071 max=0.138 max/med=1.94 | cam med=0.0228 max=0.0235 max/med=1.03
+run_60fps: boy med=0.125 max=0.243 max/med=1.94 | cam med=0.0457 max=0.0471 max/med=1.03
+walk_120fps: boy med=0.011 max=0.018 max/med=1.57 | cam med=0.0081 max=0.0084 max/med=1.03
+walk_60fps: boy med=0.021 max=0.032 max/med=1.53 | cam med=0.0162 max=0.0167 max/med=1.03
+walk_spike_120fps: boy med=0.012 max=0.018 max/med=1.46 | cam med=0.0084 max=0.0084 max/med=1.01
+walk_spike_60fps: boy med=0.022 max=0.032 max/med=1.46 | cam med=0.0168 max=0.0169 max/med=1.01

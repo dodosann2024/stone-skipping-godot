@@ -3,6 +3,7 @@ render_mode cull_disabled, diffuse_lambert;
 // Vertex colour RGB = albedo (sRGB), A = sway weight.
 uniform float game_time = 0.0;
 uniform float wind = 1.0;
+global uniform float night_k;
 #include "res://shaders/cutout.gdshaderinc"
 #include "res://shaders/refl_clip.gdshaderinc"
 varying vec3 wpos;
@@ -23,10 +24,18 @@ void fragment() {
 		if (wpos.y < 0.0) {
 			discard;
 		}
-	} else if (!IN_SHADOW_PASS && cut_amount(wpos, CAMERA_POSITION_WORLD) > bayer4(FRAGCOORD.xy)) {
-		discard;
+	} else if (!IN_SHADOW_PASS) {
+		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
+		if (cut > 0.55 || cut > bayer4(FRAGCOORD.xy)) {
+			discard;
+		}
 	}
-	ALBEDO = pow(COLOR.rgb, vec3(2.2));
+	vec3 c = pow(COLOR.rgb, vec3(2.2));
+	// Night: desaturate daytime leaf green toward cool blue-green (no neon canopy).
+	float lum = dot(c, vec3(0.30, 0.59, 0.11));
+	c = mix(c, vec3(0.10, 0.14, 0.12) * (0.7 + lum), night_k * 0.88);
+	ALBEDO = c;
 	ROUGHNESS = 0.8;
-	BACKLIGHT = vec3(0.25, 0.35, 0.12) * COLOR.a;
+	// Kill the green subsurface glow at night — it read as a lantern bloom blob.
+	BACKLIGHT = vec3(0.25, 0.35, 0.12) * COLOR.a * (1.0 - night_k * 0.92);
 }

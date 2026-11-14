@@ -8,6 +8,7 @@ render_mode cull_disabled, diffuse_lambert_wrap, specular_disabled;
 uniform sampler2D leaf_tex : source_color, filter_linear_mipmap, repeat_disable;
 uniform float game_time = 0.0;
 uniform float wind = 1.0;
+global uniform float night_k;
 #include "res://shaders/cutout.gdshaderinc"
 #include "res://shaders/refl_clip.gdshaderinc"
 varying vec3 wpos;
@@ -39,14 +40,19 @@ void fragment() {
 		if (wpos.y < 0.0) {
 			discard;
 		}
-	} else if (!IN_SHADOW_PASS && cut_amount(wpos, CAMERA_POSITION_WORLD) > bayer4(FRAGCOORD.xy)) {
-		discard;
+	} else if (!IN_SHADOW_PASS) {
+		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
+		if (cut > 0.55 || cut > bayer4(FRAGCOORD.xy)) {
+			discard;
+		}
 	}
 	vec3 c = pow(COLOR.rgb, vec3(2.2)) * tx.rgb;
+	float lum = dot(c, vec3(0.30, 0.59, 0.11));
+	c = mix(c, vec3(0.10, 0.14, 0.12) * (0.7 + lum), night_k * 0.88);
 	ALBEDO = c * mix(0.75, 1.3, ao);
 	AO = ao;
 	AO_LIGHT_AFFECT = 0.35;
 	ROUGHNESS = 0.75;
 	NORMAL = normalize((VIEW_MATRIX * vec4(nrm, 0.0)).xyz);
-	BACKLIGHT = c * (0.35 + 0.45 * ao);
+	BACKLIGHT = c * (0.35 + 0.45 * ao) * (1.0 - night_k * 0.92);
 }

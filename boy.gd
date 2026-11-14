@@ -152,7 +152,8 @@ var _night_rim: OmniLight3D
 var _night_body: OmniLight3D
 var _face_fill_day_energy := 0.35
 var _boy_mat: StandardMaterial3D
-var _boy_albedo_day := Color(1.08, 0.98, 0.92, 1.0)
+var _boy_mats: Array[StandardMaterial3D] = []
+var _boy_albedo_day := Color(1.0, 0.97, 0.93, 1.0)
 var _boy_albedo_tex_day: Texture2D
 var _boy_albedo_tex_sleep: Texture2D
 var _eyes_closed_tex := false
@@ -667,32 +668,34 @@ func _build_face_fill() -> void:
 	face_fill.omni_attenuation = 1.4
 	face_fill.shadow_enabled = false
 	face_fill.light_specular = 0.0
-	# Boy mesh only (layer 2) — lighting the world made a moving hotspot on sand/seats.
-	face_fill.light_cull_mask = 1 << 1
+	# Boy mesh only (layer 1). Off at night so he shares moon/ambient with the sand.
+	face_fill.light_cull_mask = 1
 	parts["head"].add_child(face_fill)
 	face_fill.position = Vector3(0.0, -0.02, -0.1)
 	# Cool moonlight rim — only on at night, opposite the fill so edges read without flattening him.
 	_night_rim = OmniLight3D.new()
 	_night_rim.name = "NightRim"
-	_night_rim.light_color = Color(0.55, 0.68, 0.98)
+	_night_rim.light_color = Color(0.90, 0.92, 1.0)
 	_night_rim.light_energy = 0.0
 	_night_rim.omni_range = 0.75
 	_night_rim.omni_attenuation = 1.2
 	_night_rim.shadow_enabled = false
-	_night_rim.light_specular = 0.08
+	_night_rim.light_specular = 0.0
 	_night_rim.light_cull_mask = 1 << 1
+	_night_rim.visible = false
 	parts["head"].add_child(_night_rim)
 	_night_rim.position = Vector3(0.0, 0.04, 0.12)
-	# Soft torso fill at night so vest/shorts match the moonlit ground (head fill alone leaves the body black).
+	# Kept for API compatibility; energy stays 0 (albedo tint / body fill greys the skin).
 	_night_body = OmniLight3D.new()
 	_night_body.name = "NightBody"
-	_night_body.light_color = Color(0.70, 0.80, 1.0)
+	_night_body.light_color = Color(0.90, 0.92, 1.0)
 	_night_body.light_energy = 0.0
 	_night_body.omni_range = 1.4
 	_night_body.omni_attenuation = 0.85
 	_night_body.shadow_enabled = false
 	_night_body.light_specular = 0.0
 	_night_body.light_cull_mask = 1 << 1
+	_night_body.visible = false
 	if parts.has("pelvis"):
 		parts["pelvis"].add_child(_night_body)
 		_night_body.position = Vector3(0.0, 0.12, -0.08)
@@ -703,42 +706,43 @@ func _build_face_fill() -> void:
 
 ## Blend the character-only fill with the world night look. k=0 day, k=1 full night.
 ## moon_dir: world direction toward the moon disk (sun.global_basis.z); used to place the rim.
+## v26: lights do the night look — do NOT tint albedo (that greys skin / blues sclera).
 func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 	k = clampf(k, 0.0, 1.0)
 	if face_fill:
-		# Day: warm under-brim fill. Night: cool body fill so seats/hammock match moonlit ground
-		# (v23 balance — boy luminance tracks the scene, not a black silhouette).
-		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.78, 0.86, 1.0), k)
-		face_fill.light_energy = lerpf(_face_fill_day_energy, 1.35, k)
-		face_fill.omni_range = lerpf(0.4, 1.6, k)
-		face_fill.omni_attenuation = lerpf(1.4, 0.7, k)
-		# Chest/torso fill (not just under the brim) so vest/shorts read at night.
-		face_fill.position = Vector3(0.0, -0.04, -0.16).lerp(Vector3(0.0, -0.12, -0.22), k)
+		# Day: warm under-brim fill. Night: fully off — same lights as the sand only.
+		face_fill.light_color = Color(1.0, 0.92, 0.78)
+		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.0, k)
+		face_fill.omni_range = 0.4
+		face_fill.omni_attenuation = lerpf(1.4, 1.6, k)
+		face_fill.position = Vector3(0.0, -0.04, -0.16)
+		face_fill.light_specular = 0.0
+		face_fill.visible = k < 0.45
+		# Cull mask 0 at night so a stray frame can't key the boy alone.
+		face_fill.light_cull_mask = 1 if k < 0.45 else 0
 	if _night_rim:
-		_night_rim.light_color = Color(0.55, 0.68, 0.98)
-		_night_rim.light_energy = lerpf(0.0, 0.95, k)
-		_night_rim.omni_range = lerpf(0.55, 1.6, k)
-		var local_off := Vector3(0.0, 0.04, 0.14)
-		if moon_dir.length_squared() > 0.01 and parts.has("head") and parts["head"] is Node3D:
-			var head := parts["head"] as Node3D
-			var world_off: Vector3 = moon_dir.normalized() * 0.18 + Vector3(0, 0.04, 0)
-			local_off = head.global_transform.basis.inverse() * world_off
-			if local_off.length() < 0.06:
-				local_off = Vector3(0.0, 0.04, 0.14)
-			else:
-				local_off = local_off.normalized() * 0.18
-		_night_rim.position = local_off
+		_night_rim.light_energy = 0.0
+		_night_rim.light_specular = 0.0
+		_night_rim.visible = false
 	if _night_body:
-		_night_body.light_energy = lerpf(0.0, 1.15, k)
-		_night_body.omni_range = lerpf(0.8, 1.8, k)
-		_night_body.light_color = Color(0.70, 0.80, 1.0)
-	# Keep Tripo textures readable against moonlit sand (not a black silhouette).
-	for mat in [_boy_mat, _face_mat]:
+		_night_body.light_energy = 0.0
+		_night_body.light_specular = 0.0
+		_night_body.visible = false
+	# Same world lights as the ground. Pale Tripo albedo (esp. yellow shorts / straw)
+	# outshines wet sand — neutral luminance scale so boy/sand mean L ≈ 1.0–1.3.
+	# Soft moon/ambient flatten the key. Tiny albedo trim — pale Tripo shorts/straw stay ≤ ~1.3× sand.
+	var lum_scale := lerpf(1.0, 0.92, k)
+	for mat in _boy_mats:
 		if mat == null:
 			continue
-		mat.albedo_color = _boy_albedo_day.lerp(Color(1.05, 1.05, 1.1, 1.0), k)
-		mat.metallic_specular = lerpf(0.2, 0.06, k)
-		mat.roughness = lerpf(0.78, 0.86, k)
+		mat.albedo_color = Color(
+			_boy_albedo_day.r * lum_scale,
+			_boy_albedo_day.g * lum_scale,
+			_boy_albedo_day.b * lum_scale,
+			1.0
+		)
+		mat.metallic_specular = lerpf(0.2, 0.04, k)
+		mat.roughness = lerpf(0.78, 0.94, k)
 		mat.emission_enabled = false
 		mat.emission_energy_multiplier = 0.0
 		mat.emission = Color(0, 0, 0, 1)
@@ -752,6 +756,7 @@ func _tune_boy_material() -> void:
 		return
 	_face_mat = null
 	_face_surf_i = -1
+	_boy_mats.clear()
 	for c in skel.get_children():
 		if not (c is MeshInstance3D):
 			continue
@@ -764,7 +769,8 @@ func _tune_boy_material() -> void:
 		_body_mi = mi
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		mi.transparency = 0
-		mi.layers = 1 | 2
+		# Layer 1 only — same lights as terrain (no private layer-2 key).
+		mi.layers = 1
 		# Prefer per-surface materials so a face slot can swap without touching clothes/hat.
 		mi.material_override = null
 		for si in nsurf:
@@ -778,6 +784,7 @@ func _tune_boy_material() -> void:
 				continue
 			_harden_boy_mat(mat)
 			mi.mesh.surface_set_material(si, mat)
+			_boy_mats.append(mat)
 			var is_face := _surface_looks_like_face(mi.mesh, si, nsurf)
 			if is_face and _face_mat == null:
 				_face_mat = mat
@@ -1858,7 +1865,8 @@ func _tick(delta: float) -> void:
 
 	# locomotion blends
 	if anim == "move":
-		speed_s = move_speed
+		# Frame-rate independent speed smoothing — avoids walk↔run blend pops on hitch/ProMotion.
+		speed_s = lerpf(speed_s, move_speed, 1.0 - exp(-delta * 12.0))
 		run_k = 0.0 if pivoting else smoothstep(RUN_FROM, RUN_TO, speed_s)
 		# Light stick → stroll (soft), then walk. Keep walk_k for mix amount.
 		walk_k = clampf(smoothstep(0.35, 1.05, speed_s), 0.0, 1.0)
@@ -1869,10 +1877,15 @@ func _tick(delta: float) -> void:
 		prev_pos = global_position
 		has_prev = true
 		var stride := float(clips["run"]["stride"]) if run_k > 0.5 else float(clips["walk"]["stride"])
-		# Match phase advance to travel so stance feet don't skate on the ground texture.
+		# Match phase advance to travel; cap so a hitch/ProMotion spike can't jump a whole step.
 		var dphase := dist / maxf(stride, 0.05)
 		if pivoting or dist < 0.001:
 			dphase = delta / maxf(float(clips["walk"]["length"]), 0.2)
+		else:
+			# Prefer speed·δ when a long frame would over-advance from position delta alone.
+			var spd_phase := (speed_s * delta) / maxf(stride, 0.05)
+			dphase = minf(dphase, maxf(spd_phase, 1e-5))
+		dphase = minf(dphase, 0.22)
 		phase = fposmod(phase + dphase, 1.0)
 		# walking footfalls only when translating after the spot-turn grace window
 		if not pivoting and pivot_grace <= 0.0:

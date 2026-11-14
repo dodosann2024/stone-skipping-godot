@@ -43,6 +43,9 @@ float caustic(vec2 p, float t) {
 }
 
 global uniform float night_k;
+// Soft radial lantern pool (world XZ + strength). Set each frame from the nearest path lamp.
+uniform vec2 lamp_xz = vec2(9999.0);
+uniform float lamp_pool = 0.0; // 0..1
 
 void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -113,8 +116,10 @@ void fragment() {
 		trail *= 1.0 - smoothstep(0.5, 0.95, cyc);
 		// the cycle phase wraps (fract) along a moving seam; fading in from 0 keeps the foam continuous there
 		float foam = clamp(max(rim, trail * 0.85), 0.0, 1.0) * smoothstep(-0.05, 0.0, hab) * smoothstep(0.0, 0.05, cyc);
-		c = mix(c, vec3(0.95, 0.97, 0.96), foam * 0.92);
+		vec3 foam_col = mix(vec3(0.95, 0.97, 0.96), vec3(0.20, 0.28, 0.40), night_k);
+		c = mix(c, foam_col, foam * mix(0.92, 0.40, night_k));
 		rough = mix(rough, 0.8, foam);
+
 		// under water the bottom fades into the sea colour with depth
 		float depth = -hab;
 		if (depth > 0.0) {
@@ -126,7 +131,17 @@ void fragment() {
 			c = c * tr + vec3(0.30, 0.52, 0.47) * (1.0 - tr);
 		}
 	}
+	// Night: flat cool moonlit albedo (kill path-dirt vs grass contrast). Round lantern
+	// pool = soft radial EMISSION only — no warm Omni on the dirt corridor.
+	float nk = night_k;
+	vec3 moon_ground = vec3(0.09, 0.135, 0.155); // desaturated blue-green
+	c = mix(c, moon_ground, nk);
+	float ld = length(p - lamp_xz);
+	// Soft Gaussian ~2.5 m; modest peak — radial pool, not a blazing dirt stripe.
+	float pool = lamp_pool * exp(-(ld * ld) / (1.60 * 1.60));
+	pool *= smoothstep(2.8, 0.85, ld);
 	ALBEDO = c;
-	ROUGHNESS = rough;
-	SPECULAR = 0.5 * (1.0 - night_k);
+	ROUGHNESS = mix(rough, 0.92, nk);
+	SPECULAR = 0.5 * (1.0 - nk);
+	EMISSION = moon_ground * 0.38 * nk + vec3(0.13, 0.09, 0.05) * pool;
 }
