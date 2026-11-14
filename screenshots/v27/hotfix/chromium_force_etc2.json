@@ -1,0 +1,34 @@
+{
+  "label": "v28_etc2",
+  "browser": "chromium",
+  "force_etc2": true,
+  "url": "https://dodosann2024.github.io/stone-skipping-godot/game_v28/game_v28.html?v=28",
+  "final": {
+    "href": "https://dodosann2024.github.io/stone-skipping-godot/game_v28/game_v28.html?v=28",
+    "canvas": true,
+    "cw": 780,
+    "ch": 1688,
+    "body": "",
+    "status": "",
+    "notice": "",
+    "hasStart": false,
+    "exts": [
+      "WEBGL_compressed_texture_astc",
+      "WEBGL_compressed_texture_etc",
+      "WEBGL_compressed_texture_etc1"
+    ]
+  },
+  "pageerrors": [],
+  "reqfails": [],
+  "console_error": [],
+  "godotish": [
+    "[log] Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org"
+  ],
+  "log_tail": [
+    "[log] Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org",
+    "[log] OpenGL API OpenGL ES 3.0 (WebGL 2.0 (OpenGL ES 3.0 Chromium)) - Compatibility - Using Device: WebKit - WebKit WebGL",
+    "[log] Build configuration: Emscripten 4.0.20, single-threaded, no GDExtension support.",
+    "[log] Island: hammock cloth remap max dist 0.0000 m",
+    "[log] ISLAND forest_lamp post=(0.35, 4.152514, 6.45) body=(-0.127618, 5.182514, 6.402238)"
+  ]
+}
