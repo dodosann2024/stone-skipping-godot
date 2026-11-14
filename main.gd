@@ -118,6 +118,27 @@ var ground_y := 0.0
 var cur_speed := 0.0
 var wading := false
 var action_kind := ""
+## Physics-clock body pose; _process lerps player transform for display + camera.
+var _body_pos := Vector3.ZERO
+var _body_pos_prev := Vector3.ZERO
+var _body_yaw := 0.0
+var _body_yaw_prev := 0.0
+var _body_sync := false
+## Camera mode blend (观景 / 固定视角 / sit-stand): ease-in-out over ~0.35 s.
+var _cam_blend_t := 0.0
+var _cam_blend_dur := 0.35
+var _cam_blend_from_t := Vector3.ZERO
+var _cam_blend_from_yaw := 0.0
+var _cam_blend_from_pitch := 0.0
+var _cam_blend_from_dist := 0.0
+## Throttled upkeep (cutout / night omni / prints) — 10–20 Hz.
+var _throttle_t := 0.0
+var _cut_focus := Vector3.ZERO
+var _cut_cr_f := 2.2
+var _cut_cr_s := 1.7
+## On-device debug HUD (?debug=1).
+var dbg = null
+var _orbit_smooth := Vector2.ZERO
 var keys_run := false
 
 # rest (hammock / towel)
@@ -281,6 +302,7 @@ func _ready() -> void:
 		_update_night(0.0, true)
 	# First paint: face the Tripo boy (3/4-front). Later _place()/walk snaps back to follow-behind.
 	_snap_explore_cam(true)
+	_sync_body_pose(true)
 	if is_web and _opt("hatprobe") == "1":
 		RenderingServer.frame_pre_draw.connect(_hat_probe_tick)
 		_hat_probe_place.call_deferred(_opt("at"))
@@ -291,8 +313,45 @@ func _ready() -> void:
 			selftest.run.call_deferred(self)
 		else:
 			_run_demo4.call_deferred()
+	if _opt("debug") == "1":
+		dbg = preload("res://debug_hud.gd").new()
+		add_child(dbg)
+		dbg.setup()
 	_apply_camera()
 	_update_ui()
+
+
+func _sync_body_pose(hard := false) -> void:
+	_body_pos = player.position
+	_body_yaw = face_yaw
+	if hard or not _body_sync:
+		_body_pos_prev = _body_pos
+		_body_yaw_prev = _body_yaw
+		_body_sync = true
+
+
+func _interp_body_pose() -> void:
+	if not _body_sync:
+		_sync_body_pose(true)
+		return
+	var f := Engine.get_physics_interpolation_fraction()
+	player.position = _body_pos_prev.lerp(_body_pos, f)
+	player.rotation.y = lerp_angle(_body_yaw_prev, _body_yaw, f)
+
+
+func _begin_cam_blend() -> void:
+	_cam_blend_from_t = cam_target
+	_cam_blend_from_yaw = cam_yaw
+	_cam_blend_from_pitch = cam_pitch
+	_cam_blend_from_dist = cam_dist
+	_cam_blend_t = _cam_blend_dur
+
+
+func _is_ios_web() -> bool:
+	if not is_web:
+		return false
+	var ua := str(JavaScriptBridge.eval("navigator.userAgent||''", true)).to_lower()
+	return "iphone" in ua or "ipad" in ua or "ipod" in ua or "crios" in ua
 
 var wade_ring: MeshInstance3D
 var wade_mat: ShaderMaterial
@@ -926,6 +985,7 @@ func _update_ui() -> void:
 
 func _toggle_view() -> void:
 	if mode == Mode.VIEW:
+		_begin_cam_blend()
 		mode = Mode.EXPLORE if view_from == Mode.EXPLORE else Mode.THROW
 		touches.clear()
 		_update_ui()
@@ -935,6 +995,7 @@ func _toggle_view() -> void:
 	view_from = mode
 	touches.clear()
 	orbit_vel = Vector2.ZERO
+	_begin_cam_blend()
 	mode = Mode.VIEW
 	view_yaw = cam_yaw
 	view_pitch = clamp(cam_pitch + 0.15, 0.1, 1.4)
@@ -1272,7 +1333,8 @@ func _explore_tick(delta: float) -> void:
 	var acc := (2.2 if s < WALK_MAX else 1.6) if spd_t > s else 6.0
 	s = move_toward(s, spd_t, acc * delta)
 	move_vel = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * s
-	var from := player.position
+	# Always step from the physics body pose (not the interpolated display pose).
+	var from := _body_pos if _body_sync else player.position
 	var wish_step := move_vel * delta
 	var to := _try_move(from, wish_step)
 	# Cap per-frame lateral shove from wall slide (lighthouse / rock first contact). A sudden
@@ -1296,6 +1358,9 @@ func _explore_tick(delta: float) -> void:
 	var h := _surface(to.x, to.z)
 	ground_y = h if absf(h - ground_y) > 0.5 else lerpf(ground_y, h, 1.0 - exp(-delta * 18.0))
 	to.y = ground_y
+	# Physics-clock body; _process interpolates player for display + camera.
+	_body_pos = to
+	_body_yaw = face_yaw
 	player.position = to
 	player.rotation.y = face_yaw
 	wading = not _on_dock(to.x, to.z) and h < -0.03
@@ -1342,6 +1407,7 @@ func _ensure_rest_align() -> void:
 
 
 func _begin_rest(kind: String) -> void:
+	_begin_cam_blend()
 	mode = Mode.REST
 	rest_kind = kind
 	rest_phase = 0
@@ -2183,6 +2249,7 @@ func lie_mesh_penetration_depth(include_hat := true) -> float:
 
 func _wake() -> void:
 	if mode == Mode.REST and rest_phase == 4:
+		_begin_cam_blend()
 		if rest_use_clips:
 			rest_phase = 6
 			rest_t = 0.0
@@ -2657,22 +2724,32 @@ func _poke_audio(event: InputEvent) -> void:
 	if (event is InputEventScreenTouch and not event.pressed) or (event is InputEventMouseButton and not event.pressed):
 		JavaScriptBridge.eval("window.__unlockAudio && window.__unlockAudio()", true)
 
+func _is_joy_finger(idx: int) -> bool:
+	return joy != null and joy.touch_id != -2 and idx == joy.touch_id
+
+
 func _explore_cam_input(event: InputEvent) -> void:
-	# one finger (outside the joystick) drags the camera; pinch / wheel zooms
+	# ScreenTouch/ScreenDrag only (not emulated mouse). Joystick finger never orbits.
 	if event is InputEventScreenTouch:
-		if event.pressed:
-			touches[event.index] = event.position
+		var e := event as InputEventScreenTouch
+		if _is_joy_finger(e.index):
+			return
+		if e.pressed:
+			touches[e.index] = e.position
 		else:
-			touches.erase(event.index)
+			touches.erase(e.index)
 		dragging = touches.size() > 0
 		if touches.size() == 2:
 			var ps: Array = touches.values()
 			pinch_d = (ps[0] - ps[1]).length()
 	elif event is InputEventScreenDrag:
-		var prev: Vector2 = touches.get(event.index, event.position)
-		touches[event.index] = event.position
+		var d_ev := event as InputEventScreenDrag
+		if _is_joy_finger(d_ev.index):
+			return
+		var prev: Vector2 = touches.get(d_ev.index, d_ev.position)
+		touches[d_ev.index] = d_ev.position
 		if touches.size() == 1:
-			_explore_orbit(event.position - prev)
+			_explore_orbit(d_ev.position - prev)
 		elif touches.size() >= 2:
 			var ps: Array = touches.values()
 			var d: float = (ps[0] - ps[1]).length()
@@ -2707,14 +2784,16 @@ var _orbit_ease := 0.0
 
 func _flush_orbit_pending() -> void:
 	if orbit_pending.length_squared() < 1e-12 and absf(zoom_pending - 1.0) < 1e-6:
-		_orbit_ease = move_toward(_orbit_ease, 0.0, 0.25)
+		_orbit_ease = move_toward(_orbit_ease, 0.0, 0.35)
+		_orbit_smooth = _orbit_smooth.lerp(Vector2.ZERO, 0.35)
 		return
-	# Ease drag-start so the first frames don't dump a full delta onto a lagging cam.
-	_orbit_ease = move_toward(_orbit_ease, 1.0, 0.28)
-	var ease_k := smoothstep(0.0, 1.0, _orbit_ease)
-	var dy := orbit_pending.x * ease_k
-	var dp := orbit_pending.y * ease_k
+	# Light 1-exp smoothing on drag; no long ease-in lag (orbit feels direct).
+	_orbit_ease = 1.0
+	_orbit_smooth = _orbit_smooth.lerp(orbit_pending, 1.0 - exp(-12.0 * maxf(get_process_delta_time(), 1.0 / 120.0)))
+	var dy := _orbit_smooth.x
+	var dp := _orbit_smooth.y
 	orbit_pending = Vector2.ZERO
+	_orbit_smooth = Vector2.ZERO
 	# Keep live cam angles in lockstep with the orbit targets (no lag→spike).
 	if cam_fixed:
 		fix_yaw += dy
@@ -3793,6 +3872,8 @@ func _hat_probe_place(at: String) -> void:
 var sim_dt_override := 0.0
 
 func _process(delta: float) -> void:
+	if dbg:
+		dbg.begin_process()
 	if sim_dt_override > 0.0:
 		delta = sim_dt_override
 	if OS.has_feature("web"):
@@ -3803,6 +3884,8 @@ func _process(delta: float) -> void:
 				_layout_ui()
 	gt += delta
 	island.set_time(gt)
+	# Display pose = lerp between physics states (camera follows this).
+	_interp_body_pose()
 	var tall := _tall()
 	camera.keep_aspect = Camera3D.KEEP_HEIGHT
 	var fov_want := (66.0 if tall else 52.0)
@@ -3828,9 +3911,18 @@ func _process(delta: float) -> void:
 	_update_wade_ring(delta)
 	_watch_fps(delta)
 	_update_night(delta)
-	night_fx.apply(night_k, camera.global_position, sun.global_basis.z.normalized(), delta)
-	_cap_night_omnis()
-	_update_path_lamp_pool()
+	# Throttle night omni / lamp pool / footprints (~15 Hz).
+	_throttle_t += delta
+	var do_heavy := _throttle_t >= 0.066
+	if do_heavy:
+		_throttle_t = 0.0
+		night_fx.apply(night_k, camera.global_position, sun.global_basis.z.normalized(), 0.066)
+		if mq and mq.omni_mul <= 0.0:
+			_cap_night_omnis_off()
+		else:
+			_cap_night_omnis()
+		_update_path_lamp_pool()
+		_update_prints()
 	if toast_timer > 0.0:
 		toast_timer -= delta
 		if toast_timer < 0.5:
@@ -3842,11 +3934,11 @@ func _process(delta: float) -> void:
 		spot_turning = false
 		boy.pivoting = false
 		boy.turn_ahead = 0.0
+	# Explore walk is in _physics_process; rest/throw stay on render clock.
 	match mode:
-		Mode.EXPLORE:
-			_explore_tick(delta)
 		Mode.REST:
 			_rest_tick(delta)
+			_sync_body_pose(true)
 	_idle_hammock(delta)
 	if mode != Mode.REST:
 		zzz.visible = false
@@ -3867,36 +3959,46 @@ func _process(delta: float) -> void:
 	_throw_keys(delta)
 	if mode == Mode.THROW and throw_walk:
 		_throw_walk_tick(delta)
+		_sync_body_pose(true)
 	elif mode == Mode.THROW and (state == State.READY or state == State.AIMING or state == State.THROWING):
 		_turn_to_aim(delta)
 	else:
 		boy.aim_twist = lerpf(boy.aim_twist, 0.0, 1.0 - exp(-delta * 8.0))
 	_update_throw_pad()
 	_update_camera(delta)
-	var focus := player.global_position + Vector3(0, 0.7, 0)
-	if demo_nocut:
-		focus.y = -100.0
-	island.foliage_mat.set_shader_parameter("focus", focus)
-	island.leaf_mat.set_shader_parameter("focus", focus)
-	island.static_mat.set_shader_parameter("focus", focus)
-	island.torch_mat.set_shader_parameter("focus", focus)
-	# Keep the see-through cone tight. Explore used to punch a solid grey sky-hole through
-	# the canopy on iPhone (cut_radius 5.2); spring-arm pull-in handles occlusion instead.
-	var cr_foliage := 2.2 if mode == Mode.EXPLORE else 1.6
-	var cr_static := 1.7 if mode == Mode.EXPLORE else 1.4
-	island.foliage_mat.set_shader_parameter("cut_radius", cr_foliage)
-	island.leaf_mat.set_shader_parameter("cut_radius", cr_foliage)
-	island.static_mat.set_shader_parameter("cut_radius", cr_static)
-	island.torch_mat.set_shader_parameter("cut_radius", cr_static)
-	if island.leaf_mat:
-		island.leaf_mat.set_shader_parameter("near_fade", mq.leaf_near_fade if mq else 1.1)
-	_update_prints()
+	# Cutout uniforms ~15 Hz (was every frame).
+	if do_heavy or gt < 0.5:
+		_cut_focus = player.global_position + Vector3(0, 0.7, 0)
+		if demo_nocut:
+			_cut_focus.y = -100.0
+		_cut_cr_f = 2.2 if mode == Mode.EXPLORE else 1.6
+		_cut_cr_s = 1.7 if mode == Mode.EXPLORE else 1.4
+		island.foliage_mat.set_shader_parameter("focus", _cut_focus)
+		island.leaf_mat.set_shader_parameter("focus", _cut_focus)
+		island.static_mat.set_shader_parameter("focus", _cut_focus)
+		island.torch_mat.set_shader_parameter("focus", _cut_focus)
+		island.foliage_mat.set_shader_parameter("cut_radius", _cut_cr_f)
+		island.leaf_mat.set_shader_parameter("cut_radius", _cut_cr_f)
+		island.static_mat.set_shader_parameter("cut_radius", _cut_cr_s)
+		island.torch_mat.set_shader_parameter("cut_radius", _cut_cr_s)
+		if island.leaf_mat:
+			island.leaf_mat.set_shader_parameter("near_fade", mq.leaf_near_fade if mq else 1.1)
 	_update_audio(delta)
 	_audio_tick(delta)
 	if mq:
 		mq.watch_frame(delta, get_viewport(), sun, refl_level, _set_refl_level)
+	if dbg:
+		dbg.end_process()
+		dbg.note_frame(delta, mq.scale_3d if mq else 1.0, mq.tier_name() if mq else "?")
 
 func _physics_process(delta: float) -> void:
+	if dbg:
+		dbg.begin_physics()
+	# Advance body prev→curr for render interpolation.
+	_body_pos_prev = _body_pos
+	_body_yaw_prev = _body_yaw
+	if mode == Mode.EXPLORE:
+		_explore_tick(delta)
 	if state == State.FLYING:
 		for i in 4:
 			if state != State.FLYING:
@@ -3909,6 +4011,24 @@ func _physics_process(delta: float) -> void:
 		stone.position = stone_pos
 		if sink_timer > 1.6:
 			_finish()
+	if dbg:
+		dbg.end_physics()
+
+
+func _cap_night_omnis_off() -> void:
+	## &q=min: kill night omnis for GPU isolation.
+	if island == null:
+		return
+	for tn in island.torches:
+		if tn and tn.light:
+			tn.light.visible = false
+			tn.light.light_energy = 0.0
+	if island.campfire and island.campfire.light:
+		island.campfire.light.visible = false
+		island.campfire.light.light_energy = 0.0
+		island.campfire.light.shadow_enabled = false
+	if night_fx:
+		night_fx.apply(0.0, camera.global_position if camera else Vector3.ZERO, Vector3.FORWARD, 0.0)
 
 ## Throw-mode camera: right behind the stone in his hand, looking along the aim over his shoulder, so the
 ## aim line runs up the screen. While a finger is down it turns part way towards the aim, and all the way
@@ -4219,6 +4339,7 @@ func _snap_explore_cam(front := false) -> void:
 	cam_target = c[0]; cam_yaw = c[1]; cam_pitch = c[2]; cam_dist = c[3]
 
 func _toggle_cam_fixed() -> void:
+	_begin_cam_blend()
 	cam_fixed = not cam_fixed
 	if cam_fixed:
 		# Freeze at the current follow framing (retarget if already resting).
@@ -4233,10 +4354,7 @@ func _toggle_cam_fixed() -> void:
 		fix_yaw = float(c[1])
 		fix_pitch = float(c[2])
 		fix_dist = float(c[3])
-		cam_target = fix_target
-		cam_yaw = fix_yaw
-		cam_pitch = fix_pitch
-		cam_dist = fix_dist
+		# Don't snap — _update_camera eases from _cam_blend_from_* over 0.35 s.
 	_persist_cam_fixed()
 	_update_ui()
 
@@ -4258,8 +4376,21 @@ func _load_cam_fixed() -> void:
 	cam_fixed = str(v) == "1"
 
 
+func _mix_cam_blend() -> void:
+	if _cam_blend_t <= 0.0:
+		return
+	var u := 1.0 - (_cam_blend_t / maxf(_cam_blend_dur, 0.001))
+	var e := u * u * (3.0 - 2.0 * u)
+	cam_target = _cam_blend_from_t.lerp(cam_target, e)
+	cam_yaw = lerp_angle(_cam_blend_from_yaw, cam_yaw, e)
+	cam_pitch = lerpf(_cam_blend_from_pitch, cam_pitch, e)
+	cam_dist = lerpf(_cam_blend_from_dist, cam_dist, e)
+
+
 func _update_camera(delta: float) -> void:
 	_flush_orbit_pending()
+	if _cam_blend_t > 0.0:
+		_cam_blend_t = maxf(_cam_blend_t - delta, 0.0)
 	if demo_cam:
 		if demo_track.size() > 0:
 			var tr: Array = demo_track
@@ -4267,6 +4398,7 @@ func _update_camera(delta: float) -> void:
 			cam_yaw = (float(tr[0]) if tr.size() > 4 else face_yaw + float(tr[0]))
 			cam_pitch = tr[1]
 			cam_dist = tr[2]
+		_mix_cam_blend()
 		_apply_camera(delta)
 		return
 	# Fixed mode: never auto-follow while exploring; on REST soft-retarget once so
@@ -4291,6 +4423,7 @@ func _update_camera(delta: float) -> void:
 		cam_pitch = fix_pitch
 		if dragging:
 			cam_dist = fix_dist
+		_mix_cam_blend()
 		_apply_camera(delta)
 		return
 	var want: Array
@@ -4357,6 +4490,8 @@ func _update_camera(delta: float) -> void:
 		cam_yaw = lerp_angle(cam_yaw, want[1], k)
 		cam_pitch = lerp(cam_pitch, want[2], k)
 		cam_dist = lerp(cam_dist, want[3], k)
+	# Mode switch ease-in-out (~0.35 s) — no snap / stall.
+	_mix_cam_blend()
 	_apply_camera(delta)
 
 func _cam_blocked(q: Vector3) -> bool:
@@ -4383,11 +4518,14 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	# Soft spring arm: frame-rate independent pull-in (no constant-α snap at 120Hz).
 	var want_k := 1.0
 	var orbiting := dragging or orbit_pending.length_squared() > 1e-10 or _orbit_ease > 0.05
-	if cam_dist < 20.0 and (not demo_cam or demo_track.size() > 0):
-		for i in range(2, 12):
-			var q := cam_target + full_off * (i / 11.0)
+	var moving := cur_speed > 0.12
+	# Fewer probes while walking — every other frame, coarser steps.
+	if cam_dist < 20.0 and (not demo_cam or demo_track.size() > 0) and not (moving and Engine.get_process_frames() % 2 == 1):
+		var steps := 6 if moving else 10
+		for i in range(2, steps + 1):
+			var q := cam_target + full_off * (float(i) / float(steps))
 			if _cam_blocked(q):
-				want_k = maxf((i - 1) / 11.0, 1.35 / maxf(cam_dist, 0.01))
+				want_k = maxf(float(i - 1) / float(steps), 1.35 / maxf(cam_dist, 0.01))
 				break
 	# During orbit, hold arm length — probe flicker was the cam_ds spike source.
 	if orbiting:
@@ -4400,26 +4538,20 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	_cam_arm_k = lerpf(_cam_arm_k, _cam_arm_want, 1.0 - exp(-delta * arm_rate))
 	var off := full_off * _cam_arm_k
 	var right := Vector3(cos(cam_yaw), 0, -sin(cam_yaw))
-	# Lateral dodge only while nearly idle. During walk/run a sideways hop shoves the boy
-	# across the screen (walk_120 spike); prefer smoothed arm pull-in along the look axis
-	# so look_at(cam_target) keeps him centred. Follow target is never rewritten here.
+	# Lateral dodge only while nearly idle.
 	_cam_slide_want = 0.0
-	var moving := cur_speed > 0.12
-	if mode == Mode.EXPLORE and not orbiting:
+	if mode == Mode.EXPLORE and not orbiting and not moving:
 		var probe := cam_target + off
 		if _cam_blocked(probe):
-			if not moving:
-				for s in [0.55, -0.55, 1.1, -1.1, 1.8, -1.8, 2.4, -2.4]:
-					if not _cam_blocked(probe + right * s):
-						_cam_slide_want = s
-						break
-			# Deeper arm pull (smoothed) — never teleport.
+			for s in [0.55, -0.55, 1.1, -1.1, 1.8, -1.8]:
+				if not _cam_blocked(probe + right * s):
+					_cam_slide_want = s
+					break
 			if _cam_slide_want == 0.0:
-				for kk in [0.82, 0.68, 0.54, 0.42, 0.32]:
+				for kk in [0.82, 0.68, 0.54, 0.42]:
 					if not _cam_blocked(cam_target + full_off * kk):
 						_cam_arm_want = minf(_cam_arm_want, kk)
 						break
-	# Idle dodge eases in/out slowly; while moving, bleed any leftover slide away.
 	var slide_rate := (1.6 if absf(_cam_slide_want) > absf(_cam_slide) else 2.4) if not moving else 4.0
 	if moving:
 		_cam_slide_want = 0.0
@@ -4473,16 +4605,21 @@ func _build_reflection() -> void:
 	island.water_mat.set_shader_parameter("refl_tex", refl.texture())
 	island.water_mat.set_shader_parameter("refl_guard", WaterReflection.GUARD)
 	# Mobile / web: drop internal 3D res so UI stays crisp while GPU fill falls (~DPR 3 → ~1.5–2×).
-	mq.setup(is_web, _opt("mobile") == "1", get_viewport(), sun)
+	# iOS/WebKit defaults to LOW; URL ?q=high|mid|low|min freezes the ladder.
+	mq.setup(is_web, _opt("mobile") == "1", get_viewport(), sun, _is_ios_web())
 	mq.changed.connect(func(_t: int) -> void: _apply_mq_materials())
+	var q_opt := _opt("q", "")
+	if q_opt != "":
+		mq.force_tier(q_opt, get_viewport(), sun)
 	_apply_mq_materials()
 	var want := _opt("refl", "auto")
-	refl_auto = want == "auto"
-	# On phones start one step lighter so the first walk doesn't hitch on full reflection.
-	# Mobile: reflection off by default (inland path); adaptive can leave it off.
+	refl_auto = want == "auto" and q_opt == ""
+	# On phones start with reflection off; ?q=min forces shadows+refl off.
 	var start_l := 2 if mq.mobile else 0
+	if q_opt == "min" or not mq.shadows_on:
+		start_l = 3
 	_set_refl_level({"0": 2, "low": 1}.get(want, start_l))
-	if _opt("shadow") == "0":
+	if _opt("shadow") == "0" or q_opt == "min":
 		_set_refl_level(3)
 	# lights whose glitter streaks across the waves at night: the campfire, the lighthouse, then the lamps
 	var pos := PackedVector4Array()
@@ -4517,10 +4654,13 @@ func _set_refl_level(l: int) -> void:
 
 func _apply_mq_materials() -> void:
 	if island and island.water_mat:
+		# cheap≥1 skips wave/boat glitter paths in water.gdshader (= "no water waves" for min).
 		island.water_mat.set_shader_parameter("cheap", mq.water_cheap)
 	if island and island.leaf_mat:
-		island.leaf_mat.set_shader_parameter("near_fade", mq.leaf_near_fade)
+		island.leaf_mat.set_shader_parameter("near_fade", mq.leaf_near_fade * (2.0 if mq.foliage_mul < 0.75 else 1.0))
 	_scale_particles(mq.particle_mul)
+	if sun:
+		sun.shadow_enabled = mq.shadows_on and refl_level < 3
 
 func _scale_particles(mul: float) -> void:
 	for n in get_tree().get_nodes_in_group("v27_particles") if get_tree() else []:
@@ -4528,7 +4668,12 @@ func _scale_particles(mul: float) -> void:
 			var p := n as CPUParticles3D
 			if not p.has_meta("base_amount"):
 				p.set_meta("base_amount", p.amount)
-			p.amount = maxi(1, int(round(float(p.get_meta("base_amount")) * mul)))
+			if mul <= 0.001:
+				p.amount = 1
+				p.emitting = false
+			else:
+				p.emitting = true
+				p.amount = maxi(1, int(round(float(p.get_meta("base_amount")) * mul)))
 
 ## FPS label + desktop reflection auto-drop (mobile ladder is MobileQuality.watch_frame).
 func _watch_fps(delta: float) -> void:
