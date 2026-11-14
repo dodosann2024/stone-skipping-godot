@@ -16,6 +16,9 @@ const TWIST_MAX := 0.5      # chest ahead of the hips while aiming (rad)
 const SAVE_PATH := "user://best.cfg"
 const WALK_MAX := 1.15
 const RUN_SPEED := 2.7
+## Stick mag to enter run / drop back to walk (hysteresis so the threshold doesn't chatter).
+const RUN_STICK_ON := 0.90
+const RUN_STICK_OFF := 0.82
 
 enum Mode { EXPLORE, THROW, VIEW, REST }
 enum State { READY, AIMING, THROWING, FLYING, SINKING }
@@ -146,6 +149,8 @@ var dbg_max_step := 0.0
 var dbg_gnd_err := 0.0
 var _orbit_smooth := Vector2.ZERO
 var keys_run := false
+## Sticky run gate from stick magnitude (see RUN_STICK_ON/OFF).
+var stick_running := false
 
 # rest (hammock / towel)
 var rest_kind := ""
@@ -262,6 +267,11 @@ func _ready() -> void:
 	is_web = OS.has_feature("web")
 	RenderingServer.set_default_clear_color(Color(0.02, 0.05, 0.08))
 	ui_font = load("res://fonts/ui.otf")
+	# CJK primary + Latin/Greek companion so HUD symbols (Δ etc.) never tofu —
+	# Godot's shaper often skips Greek codepoints inside Noto CJK alone.
+	var latin: Font = load("res://fonts/ui_latin.otf")
+	if ui_font and latin and ui_font is FontFile:
+		(ui_font as FontFile).fallbacks = [latin]
 	_load_best()
 	_build_environment()
 	island = Island.new()
@@ -341,7 +351,15 @@ func _interp_body_pose() -> void:
 		_sync_body_pose(true)
 		return
 	var f := Engine.get_physics_interpolation_fraction()
-	player.position = _body_pos_prev.lerp(_body_pos, f)
+	var p := _body_pos_prev.lerp(_body_pos, f)
+	# Critical: sample height at the *display* XZ. Lerping Y between physics samples
+	# chords under hills — boy looks buried while moving and pops up when stopped.
+	if mode == Mode.EXPLORE:
+		p.y = _surface(p.x, p.z)
+		# Keep soft dock-lip easing if physics is mid-step onto the deck.
+		if absf(p.y - ground_y) > 0.2 and (_on_dock(p.x, p.z) != _on_dock(_body_pos.x, _body_pos.z)):
+			p.y = lerpf(player.position.y, p.y, 0.5)
+	player.position = p
 	player.rotation.y = lerp_angle(_body_yaw_prev, _body_yaw, f)
 
 
@@ -1162,6 +1180,7 @@ func _leave_throw() -> void:
 	face_yaw = player.rotation.y
 	ex_yaw = face_yaw + PI
 	boy.set_idle()
+	_sync_body_pose(true)
 	_hide_preview()
 	_update_ui()
 # ------------------------------------------------------------------ explore: walking / running
@@ -1289,7 +1308,12 @@ func _move_input() -> Vector2:
 func _explore_tick(delta: float) -> void:
 	var inp := _move_input()
 	var mag := inp.length()
-	var running := mag >= 0.88 or (demo_mode and demo_run)
+	# Hysteresis on the run gate — push-to-run still, but no chatter at the lip.
+	if mag >= RUN_STICK_ON or (demo_mode and demo_run):
+		stick_running = true
+	elif mag < RUN_STICK_OFF:
+		stick_running = false
+	var running := stick_running
 	var fwd := Vector3(-sin(ex_yaw), 0, -cos(ex_yaw))
 	var right := Vector3(cos(ex_yaw), 0, -sin(ex_yaw))
 	var wish := right * inp.x - fwd * inp.y
@@ -1299,8 +1323,15 @@ func _explore_tick(delta: float) -> void:
 	var wish_yaw := atan2(-wish.x, -wish.z)
 	var need := wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0
 	var spd_now := move_vel.length()
-	if mag > 0.05 and Boy.wants_spot_turn(need, spd_now):
+	# Spot-turn ONLY for a gentle in-place pivot. A firm stick push must walk/arc
+	# immediately — the old gate fired on camera-forward (~180° from face) and
+	# froze translation for ~0.5–1 s (the iPhone "drag then walk" lag).
+	if mag > 0.05 and mag < 0.38 and Boy.wants_spot_turn(need, spd_now):
 		spot_turning = true
+	if spot_turning and mag >= 0.42:
+		# Stick committed to moving — break out of the pivot and stride.
+		spot_turning = false
+		spot_rate = 0.0
 	if spot_turning:
 		if mag > 0.05:
 			spot_goal = wish_yaw
@@ -1309,7 +1340,10 @@ func _explore_tick(delta: float) -> void:
 			spot_turning = false
 			spot_rate = 0.0
 	if mag > 0.05 and not spot_turning:
-		var spd := RUN_SPEED if running else lerpf(0.55, WALK_MAX, clampf(mag / 0.85, 0.0, 1.0))
+		# Ease-in walk curve (light stick = soft stroll); full push still reaches WALK_MAX.
+		var walk_u := clampf((mag - 0.06) / 0.78, 0.0, 1.0)
+		walk_u = walk_u * walk_u * (3.0 - 2.0 * walk_u)
+		var spd := RUN_SPEED if running else lerpf(0.42, WALK_MAX, walk_u)
 		if wading:
 			spd *= 0.6
 		target_v = wish.normalized() * spd
@@ -1317,10 +1351,10 @@ func _explore_tick(delta: float) -> void:
 	elif settle_t < 0.6 and not spot_turning:
 		# let go mid-stride: finish the step at a stroll, so the planted foot is not dragged into idle
 		if not boy.settling() and settle_t <= 0.0:
-			boy.begin_settle(0.38)
+			boy.begin_settle(0.42)
 		if boy.settling():
 			settle_t += delta
-			target_v = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * 0.45
+			target_v = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * 0.40
 		else:
 			settle_t = 1.0
 	# he walks the way he faces: the heading turns towards the stick as fast as his feet can corner (slowing
@@ -1331,12 +1365,19 @@ func _explore_tick(delta: float) -> void:
 		var st := Boy.spot_turn(face_yaw, face_yaw + need, spot_rate, delta)
 		face_yaw = st[0]
 		spot_rate = st[1]
+		# Weight shift into the turn — lean peaks mid-pivot, settles as heading catches up.
+		var lean_w := clampf(absf(need) / 1.2, 0.0, 1.0) * (0.55 + 0.45 * clampf(spot_rate / 2.5, 0.0, 1.0))
+		boy.turn_lean = lerpf(boy.turn_lean, signf(need) * lean_w * 0.85, 1.0 - exp(-delta * 7.0))
 	elif spd_t > 0.05:
 		var mt := Boy.move_turn(face_yaw, atan2(-target_v.x, -target_v.z), s, delta)
 		face_yaw = mt[0]
 		spd_t *= float(mt[1])
-	# Soft accel so screen-space boy delta stays even during walk/run ramp (max/med < 2).
-	var acc := (2.2 if s < WALK_MAX else 1.6) if spd_t > s else 6.0
+	# Accel: a couple of steps into a run; decel a bit snappier but not a hard stop.
+	var acc: float
+	if spd_t > s:
+		acc = 2.8 if s < WALK_MAX * 0.85 else 1.35
+	else:
+		acc = 4.6 if s > WALK_MAX else 5.5
 	s = move_toward(s, spd_t, acc * delta)
 	move_vel = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * s
 	# Always step from the physics body pose (not the interpolated display pose).
@@ -1385,7 +1426,9 @@ func _explore_tick(delta: float) -> void:
 	boy.wading = wading
 	boy.pivoting = spot_turning
 	boy.turn_ahead = wrapf(spot_goal - face_yaw, -PI, PI) if spot_turning else (wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0)
-	boy.turn_lean = lerpf(boy.turn_lean, clampf(boy.turn_ahead, -0.7, 0.7), 1.0 - exp(-delta * 5.0))
+	# Spot-turn already wrote a weight-shift lean above; don't flatten it here.
+	if not spot_turning:
+		boy.turn_lean = lerpf(boy.turn_lean, clampf(boy.turn_ahead, -0.7, 0.7), 1.0 - exp(-delta * 5.0))
 	boy.set_move(cur_speed)
 	if cur_speed < 0.05:
 		boy.set_idle()
@@ -2514,7 +2557,7 @@ func _rest_tick(delta: float) -> void:
 				rest_phase = 2
 				rest_t = 0.0
 		2, 6:
-			var dur := 0.85
+			var dur := 1.05
 			var k := clampf(rest_t / dur, 0.0, 1.0)
 			if rest_phase == 6:
 				k = 1.0 - k
@@ -2526,24 +2569,24 @@ func _rest_tick(delta: float) -> void:
 				var edge := rest_approach.lerp(rest_root_sit, 0.55)
 				edge.y = maxf(edge.y, rest_root_sit.y + 0.06)
 				root = rest_approach.lerp(edge, clampf(ks * 1.35, 0.0, 1.0)).lerp(rest_root_sit, smoothstep(0.45, 1.0, ks))
-				root.y += 0.14 * sin(PI * ks)
+				root.y += 0.16 * sin(PI * ks)
 			else:
 				root = rest_approach.lerp(rest_root_sit, ks)
 				# Clear the seat board mid-lerp; settle by snap near the end.
 				var is_log_exit := rest_kind == "seat" and seat_i >= 0 and seat_i < island.seats.size() \
 					and String(island.seats[seat_i].get("name", "")) == "坐木"
-				root.y += (0.20 if is_log_exit else 0.14) * sin(PI * ks)
+				root.y += (0.24 if is_log_exit else 0.17) * sin(PI * ks)
 				if rest_phase == 6:
 					# Hold seat-height Y until the sit clip has mostly stood up.
-					var stand_u := smoothstep(0.08, 0.55, 1.0 - ks)
-					var y_pad := 0.14 if is_log_exit else 0.05
+					var stand_u := smoothstep(0.06, 0.62, 1.0 - ks)
+					var y_pad := 0.16 if is_log_exit else 0.07
 					var y_hold := lerpf(rest_root_sit.y + y_pad, rest_approach.y, stand_u)
 					root.y = maxf(root.y, y_hold)
 					# Slide further off the seat so standing legs don't clip the log volume.
 					var away: Vector3 = rest_approach - rest_seat
 					away.y = 0.0
 					if away.length() > 0.05:
-						root += away.normalized() * ((0.28 if is_log_exit else 0.12) * (1.0 - ks))
+						root += away.normalized() * ((0.32 if is_log_exit else 0.16) * (1.0 - ks))
 			swing = island.swing_hammock(swing_amp * sin(gt * 1.3)) if sleep else Transform3D.IDENTITY
 			boy.global_transform = swing * Transform3D(rest_sit_b, root)
 			# Seat exit: live mesh clearance against the seat top footprint.
@@ -2746,11 +2789,20 @@ func _is_joy_finger(idx: int) -> bool:
 	return joy != null and joy.touch_id != -2 and idx == joy.touch_id
 
 
+func _touch_on_joystick(screen_pos: Vector2) -> bool:
+	if joy == null or not joy.visible:
+		return false
+	var r := joy.get_global_rect()
+	# Pad the hit area slightly — thumb often lands on the rim.
+	r = r.grow(12.0)
+	return r.has_point(screen_pos)
+
+
 func _explore_cam_input(event: InputEvent) -> void:
 	# ScreenTouch/ScreenDrag only (not emulated mouse). Joystick finger never orbits.
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
-		if _is_joy_finger(e.index):
+		if _is_joy_finger(e.index) or (e.pressed and _touch_on_joystick(e.position)):
 			return
 		if e.pressed:
 			touches[e.index] = e.position
@@ -2763,6 +2815,9 @@ func _explore_cam_input(event: InputEvent) -> void:
 	elif event is InputEventScreenDrag:
 		var d_ev := event as InputEventScreenDrag
 		if _is_joy_finger(d_ev.index):
+			return
+		# Don't start a camera drag that began on the stick pad.
+		if not touches.has(d_ev.index) and _touch_on_joystick(d_ev.position):
 			return
 		var prev: Vector2 = touches.get(d_ev.index, d_ev.position)
 		touches[d_ev.index] = d_ev.position
@@ -3379,17 +3434,26 @@ func _finish() -> void:
 	_update_ui()
 
 func _stamp_footprint(side: int) -> void:
+	# Prefer phase-driven plant under the body (stable with interp) and fall back to skinned toes.
+	var yaw := face_yaw
+	var side_sign := -1.0 if side == 0 else 1.0
+	var right := Vector2(cos(yaw), -sin(yaw))
+	var fwd := Vector2(-sin(yaw), -cos(yaw))
+	var c := Vector2(player.global_position.x, player.global_position.z) \
+		+ right * (0.08 * side_sign) + fwd * 0.04
 	var fp := boy.foot_points(side)
 	var heel: Vector3 = fp[0]
 	var ball: Vector3 = fp[1]
 	var f := Vector2(ball.x - heel.x, ball.z - heel.z)
-	if f.length() < 0.03:
-		return
-	var c := Vector2(heel.x, heel.z) + f * 0.6
+	if f.length() >= 0.03:
+		# Blend skinned contact toward the phase plant so prints track the gait cycle.
+		var skin_c := Vector2(heel.x, heel.z) + f * 0.6
+		c = c.lerp(skin_c, 0.55)
+		yaw = atan2(f.y, f.x)
 	# only on dry or wet sand: not on the dock, the grass, in the sea or under the running wash
 	if _surface_kind(c.x, c.y) != "sand" or Island.wash_covers(c.x, c.y, gt, 0.012):
 		return
-	print_buf[print_i] = Vector4(c.x, c.y, atan2(f.y, f.x), gt)
+	print_buf[print_i] = Vector4(c.x, c.y, yaw, gt)
 	print_wash[print_i] = -1.0
 	print_i = (print_i + 1) % PRINTS
 	_upload_prints()
@@ -4495,9 +4559,9 @@ func _update_camera(delta: float) -> void:
 			var rate := 0.6 + 0.5 * clampf(cur_speed / RUN_SPEED, 0.0, 1.0)
 			ex_yaw = lerp_angle(ex_yaw, face_yaw, 1.0 - exp(-delta * rate))
 		want = _explore_cam()
-		# Near-lock follow while moving so accel doesn't shove the boy across the screen.
+		# Follow with a little body lag so the camera feels attached, not locked-on.
 		var move_k := clampf(cur_speed / maxf(WALK_MAX, 0.01), 0.0, 1.0)
-		k = 1.0 - exp(-delta * lerpf(10.0, 28.0, move_k))
+		k = 1.0 - exp(-delta * lerpf(8.0, 16.0, move_k))
 		if dragging or orbit_pending.length_squared() > 1e-10:
 			# Drag: angles already snapped in _flush_orbit_pending; keep target tight.
 			k = 1.0
@@ -4545,9 +4609,9 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	var want_k := 1.0
 	var orbiting := dragging or orbit_pending.length_squared() > 1e-10 or _orbit_ease > 0.05
 	var moving := cur_speed > 0.12
-	# Fewer probes while walking — every other frame, coarser steps.
-	if cam_dist < 20.0 and (not demo_cam or demo_track.size() > 0) and not (moving and Engine.get_process_frames() % 2 == 1):
-		var steps := 6 if moving else 10
+	# Probe every frame; smooth the result so clearance never chatters.
+	if cam_dist < 20.0 and (not demo_cam or demo_track.size() > 0):
+		var steps := 8 if moving else 10
 		for i in range(2, steps + 1):
 			var q := cam_target + full_off * (float(i) / float(steps))
 			if _cam_blocked(q):
@@ -4556,11 +4620,10 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	# During orbit, hold arm length — probe flicker was the cam_ds spike source.
 	if orbiting:
 		want_k = _cam_arm_k
-	# Hysteresis: don't chatter when the probe flips a step.
-	if absf(want_k - _cam_arm_want) > 0.035:
-		_cam_arm_want = want_k
-	# Pull-in limited/smoothed; recover (push out) even slower so clearance doesn't ping-pong.
-	var arm_rate := 2.8 if orbiting else (3.4 if _cam_arm_want < _cam_arm_k - 0.01 else 2.0)
+	# Soft chase of probe result (no step hysteresis snap).
+	_cam_arm_want = lerpf(_cam_arm_want, want_k, 1.0 - exp(-delta * 10.0))
+	# Pull-in smoothed; recover slower so clearance doesn't ping-pong.
+	var arm_rate := 2.6 if orbiting else (3.0 if _cam_arm_want < _cam_arm_k - 0.01 else 1.8)
 	_cam_arm_k = lerpf(_cam_arm_k, _cam_arm_want, 1.0 - exp(-delta * arm_rate))
 	var off := full_off * _cam_arm_k
 	var right := Vector3(cos(cam_yaw), 0, -sin(cam_yaw))
@@ -4882,6 +4945,7 @@ func _place(p: Vector3, yaw: float) -> void:
 	face_yaw = yaw
 	player.rotation = Vector3(0, yaw, 0)
 	move_vel = Vector3.ZERO
+	_sync_body_pose(true)
 	_cam_slide = 0.0
 	_cam_slide_want = 0.0
 	_cam_arm_k = 1.0

@@ -19,8 +19,9 @@ const MODEL_PATH := "res://boy/boy.glb"
 const MODEL_OVERRIDE_PATH := "res://boy/boy_override.glb"
 const META := "res://boy/boy_meta.json"
 const T_RELEASE := 0.55
-const RUN_FROM := 1.35
-const RUN_TO := 2.2
+## Blend into run clip once past a brisk walk (matches main WALK_MAX≈1.15 → RUN_SPEED≈2.7).
+const RUN_FROM := 1.15
+const RUN_TO := 2.05
 const SIT_HIPS_Y := 0.248  # unscaled Mixamo sit hips (see process_tripo / smoke)
 ## Surface-name hints for a dedicated face material slot (eye/mouth texture swaps).
 const FACE_SLOT_HINTS := ["face", "Face", "head", "Head", "skin_face", "FaceMat", "eye", "Eye"]
@@ -1869,16 +1870,18 @@ func _tick(delta: float) -> void:
 			dist = Vector3(global_position.x - prev_pos.x, 0, global_position.z - prev_pos.z).length()
 		prev_pos = global_position
 		has_prev = true
-		var stride := float(clips["run"]["stride"]) if run_k > 0.5 else float(clips["walk"]["stride"])
-		# Match phase advance to travel; cap so a hitch/ProMotion spike can't jump a whole step.
-		var dphase := dist / maxf(stride, 0.05)
-		if pivoting or dist < 0.001:
+		# Blend stride with run_k so walk→run doesn't jump the phase rate at 0.5.
+		var stride := lerpf(float(clips["walk"]["stride"]), float(clips["run"]["stride"]), run_k)
+		# Drive phase from smoothed speed (matches anim to locomotion). Position delta
+		# only clamps hitch overshoot — never leads, so interp/display lag can't skate.
+		var dphase: float
+		if pivoting or speed_s < 0.04:
 			dphase = delta / maxf(float(clips["walk"]["length"]), 0.2)
 		else:
-			# Prefer speed·δ when a long frame would over-advance from position delta alone.
-			var spd_phase := (speed_s * delta) / maxf(stride, 0.05)
-			dphase = minf(dphase, maxf(spd_phase, 1e-5))
-		dphase = minf(dphase, 0.22)
+			dphase = (speed_s * delta) / maxf(stride, 0.05)
+			if dist > 1e-5:
+				dphase = minf(dphase, dist / maxf(stride, 0.05) * 1.15)
+		dphase = minf(dphase, 0.18)
 		phase = fposmod(phase + dphase, 1.0)
 		# walking footfalls only when translating after the spot-turn grace window
 		if not pivoting and pivot_grace <= 0.0:
@@ -1998,8 +2001,9 @@ func _polish_gait(delta: float) -> void:
 		skel.force_update_transform()
 	else:
 		hip_shift = hip_shift.lerp(Vector3.ZERO, 1.0 - exp(-delta * 6.0))
-	# Double-frequency bob: dip on each footfall, rise on mid-swing.
-	var want_bob := -absf(sin(phase * TAU)) * bob_amp if moving else 0.0
+	# Slight UP bob on mid-swing only — never dip the root below model_base
+	# (downward bob read as "buried in the island" while the stick was held).
+	var want_bob := absf(sin(phase * TAU)) * bob_amp * 0.55 if moving else 0.0
 	_walk_bob = lerpf(_walk_bob, want_bob, 1.0 - exp(-delta * 10.0))
 	model.position = model_base + Vector3(hip_shift.x, _walk_bob, 0)
 
@@ -2050,27 +2054,30 @@ static func twist_spine(sk: Skeleton3D, tw: float) -> void:
 		sk.set_bone_pose_rotation(bi, Quaternion(axis, tw * float(TWIST_SHARE[j])) * sk.get_bone_pose_rotation(bi))
 
 
-const SPOT_RATE := 3.4
-const STEER_GRIP := 4.5
-const STEER_TOP := 6.0
+const SPOT_RATE := 2.8
+const STEER_GRIP := 4.0
+const STEER_TOP := 5.5
 
 static func spot_turn(face: float, want: float, rate: float, delta: float) -> Array:
 	var need := wrapf(want - face, -PI, PI)
-	var top := minf(SPOT_RATE, 1.2 + absf(need) * 2.6)
-	rate = move_toward(rate, top, delta * 14.0)
+	# Ease into the pivot (weight settles on the planted foot) then finish cleanly.
+	var top := minf(SPOT_RATE, 0.9 + absf(need) * 2.2)
+	rate = move_toward(rate, top, delta * 9.0)
 	var stp := minf(absf(need), rate * delta)
 	return [face + signf(need) * stp, rate]
 
 
 static func wants_spot_turn(need: float, speed: float) -> bool:
-	return (absf(need) > 1.1 and speed < 0.4) or (absf(need) > 2.0 and speed < 0.9)
+	# Standing / near-stop only. Never steal a walking stick push.
+	return speed < 0.18 and absf(need) > 1.25
 
 
 static func move_turn(face: float, want: float, speed: float, delta: float) -> Array:
 	var need := wrapf(want - face, -PI, PI)
-	var top := minf(STEER_TOP, STEER_GRIP / maxf(speed, 0.3))
-	var stp := minf(absf(need), minf(top, absf(need) * 9.0) * delta)
-	return [face + signf(need) * stp, 1.0 - 0.72 * smoothstep(0.5, 1.6, absf(need))]
+	var top := minf(STEER_TOP, STEER_GRIP / maxf(speed, 0.35))
+	var stp := minf(absf(need), minf(top, absf(need) * 8.0) * delta)
+	# Heavier speed kill on sharp corners — reads as weight, not ice-skate.
+	return [face + signf(need) * stp, 1.0 - 0.82 * smoothstep(0.45, 1.55, absf(need))]
 
 
 func spin_busy() -> bool:
