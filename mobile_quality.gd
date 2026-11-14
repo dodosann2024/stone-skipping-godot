@@ -48,21 +48,21 @@ func _apply(vp: Viewport, sun: DirectionalLight3D) -> void:
 		Tier.MID:
 			scale_3d = 0.78
 			shadow_dist = 22.0
-			shadow_blur = 6.0
+			shadow_blur = 7.0
 			particle_mul = 0.45
 			water_cheap = 0.7
 			leaf_near_fade = 1.7
 		Tier.LOW:
 			scale_3d = 0.70
 			shadow_dist = 18.0
-			shadow_blur = 6.2
+			shadow_blur = 7.2
 			particle_mul = 0.3
 			water_cheap = 0.9
 			leaf_near_fade = 1.95
 		Tier.MIN:
 			scale_3d = 0.58
 			shadow_dist = 14.0
-			shadow_blur = 6.5
+			shadow_blur = 7.5
 			particle_mul = 0.18
 			water_cheap = 1.0
 			leaf_near_fade = 2.2
@@ -84,9 +84,10 @@ func _apply(vp: Viewport, sun: DirectionalLight3D) -> void:
 		if mobile:
 			# One orthogonal map (half the shadow primitives of 2-splits) + high blur ≈ soft PCF.
 			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-			sun.shadow_bias = 0.035
-			sun.shadow_normal_bias = 1.4
+			sun.shadow_bias = 0.04
+			sun.shadow_normal_bias = 1.5
 			sun.directional_shadow_pancake_size = 3.0
+			sun.light_angular_distance = maxf(sun.light_angular_distance, 2.8)
 	changed.emit(tier)
 
 

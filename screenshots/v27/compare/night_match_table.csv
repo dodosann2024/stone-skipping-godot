@@ -1,0 +1,13 @@
+shot,region,v26_L,v26_RB,v27_L,v27_RB,L_ratio,RB_delta,boy_ground_v26,boy_ground_v27
+beach,feet,37.2,33.2,38.4,-23.6,1.032,-56.8,,
+beach,far,54.8,50.3,73.5,18.9,1.342,-31.3,,
+beach,torso,54.7,60.2,51.7,23.5,0.945,-36.7,,
+beach,boy_ground_ratio,,,,,,,1.471,1.348
+campfire,feet,55.1,48.7,78.0,15.5,1.415,-33.1,,
+campfire,far,28.1,25.1,48.8,-42.6,1.733,-67.7,,
+campfire,torso,96.9,116.4,71.9,82.1,0.742,-34.2,,
+campfire,boy_ground_ratio,,,,,,,1.758,0.921
+forest,feet,49.7,34.6,53.0,25.5,1.065,-9.1,,
+forest,far,31.2,0.7,38.7,-13.6,1.243,-14.3,,
+forest,torso,58.3,60.3,49.8,49.8,0.854,-10.5,,
+forest,boy_ground_ratio,,,,,,,1.172,0.940

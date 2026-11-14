@@ -1,2 +1,2 @@
 tag=walk_path n=570
-dt_ms median=37.311 p95=43.970 p99=46.967 max=273.716 hitches_gt33=570
+dt_ms median=38.741 p95=42.609 p99=45.022 max=50.546 hitches_gt33=570

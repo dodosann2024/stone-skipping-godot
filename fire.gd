@@ -146,8 +146,9 @@ func _process(delta: float) -> void:
 		light.shadow_enabled = false
 	else:
 		light.visible = true
-		light.light_energy = (1.0 + 0.28 * f) * lerpf(0.0, 2.15, night)
-		light.omni_range = lerpf(4.0, 6.0, night)
-		light.omni_attenuation = lerpf(1.05, 1.5, night)
+		# Warm key near the fire (v26-class); boy albedo trim keeps torso from blowing out.
+		light.light_energy = (1.0 + 0.25 * f) * lerpf(1.85, 1.95, night)
+		light.omni_range = lerpf(4.0, 5.6, night)
+		light.omni_attenuation = lerpf(1.1, 1.55, night)
 		light.shadow_enabled = night > 0.45
 		light.position = Vector3(0.03 * _noise1(t * 2.2), 0.55 + 0.035 * f, 0.03 * _noise1(t * 1.7 + 9.0))

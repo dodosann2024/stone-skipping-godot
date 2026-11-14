@@ -53,13 +53,12 @@ func build(island: Island) -> void:
 			ol.light_specular = 0.12
 			lamp_energy.append(0.85)
 		elif kind == "path":
-			# Boy/cage key only (chest height, short range). Ground pool is shader emission —
-			# any strong Omni on the dirt corridor reads as a hard orange stripe.
+			# Hanging cage key + short warm pool (ground still mostly shader emission).
 			ol.light_color = Color(1.0, 0.74, 0.48)
-			ol.omni_range = 1.35
-			ol.omni_attenuation = 2.4
+			ol.omni_range = 2.0
+			ol.omni_attenuation = 1.85
 			ol.light_specular = 0.0
-			lamp_energy.append(0.30)
+			lamp_energy.append(0.62)
 		else:
 			ol.light_color = Color(1.0, 0.72, 0.38)
 			ol.omni_range = 4.2
@@ -154,29 +153,43 @@ func apply(k: float, cam_pos: Vector3, moon_dir: Vector3, delta: float) -> void:
 	var on := k > 0.01
 	visible = on
 	if not on:
+		# Explicitly kill lamp omnis by day (parent hide alone still leaves child.visible true).
+		for ol in lamp_lights:
+			ol.visible = false
+			ol.light_energy = 0.0
+		if beacon_light:
+			beacon_light.visible = false
+			beacon_light.light_energy = 0.0
 		return
 	dome.position = cam_pos
 	dome_mat.set_shader_parameter("k", k)
 	dome_mat.set_shader_parameter("moon_dir", moon_dir)
 	dome_mat.set_shader_parameter("time", t)
-	# Cap active night omnis to 2–3 nearest the player (plus fire/torch handled elsewhere).
+	# Cap active night omnis to 2–3 nearest the player. Prefer path lanterns (hanging cage key).
 	var scored: Array = []
 	for i in lamp_lights.size():
 		var ol := lamp_lights[i]
 		var d := ol.global_position.distance_to(cam_pos)
-		scored.append([d, i])
+		var kind := lamp_kinds[i] if i < lamp_kinds.size() else ""
+		# Path lamps get a slight distance bias so the forest lantern stays in the top-3.
+		var score := d - (2.5 if kind == "path" else 0.0)
+		scored.append([score, d, i])
 		ol.visible = false
 		ol.light_energy = 0.0
 	scored.sort_custom(func(a, b): return a[0] < b[0])
 	var active_n := mini(3, scored.size())
 	for n in active_n:
-		var i: int = scored[n][1]
-		var d: float = scored[n][0]
+		var i: int = scored[n][2]
+		var d: float = scored[n][1]
 		var ol := lamp_lights[i]
-		if d > ol.omni_range + 10.0:
+		if d > ol.omni_range + 12.0:
 			continue
 		ol.visible = true
-		ol.light_energy = lamp_energy[i] * k * (1.0 + 0.05 * sin(t * 7.0 + i * 2.0))
+		var e := lamp_energy[i]
+		# Path: a bit more energy so the hanging lantern + ground pool read.
+		if i < lamp_kinds.size() and lamp_kinds[i] == "path":
+			e = maxf(e, 0.62)
+		ol.light_energy = e * k * (1.0 + 0.05 * sin(t * 7.0 + i * 2.0))
 	for i in halos.size():
 		var hk := halo_kinds[i] if i < halo_kinds.size() else ""
 		# Path: no halo bloom — hanging glass + flame tip carry the source.

@@ -726,10 +726,10 @@ func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 		_night_body.light_specular = 0.0
 		_night_body.visible = false
 		_night_body.light_cull_mask = 0
-	# Same world lights as the ground. Pale Tripo albedo (esp. yellow shorts / straw)
-	# outshines wet sand — neutral luminance scale so boy/sand mean L ≈ 1.0–1.3.
-	# Soft moon/ambient flatten the key. Tiny albedo trim — pale Tripo shorts/straw stay ≤ ~1.3× sand.
-	var lum_scale := lerpf(1.0, 0.92, k)
+	# Same world lights as the ground. Pale Tripo albedo outshines moonlit sand —
+	# stronger night trim so boy/ground stays ≈ 1.0–1.4 (v26), not a bright key.
+	# Pale Tripo albedo outshines cool moon sand — trim so boy/ground ≈ 1.0–1.4.
+	var lum_scale := lerpf(1.0, 0.55, k)
 	for mat in _boy_mats:
 		if mat == null:
 			continue

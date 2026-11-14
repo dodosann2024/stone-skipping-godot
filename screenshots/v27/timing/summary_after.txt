@@ -1,12 +1,12 @@
 tag=walk_path n=570
-dt_ms median=37.311 p95=43.970 p99=46.967 max=273.716 hitches_gt33=570
+dt_ms median=38.741 p95=42.609 p99=45.022 max=50.546 hitches_gt33=570
 
 tag=run_path n=570
-dt_ms median=37.500 p95=41.238 p99=45.815 max=49.083 hitches_gt33=570
+dt_ms median=39.103 p95=43.122 p99=47.886 max=51.890 hitches_gt33=570
 
 tag=orbit_path n=570
-dt_ms median=42.921 p95=48.676 p99=101.687 max=671.722 hitches_gt33=570
+dt_ms median=43.747 p95=52.183 p99=55.689 max=127.124 hitches_gt33=570
 
 tag=campfire_night n=570
-dt_ms median=57.943 p95=62.957 p99=72.545 max=85.234 hitches_gt33=570
+dt_ms median=58.941 p95=63.701 p99=73.813 max=90.916 hitches_gt33=570
 

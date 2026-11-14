@@ -1,2 +1,2 @@
 tag=run_path n=570
-dt_ms median=37.500 p95=41.238 p99=45.815 max=49.083 hitches_gt33=570
+dt_ms median=39.103 p95=43.122 p99=47.886 max=51.890 hitches_gt33=570

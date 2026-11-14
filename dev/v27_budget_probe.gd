@@ -49,7 +49,9 @@ func g() -> void:
 		for _i in 90:
 			await process_frame
 	m.night_k = 1.0 if night else 0.0
-	m._update_night(m.night_k, true)
+	m._update_night(0.0, true)
+	if m.night_fx and m.camera and m.sun:
+		m.night_fx.apply(m.night_k, m.camera.global_position, m.sun.global_basis.z.normalized(), 0.05)
 
 	# Lighthouse climb (user iPhone day_path: rope fence + tower).
 	var pl: Array = m.island.paths[1]
@@ -70,7 +72,11 @@ func g() -> void:
 	m._cam_arm_k = 1.0
 	m._cam_arm_want = 1.0
 	m._cap_night_omnis()
+	m._update_path_lamp_pool()
 	for _i in 40:
+		m._cap_night_omnis()
+		if m.night_fx and m.camera and m.sun:
+			m.night_fx.apply(m.night_k, m.camera.global_position, m.sun.global_basis.z.normalized(), 0.05)
 		await process_frame
 	m._cap_night_omnis()
 	await process_frame

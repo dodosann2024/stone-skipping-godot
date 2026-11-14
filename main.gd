@@ -3638,26 +3638,29 @@ func _update_night(delta: float, force := false) -> void:
 	var base_blur: float = mq.shadow_blur if mq else 2.5
 	sun.shadow_blur = lerpf(base_blur, maxf(base_blur, 5.0), k)
 	sun.light_angular_distance = lerpf(1.2, 3.5, k)
-	# Soft moon shadows — canopy mustn't crush the path to pure black (v26 readable sand).
+	# Soft moon shadows — extra palm proxies must not crush path to pure black.
 	sun.shadow_opacity = lerpf(1.0, 0.16, k)
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.55 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
-	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.48, 0.42, 0.38), k)
-	env.ambient_light_sky_contribution = lerpf(1.0, 0.22, k)
-	# Stronger constant ambient fill so path/grass/roots still read under foliage.
-	env.ambient_light_energy = lerpf(0.55, 0.95, k)
-	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.20, 0.22, 0.30), k)
-	env.fog_density = lerpf(0.0045, 0.0020, k)
-	# Filmic at night — ACES was crushing dim terrain to 0/255 under the canopy.
+	# v26 night env — cool ambient; warmth = fire/lantern only (not ground albedo).
+	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.36, 0.40, 0.50), k)
+	env.ambient_light_sky_contribution = lerpf(1.0, 0.26, k)
+	env.ambient_light_energy = lerpf(0.55, 0.88, k)
+	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.16, 0.20, 0.30), k)
+	env.fog_density = lerpf(0.0045, 0.0024, k)
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = lerpf(0.95, 1.18, k)
-	env.tonemap_white = lerpf(3.2, 4.2, k)
-	env.adjustment_saturation = lerpf(1.05, 0.98, k)
+	# Exposure lift offsets 0.78 scale + shadow casters — keep cool, do not warm albedo.
+	var expo_n := 1.18
+	if mq and mq.mobile:
+		expo_n = 1.22
+	env.tonemap_exposure = lerpf(0.95, expo_n, k)
+	env.tonemap_white = lerpf(3.2, 4.4, k)
+	env.adjustment_saturation = lerpf(1.05, 0.96, k)
 	env.adjustment_contrast = lerpf(1.02, 0.96, k)
-	env.adjustment_brightness = lerpf(0.98, 1.08, k)
+	env.adjustment_brightness = lerpf(0.98, 1.06, k)
 	var moon := sun.global_basis.z.normalized()
 	island.water_mat.set_shader_parameter("glint_dir", moon)
 	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(1.0, 0.55, 0.28), sunset).lerp(Color(0.90, 0.93, 1.0), k))
-	island.water_mat.set_shader_parameter("glint_gain", lerpf(1.0, 2.15, k))
+	island.water_mat.set_shader_parameter("glint_gain", lerpf(1.0, 1.65, k))
 	island.water_mat.set_shader_parameter("night", k)
 	# Lantern glass / hut window panes: visible warm sources at night.
 	# Keep boost modest — path flame tip is tiny; high boost reads as a billboard.

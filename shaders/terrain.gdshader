@@ -131,12 +131,11 @@ void fragment() {
 			c = c * tr + vec3(0.30, 0.52, 0.47) * (1.0 - tr);
 		}
 	}
-	// Night: readable moonlit ground (v26 look) — cool fill, not pure black under canopy.
-	// Round lantern pool = soft radial EMISSION only — no warm Omni on the dirt corridor.
+	// Night: cool moonlit albedo (v26). Warmth only from lantern pool emission — not albedo.
+	// Emission lift offsets mobile 0.78 scale + extra palm-shadow casters (env/tonemap also help).
 	float nk = night_k;
-	// v26 moonlit sand: warm-tan readable ground (not cool black void).
-	vec3 moon_ground = vec3(0.30, 0.24, 0.18);
-	c = mix(c, moon_ground, nk * 0.78);
+	vec3 moon_ground = vec3(0.09, 0.135, 0.155); // desaturated blue-green
+	c = mix(c, moon_ground, nk);
 	float ld = length(p - lamp_xz);
 	// Soft Gaussian ~2.5 m; modest peak — radial pool, not a blazing dirt stripe.
 	float pool = lamp_pool * exp(-(ld * ld) / (1.60 * 1.60));
@@ -144,5 +143,6 @@ void fragment() {
 	ALBEDO = c;
 	ROUGHNESS = mix(rough, 0.92, nk);
 	SPECULAR = 0.5 * (1.0 - nk);
-	EMISSION = moon_ground * 0.72 * nk + vec3(0.22, 0.14, 0.07) * pool;
+	// Cool fill for open sand; lantern pool stays local (keep peak modest so forest ≠ dusk).
+	EMISSION = moon_ground * 0.88 * nk + vec3(0.11, 0.08, 0.045) * pool;
 }

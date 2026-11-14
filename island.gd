@@ -246,8 +246,9 @@ func build(font: Font) -> void:
 	_index_walls()
 	_flush()
 	_build_water()
-	# Mobile WebGL2 shadow budget: only the boy (outside this tree) casts. Props/particles off.
+	# Mobile WebGL2: kill small-prop/particle shadows, then add cheap palm canopy proxies.
 	_disable_shadows_recursive(self)
+	_build_palm_shadow_proxies()
 
 
 func _disable_shadows_recursive(n: Node) -> void:
@@ -255,6 +256,69 @@ func _disable_shadows_recursive(n: Node) -> void:
 		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	for c in n.get_children():
 		_disable_shadows_recursive(c)
+
+
+## Low-poly shadow-only proxies for palm trunks + canopies (and a few big bush blobs).
+## Keeps grass/leaf cards off the shadow pass while restoring soft dappled day-path shade.
+func _build_palm_shadow_proxies() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	# Narrow trunk card + several thin radial frond cards (dappled, not one big triangle).
+	for q in 2:
+		var ax := Vector3.RIGHT if q == 0 else Vector3.BACK
+		var nn := Vector3.BACK if q == 0 else Vector3.LEFT
+		var c := [[-0.5, 0.0], [0.5, 0.0], [0.5, 1.0], [-0.5, 1.0]]
+		for i: int in [0, 1, 2, 0, 2, 3]:
+			var v: Array = c[i]
+			st.set_normal(nn)
+			st.add_vertex(ax * float(v[0]) * 0.16 + Vector3.UP * float(v[1]))
+	# 6 thin frond wedges around the crown (soft blobs under high shadow_blur).
+	for fi in 6:
+		var ang := float(fi) * TAU / 6.0
+		var ax2 := Vector3(cos(ang), 0.0, sin(ang))
+		var nn2 := Vector3(-sin(ang), 0.0, cos(ang))
+		var tip := ax2 * 1.15 + Vector3.UP * 1.05
+		var a := ax2 * 0.12 + Vector3.UP * 0.92
+		var b := -ax2 * 0.08 + Vector3.UP * 0.88 + nn2 * 0.35
+		var d := -ax2 * 0.08 + Vector3.UP * 0.88 - nn2 * 0.35
+		for tri in [[a, b, tip], [a, tip, d]]:
+			for p3: Vector3 in tri:
+				st.set_normal(nn2)
+				st.add_vertex(p3)
+	var card := st.commit()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = card
+	var xfs: Array = []
+	for pts in trunks:
+		if pts.is_empty():
+			continue
+		var base: Vector3 = pts[0]
+		var crown: Vector3 = pts[pts.size() - 1]
+		var ht := maxf(crown.y - base.y, 2.5)
+		var yaw := float(hash(base) % 628) * 0.01
+		var xf := Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3(1.0, ht, 1.0)), base)
+		xfs.append(xf)
+	# Elevated canopy blobs along the lighthouse climb + forest path (dappled shade on dirt).
+	for bp in [
+		Vector3(4.8, 3.2, -4.2), Vector3(4.4, 3.6, -2.0), Vector3(4.0, 3.4, -0.6),
+		Vector3(3.4, 3.8, 0.8), Vector3(2.6, 3.5, 1.8), Vector3(1.6, 3.2, 2.8),
+		Vector3(3.8, 2.8, -5.5), Vector3(5.2, 3.0, -3.0), Vector3(2.2, 3.0, 0.4),
+		Vector3(-1.0, 3.4, 5.8), Vector3(1.5, 3.2, 5.2), Vector3(-2.2, 3.0, 7.0),
+		Vector3(0.6, 3.2, 7.4), Vector3(-0.4, 2.8, 3.8),
+	]:
+		var yaw2 := float(hash(bp) % 628) * 0.01
+		xfs.append(Transform3D(Basis(Vector3.UP, yaw2).scaled(Vector3(2.4, 1.1, 2.4)), bp))
+	mm.instance_count = xfs.size()
+	for j in xfs.size():
+		mm.set_instance_transform(j, xfs[j])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.name = "PalmShadowProxies"
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+	mmi.visibility_range_end = 42.0
+	mmi.visibility_range_end_margin = 6.0
+	add_child(mmi)
 
 
 func _make_pads() -> void:
@@ -976,9 +1040,14 @@ func _path_lantern(lp: Vector3, hang: Vector3) -> Vector3:
 		# (filled amber panes collapsed into a solid glow box at night).
 		boxb(LB, Vector3(0.082, 0.01, 0.01), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.044)), wood)
 	# Flame / bulb nested inside the open cage — the bright point that sells "lantern".
-	GB.prim(_sphm(5, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.018, 0.032, 0.018)), c + Vector3(0, 0.01, 0)), Color(1.0, 0.86, 0.48))
+	GB.prim(_sphm(5, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.028, 0.045, 0.028)), c + Vector3(0, 0.01, 0)), Color(1.0, 0.86, 0.48))
 	# Soft glass suggestion: thin amber card behind the flame (one face only).
-	box(LB, Vector3(0.06, 0.12, 0.005), c + h * 0.02 + Vector3(0, 0.0, 0), Vector3.ZERO, Color(0.45, 0.30, 0.12))
+	box(LB, Vector3(0.07, 0.14, 0.006), c + h * 0.02 + Vector3(0, 0.0, 0), Vector3.ZERO, Color(0.48, 0.32, 0.12))
+	# Outer amber panes (open faces) so the hanging body reads as a lantern, not a bare post.
+	for a in [0.0, PI * 0.5, PI, PI * 1.5]:
+		var outward2 := h * cos(a) + side * sin(a)
+		var xf2 := Transform3D(Basis(Vector3.UP, atan2(outward2.x, outward2.z)), c)
+		boxb(LB, Vector3(0.078, 0.16, 0.004), xf2 * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.048)), Color(0.42, 0.28, 0.12))
 	return c
 
 func _barrel(p: Vector3) -> void:
@@ -1371,16 +1440,27 @@ func _build_hut(th: float) -> void:
 
 func _build_lighthouse() -> void:
 	var p = lighthouse_pos + Vector3(0, -0.15, 0)
-	cyl(SB, 1.25, 1.35, 0.5, 10, p + Vector3(0, 0.2, 0), Vector3.ZERO, Color(0.62, 0.6, 0.56))
-	var h = 0.45
+	# Base plinth: darker stone + contact AO so it isn't a flat white slab.
+	cyl(SB, 1.30, 1.40, 0.55, 12, p + Vector3(0, 0.22, 0), Vector3.ZERO, Color(0.36, 0.34, 0.30))
+	# Facet shade: darker inset ring mid-plinth.
+	cyl(SB, 1.22, 1.26, 0.12, 12, p + Vector3(0, 0.42, 0), Vector3.ZERO, Color(0.26, 0.24, 0.22))
+	cyl(SB, 1.16, 1.18, 0.08, 12, p + Vector3(0, 0.52, 0), Vector3.ZERO, Color(0.22, 0.20, 0.18))
+	# Soft contact AO rings on the ground + plinth/tower junction.
+	cyl(SB, 1.70, 1.70, 0.03, 14, p + Vector3(0, 0.012, 0), Vector3.ZERO, Color(0.16, 0.18, 0.14))
+	cyl(SB, 1.48, 1.48, 0.028, 14, p + Vector3(0, 0.035, 0), Vector3.ZERO, Color(0.24, 0.25, 0.21))
+	var h = 0.48
 	var bands = 6
-	# Weathered cream / brick — chalk-white + candy-red read as a UI "ghost panel" + pink
-	# block behind the right button column on the dirt-path climb (iPhone day shot).
+	# Weathered cream / brick — chalk-white reads as a flat slab on the dirt-path climb.
 	for i in bands:
 		var r0 = 0.95 - i * 0.07
 		var r1 = 0.95 - (i + 1) * 0.07
-		var col = Color(0.86, 0.82, 0.74) if i % 2 == 0 else Color(0.62, 0.30, 0.26)
-		cyl(SB, r1, r0, 0.9, 10, p + Vector3(0, h + 0.45, 0), Vector3.ZERO, col)
+		var col = Color(0.72, 0.68, 0.60) if i % 2 == 0 else Color(0.54, 0.26, 0.22)
+		# Stronger vertical AO on lower bands + thin darker groove under each band.
+		col = col.darkened(0.07 * float(bands - 1 - i))
+		cyl(SB, r0 + 0.015, r0 + 0.015, 0.06, 12, p + Vector3(0, h + 0.02, 0), Vector3.ZERO, col.darkened(0.22))
+		# Slightly darker "south" notch via a thin darker half-band at the lower third of each drum.
+		cyl(SB, r1 + 0.01, r0 + 0.01, 0.12, 12, p + Vector3(0, h + 0.18, 0), Vector3.ZERO, col.darkened(0.12))
+		cyl(SB, r1, r0, 0.9, 12, p + Vector3(0, h + 0.45, 0), Vector3.ZERO, col)
 		h += 0.9
 	cyl(SB, 0.95, 0.95, 0.12, 12, p + Vector3(0, h + 0.06, 0), Vector3.ZERO, Color(0.25, 0.25, 0.27))
 	for i in 12:
