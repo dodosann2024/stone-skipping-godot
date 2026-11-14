@@ -497,10 +497,13 @@ func _build_terrain() -> void:
 			st.set_uv(Vector2(x, z))
 			st.add_vertex(Vector3(x, h, z))
 	# Fine patches over campfire logs + lighthouse bench so flatten pads draw cleanly.
+	# Also densify the dirt-path climb so 1 m triangles don't cast knife-edge shadow wedges.
 	var fine_rects: Array = []
 	fine_rects.append([int(floor(campfire_pos.x + half)) - 6, int(floor(campfire_pos.z + half)) - 6, 12, 12])
 	var lh_xz := gp(2.0, 3.0) + Vector3(-2.2, 0, -2.0)
 	fine_rects.append([int(floor(lh_xz.x + half)) - 4, int(floor(lh_xz.z + half)) - 4, 8, 8])
+	for pz in [4.4, 5.2, 6.0, 6.8, 7.6]:
+		fine_rects.append([int(floor(0.2 + half)) - 4, int(floor(pz + half)) - 3, 8, 6])
 	for j in n:
 		for i in n:
 			var skip := false
@@ -1344,10 +1347,12 @@ func _build_lighthouse() -> void:
 	cyl(SB, 1.25, 1.35, 0.5, 10, p + Vector3(0, 0.2, 0), Vector3.ZERO, Color(0.62, 0.6, 0.56))
 	var h = 0.45
 	var bands = 6
+	# Weathered cream / brick — chalk-white + candy-red read as a UI "ghost panel" + pink
+	# block behind the right button column on the dirt-path climb (iPhone day shot).
 	for i in bands:
 		var r0 = 0.95 - i * 0.07
 		var r1 = 0.95 - (i + 1) * 0.07
-		var col = Color(0.96, 0.95, 0.92) if i % 2 == 0 else Color(0.86, 0.25, 0.22)
+		var col = Color(0.86, 0.82, 0.74) if i % 2 == 0 else Color(0.62, 0.30, 0.26)
 		cyl(SB, r1, r0, 0.9, 10, p + Vector3(0, h + 0.45, 0), Vector3.ZERO, col)
 		h += 0.9
 	cyl(SB, 0.95, 0.95, 0.12, 12, p + Vector3(0, h + 0.06, 0), Vector3.ZERO, Color(0.25, 0.25, 0.27))
@@ -1357,7 +1362,7 @@ func _build_lighthouse() -> void:
 	cyl(SB, 0.9, 0.9, 0.04, 12, p + Vector3(0, h + 0.55, 0), Vector3.ZERO, Color(0.25, 0.25, 0.27))
 	cyl(GB, 0.45, 0.45, 0.75, 8, p + Vector3(0, h + 0.5, 0), Vector3.ZERO, Color(1.0, 0.9, 0.55))
 	beacon_pos = p + Vector3(0, h + 0.5, 0)
-	cyl(SB, 0.0, 0.7, 0.75, 10, p + Vector3(0, h + 1.25, 0), Vector3.ZERO, Color(0.86, 0.25, 0.22))
+	cyl(SB, 0.0, 0.7, 0.75, 10, p + Vector3(0, h + 1.25, 0), Vector3.ZERO, Color(0.62, 0.30, 0.26))
 	blob(SB, p + Vector3(0, h + 1.68, 0), Vector3(0.08, 0.08, 0.08), Color(0.9, 0.8, 0.3), 0.0, 6, 3, 0.0)
 	cyl(SB, 0.06, 0.06, 0.6, 6, p + Vector3(0.35, 0.9, 0.95), Vector3.ZERO, Color(0.3, 0.22, 0.15))
 	box(SB, Vector3(0.55, 1.0, 0.06), p + Vector3(0.0, 0.95, 0.96), Vector3.ZERO, Color(0.35, 0.5, 0.62))

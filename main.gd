@@ -532,7 +532,9 @@ func _btn(text: String, size: int, primary := false) -> Button:
 			sb.bg_color = Color(1.0, 0.82, 0.3, 0.95) if st_name != "pressed" else Color(1.0, 0.92, 0.6, 1.0)
 			sb.border_color = Color(0.55, 0.3, 0.05)
 		else:
-			sb.bg_color = Color(1, 1, 1, 0.82) if st_name != "pressed" else Color(0.85, 0.95, 1, 0.95)
+			# Slightly less opaque — over the lighthouse climb the old 0.82 white pills
+			# fused with the tower into one "ghost panel" on iPhone Safari.
+			sb.bg_color = Color(1, 1, 1, 0.72) if st_name != "pressed" else Color(0.85, 0.95, 1, 0.90)
 			sb.border_color = Color(0.1, 0.45, 0.65)
 		sb.set_corner_radius_all(40)
 		sb.set_border_width_all(3)
