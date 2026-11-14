@@ -6,31 +6,48 @@ render_mode cull_back, diffuse_lambert, specular_disabled;
 uniform float game_time = 0.0;
 uniform vec4 prints[48];          // footprints: x, z, heading angle, time stamped
 uniform float print_wash[48];     // time the swash first ran over the print (-1: not yet)
+uniform float print_side[48];     // 0 = left sandal, 1 = right sandal
 uniform vec4 print_box = vec4(1.0, 1.0, -1.0, -1.0);   // xz bounds of the live prints
 
-// flip-flop print: a soft dent along the foot (rounded sole, wider at the ball) with a faint pushed-up rim.
-// Returns (dent, rim) faded by age and wiped out shortly after the wash has run over it.
-vec2 footprint(vec2 p, vec4 fp, float washed, float t) {
+// Small-kid sandal print (top-down): slim sole, rounded heel, wider ball, tapered toe,
+// two thin strap bands. Left/right mirrored. Returns (dent, rim) faded by age / wash.
+vec2 footprint(vec2 p, vec4 fp, float washed, float side, float t) {
 	float age = t - fp.w;
-	if (age < 0.0 || age > 75.0) {
+	if (age < 0.0 || age > 55.0) {
 		return vec2(0.0);
 	}
 	vec2 dv = p - fp.xy;
-	if (dot(dv, dv) > 0.05) {
+	if (dot(dv, dv) > 0.028) {
 		return vec2(0.0);
 	}
 	vec2 f = vec2(cos(fp.z), sin(fp.z));
-	float u = dot(dv, f);
-	float v = dot(dv, vec2(-f.y, f.x));
-	float k = clamp((u + 0.11) / 0.2, 0.0, 1.0);
-	float r = mix(0.033, 0.043, smoothstep(0.2, 0.75, k));
-	float dist = length(vec2(u - (k * 0.2 - 0.11), v)) - r;
-	float life = 1.0 - smoothstep(30.0, 75.0, age);
+	float u = dot(dv, f);                 // heel (−) → toe (+)
+	float v = dot(dv, vec2(-f.y, f.x)); // lateral; flip for left
+	if (side < 0.5) {
+		v = -v;
+	}
+	// Local sandal frame: ~13 cm long, ~5.5 cm wide at the ball.
+	float Len = 0.125;
+	float half = Len * 0.5;
+	float s = clamp((u + half) / Len, 0.0, 1.0); // 0 heel → 1 toe
+	// Width profile: narrow heel → wide ball → taper at toe.
+	float half_w = mix(0.018, 0.027, smoothstep(0.08, 0.55, s));
+	half_w = mix(half_w, 0.014, smoothstep(0.72, 1.0, s));
+	// Soft sole outline (ellipse-ish with profiled width).
+	float nx = (u) / half;
+	float ny = v / max(half_w, 1e-4);
+	float d_sole = length(vec2(nx * 0.92, ny)) - 1.0;
+	// Two strap bands across the forefoot / midfoot.
+	float strap1 = 1.0 - smoothstep(0.0022, 0.0055, abs(s - 0.42));
+	float strap2 = 1.0 - smoothstep(0.0022, 0.0055, abs(s - 0.62));
+	float strap = max(strap1, strap2) * (1.0 - smoothstep(half_w * 0.85, half_w, abs(v)));
+	float life = 1.0 - smoothstep(18.0, 55.0, age);
 	if (washed >= 0.0) {
 		life *= 1.0 - smoothstep(0.0, 0.7, t - washed);
 	}
-	float dent = 1.0 - smoothstep(-0.008, 0.004, dist);
-	float rim = smoothstep(-0.002, 0.006, dist) * (1.0 - smoothstep(0.008, 0.022, dist));
+	float dent = (1.0 - smoothstep(-0.010, 0.003, d_sole)) * 0.85;
+	dent = max(dent, strap * 0.55);
+	float rim = smoothstep(-0.003, 0.005, d_sole) * (1.0 - smoothstep(0.006, 0.016, d_sole));
 	return vec2(dent, rim) * life;
 }
 varying vec3 wpos;
@@ -46,6 +63,10 @@ global uniform float night_k;
 // Soft radial lantern pool (world XZ + strength). Set each frame from the nearest path lamp.
 uniform vec2 lamp_xz = vec2(9999.0);
 uniform float lamp_pool = 0.0; // 0..1
+// Contact AO under the boy's feet (always-on ground darkening, every quality tier).
+uniform vec2 foot_a_xz = vec2(9999.0);
+uniform vec2 foot_b_xz = vec2(9999.0);
+uniform float foot_ao = 0.0; // 0..1
 
 void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -67,9 +88,9 @@ void fragment() {
 	if (p.x > print_box.x && p.y > print_box.y && p.x < print_box.z && p.y < print_box.w) {
 		vec2 fpr = vec2(0.0);
 		for (int i = 0; i < 48; i++) {
-			fpr = max(fpr, footprint(p, prints[i], print_wash[i], t));
+			fpr = max(fpr, footprint(p, prints[i], print_wash[i], print_side[i], t));
 		}
-		c *= (1.0 - 0.36 * fpr.x) * (1.0 + 0.12 * fpr.y * (1.0 - fpr.x));
+		c *= (1.0 - 0.42 * fpr.x) * (1.0 + 0.10 * fpr.y * (1.0 - fpr.x));
 	}
 	if (d > -9.0) {
 		float sea = sea_y(p, t);
@@ -140,6 +161,16 @@ void fragment() {
 	// Soft Gaussian ~2.2 m; gentle warm pool right around the lantern post.
 	float pool = lamp_pool * exp(-(ld * ld) / (1.45 * 1.45));
 	pool *= smoothstep(2.4, 0.55, ld);
+	// Soft contact AO under each sole — grounds the kid when sun shadows are off.
+	if (foot_ao > 0.001) {
+		float da = length(p - foot_a_xz);
+		float db = length(p - foot_b_xz);
+		float ao_a = exp(-(da * da) / (0.16 * 0.16));
+		float ao_b = exp(-(db * db) / (0.16 * 0.16));
+		float hip = exp(-(length(p - 0.5 * (foot_a_xz + foot_b_xz)) * length(p - 0.5 * (foot_a_xz + foot_b_xz))) / (0.28 * 0.28));
+		float ao = max(max(ao_a, ao_b), hip * 0.65) * foot_ao;
+		c *= 1.0 - 0.55 * ao;
+	}
 	ALBEDO = c;
 	ROUGHNESS = mix(rough, 0.92, nk);
 	SPECULAR = 0.5 * (1.0 - nk);

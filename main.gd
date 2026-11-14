@@ -73,6 +73,7 @@ const PRINTS := 48
 const PRINT_LIFE := 75.0
 var print_buf := PackedVector4Array()   # footprints on the sand: x, z, yaw, time stamped
 var print_wash := PackedFloat32Array()  # when the swash first ran over each print (-1: not yet)
+var print_side := PackedFloat32Array()  # 0 left / 1 right sandal
 var print_i := 0
 
 # camera
@@ -291,9 +292,11 @@ func _ready() -> void:
 	ripple_buf.resize(8)
 	print_buf.resize(PRINTS)
 	print_wash.resize(PRINTS)
+	print_side.resize(PRINTS)
 	for i in PRINTS:
 		print_buf[i] = Vector4(0, 0, 0, -1000.0)
 		print_wash[i] = -1.0
+		print_side[i] = 0.0
 	var args := OS.get_cmdline_user_args()
 	if "--sim" in args:
 		_run_sim_report()
@@ -429,6 +432,7 @@ func _build_player() -> void:
 	ex_yaw = face_yaw + PI + 0.45
 	ex_pitch = 0.22
 	ex_dist = 4.0
+	boy.ground_fn = _surface
 	boy.released.connect(_launch)
 	boy.footstep.connect(_on_footstep)
 	boy.foot_flat.connect(_stamp_footprint)
@@ -1372,12 +1376,17 @@ func _explore_tick(delta: float) -> void:
 		var mt := Boy.move_turn(face_yaw, atan2(-target_v.x, -target_v.z), s, delta)
 		face_yaw = mt[0]
 		spd_t *= float(mt[1])
-	# Accel: a couple of steps into a run; decel a bit snappier but not a hard stop.
+	# Accel: ease into a walk, then a couple of steps into a run; snappier decel.
 	var acc: float
 	if spd_t > s:
-		acc = 2.8 if s < WALK_MAX * 0.85 else 1.35
+		if s < 0.35:
+			acc = 3.6
+		elif s < WALK_MAX * 0.9:
+			acc = 2.6
+		else:
+			acc = 1.25  # kid needs a beat to break into a run
 	else:
-		acc = 4.6 if s > WALK_MAX else 5.5
+		acc = 5.2 if s > WALK_MAX else 6.0
 	s = move_toward(s, spd_t, acc * delta)
 	move_vel = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * s
 	# Always step from the physics body pose (not the interpolated display pose).
@@ -1432,9 +1441,18 @@ func _explore_tick(delta: float) -> void:
 	boy.set_move(cur_speed)
 	if cur_speed < 0.05:
 		boy.set_idle()
+	# Light slope lean so ankles read planted on hills (no full IK budget).
+	if not spot_turning and cur_speed > 0.08:
+		var ahead := Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * 0.45
+		var h0 := _surface(to.x, to.z)
+		var h1 := _surface(to.x + ahead.x, to.z + ahead.z)
+		var pitch_want := clampf((h0 - h1) * 0.55, -0.12, 0.12)
+		player.rotation.x = lerpf(player.rotation.x, pitch_want, 1.0 - exp(-delta * 6.0))
+	else:
+		player.rotation.x = lerpf(player.rotation.x, 0.0, 1.0 - exp(-delta * 8.0))
 	_update_action_kind()
 
-func _on_footstep(_side: int, running: bool) -> void:
+func _on_footstep(side: int, running: bool) -> void:
 	var p := player.position
 	var kind := _surface_kind(p.x, p.z)
 	var i := rng.randi() % 2
@@ -1448,6 +1466,9 @@ func _on_footstep(_side: int, running: bool) -> void:
 			vol += 1.0
 			_splash(Vector3(p.x, 0.01, p.z), 0.35 if running else 0.25, false, Vector3.ZERO)
 	_play("step_%s_%d" % [kind, i], vol + rng.randf_range(-1.5, 1.0), rng.randf_range(0.9, 1.1) * (1.08 if running else 1.0))
+	# Cheap sand/dust puff under the planted sole (skip water / dock wood).
+	if kind in ["sand", "grass"]:
+		_dust_puff(side, running, kind)
 
 # ------------------------------------------------------------------ rest: hammock nap / sunbathing
 
@@ -3434,27 +3455,28 @@ func _finish() -> void:
 	_update_ui()
 
 func _stamp_footprint(side: int) -> void:
-	# Prefer phase-driven plant under the body (stable with interp) and fall back to skinned toes.
+	# Phase-driven plant under the stance foot; skinned heel/ball refine yaw + placement.
 	var yaw := face_yaw
 	var side_sign := -1.0 if side == 0 else 1.0
 	var right := Vector2(cos(yaw), -sin(yaw))
 	var fwd := Vector2(-sin(yaw), -cos(yaw))
+	# Kid sandal sits slightly outside the pelvis midline.
 	var c := Vector2(player.global_position.x, player.global_position.z) \
-		+ right * (0.08 * side_sign) + fwd * 0.04
+		+ right * (0.065 * side_sign) + fwd * 0.02
 	var fp := boy.foot_points(side)
 	var heel: Vector3 = fp[0]
 	var ball: Vector3 = fp[1]
 	var f := Vector2(ball.x - heel.x, ball.z - heel.z)
-	if f.length() >= 0.03:
-		# Blend skinned contact toward the phase plant so prints track the gait cycle.
-		var skin_c := Vector2(heel.x, heel.z) + f * 0.6
-		c = c.lerp(skin_c, 0.55)
+	if f.length() >= 0.025:
+		var skin_c := Vector2(heel.x, heel.z) + f * 0.55
+		c = c.lerp(skin_c, 0.7)
 		yaw = atan2(f.y, f.x)
 	# only on dry or wet sand: not on the dock, the grass, in the sea or under the running wash
 	if _surface_kind(c.x, c.y) != "sand" or Island.wash_covers(c.x, c.y, gt, 0.012):
 		return
 	print_buf[print_i] = Vector4(c.x, c.y, yaw, gt)
 	print_wash[print_i] = -1.0
+	print_side[print_i] = float(side)
 	print_i = (print_i + 1) % PRINTS
 	_upload_prints()
 
@@ -3480,6 +3502,7 @@ func _upload_prints() -> void:
 	var box := Vector4(lo.x - 0.25, lo.y - 0.25, hi.x + 0.25, hi.y + 0.25) if lo.x < INF else Vector4(1, 1, -1, -1)
 	island.terrain_mat.set_shader_parameter("prints", print_buf)
 	island.terrain_mat.set_shader_parameter("print_wash", print_wash)
+	island.terrain_mat.set_shader_parameter("print_side", print_side)
 	island.terrain_mat.set_shader_parameter("print_box", box)
 
 ## Night: at most 2–3 OmniLights near the player (campfire + nearest lamps/torches).
@@ -3544,6 +3567,68 @@ func _add_ripple(p: Vector3, strength: float, delay := 0.0) -> void:
 	ripple_buf[ripple_i] = Vector4(p.x, p.z, gt + delay, strength)
 	ripple_i = (ripple_i + 1) % 8
 	island.water_mat.set_shader_parameter("ripples", ripple_buf)
+
+## Soft ground AO under each sole — pairs with the mul-blend blob discs.
+func _upload_foot_ao() -> void:
+	if island == null or island.terrain_mat == null or boy == null or boy.skel == null:
+		return
+	if mode == Mode.REST:
+		island.terrain_mat.set_shader_parameter("foot_ao", 0.0)
+		return
+	var a := Vector2(player.global_position.x, player.global_position.z)
+	var b := a
+	var fp0: Array = boy.foot_points(0)
+	var fp1: Array = boy.foot_points(1)
+	var m0: Vector3 = (fp0[0] as Vector3).lerp(fp0[1] as Vector3, 0.55)
+	var m1: Vector3 = (fp1[0] as Vector3).lerp(fp1[1] as Vector3, 0.55)
+	a = Vector2(m0.x, m0.z)
+	b = Vector2(m1.x, m1.z)
+	island.terrain_mat.set_shader_parameter("foot_a_xz", a)
+	island.terrain_mat.set_shader_parameter("foot_b_xz", b)
+	island.terrain_mat.set_shader_parameter("foot_ao", 1.0)
+
+
+## Tiny sand / dust puff on footfall (CPUParticles — cheap, one-shot, auto-free).
+func _dust_puff(side: int, running: bool, kind: String) -> void:
+	var fp: Array = boy.foot_points(side)
+	var mid: Vector3 = (fp[0] as Vector3).lerp(fp[1] as Vector3, 0.55)
+	mid.y = _surface(mid.x, mid.z) + 0.02
+	var dm := SphereMesh.new()
+	dm.radius = 0.018
+	dm.height = 0.036
+	dm.radial_segments = 4
+	dm.rings = 2
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(0.72, 0.62, 0.42, 1.0) if kind == "sand" else Color(0.45, 0.52, 0.32, 1.0)
+	dm.material = mat
+	var puff := CPUParticles3D.new()
+	puff.mesh = dm
+	puff.amount = 10 if running else 6
+	puff.one_shot = true
+	puff.explosiveness = 0.95
+	puff.lifetime = 0.45 if running else 0.35
+	puff.direction = Vector3(0, 1, 0)
+	puff.spread = 55.0
+	puff.initial_velocity_min = 0.35 if running else 0.2
+	puff.initial_velocity_max = 0.9 if running else 0.55
+	puff.gravity = Vector3(0, -2.5, 0)
+	puff.damping_min = 1.5
+	puff.damping_max = 3.0
+	puff.scale_amount_min = 0.4
+	puff.scale_amount_max = 1.1
+	var curve := Curve.new()
+	curve.add_point(Vector2(0, 1))
+	curve.add_point(Vector2(1, 0.05))
+	puff.scale_amount_curve = curve
+	puff.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	puff.emission_sphere_radius = 0.04
+	add_child(puff)
+	puff.global_position = mid
+	puff.layers = 1 | WaterReflection.SKIP_LAYER
+	puff.emitting = true
+	get_tree().create_timer(1.2).timeout.connect(puff.queue_free)
+
 
 func _splash(p: Vector3, strength: float, big: bool, vel: Vector3) -> void:
 	var dm := SphereMesh.new()
@@ -4050,23 +4135,31 @@ func _process(delta: float) -> void:
 		boy.aim_twist = lerpf(boy.aim_twist, 0.0, 1.0 - exp(-delta * 8.0))
 	_update_throw_pad()
 	_update_camera(delta)
-	# Cutout uniforms ~15 Hz (was every frame).
-	if do_heavy or gt < 0.5:
-		_cut_focus = player.global_position + Vector3(0, 0.7, 0)
-		if demo_nocut:
-			_cut_focus.y = -100.0
-		_cut_cr_f = 2.2 if mode == Mode.EXPLORE else 1.6
-		_cut_cr_s = 1.7 if mode == Mode.EXPLORE else 1.4
+	# Foliage cutout every frame while exploring — bushes must not swallow the boy mid-stride.
+	_cut_focus = player.global_position + Vector3(0, 0.72, 0)
+	if demo_nocut:
+		_cut_focus.y = -100.0
+	# Wider cone while moving so leaf walls dither open as he walks through.
+	var move_cut := clampf(cur_speed / maxf(WALK_MAX, 0.01), 0.0, 1.0)
+	_cut_cr_f = lerpf(2.4, 3.2, move_cut) if mode == Mode.EXPLORE else 1.7
+	_cut_cr_s = lerpf(1.8, 2.3, move_cut) if mode == Mode.EXPLORE else 1.45
+	if island.foliage_mat:
 		island.foliage_mat.set_shader_parameter("focus", _cut_focus)
-		island.leaf_mat.set_shader_parameter("focus", _cut_focus)
-		island.static_mat.set_shader_parameter("focus", _cut_focus)
-		island.torch_mat.set_shader_parameter("focus", _cut_focus)
 		island.foliage_mat.set_shader_parameter("cut_radius", _cut_cr_f)
+	if island.leaf_mat:
+		island.leaf_mat.set_shader_parameter("focus", _cut_focus)
 		island.leaf_mat.set_shader_parameter("cut_radius", _cut_cr_f)
+		# Near cards that fill the lens as flat green walls.
+		var base_nf: float = float(mq.leaf_near_fade) if mq else 1.1
+		var nf: float = base_nf * lerpf(1.0, 1.45, move_cut)
+		island.leaf_mat.set_shader_parameter("near_fade", nf)
+	if island.static_mat:
+		island.static_mat.set_shader_parameter("focus", _cut_focus)
 		island.static_mat.set_shader_parameter("cut_radius", _cut_cr_s)
+	if island.torch_mat:
+		island.torch_mat.set_shader_parameter("focus", _cut_focus)
 		island.torch_mat.set_shader_parameter("cut_radius", _cut_cr_s)
-		if island.leaf_mat:
-			island.leaf_mat.set_shader_parameter("near_fade", mq.leaf_near_fade if mq else 1.1)
+	_upload_foot_ao()
 	_update_audio(delta)
 	_audio_tick(delta)
 	if mq:
@@ -4211,10 +4304,10 @@ func _rest_cam_target() -> Vector3:
 		return walk_t + Vector3(0, 0.72, 0)
 	if rest_kind == "sleep" or seat_lying:
 		# Bias toward the face so the cradle + expression read.
-		return hips.lerp(head, 0.62)
+		return hips.lerp(head, 0.68)
 	if rest_kind == "seat":
-		return hips.lerp(head, 0.48)
-	return hips.lerp(head, 0.42)
+		return hips.lerp(head, 0.58)
+	return hips.lerp(head, 0.52)
 
 
 func _rest_face_fwd() -> Vector3:
