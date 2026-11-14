@@ -46,8 +46,9 @@ def main() -> None:
         out = os.path.join(ROOT, base + ".png")
         fig.savefig(out, dpi=120)
         plt.close(fig)
-        b = [x for x in boy if x > 0]
-        c = [x for x in cam if x > 0]
+        # Match Godot harness: ignore near-idle frames so max/median isn't inflated.
+        b = [x for x in boy if x > 0.02]
+        c = [x for x in cam if x > 0.001]
         def ratio(xs):
             if not xs:
                 return 0.0, 0.0, 0.0

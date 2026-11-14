@@ -1,0 +1,3 @@
+tag=run fps=120
+boy_ds median=0.3309 p95=0.7874 max=0.8330 max/median=2.518
+cam_ds median=0.02339 p95=0.02383 max=0.02385 max/median=1.020

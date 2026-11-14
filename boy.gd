@@ -152,7 +152,8 @@ var _night_rim: OmniLight3D
 var _night_body: OmniLight3D
 var _face_fill_day_energy := 0.35
 var _boy_mat: StandardMaterial3D
-var _boy_albedo_day := Color(1.08, 0.98, 0.92, 1.0)
+var _boy_mats: Array[StandardMaterial3D] = []
+var _boy_albedo_day := Color(1.0, 0.97, 0.93, 1.0)
 var _boy_albedo_tex_day: Texture2D
 var _boy_albedo_tex_sleep: Texture2D
 var _eyes_closed_tex := false
@@ -707,17 +708,17 @@ func _build_face_fill() -> void:
 func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 	k = clampf(k, 0.0, 1.0)
 	if face_fill:
-		# Day: warm under-brim fill. Night: nearly off — moon/fire are the only keys.
-		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.72, 0.82, 1.0), k)
-		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.06, k)
-		face_fill.omni_range = lerpf(0.4, 0.48, k)
-		face_fill.omni_attenuation = lerpf(1.4, 1.8, k)
+		# Day: warm under-brim fill. Night: tiny cool under-hat only (no daylight lift).
+		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.70, 0.80, 1.0), k)
+		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.05, k)
+		face_fill.omni_range = lerpf(0.4, 0.42, k)
+		face_fill.omni_attenuation = lerpf(1.4, 1.7, k)
 		face_fill.position = Vector3(0.0, -0.04, -0.16).lerp(Vector3(0.0, -0.05, -0.12), k)
 	if _night_rim:
 		# Soft cool edge only — moonlight DirectionalLight does the real key.
 		_night_rim.light_color = Color(0.55, 0.68, 0.98)
-		_night_rim.light_energy = lerpf(0.0, 0.08, k)
-		_night_rim.omni_range = lerpf(0.55, 0.75, k)
+		_night_rim.light_energy = lerpf(0.0, 0.10, k)
+		_night_rim.omni_range = lerpf(0.55, 0.80, k)
 		var local_off := Vector3(0.0, 0.04, 0.14)
 		if moon_dir.length_squared() > 0.01 and parts.has("head") and parts["head"] is Node3D:
 			var head := parts["head"] as Node3D
@@ -729,16 +730,17 @@ func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 				local_off = local_off.normalized() * 0.18
 		_night_rim.position = local_off
 	if _night_body:
-		_night_body.light_energy = lerpf(0.0, 0.04, k)
-		_night_body.omni_range = lerpf(0.8, 0.95, k)
+		_night_body.light_energy = lerpf(0.0, 0.05, k)
+		_night_body.omni_range = lerpf(0.8, 1.0, k)
 		_night_body.light_color = Color(0.62, 0.72, 0.95)
-	# Cool/darken albedo slightly so skin matches moonlit sand (never brighten).
-	for mat in [_boy_mat, _face_mat]:
+	# Cool darkening on every surface — pale Tripo albedo needs a hard pull to match sand.
+	var night_alb := Color(0.58, 0.64, 0.78, 1.0)
+	for mat in _boy_mats:
 		if mat == null:
 			continue
-		mat.albedo_color = _boy_albedo_day.lerp(Color(0.70, 0.76, 0.88, 1.0), k)
-		mat.metallic_specular = lerpf(0.2, 0.06, k)
-		mat.roughness = lerpf(0.78, 0.90, k)
+		mat.albedo_color = _boy_albedo_day.lerp(night_alb, k)
+		mat.metallic_specular = lerpf(0.2, 0.08, k)
+		mat.roughness = lerpf(0.78, 0.88, k)
 		mat.emission_enabled = false
 		mat.emission_energy_multiplier = 0.0
 		mat.emission = Color(0, 0, 0, 1)
@@ -752,6 +754,7 @@ func _tune_boy_material() -> void:
 		return
 	_face_mat = null
 	_face_surf_i = -1
+	_boy_mats.clear()
 	for c in skel.get_children():
 		if not (c is MeshInstance3D):
 			continue
@@ -778,6 +781,7 @@ func _tune_boy_material() -> void:
 				continue
 			_harden_boy_mat(mat)
 			mi.mesh.surface_set_material(si, mat)
+			_boy_mats.append(mat)
 			var is_face := _surface_looks_like_face(mi.mesh, si, nsurf)
 			if is_face and _face_mat == null:
 				_face_mat = mat

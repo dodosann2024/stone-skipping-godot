@@ -3504,12 +3504,18 @@ func _toggle_night() -> void:
 ## day <-> sunset <-> night over ~2.8 s: sky, sun→moon, ambient, fog, water, lamps, fire, sounds
 func _update_night(delta: float, force := false) -> void:
 	var target := 1.0 if night_on else 0.0
-	if night_k == target and not force:
-		return
-	night_k = move_toward(night_k, target, delta / 2.8)
+	var settled := night_k == target and not force
+	if not settled:
+		night_k = move_toward(night_k, target, delta / 2.8)
 	var k := smoothstep(0.0, 1.0, night_k)
 	# Sunset lobe peaks mid-transition (warm low sun), then yields to moonlight.
 	var sunset := smoothstep(0.05, 0.32, k) * (1.0 - smoothstep(0.48, 0.82, k))
+	# Keep boy materials synced every frame at night (expression swaps can reset albedo).
+	if settled:
+		var moon_s := sun.global_basis.z.normalized() if sun else Vector3.ZERO
+		if boy:
+			boy.set_night_k(k, moon_s)
+		return
 	RenderingServer.global_shader_parameter_set("night_k", k)
 	sky_mat.sky_top_color = Color(0.40, 0.58, 0.76).lerp(Color(0.05, 0.09, 0.20), k)
 	sky_mat.sky_horizon_color = Color(0.78, 0.85, 0.88).lerp(Color(1.0, 0.55, 0.28), sunset).lerp(Color(0.12, 0.18, 0.32), k)
@@ -3520,23 +3526,23 @@ func _update_night(delta: float, force := false) -> void:
 	var qn := Basis.from_euler(MOON_NIGHT * PI / 180.0).get_rotation_quaternion()
 	var q_mid := qd.slerp(qs, clampf(sunset * 2.0, 0.0, 1.0))
 	sun.basis = Basis(q_mid.slerp(qn, clampf((k - 0.35) / 0.55, 0.0, 1.0)))
-	# Moon is a dim cool key with readable shadows — not a second sun.
-	var moon_e := lerpf(1.0, 0.16, k)
+	# Moon is a dim cool key with readable soft shadows — not a second sun.
+	var moon_e := lerpf(1.0, 0.18, k)
 	sun.light_energy = lerpf(moon_e, 1.15, sunset * 0.55)
-	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(1.0, 0.48, 0.22), sunset).lerp(Color(0.58, 0.70, 0.98), k)
-	sun.shadow_blur = lerpf(2.5, 5.0, k)
-	sun.light_angular_distance = lerpf(1.2, 3.2, k)
-	sun.shadow_opacity = lerpf(1.0, 0.70, k)
+	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(1.0, 0.48, 0.22), sunset).lerp(Color(0.62, 0.74, 1.0), k)
+	sun.shadow_blur = lerpf(2.5, 4.8, k)
+	sun.light_angular_distance = lerpf(1.2, 3.0, k)
+	sun.shadow_opacity = lerpf(1.0, 0.65, k)
 	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.55 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
-	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.10, 0.16, 0.32), k)
-	env.ambient_light_sky_contribution = lerpf(1.0, 0.18, k)
-	# Ambient must drop at night so the boy isn't lifted into daylight.
-	env.ambient_light_energy = lerpf(0.55, 0.18, k)
-	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.06, 0.09, 0.18), k)
-	env.tonemap_exposure = lerpf(0.95, 0.76, k)
-	env.adjustment_saturation = lerpf(1.05, 0.88, k)
-	env.adjustment_contrast = lerpf(1.02, 1.06, k)
-	env.adjustment_brightness = lerpf(0.98, 0.90, k)
+	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.14, 0.20, 0.36), k)
+	env.ambient_light_sky_contribution = lerpf(1.0, 0.30, k)
+	# Dim blue fill — enough to read terrain, not enough to daylight the boy.
+	env.ambient_light_energy = lerpf(0.55, 0.28, k)
+	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.07, 0.10, 0.20), k)
+	env.tonemap_exposure = lerpf(0.95, 0.84, k)
+	env.adjustment_saturation = lerpf(1.05, 0.90, k)
+	env.adjustment_contrast = lerpf(1.02, 1.04, k)
+	env.adjustment_brightness = lerpf(0.98, 0.92, k)
 	var moon := sun.global_basis.z.normalized()
 	island.water_mat.set_shader_parameter("glint_dir", moon)
 	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(1.0, 0.55, 0.28), sunset).lerp(Color(0.72, 0.82, 1.0), k))

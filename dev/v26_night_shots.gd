@@ -45,28 +45,31 @@ func g() -> void:
 		await process_frame
 	await _shot(vp, "sunset_beach.png")
 
-	# Night: boy on open beach (match user night_beach_boy framing-ish)
+	# Night: boy on wet sand near hammock (match user night_beach_boy framing)
 	await _set_tod(m, "night")
-	m._place(Vector3(-2.2, 0, m.island.dock_start_z + 1.2), -0.4)
+	var beach: Vector3 = m.island.shore_pt(-2.15, 0.55)
+	m._place(beach, 1.15)
 	m.player.position.y = m._surface(m.player.position.x, m.player.position.z)
 	m.ground_y = m.player.position.y
 	m.boy.global_position = m.player.global_position
-	m.ex_yaw = m.face_yaw + PI + 0.15
-	m.ex_pitch = 0.18
-	m.ex_dist = 4.6
+	# Camera inland-side, looking across boy toward sea + hammock left.
+	m.ex_yaw = m.face_yaw + PI + 0.55
+	m.ex_pitch = 0.16
+	m.ex_dist = 4.2
 	for _i in 30:
 		await process_frame
 	await _shot(vp, "night_beach_boy.png")
 
-	# Night: near campfire
+	# Night: near campfire — face the flames so warm Omni keys the skin
 	var fire: Vector3 = m.island.campfire_pos
-	m._place(fire + Vector3(1.4, 0, 0.6), atan2(-0.2, -1.0))
+	var to_fire := fire - (fire + Vector3(1.05, 0, 0.35))
+	m._place(fire + Vector3(1.05, 0, 0.35), atan2(-to_fire.x, -to_fire.z))
 	m.player.position.y = m._surface(m.player.position.x, m.player.position.z)
 	m.ground_y = m.player.position.y
 	m.boy.global_position = m.player.global_position
-	m.ex_yaw = m.face_yaw + PI + 0.35
-	m.ex_pitch = 0.22
-	m.ex_dist = 4.8
+	m.ex_yaw = m.face_yaw + PI + 0.55
+	m.ex_pitch = 0.18
+	m.ex_dist = 3.6
 	for _i in 30:
 		await process_frame
 	await _shot(vp, "night_campfire.png")
@@ -84,15 +87,14 @@ func g() -> void:
 	if m.mode == m.Mode.VIEW:
 		m._toggle_view()
 
-	# Night: forest path
+	# Night: forest path (inland path toward palms, match user framing)
 	m.mode = m.Mode.EXPLORE
-	m._place(Vector3(-0.8, 0, 6.5), 0.6)
-	m.player.position.y = m._surface(m.player.position.x, m.player.position.z)
-	m.ground_y = m.player.position.y
-	m.boy.global_position = m.player.global_position
-	m.ex_yaw = m.face_yaw + PI + 0.2
-	m.ex_pitch = 0.18
-	m.ex_dist = 4.5
+	var path_p := Vector3(-1.2, 0, 5.2)
+	path_p.y = m._surface(path_p.x, path_p.z)
+	m._place(path_p, -0.2)
+	m.ex_yaw = m.face_yaw + PI + 0.35
+	m.ex_pitch = 0.22
+	m.ex_dist = 4.4
 	for _i in 30:
 		await process_frame
 	await _shot(vp, "night_forest_path.png")

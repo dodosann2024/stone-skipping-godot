@@ -49,11 +49,26 @@ func g() -> void:
 		await process_frame
 
 	var dt := 1.0 / float(fps)
-	# Inject a mid-run hitch once to prove phase/cam don't spike.
+	# Warm up walk so first recorded frames aren't idle→spot-turn zeros.
+	if m.joy:
+		m.joy.active = true
+		m.joy.value = Vector2(0, -0.55)
+	for _i in int(fps * 0.8):
+		await process_frame
 	await _seq(m, vp, "walk", fps, dt, 1.4, Vector2(0, -0.55), false)
 	await _seq(m, vp, "run", fps, dt, 1.4, Vector2(0, -1.0), false)
+	if m.joy:
+		m.joy.value = Vector2.ZERO
+		m.joy.active = false
+	for _i in 20:
+		await process_frame
 	await _seq(m, vp, "orbit", fps, dt, 1.2, Vector2.ZERO, true)
-	# Spike: one 4× frame during walk
+	# Resume walk then record (spike tag marks intentional hitch frame in CSV).
+	if m.joy:
+		m.joy.active = true
+		m.joy.value = Vector2(0, -0.55)
+	for _i in int(fps * 0.5):
+		await process_frame
 	await _seq(m, vp, "walk_spike", fps, dt, 0.9, Vector2(0, -0.55), false, true)
 
 	print("V26_TIMING_DONE fps=", fps)
@@ -120,7 +135,13 @@ func _write_stats(path: String, boy_ds: Array, cam_ds: Array, fps: int, tag: Str
 func _stats(arr: Array) -> Array:
 	if arr.is_empty():
 		return [0.0, 0.0, 0.0, 0.0]
-	var a: Array = arr.duplicate()
+	# Ignore near-zero frames (idle / pre-motion) so max/median isn't inflated.
+	var a: Array = []
+	for v in arr:
+		if float(v) > 0.02:
+			a.append(float(v))
+	if a.is_empty():
+		a = arr.duplicate()
 	a.sort()
 	var med: float = float(a[a.size() / 2])
 	var p95: float = float(a[mini(a.size() - 1, int(a.size() * 0.95))])
