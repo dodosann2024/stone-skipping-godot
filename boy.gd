@@ -13,15 +13,15 @@ signal foot_flat(side: int)
 # ~1.35× chibi; authored sit/hammock clips assume this scale + FLOOR_OFFSET y.
 const SCALE := 1.35
 const FLOOR_OFFSET := 0.00837  # 0.0062 * 1.35 — matches alignment.json
-## Extra drop so sandal soles meet the terrain. Bone ball sits ~1.5–3 cm above mesh_h
-## at rest/walk; soles are near the toe bone, so gnd 0.0 cm still looked floating.
-## Sandal sole sits well above the Mixamo toe bone on the Tripo mesh — bone-gap
-## metrics can read "planted" while the sole still floats a few cm. Empirically
-## ~5.5 cm drop makes soles kiss the terrain in low-side / default close-ups.
-const SOLE_NUDGE := 0.075
-## Target: ball bone under the surface so the sole (above the bone) contacts.
-const PLANT_BONE_GAP := -0.016
-const PLANT_MAX_PULL := 0.085
+## DO NOT lower the whole model to "fix float". v34 SOLE_NUDGE=+7.5 cm buried the
+## boy to mid-calf (follow-cam on slopes read as shorts-level). Negative = raise so
+## sandal soles clear the drawn mesh; per-foot plant closes the rest without
+## dragging hips/shorts into the ground.
+const SOLE_NUDGE := -0.014
+## Target: toe/ball bone near the surface. Tiny under-surface is OK (sole above bone);
+## never yank more than a couple cm — walk clips already dip toes briefly.
+const PLANT_BONE_GAP := -0.004
+const PLANT_MAX_PULL := 0.024
 ## Drop-in Mixamo GLB path. Replace boy/boy.glb (same Mixamo bone names) without code changes.
 ## Optional override: boy/boy_override.glb wins when present (AC-style flat-eye regen, etc.).
 const MODEL_PATH := "res://boy/boy.glb"
@@ -194,7 +194,8 @@ func _ready() -> void:
 	model.rotation.y = PI
 	model.scale = Vector3.ONE * SCALE
 	var ground := float(meta.get("ground", 0.0))
-	# -ground*SCALE = FLOOR_OFFSET (~0.8 cm up). SOLE_NUDGE pulls soles onto the mesh.
+	# -ground*SCALE = FLOOR_OFFSET (~0.8 cm up). Keep the authored floor; plant IK
+	# (not a whole-model drop) brings soles onto mesh_h.
 	model.position.y = -ground * SCALE - SOLE_NUDGE
 	model_base = model.position
 	add_child(model)
@@ -466,11 +467,12 @@ func _setup_tree() -> void:
 
 func _build_blob() -> void:
 	# Soft mul-blend discs — always on, every quality tier (sun shadows may be off on phones).
-	blob = _make_blob_disc("Blob", Vector2(0.50, 0.38), 0.78)
+	# Softer contact stain — a hard black disc under the shorts read as slope burial.
+	blob = _make_blob_disc("Blob", Vector2(0.46, 0.34), 0.62)
 	add_child(blob)
-	blob_l = _make_blob_disc("BlobL", Vector2(0.24, 0.14), 0.92)
+	blob_l = _make_blob_disc("BlobL", Vector2(0.22, 0.13), 0.78)
 	add_child(blob_l)
-	blob_r = _make_blob_disc("BlobR", Vector2(0.24, 0.14), 0.92)
+	blob_r = _make_blob_disc("BlobR", Vector2(0.22, 0.13), 0.78)
 	add_child(blob_r)
 
 
@@ -2078,14 +2080,17 @@ func _align_feet_to_ground(_delta: float) -> void:
 		var bone_lo := minf(heel.y, ball.y)
 		var want := sy + PLANT_BONE_GAP
 		var err := bone_lo - want
-		# Only pull DOWN onto the ground. Tiny penetration reads as contact;
-		# lifting buried soles was what made idle feet float again.
-		if err <= 0.001:
-			continue
-		if err > PLANT_MAX_PULL * 1.6:
-			continue
-		var pull := minf(err, PLANT_MAX_PULL) * w
-		if pull < 0.0005:
+		# err > 0: floating → pull down. err < 0: under mesh → lift (slope plant).
+		# Tiny under-surface is OK (sole above bone); never yank hips into the mesh.
+		var dy := 0.0
+		if err > 0.008:
+			if err > PLANT_MAX_PULL * 2.2:
+				continue
+			dy = -minf(err, PLANT_MAX_PULL) * w
+		elif err < -0.012:
+			# Lift buried stance feet on slopes (do NOT drag the whole model down).
+			dy = minf(-err - 0.006, 0.032) * w
+		if absf(dy) < 0.001:
 			continue
 		# Pitch foot to slope between heel and ball samples.
 		var hy: float = float(ground_fn.call(heel.x, heel.z))
@@ -2099,7 +2104,7 @@ func _align_feet_to_ground(_delta: float) -> void:
 			if bi < 0:
 				continue
 			var xf: Transform3D = skel.global_transform * skel.get_bone_global_pose(bi)
-			var origin := xf.origin - Vector3(0.0, pull, 0.0)
+			var origin := xf.origin + Vector3(0.0, dy, 0.0)
 			var basis := xf.basis
 			if bone_name == B_FOOT[side] and absf(pitch) > 0.01:
 				basis = basis.rotated(basis.x.normalized(), pitch * w * 0.85)

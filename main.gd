@@ -428,8 +428,10 @@ func _build_player() -> void:
 	ground_y = sp.y
 	# Default view: 3/4-front so the Tripo face is readable (drag still orbits 360°)
 	ex_yaw = face_yaw + PI + 0.45
-	ex_pitch = 0.22
-	ex_dist = 4.0
+	# Higher default pitch: low follow looking *up* a grass slope hid the legs
+	# behind the hillside (gnd 0 cm but shorts-level silhouette). ~0.66 clears soles.
+	ex_pitch = 0.66
+	ex_dist = 3.0
 	boy.ground_fn = _surface
 	boy.released.connect(_launch)
 	boy.footstep.connect(_on_footstep)
@@ -3862,7 +3864,8 @@ func _start_audio() -> void:
 	chime_wait = 0.0
 	if is_web:
 		tip_box.visible = true
-		tip_timer = 9.0
+		# AAA: don't park a banner over the boy for long — short tip, then clear.
+		tip_timer = 4.5
 
 ## a short "ding" right after start proves to the player that sound works
 func _audio_tick(delta: float) -> void:
@@ -4175,12 +4178,12 @@ func _process(delta: float) -> void:
 	_cut_focus = player.global_position + Vector3(0, 0.72, 0)
 	if demo_nocut:
 		_cut_focus.y = -100.0
-	# Wider cone while moving so leaf walls dither open as he walks through.
+	# Wide cone — leaf walls must dither open in the web build follow cam.
 	var move_cut := clampf(cur_speed / maxf(WALK_MAX, 0.01), 0.0, 1.0)
-	_cut_cr_f = lerpf(3.0, 4.0, move_cut) if mode == Mode.EXPLORE else 2.0
+	_cut_cr_f = lerpf(4.2, 5.8, move_cut) if mode == Mode.EXPLORE else 3.0
 	# Static props (barrels, posts, trunks) need a generous cone — close dock cams
 	# used to hide the boy completely behind a barrel.
-	_cut_cr_s = lerpf(2.8, 3.8, move_cut) if mode == Mode.EXPLORE else 2.0
+	_cut_cr_s = lerpf(3.8, 5.0, move_cut) if mode == Mode.EXPLORE else 2.6
 	if island.foliage_mat:
 		island.foliage_mat.set_shader_parameter("focus", _cut_focus)
 		island.foliage_mat.set_shader_parameter("cut_radius", _cut_cr_f)
@@ -4188,8 +4191,8 @@ func _process(delta: float) -> void:
 		island.leaf_mat.set_shader_parameter("focus", _cut_focus)
 		island.leaf_mat.set_shader_parameter("cut_radius", _cut_cr_f)
 		# Near cards that fill the lens as flat green walls.
-		var base_nf: float = float(mq.leaf_near_fade) if mq else 1.1
-		var nf: float = base_nf * lerpf(1.0, 1.45, move_cut)
+		var base_nf: float = float(mq.leaf_near_fade) if mq else 1.35
+		var nf: float = base_nf * lerpf(1.15, 1.7, move_cut)
 		island.leaf_mat.set_shader_parameter("near_fade", nf)
 	if island.static_mat:
 		island.static_mat.set_shader_parameter("focus", _cut_focus)
@@ -4777,11 +4780,58 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 		_cam_slide_want = 0.0
 	_cam_slide = lerpf(_cam_slide, _cam_slide_want, 1.0 - exp(-delta * slide_rate))
 	var pos := cam_target + off + right * _cam_slide
-	var floor_y: float = max(Island.ground_h(pos.x, pos.z), 0.0) + 0.55
+	# Keep the lens above the *drawn* mesh (not analytic ground_h) so slope follow
+	# never sits under a triangle and makes the boy look buried to the shorts.
+	var floor_y: float = Island.mesh_h(pos.x, pos.z) + 0.65
 	if _on_dock(pos.x, pos.z):
-		floor_y = maxf(floor_y, Island.DECK_Y + 0.4)
+		floor_y = maxf(floor_y, Island.DECK_Y + 0.45)
 	if pos.y < floor_y:
 		pos.y = floor_y
+	# Soft terrain probe along the arm so we don't look through a hillside.
+	if mode == Mode.EXPLORE and cam_dist < 12.0:
+		for i in range(3, 9):
+			var t: float = float(i) / 9.0
+			var q: Vector3 = cam_target.lerp(pos, t)
+			var h: float = Island.mesh_h(q.x, q.z) + 0.45
+			if q.y < h:
+				# Pull in so the segment clears the hill.
+				pos = cam_target + (pos - cam_target) * maxf(t - 0.08, 0.35)
+				pos.y = maxf(pos.y, Island.mesh_h(pos.x, pos.z) + 0.85)
+				break
+		# Looking *up* a slope from downhill: the hillside silhouette covers
+		# ankles→shorts even when bones sit on mesh_h (v34 CDP burial look).
+		# Lift + pull in so the lens reads over the crest, not through it.
+		var p_mh: float = Island.mesh_h(cam_target.x, cam_target.z)
+		var c_mh: float = Island.mesh_h(pos.x, pos.z)
+		var uphill: float = p_mh - c_mh
+		if uphill > 0.08:
+			var lift: float = clampf(uphill * 1.15, 0.55, 3.2)
+			pos.y = maxf(pos.y, cam_target.y + 1.15 + lift * 0.85)
+			var to_t: Vector3 = pos - cam_target
+			var pull: float = clampf(uphill * 0.22, 0.12, 0.52)
+			pos = cam_target + to_t * (1.0 - pull)
+			pos.y = maxf(pos.y, Island.mesh_h(pos.x, pos.z) + 1.25)
+			pos.y = maxf(pos.y, cam_target.y + 1.35)
+		# Ankle-line clearance: raise until the segment cam→ankles clears the mesh.
+		# This is what made gnd 0 cm still read as "buried to shorts" on CDP.
+		var ankle := Vector3(cam_target.x, p_mh + 0.10, cam_target.z)
+		for _iter in range(6):
+			var blocked := false
+			var block_h := 0.0
+			for i in range(2, 10):
+				var t3: float = float(i) / 10.0
+				var q3: Vector3 = pos.lerp(ankle, t3)
+				var hill3: float = Island.mesh_h(q3.x, q3.z)
+				if hill3 > q3.y + 0.04:
+					blocked = true
+					block_h = maxf(block_h, hill3)
+			if not blocked:
+				break
+			pos.y = maxf(pos.y, block_h + 1.35)
+			pos.y = maxf(pos.y, cam_target.y + 1.45)
+			# Pull slightly closer each iteration so we look more down than through.
+			pos = cam_target + (pos - cam_target) * 0.90
+			pos.y = maxf(pos.y, Island.mesh_h(pos.x, pos.z) + 1.20)
 	camera.global_position = pos
 	camera.look_at(cam_target, Vector3.UP)
 	if refl:

@@ -19,7 +19,7 @@ void fragment() {
 	} else if (!IN_SHADOW_PASS) {
 		float cut = cut_amount(wpos, CAMERA_POSITION_WORLD);
 		// Barrels / crates / posts between cam and boy: dither open like foliage.
-		if (cut > 0.52 || (cut > 0.02 && cut > bayer4(FRAGCOORD.xy))) {
+		if (cut > 0.12 || (cut > 0.004 && cut * 1.35 > bayer4(FRAGCOORD.xy))) {
 			discard;
 		}
 	}
