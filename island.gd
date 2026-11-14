@@ -989,39 +989,37 @@ func _path_lantern(lp: Vector3, hang: Vector3) -> Vector3:
 		h = Vector3(1, 0, 0)
 	h = h.normalized()
 	var side := Vector3(-h.z, 0.0, h.x)
-	var metal := Color(0.42, 0.38, 0.34)
-	var wood := Color(0.28, 0.17, 0.09)
-	# Longer hook arm so the hanging cage clears the post and reads in frame.
-	tube(LB, lp + Vector3(0, 0.04, 0), lp + h * 0.52 + Vector3(0, 0.04, 0), 0.014, 0.014, 5, metal)
-	# Drop hook ring.
-	tube(LB, lp + h * 0.52 + Vector3(0, 0.04, 0), lp + h * 0.52 + Vector3(0, -0.03, 0), 0.01, 0.01, 4, metal)
-	cyl(LB, 0.016, 0.016, 0.032, 6, lp + h * 0.52 + Vector3(0, -0.03, 0), Vector3(PI * 0.5, 0, 0), metal)
-	# Body center hangs below the hook; slightly larger cage (~30 cm) so it reads at night.
-	var c := lp + h * 0.52 + Vector3(0, -0.19, 0)
-	# Peaked roof + thin base — open cage silhouette (not a solid crate).
-	box(LB, Vector3(0.13, 0.018, 0.13), c + Vector3(0, 0.125, 0), Vector3.ZERO, metal)
-	box(LB, Vector3(0.05, 0.045, 0.05), c + Vector3(0, 0.16, 0), Vector3.ZERO, metal)
-	box(LB, Vector3(0.024, 0.028, 0.024), c + Vector3(0, 0.19, 0), Vector3.ZERO, metal)
-	box(LB, Vector3(0.105, 0.016, 0.105), c + Vector3(0, -0.13, 0), Vector3.ZERO, metal)
-	# Four slender corner posts only — leave the faces open for glass.
+	# Dark metal cage (shaded via lantern_mat) — keep out of the amber-glass emission band.
+	var metal := Color(0.30, 0.28, 0.26)
+	var wood := Color(0.22, 0.14, 0.08)
+	# Glass tint matches static_nocut soft-emission band (r 0.35–0.55, g 0.20–0.40, b < 0.22).
+	var glass := Color(0.46, 0.30, 0.12)
+	tube(LB, lp + Vector3(0, 0.04, 0), lp + h * 0.48 + Vector3(0, 0.04, 0), 0.014, 0.014, 5, metal)
+	tube(LB, lp + h * 0.48 + Vector3(0, 0.04, 0), lp + h * 0.48 + Vector3(0, -0.03, 0), 0.01, 0.01, 4, metal)
+	cyl(LB, 0.016, 0.016, 0.032, 6, lp + h * 0.48 + Vector3(0, -0.03, 0), Vector3(PI * 0.5, 0, 0), metal)
+	var c := lp + h * 0.48 + Vector3(0, -0.19, 0)
+	# Peaked roof + thin base — open cage silhouette.
+	box(LB, Vector3(0.12, 0.016, 0.12), c + Vector3(0, 0.120, 0), Vector3.ZERO, metal)
+	box(LB, Vector3(0.048, 0.040, 0.048), c + Vector3(0, 0.155, 0), Vector3.ZERO, metal)
+	box(LB, Vector3(0.022, 0.026, 0.022), c + Vector3(0, 0.185, 0), Vector3.ZERO, metal)
+	box(LB, Vector3(0.100, 0.014, 0.100), c + Vector3(0, -0.125, 0), Vector3.ZERO, metal)
 	for sx in [-1.0, 1.0]:
 		for sz in [-1.0, 1.0]:
-			box(LB, Vector3(0.014, 0.24, 0.014), c + h * (sx * 0.052) + side * (sz * 0.052), Vector3.ZERO, wood)
+			box(LB, Vector3(0.013, 0.23, 0.013), c + h * (sx * 0.050) + side * (sz * 0.050), Vector3.ZERO, wood)
 	for a in [0.0, PI * 0.5, PI, PI * 1.5]:
 		var outward := h * cos(a) + side * sin(a)
 		var xf := Transform3D(Basis(Vector3.UP, atan2(outward.x, outward.z)), c)
-		boxb(LB, Vector3(0.095, 0.012, 0.012), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.10, 0.052)), wood)
-		boxb(LB, Vector3(0.095, 0.012, 0.012), xf * Transform3D(Basis.IDENTITY, Vector3(0, -0.10, 0.052)), wood)
-		boxb(LB, Vector3(0.095, 0.012, 0.012), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.052)), wood)
-	# Flame / bulb nested inside the open cage — the bright point that sells "lantern".
-	GB.prim(_sphm(5, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.036, 0.055, 0.036)), c + Vector3(0, 0.01, 0)), Color(1.0, 0.88, 0.50))
-	# Soft glass suggestion: thin amber card behind the flame (one face only).
-	box(LB, Vector3(0.085, 0.17, 0.006), c + h * 0.02 + Vector3(0, 0.0, 0), Vector3.ZERO, Color(0.50, 0.34, 0.12))
-	# Outer amber panes so the hanging body reads as a lantern, not a bare post.
+		boxb(LB, Vector3(0.090, 0.011, 0.011), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.095, 0.050)), wood)
+		boxb(LB, Vector3(0.090, 0.011, 0.011), xf * Transform3D(Basis.IDENTITY, Vector3(0, -0.095, 0.050)), wood)
+		boxb(LB, Vector3(0.090, 0.011, 0.011), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.050)), wood)
+	# Tiny flame tip only (no big unshaded yellow blobs that read as flat lantern).
+	GB.prim(_sphm(5, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.026, 0.040, 0.026)), c + Vector3(0, 0.01, 0)), Color(1.0, 0.86, 0.48))
+	# Softly emissive amber glass panes (lantern_mat emission band).
+	box(LB, Vector3(0.078, 0.155, 0.005), c + h * 0.02, Vector3.ZERO, glass)
 	for a in [0.0, PI * 0.5, PI, PI * 1.5]:
 		var outward2 := h * cos(a) + side * sin(a)
 		var xf2 := Transform3D(Basis(Vector3.UP, atan2(outward2.x, outward2.z)), c)
-		boxb(LB, Vector3(0.092, 0.18, 0.005), xf2 * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.055)), Color(0.45, 0.30, 0.12))
+		boxb(LB, Vector3(0.084, 0.16, 0.004), xf2 * Transform3D(Basis.IDENTITY, Vector3(0, 0.0, 0.052)), glass)
 	return c
 
 func _barrel(p: Vector3) -> void:
@@ -1476,47 +1474,34 @@ func _build_lighthouse() -> void:
 func _build_campfire() -> void:
 	var c = campfire_pos
 	wall_c(Vector2(c.x, c.z), 0.82, c.y - 0.5, c.y + 0.9, "篝火")
-	# Solid stone ring — unshaded custom shader (no Compatibility dither stipple).
+	# Normally lit mid-grey stones — fire Omni warms the near face, far side stays dark.
 	var ring := Node3D.new()
 	ring.name = "CampfireStoneRing"
 	add_child(ring)
-	var stone_sh: Shader = load("res://shaders/stone.gdshader")
-	for i in 10:
-		var a = TAU * i / 10.0 + 0.08
-		var sp := gp(c.x + cos(a) * 0.68, c.z + sin(a) * 0.68) + Vector3(0, 0.08, 0)
-		# Warm solid stones — bright enough to read clean (no mid-grey stipple look).
-		var stone_col := Color(0.62, 0.58, 0.52).darkened(0.03 * float(i % 3))
-		var mat := ShaderMaterial.new()
-		mat.shader = stone_sh
-		mat.set_shader_parameter("albedo_color", Vector3(stone_col.r, stone_col.g, stone_col.b))
+	for i in 9:
+		var a = TAU * i / 9.0 + 0.05
+		var sp := gp(c.x + cos(a) * 0.66, c.z + sin(a) * 0.66) + Vector3(0, 0.07, 0)
+		# Mid-grey rock: fire Omni warms the near face; far side stays dark.
+		var stone_col := Color(0.20, 0.19, 0.18).darkened(0.025 * float(i % 3))
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = stone_col
+		mat.roughness = 0.97
+		mat.metallic = 0.0
+		mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+		mat.disable_receive_shadows = true
 		var body := MeshInstance3D.new()
 		var cm := SphereMesh.new()
-		cm.radius = 0.17
-		cm.height = 0.22
-		cm.radial_segments = 12
-		cm.rings = 6
+		cm.radius = 0.145
+		cm.height = 0.17
+		cm.radial_segments = 10
+		cm.rings = 5
 		body.mesh = cm
 		body.material_override = mat
 		body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		body.position = sp
-		body.scale = Vector3(1.15, 0.72, 1.05)
+		body.scale = Vector3(1.30, 0.72, 1.15)
 		ring.add_child(body)
-		var cap := MeshInstance3D.new()
-		var cm2 := SphereMesh.new()
-		cm2.radius = 0.12
-		cm2.height = 0.10
-		cm2.radial_segments = 10
-		cm2.rings = 4
-		cap.mesh = cm2
-		var mat2 := ShaderMaterial.new()
-		mat2.shader = stone_sh
-		var top := stone_col.lightened(0.14)
-		mat2.set_shader_parameter("albedo_color", Vector3(top.r, top.g, top.b))
-		cap.material_override = mat2
-		cap.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		cap.position = sp + Vector3(0, 0.08, 0)
-		cap.scale = Vector3(1.1, 0.50, 1.05)
-		ring.add_child(cap)
 	# Charred logs (SB cast already off). Glowing tips stay in GB.
 	var char_c := Color(0.09, 0.075, 0.065)
 	var rs := rng.state   # keep the rest of the island's random layout as it was
@@ -2701,19 +2686,16 @@ func _build_vegetation() -> void:
 		lamps.append([body, "path"])
 		# Keep explore cam from sitting inside path posts / fence boxes near the lamps.
 		cam_blockers.append([g + Vector3(0, 0.45, 0), 0.55])
-	# Forest-path lantern — post on the boy's left (+X) so the hanging cage reads in frame.
-	# Boy stands near (-0.9, 6.55); cage hangs toward -X into open air beside him.
-	var fq := Vector2(0.55, 6.40)
+	# Forest-path lantern beside the v26/7b65342 night_forest spot (~(-0.8, 6.5)).
+	# Post on the uphill/+X side; arm hangs toward path centre so the cage sits in open air.
+	var fq := Vector2(0.35, 6.45)
 	var fg := gp(fq.x, fq.y)
-	tube(SB, fg, fg + Vector3(0, 1.22, 0), 0.050, 0.042, 5, Color(0.4, 0.28, 0.16))
-	wall_c(Vector2(fg.x, fg.z), 0.06, fg.y - 0.2, fg.y + 1.45, "路灯")
-	var flp: Vector3 = fg + Vector3(0, 1.26, 0)
-	var fhang := Vector3(-1.0, 0.0, 0.05).normalized()
+	tube(SB, fg, fg + Vector3(0, 1.18, 0), 0.048, 0.040, 5, Color(0.4, 0.28, 0.16))
+	wall_c(Vector2(fg.x, fg.z), 0.06, fg.y - 0.2, fg.y + 1.4, "路灯")
+	var flp: Vector3 = fg + Vector3(0, 1.22, 0)
+	var fhang := Vector3(-1.0, 0.0, -0.10).normalized()
 	var fbody: Vector3 = _path_lantern(flp, fhang)
 	lamps.append([fbody, "path"])
-	# Extra warm glow so the hanging lantern reads even in a busy night frame.
-	GB.prim(_sphm(6, 4), Transform3D(Basis.IDENTITY.scaled(Vector3(0.10, 0.12, 0.10)), fbody + Vector3(0, 0.02, 0)), Color(1.0, 0.84, 0.45))
-	GB.prim(_sphm(5, 3), Transform3D(Basis.IDENTITY.scaled(Vector3(0.16, 0.10, 0.16)), fbody + Vector3(0, -0.20, 0)), Color(1.0, 0.70, 0.32))
 	cam_blockers.append([fg + Vector3(0, 0.45, 0), 0.55])
 	print("ISLAND forest_lamp post=", fg, " body=", fbody)
 

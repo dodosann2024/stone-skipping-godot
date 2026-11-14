@@ -1,7 +1,7 @@
 shader_type spatial;
-// Glowing coals and ash under the fire: charcoal with slowly breathing orange cracks.
-// Opaque disc (no discard) — Compatibility Bayer-stipples any alpha/discard rim into dotted grey.
-render_mode unshaded, cull_disabled, shadows_disabled, depth_draw_opaque;
+// Round glowing coal disc on a plane — discard outside the circle (no square corners).
+// Soft radial glow; discard rim is a hard circle but the glow fades before it.
+render_mode unshaded, cull_disabled, shadows_disabled;
 
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -17,15 +17,18 @@ float vnoise(vec2 p) {
 void fragment() {
 	vec2 q = UV - 0.5;
 	float r = length(q) * 2.0;
-	// Soft edge via albedo darkening, not discard/alpha (avoids stipple).
-	float edge = smoothstep(1.05, 0.72, r);
+	if (r > 0.98) {
+		discard;
+	}
 	float cells = vnoise(UV * 9.0) * 0.6 + vnoise(UV * 23.0) * 0.4;
 	float breathe = vnoise(UV * 5.0 + vec2(TIME * 0.35, -TIME * 0.27));
-	float glow = smoothstep(0.42, 0.75, cells * 0.7 + breathe * 0.5) * (1.0 - smoothstep(0.35, 0.90, r));
-	vec3 ash = mix(vec3(0.06, 0.05, 0.045), vec3(0.22, 0.20, 0.18), smoothstep(0.55, 1.0, r) * 0.5);
-	vec3 col = mix(ash, vec3(1.0, 0.36, 0.06) * 1.35, glow);
-	ALBEDO = col * edge;
-	if (edge < 0.02) {
-		ALBEDO = vec3(0.04, 0.035, 0.03);
-	}
+	float glow = smoothstep(0.40, 0.78, cells * 0.7 + breathe * 0.5) * (1.0 - smoothstep(0.25, 0.88, r));
+	vec3 ash = mix(vec3(0.08, 0.07, 0.06), vec3(0.28, 0.24, 0.20), smoothstep(0.40, 0.95, r) * 0.6);
+	vec3 col = mix(ash, vec3(1.0, 0.40, 0.08) * 1.55, glow);
+	// Soft visual edge: darken toward the discard rim.
+	// Fade toward cool ground so the rim reads soft (no hard disc edge).
+	vec3 ground = vec3(0.05, 0.07, 0.08);
+	float soft = smoothstep(0.98, 0.55, r);
+	ALBEDO = mix(ground, col, soft);
+	EMISSION = vec3(1.0, 0.36, 0.06) * glow * 0.85 * soft;
 }

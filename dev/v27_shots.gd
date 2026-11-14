@@ -130,33 +130,38 @@ func g() -> void:
 		await process_frame
 	await _shot(vp, "night_campfire.png")
 
-	# Night forest — boy on path; hanging lantern clearly beside him (screen-left) + warm pool.
+	# Night forest path — 7b65342 framing (face toward camera; lantern beside him).
 	m.mode = m.Mode.EXPLORE
 	m.cam_fixed = false
 	m.demo_cam = false
 	m.demo_track = []
-	var lamp_p := Vector3(0.05, 1.0, 6.40)
+	var ref_p := Vector3(-0.8, 0, 6.5)
+	var lamp_p := ref_p
 	var best_ld := 999.0
 	for L in m.island.lamps:
 		if str(L[1]) != "path":
 			continue
 		var lp: Vector3 = L[0]
-		var ld := Vector2(lp.x - 0.05, lp.z - 6.40).length()
+		var ld := Vector2(lp.x - ref_p.x, lp.z - ref_p.z).length()
 		if ld < best_ld:
 			best_ld = ld
 			lamp_p = lp
-	# Stand slightly downhill/left of the post so the cage sits open-air to his left.
-	var forest_p := Vector3(-0.95, 0.0, 6.55)
+	var away: Vector3 = Vector3(ref_p.x - lamp_p.x, 0.0, ref_p.z - lamp_p.z)
+	if away.length_squared() < 1e-6:
+		away = Vector3(-0.6, 0.0, -0.4)
+	var forest_p: Vector3 = Vector3(lamp_p.x, 0.0, lamp_p.z) + away.normalized() * 1.35
+	forest_p = forest_p.lerp(Vector3(ref_p.x, 0.0, ref_p.z), 0.35)
 	forest_p.y = m._surface(forest_p.x, forest_p.z)
-	# Face mostly along +Z (up the path); lantern stays on his left shoulder.
-	m._place(forest_p, -0.15)
-	# Camera from his right/front so the hanging cage + post read on screen-left.
-	var mid := (forest_p + Vector3(lamp_p.x, forest_p.y, lamp_p.z)) * 0.5
-	var cam_from := forest_p + Vector3(-1.55, 0.0, 1.35)
-	var look := mid + Vector3(0.15, 0.55, 0.0) - cam_from
-	m.ex_yaw = atan2(-look.x, -look.z)
-	m.ex_pitch = 0.20
-	m.ex_dist = 3.6
+	var to_lamp: Vector3 = lamp_p - forest_p
+	to_lamp.y = 0.0
+	var face_f := atan2(-(forest_p.x - 1.5), -(forest_p.z - 3.0))
+	if to_lamp.length_squared() > 1e-6:
+		var side := atan2(-to_lamp.x, -to_lamp.z) + PI * 0.62
+		face_f = lerp_angle(face_f, side, 0.40)
+	m._place(forest_p, face_f)
+	m.ex_yaw = m.face_yaw + PI + 0.22
+	m.ex_pitch = 0.16
+	m.ex_dist = 4.1
 	m._cam_arm_k = 1.0
 	m._cam_arm_want = 1.0
 	m._cam_slide = 0.0
@@ -164,19 +169,19 @@ func g() -> void:
 	m.cam_yaw = m.ex_yaw
 	m.cam_pitch = m.ex_pitch
 	m.cam_dist = m.ex_dist
-	m.cam_target = mid + Vector3(0.0, 0.72, 0.0)
-	m.island.foliage_mat.set_shader_parameter("cut_radius", 5.5)
-	m.island.leaf_mat.set_shader_parameter("cut_radius", 5.5)
-	m.island.static_mat.set_shader_parameter("cut_radius", 5.5)
+	m.cam_target = m.player.global_position + Vector3(0, 0.70, 0) + to_lamp.normalized() * 0.15
+	m.island.foliage_mat.set_shader_parameter("cut_radius", 4.5)
+	m.island.leaf_mat.set_shader_parameter("cut_radius", 4.5)
+	m.island.static_mat.set_shader_parameter("cut_radius", 4.5)
 	print("FOREST lamp=", lamp_p, " boy=", forest_p, " dist=", forest_p.distance_to(Vector3(lamp_p.x, forest_p.y, lamp_p.z)))
-	for _i in 60:
-		m.ex_yaw = atan2(-look.x, -look.z)
-		m.ex_pitch = 0.20
-		m.ex_dist = 3.6
+	for _i in 55:
+		m.ex_yaw = m.face_yaw + PI + 0.22
+		m.ex_pitch = 0.16
+		m.ex_dist = 4.1
 		m.cam_yaw = m.ex_yaw
 		m.cam_pitch = m.ex_pitch
 		m.cam_dist = m.ex_dist
-		m.cam_target = mid + Vector3(0.0, 0.72, 0.0)
+		m.cam_target = m.player.global_position + Vector3(0, 0.70, 0) + to_lamp.normalized() * 0.15
 		m._cap_night_omnis()
 		m._update_path_lamp_pool()
 		await process_frame

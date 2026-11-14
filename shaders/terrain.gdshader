@@ -137,12 +137,12 @@ void fragment() {
 	vec3 moon_ground = vec3(0.09, 0.135, 0.155); // desaturated blue-green
 	c = mix(c, moon_ground, nk);
 	float ld = length(p - lamp_xz);
-	// Soft Gaussian ~3.2 m — clear warm pool under the hanging forest lantern.
-	float pool = lamp_pool * exp(-(ld * ld) / (2.35 * 2.35));
-	pool *= smoothstep(3.6, 0.55, ld);
+	// Soft Gaussian ~2.2 m; gentle warm pool right around the lantern post.
+	float pool = lamp_pool * exp(-(ld * ld) / (1.45 * 1.45));
+	pool *= smoothstep(2.4, 0.55, ld);
 	ALBEDO = c;
 	ROUGHNESS = mix(rough, 0.92, nk);
 	SPECULAR = 0.5 * (1.0 - nk);
-	// Cool fill for open sand; lantern pool stays local (warm, readable).
-	EMISSION = moon_ground * 0.88 * nk + vec3(0.34, 0.20, 0.07) * pool;
+	// Cool moonlit fill (match 7b65342 feet luminance vs v26 ≈ 0.9–1.0); pool local.
+	EMISSION = moon_ground * 1.05 * nk + vec3(0.16, 0.11, 0.048) * pool;
 }

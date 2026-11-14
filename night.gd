@@ -53,12 +53,12 @@ func build(island: Island) -> void:
 			ol.light_specular = 0.12
 			lamp_energy.append(0.85)
 		elif kind == "path":
-			# Hanging cage key + short warm pool (ground still mostly shader emission).
-			ol.light_color = Color(1.0, 0.76, 0.48)
-			ol.omni_range = 2.6
-			ol.omni_attenuation = 1.55
+			# Short boy/cage key — ground warmth is the terrain Gaussian pool, not a bright Omni disc.
+			ol.light_color = Color(1.0, 0.74, 0.48)
+			ol.omni_range = 1.8
+			ol.omni_attenuation = 1.9
 			ol.light_specular = 0.0
-			lamp_energy.append(0.85)
+			lamp_energy.append(0.55)
 		else:
 			ol.light_color = Color(1.0, 0.72, 0.38)
 			ol.omni_range = 4.2

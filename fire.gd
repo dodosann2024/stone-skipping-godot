@@ -37,16 +37,16 @@ func build() -> void:
 		mi.extra_cull_margin = 1.0
 		add_child(mi)
 		flames.append(mi)
-	# coal bed — slightly smaller opaque disc (no alpha rim dither).
+	# Coal bed on a plane; shader discards outside a circle → round glowing disc.
 	var bed := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(0.78, 0.78)
+	pm.size = Vector2(0.88, 0.88)
 	bed.mesh = pm
 	var bm := ShaderMaterial.new()
 	bm.shader = load("res://shaders/ember_bed.gdshader")
 	bed.material_override = bm
 	bed.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	bed.position = Vector3(0, 0.035, 0)
+	bed.position = Vector3(0, 0.032, 0)
 	add_child(bed)
 	_sparks()
 	_smoke()
@@ -147,10 +147,10 @@ func _process(delta: float) -> void:
 		light.shadow_enabled = false
 	else:
 		light.visible = true
-		# Warm key near the fire (v26-class); boy albedo trim keeps torso from blowing out.
-		light.light_energy = (1.0 + 0.25 * f) * lerpf(1.85, 1.95, night)
-		light.omni_range = lerpf(4.0, 5.6, night)
-		light.omni_attenuation = lerpf(1.1, 1.55, night)
+		# Warm key — short falloff so stone near-faces read warm and far faces stay dark.
+		light.light_energy = (1.0 + 0.18 * f) * lerpf(1.05, 1.25, night)
+		light.omni_range = lerpf(3.2, 4.2, night)
+		light.omni_attenuation = lerpf(1.5, 2.1, night)
 		# No omni shadows — positional atlas dithered the stone ring into dotted grey.
 		light.shadow_enabled = false
 		light.position = Vector3(0.03 * _noise1(t * 2.2), 0.55 + 0.035 * f, 0.03 * _noise1(t * 1.7 + 9.0))
