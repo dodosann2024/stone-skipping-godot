@@ -1,0 +1,7 @@
+China CDN check (no-signup hosts):
+- jsDelivr gh: HTML/JS/PCK OK, but WASM returns 403:
+  "Package size exceeded the configured limit of 50 MB."
+  Repo docs+history package > 50 MB, so full-game mirror via jsDelivr is not viable.
+- fastly.jsdelivr.net: same limit.
+- rawcdn.githack.com: serves HTML; not a mainland-optimized CDN.
+Conclusion: keep GitHub Pages as primary host; no second full mirror shipped.

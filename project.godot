@@ -28,7 +28,12 @@ pointing/emulate_mouse_from_touch=true
 
 [physics]
 
+# Walk runs on the physics clock; visuals lerp in _process (see main.gd).
+# Engine transform interpolation stays off — Boy is a Node3D, not a physics body.
+# v28 blamed WebKit blank boots on enabling this globally; we interpolate manually instead.
 common/physics_interpolation=false
+common/physics_ticks_per_second=60
+common/max_physics_steps_per_frame=2
 
 [rendering]
 
