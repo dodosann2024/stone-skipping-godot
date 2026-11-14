@@ -27,6 +27,8 @@ var quality_tier := ""
 var gpu_renderer := ""
 var dpr := 1.0
 var screen_px := Vector2i.ZERO
+var gnd_err := 0.0
+var max_step := 0.0
 var _proc_t0 := 0.0
 var _phys_t0 := 0.0
 var _last_copy := ""
@@ -181,11 +183,13 @@ func _refresh_label() -> void:
 		"FPS %.0f  %.1f ms\n"
 		+ "p50 %.1f  p95 %.1f  max %.1f\n"
 		+ "phys/f %d  proc %.1f  phys %.1f\n"
+		+ "gnd %.1fcm  maxΔ %.1fcm\n"
 		+ "scale %.2f  tier %s\n"
 		+ "draws %d  prim %d\n"
 		+ "px %dx%d  dpr %.2f\n"
 		+ "%s"
 	) % [fps, last_ms, st.x, st.y, st.z, phys_ticks_frame, process_ms, physics_ms,
+		gnd_err * 100.0, max_step * 100.0,
 		render_scale, quality_tier, dc, prim, screen_px.x, screen_px.y, dpr, gpu]
 
 
@@ -195,13 +199,15 @@ func compact_text() -> String:
 	var dc := vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
 	var prim := vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_PRIMITIVES_IN_FRAME)
 	return (
-		"v31 debug\n"
+		"v32 debug\n"
 		+ "fps=%.0f p50=%.1f p95=%.1f max=%.1f\n"
 		+ "phys/f=%d proc_ms=%.1f phys_ms=%.1f\n"
+		+ "gnd_err_cm=%.2f max_step_cm=%.2f\n"
 		+ "scale=%.2f tier=%s\n"
 		+ "draws=%d prim=%d px=%dx%d dpr=%.2f\n"
 		+ "gpu=%s"
 	) % [Engine.get_frames_per_second(), st.x, st.y, st.z, phys_ticks_frame, process_ms, physics_ms,
+		gnd_err * 100.0, max_step * 100.0,
 		render_scale, quality_tier, dc, prim, screen_px.x, screen_px.y, dpr, gpu_renderer]
 
 

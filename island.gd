@@ -128,6 +128,10 @@ static var site_k := 0.25
 static var site_r := 3.0
 static var site_l := 6.0
 
+## Terrain mesh vertex spacing. ≤0.45 m keeps bilinear/planar error under ~2 cm vs analytic.
+const TERRAIN_STEP := 0.45
+const TERRAIN_HALF := 48.0
+
 static func ground_h(x: float, z: float) -> float:
 	var h := _ground_raw(x, z)
 	if site_on:
@@ -142,6 +146,25 @@ static func ground_h(x: float, z: float) -> float:
 		var dist := q.distance_to(a + ab * clampf((q - a).dot(ab) / ab.length_squared(), 0.0, 1.0))
 		h = lerpf(float(pd[2]), h, smoothstep(pad_flat, pad_flat + pad_blend, dist))
 	return h
+
+## Height of the walkable terrain mesh at (x,z): bilinear on TERRAIN_STEP verts (matches
+## vertex heights; triangle faces stay within a couple cm of this at TERRAIN_STEP≤0.45).
+static func mesh_h(x: float, z: float) -> float:
+	var step := TERRAIN_STEP
+	var half := TERRAIN_HALF
+	var gx0 := floorf((x + half) / step) * step - half
+	var gz0 := floorf((z + half) / step) * step - half
+	var tx := clampf((x - gx0) / step, 0.0, 1.0)
+	var tz := clampf((z - gz0) / step, 0.0, 1.0)
+	var h00 := ground_h(gx0, gz0)
+	var h10 := ground_h(gx0 + step, gz0)
+	var h01 := ground_h(gx0, gz0 + step)
+	var h11 := ground_h(gx0 + step, gz0 + step)
+	return lerpf(lerpf(h00, h10, tx), lerpf(h01, h11, tx), tz)
+
+## Signed gap: positive = feet above the mesh (floating), negative = into the mesh (sinking).
+static func ground_err(x: float, z: float, body_y: float) -> float:
+	return body_y - mesh_h(x, z)
 
 static func _ground_raw(x: float, z: float) -> float:
 	var d = shore_d(x, z)
@@ -546,26 +569,32 @@ func _ground_color(x: float, z: float, h: float) -> Color:
 func _build_terrain() -> void:
 	var st = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var half = 48.0
-	# Coarser terrain grid — path fine-patches cover the climb; saves terrain fill.
-	var step = 1.5
-	var n = int(half * 2.0 / step)
+	var half := TERRAIN_HALF
+	# Dense enough that mesh_h ≈ analytic (<~2 cm). Fine patches still cover sit pads.
+	var step := TERRAIN_STEP
+	var n := int(half * 2.0 / step)
 	for j in n + 1:
 		for i in n + 1:
-			var x = -half + i * step
-			var z = -half + j * step
-			var h = ground_h(x, z)
+			var x := -half + i * step
+			var z := -half + j * step
+			var h := ground_h(x, z)
 			st.set_color(_ground_color(x, z, h))
 			st.set_uv(Vector2(x, z))
 			st.add_vertex(Vector3(x, h, z))
 	# Fine patches over campfire logs + lighthouse bench so flatten pads draw cleanly.
-	# Also densify the dirt-path climb so 1 m triangles don't cast knife-edge shadow wedges.
+	# Cell indices are in TERRAIN_STEP units (not metres).
 	var fine_rects: Array = []
-	fine_rects.append([int(floor(campfire_pos.x + half)) - 6, int(floor(campfire_pos.z + half)) - 6, 12, 12])
+	var cf_i := int(floor((campfire_pos.x + half) / step))
+	var cf_j := int(floor((campfire_pos.z + half) / step))
+	fine_rects.append([cf_i - 8, cf_j - 8, 16, 16])
 	var lh_xz := gp(2.0, 3.0) + Vector3(-2.2, 0, -2.0)
-	fine_rects.append([int(floor(lh_xz.x + half)) - 4, int(floor(lh_xz.z + half)) - 4, 8, 8])
-	# One denser strip on the forest climb (was 5 overlapping patches).
-	fine_rects.append([int(floor(0.2 + half)) - 4, int(floor(6.0 + half)) - 5, 9, 10])
+	var lh_i := int(floor((lh_xz.x + half) / step))
+	var lh_j := int(floor((lh_xz.z + half) / step))
+	fine_rects.append([lh_i - 6, lh_j - 6, 12, 12])
+	# Dirt-path climb: denser strip so pad flats stay clean.
+	var path_i := int(floor((0.2 + half) / step))
+	var path_j := int(floor((6.0 + half) / step))
+	fine_rects.append([path_i - 6, path_j - 8, 14, 16])
 	for j in n:
 		for i in n:
 			var skip := false
@@ -575,13 +604,13 @@ func _build_terrain() -> void:
 					break
 			if skip:
 				continue
-			var a = j * (n + 1) + i
-			var b = a + 1
-			var c = a + n + 1
-			var d = c + 1
+			var a := j * (n + 1) + i
+			var b := a + 1
+			var c := a + n + 1
+			var d := c + 1
 			st.add_index(a); st.add_index(b); st.add_index(c)
 			st.add_index(b); st.add_index(d); st.add_index(c)
-	var sub := 4
+	var sub := 3
 	var base: int = (n + 1) * (n + 1)
 	for fr in fine_rects:
 		var fi0: int = int(fr[0])
@@ -592,15 +621,12 @@ func _build_terrain() -> void:
 		var patch_base := base
 		for j in fn + 1:
 			for i in fn + 1:
-				var x: float = -half + fi0 + float(i) / sub
-				var z: float = -half + fj0 + float(j) / sub
+				var x: float = -half + (float(fi0) + float(i) / float(sub)) * step
+				var z: float = -half + (float(fj0) + float(j) / float(sub)) * step
 				var h: float
 				if i == 0 or i == fn or j == 0 or j == fn:
-					var x0: float = floorf(x + half + 1e-4) - half
-					var z0: float = floorf(z + half + 1e-4) - half
-					var tx := x - x0
-					var tz := z - z0
-					h = lerpf(lerpf(ground_h(x0, z0), ground_h(x0 + 1.0, z0), tx), lerpf(ground_h(x0, z0 + 1.0), ground_h(x0 + 1.0, z0 + 1.0), tx), tz)
+					# Seam to coarse verts: bilinear on TERRAIN_STEP (same as mesh_h).
+					h = mesh_h(x, z)
 				else:
 					h = ground_h(x, z)
 				st.set_color(_ground_color(x, z, h))
@@ -608,10 +634,10 @@ func _build_terrain() -> void:
 				st.add_vertex(Vector3(x, h, z))
 		for j in fn:
 			for i in fn:
-				var a2 = patch_base + j * (fn + 1) + i
-				var b2 = a2 + 1
-				var c2 = a2 + fn + 1
-				var d2 = c2 + 1
+				var a2 := patch_base + j * (fn + 1) + i
+				var b2 := a2 + 1
+				var c2 := a2 + fn + 1
+				var d2 := c2 + 1
 				st.add_index(a2); st.add_index(b2); st.add_index(c2)
 				st.add_index(b2); st.add_index(d2); st.add_index(c2)
 		base += (fn + 1) * (fn + 1)
