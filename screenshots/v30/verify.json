@@ -1,0 +1,30 @@
+{
+  "chromium": {
+    "load_s": 5.77,
+    "hud": {
+      "hasCopy": true,
+      "dpr": 2
+    },
+    "url": "https://dodosann2024.github.io/stone-skipping-godot/game_v30/game_v30.html?v=30&debug=1",
+    "console_error": [],
+    "pageerrors": [],
+    "godot": [
+      "[log] Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org",
+      "[log] Island: hammock cloth remap max dist 0.0000 m"
+    ]
+  },
+  "webkit": {
+    "load_s": 4.17,
+    "hud": {
+      "hasCopy": true,
+      "dpr": 2
+    },
+    "url": "https://dodosann2024.github.io/stone-skipping-godot/game_v30/game_v30.html?v=30&debug=1",
+    "console_error": [],
+    "pageerrors": [],
+    "godot": [
+      "[log] Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org",
+      "[log] Island: hammock cloth remap max dist 0.0000 m"
+    ]
+  }
+}
