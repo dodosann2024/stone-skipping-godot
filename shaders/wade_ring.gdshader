@@ -45,6 +45,6 @@ void fragment() {
 	if (a < 0.01) {
 		discard;
 	}
-	ALBEDO = mix(vec3(0.94, 0.98, 0.97), vec3(0.42, 0.50, 0.62), night);
-	ALPHA = a;
+	ALBEDO = mix(vec3(0.94, 0.98, 0.97), vec3(0.18, 0.26, 0.38), night);
+	ALPHA = a * mix(1.0, 0.55, night);
 }

@@ -52,7 +52,7 @@ func build(island: Island) -> void:
 			ol.visible = false
 			add_child(ol)
 			lamp_lights.append(ol)
-			lamp_energy.append(0.45 if kind == "dock" else 3.2)
+			lamp_energy.append(0.40 if kind == "dock" else 2.0)
 			# No deck flood — one lantern pool only (two corner posts share the dock).
 	# lighthouse: glow, a local light on the tower top and two opposite beams sweeping round
 	var bh := ShaderMaterial.new()
@@ -64,12 +64,13 @@ func build(island: Island) -> void:
 	halos.append(bh)
 	beacon_light = OmniLight3D.new()
 	beacon_light.light_color = Color(1.0, 0.85, 0.55)
-	beacon_light.omni_range = 5.0
+	beacon_light.omni_range = 4.5
+	beacon_light.omni_attenuation = 1.2
 	beacon_light.position = island.beacon_pos + Vector3(0, 0.6, 0)
 	beacon_light.visible = false
 	add_child(beacon_light)
 	lamp_lights.append(beacon_light)
-	lamp_energy.append(1.2)
+	lamp_energy.append(0.9)
 	beam_pivot = Node3D.new()
 	beam_pivot.position = island.beacon_pos
 	add_child(beam_pivot)
@@ -138,14 +139,18 @@ func apply(k: float, cam_pos: Vector3, moon_dir: Vector3, delta: float) -> void:
 	dome_mat.set_shader_parameter("k", k)
 	dome_mat.set_shader_parameter("moon_dir", moon_dir)
 	dome_mat.set_shader_parameter("time", t)
+	# Cull distant omnis — Compatibility only shades a handful of lights per mesh on mobile.
 	for i in lamp_lights.size():
 		var ol := lamp_lights[i]
-		ol.visible = true
-		ol.light_energy = lamp_energy[i] * k * (1.0 + 0.04 * sin(t * 9.0 + i * 2.0))
+		var d := ol.global_position.distance_to(cam_pos)
+		var near := d < ol.omni_range + 18.0
+		ol.visible = near
+		if near:
+			ol.light_energy = lamp_energy[i] * k * (1.0 + 0.05 * sin(t * 7.0 + i * 2.0))
 	for hm in halos:
 		hm.set_shader_parameter("k", k)
 	beam_pivot.visible = true
 	beam_pivot.rotation.y = t * 0.55
-	beam_mat.set_shader_parameter("k", k)
+	beam_mat.set_shader_parameter("k", k * 0.85)
 	fly_mat.set_shader_parameter("k", smoothstep(0.5, 1.0, k))
 	fly_mat.set_shader_parameter("time", t)

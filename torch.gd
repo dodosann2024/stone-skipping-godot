@@ -132,17 +132,27 @@ func _smoke() -> void:
 	p.layers = 1 | 16
 	add_child(p)
 
+func _noise1(x: float) -> float:
+	var i := floorf(x)
+	var f := x - i
+	var a := fposmod(sin(i * 91.7 + phase * 13.0) * 43758.5453, 1.0)
+	var b := fposmod(sin((i + 1.0) * 91.7 + phase * 13.0) * 43758.5453, 1.0)
+	f = f * f * (3.0 - 2.0 * f)
+	return lerpf(a, b, f) * 2.0 - 1.0
+
+
 func _process(delta: float) -> void:
 	t += delta
 	var s := t + phase
-	# quicker than the campfire's flicker (a small flame gutters faster), with an occasional deeper dip
-	var f := 0.5 * sin(s * 9.1) + 0.3 * sin(s * 15.7 + 1.1) + 0.2 * sin(s * 27.3 + 0.6)
-	var dip := smoothstep(0.85, 1.0, sin(s * 1.37) * sin(s * 2.11 + 0.4))
-	var k := 1.0 + 0.2 * f - 0.25 * dip
-	light.light_energy = k * lerpf(0.45, 1.9, night)
-	light.omni_range = lerpf(2.4, 5.2, night)
-	light.position = Vector3(0.015 * sin(s * 6.3), 0.12 + 0.02 * f, 0.015 * cos(s * 5.1))
-	glow.set_shader_parameter("k", k * lerpf(0.18, 0.75, night))
+	var f := 0.5 * _noise1(s * 4.2) + 0.3 * _noise1(s * 9.1 + 3.0) + 0.2 * _noise1(s * 15.0 + 8.0)
+	var dip := smoothstep(0.82, 1.0, _noise1(s * 0.55 + 2.0))
+	var k := 1.0 + 0.22 * f - 0.22 * dip
+	# Small-radius warm omnis — falloff keeps moonlight dominant away from the torch.
+	light.light_energy = k * lerpf(0.45, 1.35, night)
+	light.omni_range = lerpf(2.4, 4.2, night)
+	light.omni_attenuation = lerpf(1.1, 1.5, night)
+	light.position = Vector3(0.012 * _noise1(s * 3.1), 0.12 + 0.018 * f, 0.012 * _noise1(s * 2.4 + 5.0))
+	glow.set_shader_parameter("k", k * lerpf(0.18, 0.55, night))
 	if wood_mat and slot < flame_data.size():
 		var fp := global_position + Vector3(0, 0.06, 0)
 		flame_data[slot] = Vector4(fp.x, fp.y, fp.z, k * night * SELF_LIT)

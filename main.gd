@@ -82,6 +82,9 @@ var view_yaw := 0.6
 var view_pitch := 0.55
 var view_dist := 34.0
 var orbit_vel := Vector2.ZERO
+## Drag deltas accumulated across input events; applied once per render frame (ProMotion-safe).
+var orbit_pending := Vector2.ZERO
+var zoom_pending := 1.0
 var touches := {}
 var pinch_d := 0.0
 var mouse_drag := false
@@ -1259,7 +1262,8 @@ func _explore_tick(delta: float) -> void:
 	var real := (to - from) / maxf(delta, 1e-4)
 	real.y = 0.0
 	if real.length() < move_vel.length() * 0.5:
-		move_vel = move_vel.lerp(real, 0.5)   # bumping into something
+		# Frame-rate independent collision bleed (was constant 0.5 → jitter at 120Hz).
+		move_vel = move_vel.lerp(real, 1.0 - exp(-delta * 14.0))
 	cur_speed = real.length()
 	var h := _surface(to.x, to.z)
 	ground_y = h if absf(h - ground_y) > 0.5 else lerpf(ground_y, h, 1.0 - exp(-delta * 18.0))
@@ -2645,11 +2649,7 @@ func _explore_cam_input(event: InputEvent) -> void:
 			var ps: Array = touches.values()
 			var d: float = (ps[0] - ps[1]).length()
 			if pinch_d > 1.0 and d > 1.0:
-				var factor := pinch_d / d
-				if cam_fixed:
-					fix_dist = clampf(fix_dist * factor, 2.5, 28.0)
-				else:
-					ex_dist = clamp(ex_dist * factor, 3.0, 14.0)
+				zoom_pending *= pinch_d / d
 			pinch_d = d
 	elif event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION:
 		if event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT:
@@ -2667,19 +2667,43 @@ func _explore_cam_input(event: InputEvent) -> void:
 func _explore_orbit(rel: Vector2) -> void:
 	var vs := get_viewport().get_visible_rect().size
 	var k: float = 5.0 / max(min(vs.x, vs.y), 200.0)
-	if cam_fixed:
-		fix_yaw -= rel.x * k
-		fix_pitch = clampf(fix_pitch + rel.y * k * 0.6, 0.06, 1.35)
-		orbit_vel = Vector2(-rel.x * k * 12.0, rel.y * k * 8.0)
-	elif mode == Mode.REST:
-		rest_cam_yaw -= rel.x * k
-		rest_cam_pitch = clampf(rest_cam_pitch + rel.y * k * 0.6, 0.06, 1.15)
-		orbit_vel = Vector2(-rel.x * k * 12.0, rel.y * k * 8.0)
+	# Accumulate; applied once in _update_camera so multi-event ProMotion frames don't stutter.
+	orbit_pending += Vector2(-rel.x * k, rel.y * k * 0.6)
+	orbit_vel = Vector2(-rel.x * k * 12.0, rel.y * k * 8.0)
+	if mode == Mode.REST:
 		rest_touch_dragged = true
-	else:
-		ex_yaw -= rel.x * k
-		ex_pitch = clamp(ex_pitch + rel.y * k * 0.6, 0.05, 1.25)
 	last_drag = gt
+
+
+func _flush_orbit_pending() -> void:
+	if orbit_pending.length_squared() < 1e-12 and absf(zoom_pending - 1.0) < 1e-6:
+		return
+	var dy := orbit_pending.x
+	var dp := orbit_pending.y
+	orbit_pending = Vector2.ZERO
+	if cam_fixed:
+		fix_yaw += dy
+		fix_pitch = clampf(fix_pitch + dp, 0.06, 1.35)
+	elif mode == Mode.REST:
+		rest_cam_yaw += dy
+		rest_cam_pitch = clampf(rest_cam_pitch + dp, 0.06, 1.15)
+	elif mode == Mode.VIEW:
+		view_yaw += dy
+		view_pitch = clamp(view_pitch + dp, 0.06, 1.42)
+	else:
+		ex_yaw += dy
+		ex_pitch = clamp(ex_pitch + dp, 0.05, 1.25)
+	if absf(zoom_pending - 1.0) > 1e-6:
+		var z := zoom_pending
+		zoom_pending = 1.0
+		if cam_fixed:
+			fix_dist = clampf(fix_dist * z, 2.5, 28.0)
+		elif mode == Mode.REST:
+			rest_cam_dist = clampf(rest_cam_dist * z, 1.6, 7.5)
+		elif mode == Mode.VIEW:
+			view_dist = clamp(view_dist * z, 4.0, 95.0)
+		else:
+			ex_dist = clamp(ex_dist * z, 3.0, 14.0)
 
 
 ## Orbit / zoom while sitting or sleeping; a tap with no drag still stands up.
@@ -3477,54 +3501,56 @@ func _toggle_night() -> void:
 	_toast("夜晚：篝火和灯都亮起来了" if night_on else "天亮了", 1.6)
 	_update_ui()
 
-## day <-> night over ~2.5 s: sky, sun -> moon, ambient, fog, water glints, lamps, fire, sounds
+## day <-> sunset <-> night over ~2.8 s: sky, sun→moon, ambient, fog, water, lamps, fire, sounds
 func _update_night(delta: float, force := false) -> void:
 	var target := 1.0 if night_on else 0.0
 	if night_k == target and not force:
 		return
-	night_k = move_toward(night_k, target, delta / 2.5)
+	night_k = move_toward(night_k, target, delta / 2.8)
 	var k := smoothstep(0.0, 1.0, night_k)
+	# Sunset lobe peaks mid-transition (warm low sun), then yields to moonlight.
+	var sunset := smoothstep(0.05, 0.32, k) * (1.0 - smoothstep(0.48, 0.82, k))
 	RenderingServer.global_shader_parameter_set("night_k", k)
-	# Keep night sky readable (v22 iPhone look), not crushed black.
-	sky_mat.sky_top_color = Color(0.40, 0.58, 0.76).lerp(Color(0.08, 0.14, 0.28), k)
-	sky_mat.sky_horizon_color = Color(0.78, 0.85, 0.88).lerp(Color(0.18, 0.26, 0.42), k)
+	sky_mat.sky_top_color = Color(0.40, 0.58, 0.76).lerp(Color(0.05, 0.09, 0.20), k)
+	sky_mat.sky_horizon_color = Color(0.78, 0.85, 0.88).lerp(Color(1.0, 0.55, 0.28), sunset).lerp(Color(0.12, 0.18, 0.32), k)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
-	sky_mat.ground_bottom_color = Color(0.30, 0.46, 0.52).lerp(Color(0.06, 0.10, 0.18), k)
+	sky_mat.ground_bottom_color = Color(0.30, 0.46, 0.52).lerp(Color(0.04, 0.07, 0.14), k)
 	var qd := Basis.from_euler(SUN_DAY * PI / 180.0).get_rotation_quaternion()
+	var qs := Basis.from_euler(Vector3(-8, 55, 0) * PI / 180.0).get_rotation_quaternion()
 	var qn := Basis.from_euler(MOON_NIGHT * PI / 180.0).get_rotation_quaternion()
-	sun.basis = Basis(qd.slerp(qn, k))
-	# Moonlit blue world (readable ground/sea/sky like the v22 iPhone shots). Compatibility
-	# soft-blur is weak, so softness comes from opacity + ambient fill.
-	sun.light_energy = lerpf(1.0, 0.58, k)
-	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(0.58, 0.72, 1.0), k)
-	sun.shadow_blur = lerpf(2.5, 8.0, k)
-	sun.light_angular_distance = lerpf(1.2, 6.0, k)
-	sun.shadow_opacity = lerpf(1.0, 0.35, k)
-	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.5 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
-	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.28, 0.38, 0.58), k)
-	env.ambient_light_sky_contribution = lerpf(1.0, 0.55, k)
-	env.ambient_light_energy = lerpf(0.55, 0.92, k)
-	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.14, 0.20, 0.34), k)
-	# Night exposure: lift the world; boy extras stay off so he matches the ground.
-	env.tonemap_exposure = lerpf(0.95, 1.18, k)
-	env.adjustment_saturation = lerpf(1.05, 0.92, k)
-	env.adjustment_contrast = lerpf(1.02, 0.96, k)
-	env.adjustment_brightness = lerpf(0.98, 1.02, k)
+	var q_mid := qd.slerp(qs, clampf(sunset * 2.0, 0.0, 1.0))
+	sun.basis = Basis(q_mid.slerp(qn, clampf((k - 0.35) / 0.55, 0.0, 1.0)))
+	# Moon is a dim cool key with readable shadows — not a second sun.
+	var moon_e := lerpf(1.0, 0.16, k)
+	sun.light_energy = lerpf(moon_e, 1.15, sunset * 0.55)
+	sun.light_color = Color(1.0, 0.93, 0.82).lerp(Color(1.0, 0.48, 0.22), sunset).lerp(Color(0.58, 0.70, 0.98), k)
+	sun.shadow_blur = lerpf(2.5, 5.0, k)
+	sun.light_angular_distance = lerpf(1.2, 3.2, k)
+	sun.shadow_opacity = lerpf(1.0, 0.70, k)
+	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY if k > 0.55 else DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
+	env.ambient_light_color = Color(0.22, 0.30, 0.50).lerp(Color(0.45, 0.28, 0.18), sunset).lerp(Color(0.10, 0.16, 0.32), k)
+	env.ambient_light_sky_contribution = lerpf(1.0, 0.18, k)
+	# Ambient must drop at night so the boy isn't lifted into daylight.
+	env.ambient_light_energy = lerpf(0.55, 0.18, k)
+	env.fog_light_color = Color(0.80, 0.86, 0.88).lerp(Color(0.95, 0.55, 0.30), sunset).lerp(Color(0.06, 0.09, 0.18), k)
+	env.tonemap_exposure = lerpf(0.95, 0.76, k)
+	env.adjustment_saturation = lerpf(1.05, 0.88, k)
+	env.adjustment_contrast = lerpf(1.02, 1.06, k)
+	env.adjustment_brightness = lerpf(0.98, 0.90, k)
 	var moon := sun.global_basis.z.normalized()
 	island.water_mat.set_shader_parameter("glint_dir", moon)
-	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(0.8, 0.88, 1.0), k))
+	island.water_mat.set_shader_parameter("glint_col", Color(1.0, 0.95, 0.85).lerp(Color(1.0, 0.55, 0.28), sunset).lerp(Color(0.72, 0.82, 1.0), k))
 	island.water_mat.set_shader_parameter("night", k)
-	# Day: dim the unshaded lantern glass; night: bright warm bulbs.
-	island.glow_mat.set_shader_parameter("boost", lerpf(0.35, 3.4, k))
-	island.cloud_mat.set_shader_parameter("tint", Color(1, 1, 1).lerp(Color(0.13, 0.16, 0.26), k))
+	# Day: dim lantern glass; night: warm bulbs (capped so they don't wash the shore).
+	island.glow_mat.set_shader_parameter("boost", lerpf(0.35, 1.55, k))
+	island.cloud_mat.set_shader_parameter("tint", Color(1, 1, 1).lerp(Color(0.10, 0.12, 0.20), k))
 	island.campfire.night = k
 	for tn in island.torches:
 		tn.night = k
 	for b in birds:
-		(b["node"] as Node3D).visible = k < 0.5
+		(b["node"] as Node3D).visible = k < 0.45
 	if night_amb:
 		night_amb.volume_db = lerpf(-60.0, -13.0, sqrt(k))
-	# Character fill / rim must track night so face and body match the world.
 	if boy:
 		boy.set_night_k(k, moon)
 
@@ -4073,15 +4099,7 @@ func _toggle_cam_fixed() -> void:
 
 
 func _nudge_zoom(factor: float) -> void:
-	if cam_fixed:
-		fix_dist = clampf(fix_dist * factor, 2.8, 18.0)
-		cam_dist = lerpf(cam_dist, fix_dist, 0.55)
-	elif mode == Mode.VIEW:
-		view_dist = clampf(view_dist * factor, 4.0, 95.0)
-	elif mode == Mode.REST:
-		rest_cam_dist = clampf(rest_cam_dist * factor, 1.6, 7.5)
-	else:
-		ex_dist = clampf(ex_dist * factor, 3.2, 12.0)
+	zoom_pending *= factor
 
 
 func _persist_cam_fixed() -> void:
@@ -4098,6 +4116,7 @@ func _load_cam_fixed() -> void:
 
 
 func _update_camera(delta: float) -> void:
+	_flush_orbit_pending()
 	if demo_cam:
 		if demo_track.size() > 0:
 			var tr: Array = demo_track
@@ -4105,7 +4124,7 @@ func _update_camera(delta: float) -> void:
 			cam_yaw = (float(tr[0]) if tr.size() > 4 else face_yaw + float(tr[0]))
 			cam_pitch = tr[1]
 			cam_dist = tr[2]
-		_apply_camera()
+		_apply_camera(delta)
 		return
 	# Fixed mode: never auto-follow while exploring; on REST soft-retarget once so
 	# sit/lie aren't off-frame after toggling 固定视角 in explore.
@@ -4121,7 +4140,6 @@ func _update_camera(delta: float) -> void:
 			orbit_vel *= exp(-delta * 3.5)
 			fix_yaw += orbit_vel.x * delta
 			fix_pitch = clampf(fix_pitch + orbit_vel.y * delta, 0.06, 1.25)
-			# Soft zoom damping toward the clamped fix_dist.
 			cam_dist = lerpf(cam_dist, fix_dist, 1.0 - exp(-delta * 5.0))
 		else:
 			cam_dist = fix_dist
@@ -4130,7 +4148,7 @@ func _update_camera(delta: float) -> void:
 		cam_pitch = fix_pitch
 		if dragging:
 			cam_dist = fix_dist
-		_apply_camera()
+		_apply_camera(delta)
 		return
 	var want: Array
 	var k: float
@@ -4186,7 +4204,7 @@ func _update_camera(delta: float) -> void:
 	cam_yaw = lerp_angle(cam_yaw, want[1], k)
 	cam_pitch = lerp(cam_pitch, want[2], k)
 	cam_dist = lerp(cam_dist, want[3], k)
-	_apply_camera()
+	_apply_camera(delta)
 
 func _cam_blocked(q: Vector3) -> bool:
 	if mode == Mode.THROW or mode == Mode.VIEW:
@@ -4202,10 +4220,11 @@ func _cam_blocked(q: Vector3) -> bool:
 	return false
 
 var _cam_arm_k := 1.0
+var _cam_arm_want := 1.0
 
-func _apply_camera() -> void:
+func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	var off := Vector3(sin(cam_yaw) * cos(cam_pitch), sin(cam_pitch), cos(cam_yaw) * cos(cam_pitch)) * cam_dist
-	# Soft spring arm: ease pull-in so palms don't slam the framing in one frame.
+	# Soft spring arm: frame-rate independent pull-in (no constant-α snap at 120Hz).
 	var want_k := 1.0
 	if cam_dist < 20.0 and (not demo_cam or demo_track.size() > 0):
 		for i in range(4, 25):
@@ -4213,7 +4232,10 @@ func _apply_camera() -> void:
 			if _cam_blocked(q):
 				want_k = maxf((i - 1) / 24.0, 1.3 / cam_dist)
 				break
-	_cam_arm_k = lerpf(_cam_arm_k, want_k, 0.28)
+	# Hysteresis: don't chatter when the probe flips a step.
+	if absf(want_k - _cam_arm_want) > 0.04:
+		_cam_arm_want = want_k
+	_cam_arm_k = lerpf(_cam_arm_k, _cam_arm_want, 1.0 - exp(-delta * 7.0))
 	off *= _cam_arm_k
 	var pos := cam_target + off
 	var floor_y: float = max(Island.ground_h(pos.x, pos.z), 0.0) + 0.35
@@ -4271,15 +4293,15 @@ func _build_reflection() -> void:
 	# lights whose glitter streaks across the waves at night: the campfire, the lighthouse, then the lamps
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
-	pos.append(Vector4(island.campfire_pos.x, island.campfire_pos.y + 0.45, island.campfire_pos.z, 2.2))
+	pos.append(Vector4(island.campfire_pos.x, island.campfire_pos.y + 0.45, island.campfire_pos.z, 1.4))
 	col.append(Vector4(1.0, 0.55, 0.2, 1.0))
-	pos.append(Vector4(island.beacon_pos.x, island.beacon_pos.y, island.beacon_pos.z, 6.0))
+	pos.append(Vector4(island.beacon_pos.x, island.beacon_pos.y, island.beacon_pos.z, 3.2))
 	col.append(Vector4(1.0, 0.86, 0.58, 1.0))
 	for l: Array in island.lamps:
 		if pos.size() >= 12:
 			break
 		var lp: Vector3 = l[0]
-		pos.append(Vector4(lp.x, lp.y, lp.z, 0.9 if l[1] == "path" else 1.4))
+		pos.append(Vector4(lp.x, lp.y, lp.z, 0.55 if l[1] == "path" else 0.85))
 		col.append(Vector4(1.0, 0.72, 0.38, 1.0))
 	while pos.size() < 12:
 		pos.append(Vector4.ZERO)

@@ -113,8 +113,10 @@ void fragment() {
 		trail *= 1.0 - smoothstep(0.5, 0.95, cyc);
 		// the cycle phase wraps (fract) along a moving seam; fading in from 0 keeps the foam continuous there
 		float foam = clamp(max(rim, trail * 0.85), 0.0, 1.0) * smoothstep(-0.05, 0.0, hab) * smoothstep(0.0, 0.05, cyc);
-		c = mix(c, vec3(0.95, 0.97, 0.96), foam * 0.92);
+		vec3 foam_col = mix(vec3(0.95, 0.97, 0.96), vec3(0.20, 0.28, 0.40), night_k);
+		c = mix(c, foam_col, foam * mix(0.92, 0.40, night_k));
 		rough = mix(rough, 0.8, foam);
+
 		// under water the bottom fades into the sea colour with depth
 		float depth = -hab;
 		if (depth > 0.0) {

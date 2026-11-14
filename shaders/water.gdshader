@@ -184,7 +184,9 @@ void fragment() {
 	}
 	foam = max(foam, clamp(rip, 0.0, 1.0) * 0.7);
 	float foam_v = clamp(foam, 0.0, 1.0);
-	col = mix(col, vec3(0.97, 0.99, 1.0), foam_v);
+	// Night foam is moonlit slate, not emissive cyan-white.
+	vec3 foam_col = mix(vec3(0.97, 0.99, 1.0), vec3(0.22, 0.30, 0.42), night);
+	col = mix(col, foam_col, foam_v * mix(1.0, 0.45, night));
 
 	// --- glints: tiny twinkling highlights of the sun (or the moon's path at night) on the wave facets
 	vec3 vw = normalize(CAMERA_POSITION_WORLD - wpos);
@@ -193,8 +195,8 @@ void fragment() {
 	vec2 gc = floor(p * 9.0);
 	vec2 gf = fract(p * 9.0) - 0.5 - (vec2(hash12(gc + 3.1), hash12(gc + 7.7)) - 0.5) * 0.5;
 	float tw = step(0.55, hash12(gc + floor(t * 5.0 + hash12(gc) * 5.0))) * (1.0 - smoothstep(0.06, 0.2, length(gf)));
-	float glint = pow(gd, 300.0) * tw * 6.0 + pow(gd, 40.0) * 0.12 * (1.0 + night * 2.5);
-	glint *= (1.0 - foam_v) * glint_gain;
+	float glint = pow(gd, 300.0) * tw * 6.0 + pow(gd, 40.0) * 0.12 * mix(1.0, 0.55, night);
+	glint *= (1.0 - foam_v) * glint_gain * mix(1.0, 0.40, night);
 
 	vec3 emis = glint_col * glint;
 	float fr = 0.02 + 0.98 * pow(1.0 - clamp(dot(nw, vw), 0.0, 1.0), 5.0);
@@ -227,13 +229,13 @@ void fragment() {
 			vec3 nsky = mix(vec3(0.09, 0.14, 0.25), vec3(0.025, 0.05, 0.13), smoothstep(0.0, 0.5, ry));
 			col = mix(col, nsky, fr * night * (1.0 - foam_v));
 			float ma = acos(clamp(dot(rw, normalize(glint_dir)), -1.0, 1.0));
-			moon = vec3(0.55, 0.65, 0.9) * (exp(-ma / 0.06) * 0.28 + exp(-ma / 0.32) * 0.07);
-			moon += vec3(1.0, 0.97, 0.88) * (1.0 - smoothstep(0.035, 0.05, ma)) * 1.1;
+			moon = vec3(0.55, 0.65, 0.9) * (exp(-ma / 0.06) * 0.14 + exp(-ma / 0.32) * 0.04);
+			moon += vec3(0.92, 0.94, 1.0) * (1.0 - smoothstep(0.035, 0.05, ma)) * 0.45;
 		}
 		float sc = step(0.985, hash12(gc + 11.0 + floor(t * 0.7 + hash12(gc + 5.0) * 3.0))) * (1.0 - smoothstep(0.03, 0.12, length(gf)));
-		moon += vec3(0.75, 0.82, 1.0) * sc * 0.35 * smoothstep(0.05, 0.4, ry);
-		emis += moon * (0.25 + 0.75 * fr) * night * (1.0 - foam_v);
-		// lamps, the campfire and the lighthouse: a glitter path of wave facets towards the viewer
+		moon += vec3(0.75, 0.82, 1.0) * sc * 0.12 * smoothstep(0.05, 0.4, ry);
+		emis += moon * (0.18 + 0.45 * fr) * night * (1.0 - foam_v);
+		// lamps, the campfire and the lighthouse: a warm glitter path (local, falloff)
 		vec3 streak = vec3(0.0);
 		for (int i = 0; i < 12; i++) {
 			vec4 lp = lamp_pos[i];
@@ -242,11 +244,11 @@ void fragment() {
 				float dl = length(L);
 				vec3 h = normalize(L / dl + vw);
 				float nh = max(dot(nw, h), 0.0);
-				float s = pow(nh, 700.0) * tw * 5.0 + pow(nh, 160.0) * 0.5 + pow(nh, 30.0) * 0.03;
-				streak += lamp_col[i].rgb * s * lp.w / (1.0 + dl * dl * 0.01);
+				float s = pow(nh, 700.0) * tw * 3.2 + pow(nh, 160.0) * 0.28 + pow(nh, 30.0) * 0.02;
+				streak += lamp_col[i].rgb * s * lp.w / (1.0 + dl * dl * 0.025);
 			}
 		}
-		emis += streak * night * (1.0 - foam_v);
+		emis += streak * night * (1.0 - foam_v) * 0.65;
 	}
 
 	ALBEDO = col;

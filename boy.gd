@@ -703,21 +703,21 @@ func _build_face_fill() -> void:
 
 ## Blend the character-only fill with the world night look. k=0 day, k=1 full night.
 ## moon_dir: world direction toward the moon disk (sun.global_basis.z); used to place the rim.
+## v26: keep fills tiny — moonlight + fire/torches light the boy; no daylight-bright private Omni stack.
 func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 	k = clampf(k, 0.0, 1.0)
 	if face_fill:
-		# Day: warm under-brim fill. Night: cool body fill so seats/hammock match moonlit ground
-		# (v23 balance — boy luminance tracks the scene, not a black silhouette).
-		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.78, 0.86, 1.0), k)
-		face_fill.light_energy = lerpf(_face_fill_day_energy, 1.35, k)
-		face_fill.omni_range = lerpf(0.4, 1.6, k)
-		face_fill.omni_attenuation = lerpf(1.4, 0.7, k)
-		# Chest/torso fill (not just under the brim) so vest/shorts read at night.
-		face_fill.position = Vector3(0.0, -0.04, -0.16).lerp(Vector3(0.0, -0.12, -0.22), k)
+		# Day: warm under-brim fill. Night: nearly off — moon/fire are the only keys.
+		face_fill.light_color = Color(1.0, 0.92, 0.78).lerp(Color(0.72, 0.82, 1.0), k)
+		face_fill.light_energy = lerpf(_face_fill_day_energy, 0.06, k)
+		face_fill.omni_range = lerpf(0.4, 0.48, k)
+		face_fill.omni_attenuation = lerpf(1.4, 1.8, k)
+		face_fill.position = Vector3(0.0, -0.04, -0.16).lerp(Vector3(0.0, -0.05, -0.12), k)
 	if _night_rim:
+		# Soft cool edge only — moonlight DirectionalLight does the real key.
 		_night_rim.light_color = Color(0.55, 0.68, 0.98)
-		_night_rim.light_energy = lerpf(0.0, 0.95, k)
-		_night_rim.omni_range = lerpf(0.55, 1.6, k)
+		_night_rim.light_energy = lerpf(0.0, 0.08, k)
+		_night_rim.omni_range = lerpf(0.55, 0.75, k)
 		var local_off := Vector3(0.0, 0.04, 0.14)
 		if moon_dir.length_squared() > 0.01 and parts.has("head") and parts["head"] is Node3D:
 			var head := parts["head"] as Node3D
@@ -729,16 +729,16 @@ func set_night_k(k: float, moon_dir: Vector3 = Vector3.ZERO) -> void:
 				local_off = local_off.normalized() * 0.18
 		_night_rim.position = local_off
 	if _night_body:
-		_night_body.light_energy = lerpf(0.0, 1.15, k)
-		_night_body.omni_range = lerpf(0.8, 1.8, k)
-		_night_body.light_color = Color(0.70, 0.80, 1.0)
-	# Keep Tripo textures readable against moonlit sand (not a black silhouette).
+		_night_body.light_energy = lerpf(0.0, 0.04, k)
+		_night_body.omni_range = lerpf(0.8, 0.95, k)
+		_night_body.light_color = Color(0.62, 0.72, 0.95)
+	# Cool/darken albedo slightly so skin matches moonlit sand (never brighten).
 	for mat in [_boy_mat, _face_mat]:
 		if mat == null:
 			continue
-		mat.albedo_color = _boy_albedo_day.lerp(Color(1.05, 1.05, 1.1, 1.0), k)
+		mat.albedo_color = _boy_albedo_day.lerp(Color(0.70, 0.76, 0.88, 1.0), k)
 		mat.metallic_specular = lerpf(0.2, 0.06, k)
-		mat.roughness = lerpf(0.78, 0.86, k)
+		mat.roughness = lerpf(0.78, 0.90, k)
 		mat.emission_enabled = false
 		mat.emission_energy_multiplier = 0.0
 		mat.emission = Color(0, 0, 0, 1)
@@ -1858,7 +1858,8 @@ func _tick(delta: float) -> void:
 
 	# locomotion blends
 	if anim == "move":
-		speed_s = move_speed
+		# Frame-rate independent speed smoothing — avoids walk↔run blend pops on hitch/ProMotion.
+		speed_s = lerpf(speed_s, move_speed, 1.0 - exp(-delta * 12.0))
 		run_k = 0.0 if pivoting else smoothstep(RUN_FROM, RUN_TO, speed_s)
 		# Light stick → stroll (soft), then walk. Keep walk_k for mix amount.
 		walk_k = clampf(smoothstep(0.35, 1.05, speed_s), 0.0, 1.0)
@@ -1869,10 +1870,15 @@ func _tick(delta: float) -> void:
 		prev_pos = global_position
 		has_prev = true
 		var stride := float(clips["run"]["stride"]) if run_k > 0.5 else float(clips["walk"]["stride"])
-		# Match phase advance to travel so stance feet don't skate on the ground texture.
+		# Match phase advance to travel; cap so a hitch/ProMotion spike can't jump a whole step.
 		var dphase := dist / maxf(stride, 0.05)
 		if pivoting or dist < 0.001:
 			dphase = delta / maxf(float(clips["walk"]["length"]), 0.2)
+		else:
+			# Prefer speed·δ when a long frame would over-advance from position delta alone.
+			var spd_phase := (speed_s * delta) / maxf(stride, 0.05)
+			dphase = minf(dphase, maxf(spd_phase, 1e-5))
+		dphase = minf(dphase, 0.22)
 		phase = fposmod(phase + dphase, 1.0)
 		# walking footfalls only when translating after the spot-turn grace window
 		if not pivoting and pivot_grace <= 0.0:
