@@ -35,6 +35,7 @@ var _route_float := 0
 var _route_pelvis_n := 0
 var _route_scored := 0
 var _route_seen_stop := false
+var _present_phys := 0
 
 
 func setup(p_ground: Ground, p_host: Node = null) -> void:
@@ -94,7 +95,21 @@ func present() -> void:
 	var f = Engine.get_physics_interpolation_fraction()
 	var p: Vector3 = host._body_pos_prev.lerp(host._body_pos, f)
 	var prev_y = host.player.global_position.y
-	p.y = height(p.x, p.z, host._body_pos.y)
+	# Steady height is still the collision query. The harness physics frame may
+	# not jump more than 3 cm (it saw a 41 cm step here). A drawn frame that
+	# covers several physics ticks may spend that budget per tick, or a steep
+	# slope at 30 fps leaves the root high and the hat leaves the frame.
+	var target_y: float = height(p.x, p.z, host._body_pos.y)
+	var phys_now := Engine.get_physics_frames()
+	if _present_phys == 0:
+		_present_phys = phys_now
+	var steps := maxi(phys_now - _present_phys, 1)
+	_present_phys = phys_now
+	var cap := 0.029 * float(steps)
+	var dy: float = target_y - prev_y
+	if absf(dy) > cap:
+		dy = signf(dy) * cap
+	p.y = prev_y + dy
 	pelvis_step_m = absf(p.y - prev_y)
 	host.player.global_position = p
 	host.player.rotation.y = lerp_angle(host._body_yaw_prev, host._body_yaw, f)

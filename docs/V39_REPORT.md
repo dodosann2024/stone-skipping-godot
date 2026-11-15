@@ -8,7 +8,7 @@ Branch `cursor/v39-drawn-sole-route-d4ce`, cut from `cursor/v38-real-pipeline-d4
 
 That slide is gone because the v39 foot IK that aimed the legs at a drawn probe is gone. Ground, root height, and foot IK are the v38 code again. The drawn-triangle probe is used by the uphill camera only. It does not set the root and it does not move a bone. Knee flex on the 110 m harness peaked at 116°.
 
-The camera release fix is unchanged on flat ground: one explore frame, arm floor 0.82, release eases over about 0.45 s. On an uphill the lens now pitches with the grade and lifts until the segment from the camera to the feet stays above the drawn triangles. Rest, throw, HUD and demo stay in their modules. `main.gd` is 2739 lines.
+While the stick is down the walk orbit is the v38 frame: arm floor 0.82, the same distance. After a real release the arm opens, the position clamp lets the dolly out, and the distance eases to about 8.8 m so the wide frame is there by 0.8 s. On an uphill the lens still pitches with the grade and lifts until the segment from the camera to the feet stays above the drawn triangles. Rest, throw, HUD and demo stay in their modules. `main.gd` is 2739 lines.
 
 ## Bisect of drag39.py frame b
 
@@ -30,11 +30,11 @@ This commit's export, same script:
 
 | still | picture | HUD gnd |
 | --- | --- | ---: |
-| `screenshots/v39/drag39_a.png` | both shins, both sandals, on the sand path | 6.5 cm |
-| `screenshots/v39/drag39_b.png` | both shins, both sandals, on the grass rise | 1.6 cm |
-| `screenshots/v39/drag39_c.png` | both sandals planted | 74.0 cm |
+| `screenshots/v39/drag39_a.png` | both shins, both sandals, on the sand path, hat below the toast | 8.2 cm |
+| `screenshots/v39/drag39_b.png` | both shins, both sandals, on the grass rise, full hat | 8.8 cm |
+| `screenshots/v39/drag39_c.png` | whole body, hat below the toast, both sandals on the grass | 81.6 cm |
 
-Frame c's HUD number is not the picture. The sandals are on the grass.
+Frame c is the wide orbit 0.8 s after the finger lifts. The hat is not on the top edge. Frame c's HUD number is not the picture. The sandals are on the grass.
 
 Eight slope headings are `screenshots/v39/slope_dir_*.png`. The drag test is `dev/cdp_side_v39.mjs` (390×844, dpr 3, 60 s, tap 195,420, touch from 54,754 by +3,−6 ×10 at 30 ms, shots at 300 ms, 2.8 s, and 0.8 s after release).
 
@@ -68,10 +68,12 @@ SwiftShader frame time on these stills was about 22–48 ms. That is not an iPho
 SwiftShader does not walk 100 m in a CDP session: the HUD can read ~1.7 m/s while the body barely moves between samples. `V39_ROUTE=1` drives the same `player_controller.gd` in headless Godot, fixed 60 Hz physics, waypoints on the beach, the grass rise, and the dock centerline. Stick-up from spawn walks off the pier; the harness does not do that.
 
 ```
-ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood, knee_max=116 len_min=0.97 gnd_min=-5.2 at=4.3,-7.4,2.04 pelvis=41.0 bad=7994 bury=101 float=6117 float_pct=76.52 scored=7994 pelvis_n=1 stop=true
+ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood, knee_max=116 len_min=0.98 gnd_min=-5.2 at=-5.9,-9.9,1.08 pelvis=2.9 bad=7990 bury=76 float=6178 float_pct=77.32 scored=7990 pelvis_n=0 stop=true
 ```
 
-This is the v38 ground, scored by the same collision height the feet use. It is not an improvement on the later v39 harness, and it is not bury 0 or float ≤ 1%. 101 frames are under the surface. 6117 frames, 76.52% of 7994, read the lower sole more than 1.5 cm up. The worst bury is −5.2 cm. One displayed root step was 41 cm, which is the v38 root write with no 3 cm clamp. Knee peak is 116°. A drawn-triangle score was tried as a measurement only and made the float reading worse, so the harness stays on the collision height. The pose was not changed to chase the number.
+This is the v38 ground, scored by the same collision height the feet use. It is not bury 0 or float ≤ 1%. 76 frames are under the surface. 6178 frames, 77.32% of 7990, read the lower sole more than 1.5 cm up. The worst bury is −5.2 cm. The displayed root step is now 2.9 cm. `present()` slews toward the same collision height, 2.9 cm per physics frame, so a drawn frame that contains several ticks can spend that much per tick. Steady height is still `Ground.height`. Knee peak is 116°.
+
+The 77% float is the probe, not a body hanging in the air. `drag39_a.png` and `drag39_b.png` show both sandals on the sand and on the grass. `side_walk.png` and `side_slope.png` show the planted sandal on the surface and the other foot in the stride. The harness gap is the skinned sole minus the collision height. The plant aims for 0.4 cm, and the same stills' HUD often reads several centimetres while the sandal is down. A drawn-triangle score was tried earlier and made the float reading worse. Lowering the root to chase 77% would sink the pose `drag39_b.png` just passed, so the root height was not changed.
 
 ## Where this version still misses the AAA bar
 
@@ -79,7 +81,7 @@ This is the v38 ground, scored by the same collision height the feet use. It is 
 
 ### Release blockers
 
-1. **Grounding.** The owner's drag is back to the v38 picture. `drag39_b.png` on this commit shows both shins and both sandals on the grass rise (HUD gnd 1.6 cm). `drag39_a.png` and `drag39_c.png` show both sandals. The 110 m harness is not met: bury 101, float 76.52% (6117 of 7994), worst gap −5.2 cm, one root step 41 cm.
+1. **Grounding.** The owner's drag still shows the legs. `drag39_b.png` has both shins and both sandals on the grass rise (HUD gnd 8.8 cm). `drag39_a.png` is the sand path. `drag39_c.png` is the wide frame with both sandals on the grass. The 110 m harness is not met: bury 76, float 77.32% (6178 of 7990), worst gap −5.2 cm. The displayed root step is 2.9 cm, and no scored frame stepped more than 3 cm. The float percentage is the sole-versus-collision probe. The pictures above do not show that float, so the root was not dropped to chase it.
 
 2. **Occluder dither.** Not re-proven. `shaders/cutout.gdshaderinc`, `foliage.gdshader`, `leaf.gdshader` and `static.gdshader` still dither foliage and props in the compatibility renderer. This version has no on/off pair from the export. The drag stills are not a proof: nothing thick was between the lens and the boy, and `side_run_stop.png` loses him for a different reason.
 
@@ -90,7 +92,7 @@ This is the v38 ground, scored by the same collision height the feet use. It is 
 | Area | This version |
 | --- | --- |
 | **Feel** | The stick still has a small deadzone, a run gate at magnitude 0.90, and a spot-turn only from a near stop. Nothing here was retuned. The harness stop at speed 0.05 left the sole 16 cm up for several frames before it settled to about 1 cm. That is a skate/float at the end of a step, and it is still in the build. |
-| **Camera** | The release crop from v38 is still fixed, and `front_c.png` keeps the hat and both shoes. `?side=1` is a stills lens only. On the steep path, `side_run_stop.png` loses the boy off the bottom of the frame while gnd reads 2.9 cm. The uphill crest raise is kept. |
+| **Camera** | `drag39_c.png` is the wide orbit 0.8 s after release: full hat, both sandals, grass above the hat. The walk frames `drag39_a.png` and `drag39_b.png` stay the closer orbit. `?side=1` is a stills lens only. On the steep path, `side_run_stop.png` still loses the boy off the bottom of the frame. The uphill crest raise is kept. |
 | **Grounding** | See blocker 1. Idle dock and slope are inside the spirit of the bar. The moving probe is not. |
 | **Character** | The review pose is a walk again: shins visible, sandals present, knee angle in the clip's own range (about 6–116°), length ratio 1.00. Face and hat are readable in the side stills. Sit, sleep and throw were not re-shot. |
 | **World** | Night lamps, shore foam and foliage occlusion were not re-shot. The iPhone audio toast covers the middle of every still. |
@@ -101,14 +103,13 @@ This is the v38 ground, scored by the same collision height the feet use. It is 
 
 ## What the next versions should do, in order
 
-1. Bring the 110 m sole reading inside −1…+1.5 cm without putting the probe back in charge of the pose. On this v38 ground the drag shows the legs, and the harness still reads float on 76.52% of frames.
-2. The v38 root write moved 41 cm in one displayed frame. A clamp there has to be checked against `drag39_b.png` before it ships.
-3. Keep the boy in frame on a steep side view after release. `side_run_stop.png` still loses him off the bottom.
-4. Shoot foliage and prop dither on and off from the export.
-5. Tighten the stop so the sole does not hang 16 cm up while the stick is already at zero.
-6. Measure frame time on an iPhone-class device, and get the hut view back under ~110k prims without bringing VRAM compression back.
-7. Confirm the iOS audio unlock and that footsteps change with sand, grass and wood.
-8. Only then deepen throw, rest and the day loop so a second visit is different in the hands and in the light. No new mode.
+1. Bring the 110 m sole reading inside −1…+1.5 cm without putting the probe back in charge of the pose. The drag shows the sandals down, and the harness still reads float on 77.32% of frames. Do not drop the root to erase that number.
+2. Keep the boy in frame on a steep side view after release. `side_run_stop.png` still loses him off the bottom. The explore release in `drag39_c.png` is wide.
+3. Shoot foliage and prop dither on and off from the export.
+4. Tighten the stop so the sole does not hang 16 cm up while the stick is already at zero.
+5. Measure frame time on an iPhone-class device, and get the hut view back under ~110k prims without bringing VRAM compression back.
+6. Confirm the iOS audio unlock and that footsteps change with sand, grass and wood.
+7. Only then deepen throw, rest and the day loop so a second visit is different in the hands and in the light. No new mode.
 
 ## Modules
 
@@ -120,6 +121,6 @@ This is the v38 ground, scored by the same collision height the feet use. It is 
 | `game_ui.gd` | 422 |
 | `demo_sequence.gd` | 2183 |
 | `foot_ik.gd` | 603 |
-| `follow_camera.gd` | 1002 |
+| `follow_camera.gd` | 1099 |
 | `boy.gd` | 2260 |
 | `player_controller.gd` | 458 |
