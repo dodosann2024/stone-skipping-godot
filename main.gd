@@ -960,7 +960,10 @@ func _on_footstep(side: int, running: bool) -> void:
 	var p := player.position
 	var kind := _surface_kind(p.x, p.z)
 	var i := rng.randi() % 2
-	var vol := -9.0 if running else -14.0
+	# Sit just under the wave bed so a step reads, and a run is closer to it.
+	var wave := amb.volume_db if amb != null and audio_started else -8.0
+	var vol := (wave - 1.5) if running else (wave - 4.5)
+	vol = clampf(vol, -16.0, -6.0)
 	match kind:
 		"wood":
 			vol += 1.5
@@ -2234,7 +2237,7 @@ func _process(delta: float) -> void:
 		dbg.gnd_err = dbg_gnd_err
 		dbg.max_step = dbg_max_step
 		dbg.end_process()
-		dbg.note_frame(delta, mq.scale_3d if mq else 1.0, mq.tier_name() if mq else "?")
+		dbg.note_frame(delta, mq.scale_3d if mq else 1.0, mq.tier_name() if mq else "?", cur_speed > 0.12)
 
 func _physics_process(delta: float) -> void:
 	if dbg:

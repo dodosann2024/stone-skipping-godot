@@ -11,6 +11,11 @@ var center := Vector2.ZERO
 var knob := Vector2.ZERO
 var rest := Vector2.ZERO
 var lift := 0.0   # raise the resting ring above the hint text along the bottom edge
+var run_latched := false
+var _pop := 0.0
+const DEAD := 0.06
+const RUN_ON := 0.90
+const RUN_OFF := 0.82
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -59,9 +64,20 @@ func _drag(p: Vector2) -> void:
 		d = p - center
 	knob = d
 	value = d / radius
+	var mag := value.length()
 	# Tight deadzone — must clear within one frame of a real drag.
-	if value.length() < 0.06:
+	if mag < DEAD:
 		value = Vector2.ZERO
+		mag = 0.0
+	# Same hysteresis as the controller, so the ring doesn't flicker walk/run.
+	if mag >= RUN_ON:
+		if not run_latched:
+			_pop = 1.0
+		run_latched = true
+	elif mag < RUN_OFF:
+		run_latched = false
+	if mag > DEAD and mag < DEAD + 0.04:
+		_pop = maxf(_pop, 0.65)
 	queue_redraw()
 
 func _end() -> void:
@@ -69,7 +85,13 @@ func _end() -> void:
 	touch_id = -2
 	value = Vector2.ZERO
 	knob = Vector2.ZERO
+	run_latched = false
 	queue_redraw()
+
+func _process(delta: float) -> void:
+	if _pop > 0.0:
+		_pop = maxf(_pop - delta * 3.2, 0.0)
+		queue_redraw()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
@@ -80,6 +102,11 @@ func _draw() -> void:
 	var a := 0.85 if active else 0.45
 	draw_circle(c, radius, Color(0.02, 0.15, 0.25, 0.28 * a))
 	draw_arc(c, radius, 0, TAU, 48, Color(1, 1, 1, 0.75 * a), 4.0, true)
-	draw_arc(c, radius * 0.88, 0, TAU, 48, Color(1, 0.85, 0.3, 0.35 * a), 2.0, true)
-	draw_circle(c + knob, radius * 0.42, Color(1, 1, 1, 0.8 * a))
-	draw_arc(c + knob, radius * 0.42, 0, TAU, 32, Color(0.05, 0.35, 0.55, 0.8 * a), 3.0, true)
+	# Dead zone, then the run threshold. The thumb recentres the base on touch.
+	draw_arc(c, radius * DEAD, 0, TAU, 24, Color(1, 1, 1, 0.55 * a), 1.5, true)
+	draw_arc(c, radius * RUN_ON, 0, TAU, 40, Color(1, 0.78, 0.25, 0.45 * a), 1.5, true)
+	var pop := 1.0 + _pop * 0.18
+	var knob_col := Color(1, 0.92, 0.55, 0.92 * a) if run_latched else Color(1, 1, 1, 0.8 * a)
+	var rim_col := Color(0.85, 0.45, 0.1, 0.9 * a) if run_latched else Color(0.05, 0.35, 0.55, 0.8 * a)
+	draw_circle(c + knob, radius * 0.42 * pop, knob_col)
+	draw_arc(c + knob, radius * 0.42 * pop, 0, TAU, 32, rim_col, 3.0, true)
