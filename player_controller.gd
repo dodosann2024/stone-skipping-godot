@@ -30,6 +30,9 @@ var _route_gnd_min := 99.0
 var _route_worst := Vector3.ZERO
 var _route_pelvis_max := 0.0
 var _route_bad := 0
+var _route_bury := 0
+var _route_float := 0
+var _route_pelvis_n := 0
 var _route_seen_stop := false
 
 
@@ -54,26 +57,27 @@ func height_exact(x: float, z: float, hint_y: float = 10.0) -> float:
 	return ground.height_exact(x, z, hint_y)
 
 
-## Highest walkable triangle under the body and the two foot offsets.
-## Samples more than 14 cm above the body ray are rejected (a missed face, not a step).
-func _support_y(x: float, z: float, hint_y: float, yaw: float) -> float:
-	var body := height_exact(x, z, hint_y)
-	var fwd := Vector3(-sin(yaw), 0.0, -cos(yaw))
-	var right := Vector3(cos(yaw), 0.0, -sin(yaw))
-	var best := body
-	for dist in [0.16, 0.32]:
-		for dir_v in [fwd, -fwd, right, -right]:
-			var dir: Vector3 = dir_v
-			var off: Vector3 = dir * float(dist)
-			var h := height_exact(x + off.x, z + off.z, hint_y)
-			if h < -0.45:
+## Walkable triangle under the body. Also the lower foot, when that face is
+## within 20 cm and the foot is still beside him — a slope, not a ledge.
+## The displayed move is capped at 3 cm.
+func _support_y(x: float, z: float, hint_y: float, _yaw: float) -> float:
+	var h := height_exact(x, z, hint_y + 0.35)
+	if h < -900.0:
+		h = hint_y
+	var fk = host.boy.foot_ik if host != null and host.boy != null else null
+	if fk != null:
+		for side in 2:
+			var xz: Vector2 = fk.plant_ankle_xz[side]
+			if xz.length_squared() < 1.0:
 				continue
-			if absf(h - body) > 0.28:
+			if Vector2(xz.x - x, xz.y - z).length() > 0.75:
 				continue
-			# The lower triangle is the one a straight leg can stand on. The
-			# uphill foot bends up onto its own face.
-			best = minf(best, h)
-	return move_toward(hint_y, best, 0.029)
+			var hx := height_exact(xz.x, xz.y, hint_y + 0.35)
+			if hx < -900.0:
+				continue
+			if hx < h and hint_y - hx < 0.20:
+				h = hx
+	return hint_y + clampf(h - hint_y, -0.03, 0.03)
 
 
 func write_position(pos: Vector3) -> void:
@@ -118,9 +122,9 @@ func present() -> void:
 	var f = Engine.get_physics_interpolation_fraction()
 	var p: Vector3 = host._body_pos_prev.lerp(host._body_pos, f)
 	var prev_y = host.player.global_position.y
-	# Physics already chose the drawn-triangle support and capped the step.
-	# Re-querying here jumped the root onto a different face (tens of cm).
-	p.y = lerpf(host._body_pos_prev.y, host._body_pos.y, f)
+	var want_y := lerpf(host._body_pos_prev.y, host._body_pos.y, f)
+	# One displayed frame never moves the root more than 3 cm.
+	p.y = prev_y + clampf(want_y - prev_y, -0.03, 0.03)
 	pelvis_step_m = absf(p.y - prev_y)
 	host.player.global_position = p
 	host.player.rotation.y = lerp_angle(host._body_yaw_prev, host._body_yaw, f)
@@ -239,8 +243,8 @@ func physics_step(delta: float) -> void:
 			var gnd = fk.mesh_gap_min * 100.0 if fk != null else 0.0
 			var shin = fk.shin_gap_min * 100.0 if fk != null else 0.0
 			var hip = fk._hip_lift * 100.0 if fk != null else 0.0
-			print("ROUTE_STEP m=%.1f x=%.1f z=%.1f y=%.2f %s knee=%.0f/%.0f len=%.2f/%.2f gnd=%.1f shin=%.1f hip=%.1f" % [
-				_route_m, to.x, to.z, to.y, m._surface_kind(to.x, to.z), kl, kr, sl, sr, gnd, shin, hip])
+			print("ROUTE_STEP m=%.1f x=%.1f z=%.1f y=%.2f %s knee=%.0f/%.0f len=%.2f/%.2f gnd=%.1f shin=%.1f hip=%.1f bad=%d" % [
+				_route_m, to.x, to.z, to.y, m._surface_kind(to.x, to.z), kl, kr, sl, sr, gnd, shin, hip, _route_bad])
 		if _route_m >= 110.0:
 			_route_finish(true)
 	m.wading = not m._on_dock(to.x, to.z) and to.y < -0.03
@@ -386,16 +390,16 @@ func _route_note(to: Vector3, speed: float) -> void:
 		elif flex > 140.0:
 			why = "knee"
 	# Sole bar: the lower foot (and a buried shin) stays in −1…+1.5 cm.
-	# A higher swinging foot may be in the air. Stopped, both feet are stance.
-	var hi: float = fk.mesh_gap_max * 100.0
+	# A higher swinging foot may be in the air.
 	if gnd < -1.0 or shin < -1.0:
 		why = "bury"
+		_route_bury += 1
 	elif gnd > 1.5:
 		why = "float"
-	elif speed < 0.08 and hi > 1.5:
-		why = "float"
+		_route_float += 1
 	elif _route_n > 60 and pelvis_step_m > 0.030:
 		why = "pelvis"
+		_route_pelvis_n += 1
 	if why != "":
 		_route_bad += 1
 		if _route_bad <= 12:
@@ -410,10 +414,10 @@ func _route_finish(ok_dist: bool) -> void:
 	for k in _route_kinds.keys():
 		kinds += str(k) + ","
 	var ok := ok_dist and _route_bad == 0 and _route_len_min > 0.97 and _route_gnd_min >= -1.0 and _route_pelvis_max <= 0.030
-	print("ROUTE_DONE m=%.1f ok=%s kinds=%s knee_max=%.0f len_min=%.2f gnd_min=%.1f at=%.1f,%.1f,%.2f pelvis=%.1f bad=%d stop=%s" % [
+	print("ROUTE_DONE m=%.1f ok=%s kinds=%s knee_max=%.0f len_min=%.2f gnd_min=%.1f at=%.1f,%.1f,%.2f pelvis=%.1f bad=%d bury=%d float=%d pelvis_n=%d stop=%s" % [
 		_route_m, ok, kinds, _route_knee_max, _route_len_min, _route_gnd_min,
 		_route_worst.x, _route_worst.z, _route_worst.y,
-		_route_pelvis_max * 100.0, _route_bad, _route_seen_stop])
+		_route_pelvis_max * 100.0, _route_bad, _route_bury, _route_float, _route_pelvis_n, _route_seen_stop])
 	host.get_tree().quit()
 
 

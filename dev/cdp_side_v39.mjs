@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
- * Side-view stills of the exported v39 build, plus the reviewer's drag.
- *   ?side=1 puts the lens perpendicular to travel and does not change stick yaw.
+ * Owner drag acceptance on the exported v39 build.
+ * Chromium 390×844 dpr 3, wait 60s, tap (195,420),
+ * CDP touch from (54,754) moving (+3,−6)×10 at 30ms,
+ * shots at 300ms, 2.8s, and 0.8s after release.
+ * Front frames and a side lens of the same gesture, then 8 slope headings.
  *   node dev/cdp_side_v39.mjs
  */
 import http from "node:http";

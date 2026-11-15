@@ -314,7 +314,7 @@ func _crest_blocks(cam: Vector3, feet: Vector3) -> bool:
 		return false
 	for i in range(1, 7):
 		var p := cam.lerp(feet, float(i) / 7.0)
-		var gh: float = m.island.drawn_h(p.x, p.z)
+		var gh: float = m.island.drawn_h(p.x, p.z, p.y + 1.5)
 		if gh > -900.0 and p.y < gh + 0.2:
 			return true
 	return false

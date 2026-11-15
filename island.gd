@@ -778,8 +778,12 @@ func _bin_terrain_tris() -> void:
 		i += 3
 
 
-## Highest drawn triangle covering (x, z). -999 if none.
-func drawn_h(x: float, z: float) -> float:
+## Walkable top under (x, z). cos(40°) — the same limit as the body capsule.
+const WALK_NY := 0.766
+## Nearest walkable triangle at or below `probe_y` whose XZ footprint contains
+## the point. Not the highest face in the column: that picked cliff and
+## overhang planes and threw a sandal up beside the hat.
+func drawn_h(x: float, z: float, probe_y: float = 1000.0) -> float:
 	if _tri_faces.is_empty():
 		return -999.0
 	var best := -999.0
@@ -794,26 +798,32 @@ func drawn_h(x: float, z: float) -> float:
 				var b: Vector3 = _tri_faces[i + 1]
 				var c: Vector3 = _tri_faces[i + 2]
 				var h := _tri_height(x, z, a, b, c)
+				if h < -900.0 or h > probe_y:
+					continue
 				if h > best:
 					best = h
 	return best
 
 
 func _tri_height(x: float, z: float, a: Vector3, b: Vector3, c: Vector3) -> float:
-	var ab := Vector3(b.x - a.x, 0.0, b.z - a.z)
-	var ac := Vector3(c.x - a.x, 0.0, c.z - a.z)
+	var ab := b - a
+	var ac := c - a
 	var n := ab.cross(ac)
-	# Reject underside and near-vertical faces. n.y > 0 is the drawn top.
-	if n.y < 0.15:
+	var nl := n.length()
+	if nl < 1e-8:
+		return -999.0
+	n /= nl
+	# The mesh is wound either way. Steepness is |n.y|; a cliff is rejected.
+	if absf(n.y) < WALK_NY:
 		return -999.0
 	var ap := Vector2(x - a.x, z - a.z)
 	var v0 := Vector2(c.x - a.x, c.z - a.z)
 	var v1 := Vector2(b.x - a.x, b.z - a.z)
-	var den := v0.cross(v1)
+	var den := v0.x * v1.y - v0.y * v1.x
 	if absf(den) < 1e-8:
 		return -999.0
-	var u := ap.cross(v1) / den
-	var v := v0.cross(ap) / den
+	var u := (ap.x * v1.y - ap.y * v1.x) / den
+	var v := (v0.x * ap.y - v0.y * ap.x) / den
 	if u < -0.002 or v < -0.002 or u + v > 1.002:
 		return -999.0
 	return a.y + (c.y - a.y) * u + (b.y - a.y) * v
@@ -884,31 +894,12 @@ func collision_h_walk(x: float, z: float, hint_y: float = 10.0, exclude: Array =
 func collision_h_exact(x: float, z: float, hint_y: float = 10.0, exclude: Array = []) -> float:
 	if absf(x) < 5.0 and z <= dock_start_z + 0.35 and z >= dock_end_z - 3.0:
 		return DECK_Y
-	var drawn := drawn_h(x, z)
+	# Probe starts just above the foot or the body. Faces above that are not
+	# the ground it is standing on.
+	var drawn := drawn_h(x, z, hint_y)
 	if drawn > -900.0:
 		return drawn
-	var from_y := maxf(hint_y, DECK_Y + 2.0) + 6.0
-	var from := Vector3(x, from_y, z)
-	var to := Vector3(x, -6.0, z)
-	for _try in 4:
-		var hit := ray_ground(from, to, exclude)
-		if not hit.has("position"):
-			break
-		var p: Vector3 = hit.position
-		var n := Vector3.UP
-		if hit.has("normal"):
-			n = (hit.normal as Vector3)
-		# First face whose normal points up is the drawn surface. Steeper
-		# walkable faces still count; skipping them fell through to a lower
-		# triangle and the sole read tens of centimetres high.
-		if n.y > 0.12 and absf(p.x - x) < 0.08 and absf(p.z - z) < 0.08:
-			return p.y
-		from.y = p.y - 0.03
-		if from.y < -5.5:
-			break
-	if absf(x) < 5.0 and z <= dock_start_z + 0.35 and z >= dock_end_z - 3.0:
-		return DECK_Y
-	return hint_y
+	return -999.0
 
 
 ## Normal of the collision surface under (x,z), or UP if miss.

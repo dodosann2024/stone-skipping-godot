@@ -6,25 +6,30 @@ Branch `cursor/v39-drawn-sole-route-d4ce`, cut from `cursor/v38-real-pipeline-d4
 
 `9a62dcd` moved the foot bone until the vertices that are at least 85% foot or toe sat on the probe surface. The knee did not follow, so the shin stayed in the terrain. In the review drag the shorts sat on the sandals, and after release one leg ended at the knee, while the HUD read gnd 0.0–0.8 cm.
 
-That slide is gone. The hips rise by this frame's penetration of the 85% sandal shell, in world up, and the lift is dropped the same frame the penetration is gone. It is not added to last frame's lift. The rise is capped at 2.9 cm so a bad sample cannot pop the pelvis. The foot bone is not translated. Shin length is the animated knee-to-ankle length (ratio 1.00 on every sample below). Knee flex on the 110 m harness peaked at 116°, which is this clip's run swing. A crushed shin would also shorten that segment.
+That slide is gone. The hips move vertically with the lower sole, in world up, and the foot bone is not translated. The shift is capped at 12 cm and eased across frames. A miss, or a face more than 30 cm off the sandal, leaves the animated leg alone. Shin length is the animated knee-to-ankle length (ratio 1.00 on every sample below). Knee flex on the 110 m harness peaked at 116°, which is this clip's run swing. A crushed shin would also shorten that segment.
 
 The camera release fix is unchanged on flat ground: one explore frame, arm floor 0.82, release eases over about 0.45 s. On an uphill the lens now pitches with the grade and lifts until the segment from the camera to the feet stays above the drawn triangles. Rest, throw, HUD and demo stay in their modules. `main.gd` is 2739 lines.
 
-## The rise cut him off at the waist
+## The rise, then the flung sandal
 
-The 2.8 s frame of the review drag showed only the hat and vest. The side view at that same gesture (`screenshots/v39/side_walk.png`) shows both shins, both sandals, and the shadow, with the HUD at gnd 0.6 cm. He is standing on the path. The follow camera was looking up the crest, so the mesh covered everything below the vest.
+The 2.8 s frame was the crest in front of the lens. The side view of that gesture shows full legs. Raising the camera with the slope fixed that picture, and it is kept.
 
-Foot height for the plant and the probe is the highest drawn terrain triangle under that xz (`Island.drawn_h`), the same faces the mesh renders. A physics ray that missed the top face and a neighbour column 35 cm away were reporting the sole tens of centimetres off a triangle the shoe was not on. The root display no longer replaces that choice with a second uncapped ray.
+Taking the highest drawn triangle in the column did not. On `bb693a3` the 300 ms frame sank until the shorts read as a stump (HUD gnd 26.9 cm), and at 2.8 s one sandal was up by the hat while the torso folded into a crawl. That face was a steep or overlapping triangle above the foot. The query now keeps a triangle only when its XZ footprint contains the point, its normal is at least as upright as the 40° walk slope (`|n.y| ≥ cos 40°`), and its height is the nearest one at or below a probe just above the sandal. A miss leaves the animated leg alone and the root on the controller height.
 
-After the camera change, the same drag's front frame (`screenshots/v39/front_b.png`) shows the shorts, both legs, both sandals, and the shadow. HUD gnd 0.7 cm, max step 2.5 cm. `front_a.png` is gnd 1.6 cm with a leg and a sandal. `front_c.png` is gnd 4.2 cm with both sandals. Eight headings from the slope spot are `screenshots/v39/slope_dir_*.png`.
+The correction is a vertical hip shift of the lower sole, at most 12 cm either way, eased across frames. The knee is not retargeted, so a bad face cannot swing the foot sideways or park a sandal by the hat. The displayed root step is clamped to 3 cm.
 
-The 110 m headless route still does not pass the sole bar:
+On the re-exported build, the same drag:
 
-```
-ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood knee_max=125 len_min=1.00 gnd_min=-84.3 at=6.8,-9.8,0.91 pelvis=6.5 bad=2914 stop=true
-```
+| still | picture | HUD gnd |
+| --- | --- | ---: |
+| `screenshots/v39/front_a.png` | both shins, both sandals, shadow, not a stump | 9.1 cm |
+| `screenshots/v39/front_b.png` | normal stride on the rise, both sandals, no leg by the hat | 2.0 cm |
+| `screenshots/v39/front_c.png` | both sandals planted, shadow | 11.2 cm |
+| `screenshots/v39/side_start.png` | profile, full shins, both sandals | 9.5 cm |
+| `screenshots/v39/side_walk.png` | profile stride, full shins, both sandals | 0.8 cm |
+| `screenshots/v39/side_stop.png` | profile, full shins, both sandals | 14.3 cm |
 
-Shin length stays 1.00. 2914 frames are outside −1.0…+1.5 cm. The worst gap is −84.3 cm, on a steep face the harness walked under. One displayed root step was 6.5 cm. That is not a pass.
+Eight slope headings are `screenshots/v39/slope_dir_*.png`. The drag test is `dev/cdp_side_v39.mjs` (390×844, dpr 3, 60 s, tap 195,420, touch from 54,754 by +3,−6 ×10 at 30 ms, shots at 300 ms, 2.8 s, and 0.8 s after release).
 
 ## Published builds
 
@@ -38,16 +43,16 @@ The pictures have both shins and both sandals. They are not the crouched pose fr
 
 | still | what the picture shows | HUD gnd | probe a moment later |
 | --- | --- | ---: | --- |
-| `screenshots/v39/side_start.png` | full shins, both sandals | 6.6 cm | sole −9.5 cm, shin −4.9 cm, knee 6°/10°, len 1.00 |
-| `screenshots/v39/side_walk.png` | full stride, both sandals down | 1.9 cm | sole −7.6 cm, shin +8.6 cm, knee 48°/27°, len 1.00 |
-| `screenshots/v39/side_stop.png` | both shins, both sandals | 4.1 cm | sole +0.8…+4.7 cm, shin +6.6 cm, knee 13°/9°, len 1.00 |
-| `screenshots/v39/side_run.png` | full legs, sandals on the path | 10.2 cm | sole −9.9 cm, shin +1.1 cm, knee 39°/84°, len 1.00 |
-| `screenshots/v39/side_run_stop.png` | boy left the frame on the steep side view | 39.0 cm | sole −30 cm, shin −13 cm, len 1.00 |
-| `screenshots/v39/front_a.png` | both shins, both sandals | 4.9 cm | sole −7.5 cm, shin +3.5 cm, knee 57°/23°, len 1.00 |
-| `screenshots/v39/front_b.png` | both shins, both sandals on the path | 35.4 cm | sole −10 cm, shin +6.2 cm, knee 44°/27°, len 1.00 |
-| `screenshots/v39/front_c.png` | both legs complete, not cut at the knee | 6.8 cm | sole +0.8…+5.3 cm, shin +7.2 cm, knee 10°/19°, len 1.00 |
-| `screenshots/v39/side_slope.png` | idle on grass, full shins, sandals down | 0.8 cm | sole +0.8…+5.4 cm, shin +6.9 cm, knee 6°/36°, len 1.00, 116636 prims |
-| `screenshots/v39/side_dock.png` | idle on the deck, full shins, sandals on the planks | 0.8 cm | sole +0.8…+2.5 cm, shin +7.8 cm, knee 6°/36°, len 1.00, 107316 prims |
+| `screenshots/v39/side_start.png` | full shins, both sandals | 9.5 cm | sole −0.1…+0.7 cm, knee 34°/20°, len 1.00 |
+| `screenshots/v39/side_walk.png` | stride, full shins, both sandals | 0.8 cm | sole −5.2…+1.2 cm, shin +9.3 cm, knee 33°/22°, len 1.00 |
+| `screenshots/v39/side_stop.png` | full shins, both sandals | 14.3 cm | sole −8.8 cm, shin −1.3 cm, knee 13°/31°, len 1.00 |
+| `screenshots/v39/side_run.png` | run, full legs, boy low in the frame | 8.3 cm | sole −15.8 cm, knee 51°/87°, len 1.00 |
+| `screenshots/v39/side_run_stop.png` | boy has left the bottom of the frame | 2.9 cm | sole −4.8 cm, knee 64°/37°, len 1.00 |
+| `screenshots/v39/front_a.png` | both shins, both sandals, shadow | 9.1 cm | sole −0.1…+0.9 cm, knee 21°/19°, len 1.00 |
+| `screenshots/v39/front_b.png` | normal stride, both sandals, no leg by the hat | 2.0 cm | sole −4.5…+2.5 cm, shin +9.6 cm, knee 29°/18°, len 1.00 |
+| `screenshots/v39/front_c.png` | both sandals planted, shadow | 11.2 cm | sole −8.1 cm, shin +3.0 cm, knee 18°/53°, len 1.00 |
+| `screenshots/v39/side_slope.png` | idle on grass, full shins, sandals down | 0.8 cm | sole +0.8…+5.4 cm, shin +6.9 cm, knee 6°/36°, len 1.00 |
+| `screenshots/v39/side_dock.png` | idle on the deck, full shins, sandals on the planks | 0.8 cm | sole +0.8…+2.5 cm, shin +7.8 cm, knee 6°/36°, len 1.00 |
 
 SwiftShader frame time on these stills was about 22–48 ms. That is not an iPhone measurement.
 
@@ -56,10 +61,12 @@ SwiftShader frame time on these stills was about 22–48 ms. That is not an iPho
 SwiftShader does not walk 100 m in a CDP session: the HUD can read ~1.7 m/s while the body barely moves between samples. `V39_ROUTE=1` drives the same `player_controller.gd` in headless Godot, fixed 60 Hz physics, waypoints on the beach, the grass rise, and the dock centerline. Stick-up from spawn walks off the pier; the harness does not do that.
 
 ```
-ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood knee_max=116 len_min=1.00 gnd_min=-39.9 pelvis=3.4 bad=548 stop=true
+ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood, knee_max=116 len_min=1.00 gnd_min=-21.9 at=3.1,-10.0,1.07 pelvis=3.0 bad=1997 bury=1071 float=926 pelvis_n=0 stop=true
 ```
 
-110 m, with sand, grass, wood, and stops. `ok=false` because 548 frames missed the sole bar. The worst sole gap was −39.9 cm. One root step was 3.4 cm, over the 3 cm pelvis cap. Shin length never left 1.00. This is not a pass of the grounding bar.
+110 m, with sand, grass, wood, and stops. `ok=false`. 1997 frames missed the sole bar: 1071 with the lower sole or a same-terrace shin under the surface, 926 with the lower sole more than 1.5 cm up. No frame failed the pelvis counter. The largest displayed root step printed as 3.0 cm. Shin length stayed 1.00 and the knee stayed at this clip's 116°.
+
+The remaining frames are the 12 cm cap. On those samples the hip shift is already at +12 cm or −12 cm and the sole is still outside −1…+1.5, because the walkable triangle under that foot is further than 12 cm from the animated sole (the downhill foot on a grade, or a straight leg over a lower terrace). A gap past 30 cm is ignored on purpose, so a cliff cannot move the leg; two samples sat there with the hip at 0 and the sole 33 cm and 38 cm up. This is not a pass.
 
 ## Where this version still misses the AAA bar
 
@@ -67,18 +74,18 @@ ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood knee_max=116 len_min=1.00 gnd_
 
 ### Release blockers
 
-1. **Grounding.** Not met. The foot-bone slide is gone, and the 2.8 s rise frame is no longer a waist cut-off: the side view shows full legs, and `front_b.png` shows shorts, both sandals, and the shadow with HUD gnd 0.7 cm. The foot sample is the drawn triangle. The 110 m harness is still outside the bar: 2914 bad frames, worst gap −84.3 cm at (6.8, −9.8), pelvis step 6.5 cm, knee max 125°, shin length 1.00.
+1. **Grounding.** Not met. The foot-bone slide is gone, and the flung sandal from `bb693a3` is gone: `front_a.png` is a walk with both shins (HUD 9.1 cm), `front_b.png` is a normal stride on the rise (HUD 2.0 cm, no leg by the hat), `front_c.png` has both sandals (HUD 11.2 cm). The eight slope headings are normal walks. The query is the walkable triangle whose XZ contains the foot, nearest below a probe just above the sandal. The 110 m harness is still outside the bar: 1997 bad frames (1071 bury, 926 float), worst gap −21.9 cm at (3.1, −10.0), pelvis step 3.0 cm, knee max 116°, shin length 1.00. Those frames are already on the 12 cm cap.
 
 2. **Occluder dither.** Not re-proven. `shaders/cutout.gdshaderinc`, `foliage.gdshader`, `leaf.gdshader` and `static.gdshader` still dither foliage and props in the compatibility renderer. This version has no on/off pair from the export. The drag stills are not a proof: nothing thick was between the lens and the boy, and `side_run_stop.png` loses him for a different reason.
 
-3. **Full island route.** Distance only. The headless harness covered 110 m of sand, grass and dock wood, including the beach rise and stops. It did not stay inside the sole bar, the pelvis cap was broken once, and it is not a CDP touch route on the export. Chrome on SwiftShader still cannot accumulate that distance. "Every major grass slope" is not shown.
+3. **Full island route.** Distance only. The headless harness covered 110 m of sand, grass and dock wood, including the beach rise and stops. It did not stay inside the sole bar. It is not a CDP touch route on the export. Chrome on SwiftShader still cannot accumulate that distance. The eight slope headings are stills, not a circuit of every grass slope.
 
 ### Self-audit
 
 | Area | This version |
 | --- | --- |
 | **Feel** | The stick still has a small deadzone, a run gate at magnitude 0.90, and a spot-turn only from a near stop. Nothing here was retuned. The harness stop at speed 0.05 left the sole 16 cm up for several frames before it settled to about 1 cm. That is a skate/float at the end of a step, and it is still in the build. |
-| **Camera** | The release crop from v38 is still fixed, and `front_c.png` keeps the hat and both shoes. `?side=1` is a stills lens only. On the steep path, `side_run_stop.png` loses the boy entirely while gnd reads 39 cm. Slope framing is not done. |
+| **Camera** | The release crop from v38 is still fixed, and `front_c.png` keeps the hat and both shoes. `?side=1` is a stills lens only. On the steep path, `side_run_stop.png` loses the boy off the bottom of the frame while gnd reads 2.9 cm. The uphill crest raise is kept. |
 | **Grounding** | See blocker 1. Idle dock and slope are inside the spirit of the bar. The moving probe is not. |
 | **Character** | The review pose is a walk again: shins visible, sandals present, knee angle in the clip's own range (about 6–116°), length ratio 1.00. Face and hat are readable in the side stills. Sit, sleep and throw were not re-shot. |
 | **World** | Night lamps, shore foam and foliage occlusion were not re-shot. The iPhone audio toast covers the middle of every still. |
@@ -89,9 +96,9 @@ ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood knee_max=116 len_min=1.00 gnd_
 
 ## What the next versions should do, in order
 
-1. Make the drawn sole and the shin sample agree with the picture on the review drag and across the 110 m. The failure is the ground sample under the shoe on a rise, not a missing constant offset. Until gnd on a moving still matches the sandals in that still, the grounding blocker stays open.
-2. Hold the pelvis to 3 cm/frame on that same route. The harness already saw 3.4 cm.
-3. Keep the boy in frame on a steep side view after release. `side_run_stop.png` is the miss.
+1. Close the frames the 12 cm cap leaves outside −1…+1.5 cm. On the 110 m route that is 1997 frames, almost all of them already sitting on the cap, where the walkable triangle is further than 12 cm from the animated sole. The review drag no longer sinks into a stump or throws a sandal at the hat.
+2. Keep the displayed root step at 3 cm. This run's largest printed step was 3.0 cm and the pelvis counter stayed at 0.
+3. Keep the boy in frame on a steep side view after release. `side_run_stop.png` still loses him off the bottom.
 4. Shoot foliage and prop dither on and off from the export.
 5. Tighten the stop so the sole does not hang 16 cm up while the stick is already at zero.
 6. Measure frame time on an iPhone-class device, and get the hut view back under ~110k prims without bringing VRAM compression back.

@@ -43,6 +43,10 @@ var plant_ankle_xz: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]
 var stance_locked: Array[bool] = [false, false]
 var pose_path := "skeleton_modifier_set_bone_pose"
 var _hip_lift := 0.0
+## Smoothed vertical correction per foot, metres. Never a horizontal slide.
+var _foot_corr: Array[float] = [0.0, 0.0]
+const MAX_FOOT_CORR := 0.12
+const MAX_KNEE_DEG := 115.0
 var _ready_mesh := false
 var _skin: Skin
 var _verts: PackedVector3Array = PackedVector3Array()
@@ -197,68 +201,59 @@ func _solve(skel: Skeleton3D, _delta: float) -> void:
 		var pole := ankle0 + fwd * 0.62 + Vector3(0, 0.42, 0)
 		_two_bone(skel, 0, target, pole, ground.normal(ankle0.x, ankle0.z, body_y))
 		return
-	# Rotate the knee so the sandal meets the triangle under that foot. Do not
-	# write the foot bone's origin: that slide left the shin in the mesh while
-	# the probe read the sandal. A residual both feet cannot bend out of
-	# becomes one hip lift, dropped the same frame it is gone.
+	# Vertical correction only. A two-bone aim at a bad face folded him into a
+	# crawl and parked a sandal beside the hat, so the foot never moves in XZ
+	# and a miss keeps the animated leg.
 	var moving := float(boy.move_speed) > 0.12
-	var soles: Array[float] = [0.0, 0.0]
-	var surfaces: Array[float] = [0.0, 0.0]
-	var valid: Array[bool] = [false, false]
+	# 12 cm in one frame at 60 Hz, so a footstrike is planted before the next
+	# step instead of riding buried through the blend.
+	var step := maxf(_delta, 0.016) * 8.0
+	var gaps: Array[float] = [0.0, 0.0]
+	var known: Array[bool] = [false, false]
 	for side in range(2):
 		if _foot_bi[side] < 0:
 			stance_locked[side] = false
+			_foot_corr[side] = move_toward(_foot_corr[side], 0.0, step)
 			continue
 		var ankle: Vector3 = _world_xf(skel, _foot_bi[side]).origin
 		var shell := _lowest_sole(skel, side)
-		var sole_y := shell.y if shell.y < 500.0 else ankle.y - sole_offset
-		var sx := shell.x if shell.y < 500.0 else ankle.x
-		var sz := shell.z if shell.y < 500.0 else ankle.z
-		var surface := _foot_surface(sx, sz, sole_y, body_y)
-		soles[side] = sole_y
-		surfaces[side] = surface
-		valid[side] = true
-		plant_hit_y[side] = surface
+		var sy := shell.y if shell.y < 500.0 else ankle.y - sole_offset
+		var sx := ankle.x
+		var sz := ankle.z
+		if shell.y < 500.0:
+			sx = shell.x
+			sz = shell.z
+		var surface := _query_surface(sx, sz, sy + 0.25)
 		plant_ankle_xz[side] = Vector2(sx, sz)
-	var lower := 0 if not valid[1] or (valid[0] and soles[0] <= soles[1]) else 1
-	var sink := 0.0
+		if surface < -900.0:
+			plant_hit_y[side] = body_y
+			stance_locked[side] = false
+			_foot_corr[side] = move_toward(_foot_corr[side], 0.0, step)
+			continue
+		plant_hit_y[side] = surface
+		gaps[side] = surface + SOLE_TARGET - sy
+		known[side] = true
+	# The lower sole is always the plant. The other foot keeps the animation
+	# while it is a real swing, more than 6 cm clear of its own triangle.
+	var lower := 0 if not known[1] or (known[0] and gaps[0] >= gaps[1]) else 1
 	for side in range(2):
-		if not valid[side]:
+		if not known[side]:
 			continue
-		var gap := soles[side] - surfaces[side]
-		var plant := (not moving) or side == lower or gap < 0.06
+		var gap: float = gaps[side]
+		var plant := side == lower or (not moving) or gap > -0.06
 		stance_locked[side] = plant
-		if not plant:
-			continue
-		if gap >= -0.010 and gap <= 0.015:
-			continue
-		var left := _bend_sole_to(skel, side, surfaces[side] + SOLE_TARGET)
-		sink = maxf(sink, left)
-	var want := maxf(sink, 0.0)
-	if want < _hip_lift:
-		_hip_lift = want
-	elif want <= 0.06:
-		# The knee already did what it can. Close the last few centimetres
-		# this frame so the sole is on the triangle, not a frame later.
-		_hip_lift = want
-	else:
-		_hip_lift = minf(want, _hip_lift + MAX_HIP_STEP)
-	# A straight leg that is still a couple of centimetres short of the lower
-	# triangle: drop the hips by that stub, and no further than the other sole
-	# can spare inside the bar.
-	if want <= 0.0005:
-		var hi_gap := -10.0
-		var lo_gap := 10.0
-		for side in range(2):
-			if not valid[side] or not stance_locked[side]:
-				continue
-			var g := _shell_y(skel, side) - surfaces[side]
-			hi_gap = maxf(hi_gap, g)
-			lo_gap = minf(lo_gap, g)
-		if hi_gap > 0.015 and hi_gap < 0.035 and lo_gap < 9.0:
-			var drop := minf(hi_gap - SOLE_TARGET, lo_gap + 0.008)
-			if drop > 0.001:
-				_hip_lift = -minf(drop, 0.02)
+		var want := 0.0
+		if plant and absf(gap) < 0.30:
+			want = clampf(gap, -MAX_FOOT_CORR, MAX_FOOT_CORR)
+		_foot_corr[side] = move_toward(_foot_corr[side], want, step)
+	# Move the hips by the lower sole's correction only. Up plants a buried
+	# sandal; down plants a straight leg that the knee can no longer extend.
+	# It is vertical, capped, and smoothed, so a bad face cannot kick the foot
+	# out or throw it up beside the hat.
+	var lift := 0.0
+	if known[lower]:
+		lift = _foot_corr[lower]
+	_hip_lift = clampf(lift, -MAX_FOOT_CORR, MAX_FOOT_CORR)
 	if _hips_bi >= 0 and absf(_hip_lift) > 0.001:
 		var hp := skel.get_bone_pose(_hips_bi)
 		var parent_g := Transform3D.IDENTITY
@@ -268,15 +263,6 @@ func _solve(skel: Skeleton3D, _delta: float) -> void:
 		var skel_up := skel.global_transform.basis.inverse() * Vector3(0, _hip_lift, 0)
 		hp.origin += parent_g.basis.inverse() * skel_up
 		skel.set_bone_pose(_hips_bi, hp)
-	# Hips moved the feet. Plant again on the triangle under the shell now.
-	for side in range(2):
-		if not valid[side] or not stance_locked[side]:
-			continue
-		var shell := _lowest_sole(skel, side)
-		if shell.y > 500.0:
-			continue
-		var surface := _foot_surface(shell.x, shell.z, shell.y, body_y)
-		_bend_sole_to(skel, side, surface + SOLE_TARGET)
 
 
 ## Swing the foot by rotating one bone. Lengths stay the animated lengths.
@@ -301,8 +287,23 @@ func _rotate_bone_y(skel: Skeleton3D, bone: int, end_bone: int, delta_y: float) 
 		axis = bone_xf.basis.x
 	else:
 		axis = axis.normalized()
-	var lever := maxf(arm.length(), 0.12)
-	var ang := clampf(delta_y / lever, -0.45, 0.45)
+	# axis is perpendicular to the shin, so the foot moves on a circle. A
+	# small-angle "delta / length" barely lifts or drops a vertical shin.
+	var radial := axis.cross(arm)
+	var a := arm.y
+	var b := radial.y
+	var radius := sqrt(a * a + b * b)
+	if radius < 1e-4:
+		return
+	var target := clampf(a + delta_y, -radius + 0.001, radius - 0.001)
+	var alpha := atan2(b, a)
+	var acc := acos(clampf(target / radius, -1.0, 1.0))
+	var ang_a := alpha - acc
+	var ang_b := alpha + acc
+	var ang := ang_a if absf(ang_a) <= absf(ang_b) else ang_b
+	ang = clampf(ang, -1.15, 1.15)
+	if absf(ang) < 1e-4:
+		return
 	var before_y := end_xf.origin.y
 	var new_basis := Basis(Quaternion(axis, ang)) * bone_xf.basis
 	_set_world(skel, bone, Transform3D(new_basis, bone_xf.origin))
@@ -389,11 +390,44 @@ func _set_world(skel: Skeleton3D, bone: int, world_xf: Transform3D) -> void:
 
 
 ## Lowest drawn point of this leg: sandal or shin. Same upload matrix as the sole.
-## The drawn triangle under this foot. No stand-in from a neighbouring column.
-func _foot_surface(x: float, z: float, _leg_y: float, body_y: float) -> float:
+## Walkable triangle at or just below the foot. -999 when the query is invalid.
+func _query_surface(x: float, z: float, probe_y: float) -> float:
 	if ground == null:
+		return -999.0
+	return ground.height_exact(x, z, probe_y)
+
+
+## Probe surface, or the controller height when no walkable face contains the foot.
+func _foot_surface(x: float, z: float, leg_y: float, body_y: float) -> float:
+	var h := _query_surface(x, z, leg_y + 0.12)
+	if h < -900.0:
 		return body_y
-	return ground.height_exact(x, z, body_y)
+	return h
+
+
+func _knee_flex_of(skel: Skeleton3D, side: int) -> float:
+	if _up_bi[side] < 0 or _knee_bi[side] < 0 or _foot_bi[side] < 0:
+		return 0.0
+	var hip: Vector3 = _world_xf(skel, _up_bi[side]).origin
+	var knee: Vector3 = _world_xf(skel, _knee_bi[side]).origin
+	var ankle: Vector3 = _world_xf(skel, _foot_bi[side]).origin
+	if hip.distance_squared_to(knee) < 1e-6 or knee.distance_squared_to(ankle) < 1e-6:
+		return 0.0
+	return rad_to_deg((knee - hip).angle_to(ankle - knee))
+
+
+func _leg_unsafe(skel: Skeleton3D, side: int) -> bool:
+	if _up_bi[side] < 0 or _knee_bi[side] < 0 or _foot_bi[side] < 0:
+		return true
+	var hip: Vector3 = _world_xf(skel, _up_bi[side]).origin
+	var knee: Vector3 = _world_xf(skel, _knee_bi[side]).origin
+	var ankle: Vector3 = _world_xf(skel, _foot_bi[side]).origin
+	if ankle.y > hip.y - 0.08:
+		return true
+	if hip.distance_squared_to(knee) < 1e-6 or knee.distance_squared_to(ankle) < 1e-6:
+		return true
+	var flex := rad_to_deg((knee - hip).angle_to(ankle - knee))
+	return flex > MAX_KNEE_DEG
 
 
 ## Two-bone plant. Rotates the thigh and the knee so the ankle reaches the
@@ -687,15 +721,22 @@ func _measure_and_store(skel: Skeleton3D) -> void:
 			sy = ankle.y - sole_offset
 			xz = Vector2(ankle.x, ankle.z)
 		var shin_p := _lowest_on_bone(skel, _knee_bi[side], 0.45)
-		var hy := _foot_surface(xz.x, xz.y, sy, body_y) if ground != null else sy
+		# Same probe the plant uses, so the score is the triangle the foot aimed at.
+		var hy := _query_surface(xz.x, xz.y, sy + 0.25) if ground != null else sy
+		if hy < -900.0:
+			hy = body_y
 		mesh_sole_y[side] = sy
 		mesh_hit_y[side] = hy
 		plant_hit_y[side] = hy
 		plant_ankle_xz[side] = xz
 		sole_gaps.append(sy - hy)
 		if shin_p.y < 500.0:
-			var shy := _foot_surface(shin_p.x, shin_p.z, shin_p.y, body_y) if ground != null else shin_p.y
-			shin_gaps.append(shin_p.y - shy)
+			var shy := _query_surface(shin_p.x, shin_p.z, shin_p.y + 0.25) if ground != null else shin_p.y
+			if shy < -900.0:
+				shy = body_y
+			# A shin over a different terrace is not a buried shin.
+			if absf(shy - hy) < 0.08:
+				shin_gaps.append(shin_p.y - shy)
 		var shin_len := knee.distance_to(ankle)
 		var rest_len := maxf(_shin_rest[side], 0.05)
 		shin_len_ratio[side] = shin_len / rest_len
