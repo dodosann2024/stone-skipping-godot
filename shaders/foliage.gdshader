@@ -16,6 +16,7 @@ void vertex() {
 	VERTEX.x += s * (sin(t * 1.2 + ph) * 0.11 + sin(t * 3.3 + ph * 4.0) * 0.025);
 	VERTEX.z += s * (cos(t * 1.0 + ph * 1.3) * 0.07 + sin(t * 2.9 + ph * 3.0) * 0.02);
 	VERTEX.y += s * sin(t * 2.1 + ph * 2.0) * 0.035;
+	VERTEX += foliage_bend(VERTEX, CAMERA_POSITION_WORLD);
 	wpos = VERTEX;
 }
 
