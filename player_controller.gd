@@ -148,19 +148,23 @@ func physics_step(delta: float) -> void:
 			m.spot_turning = false
 			m.spot_rate = 0.0
 	if mag > 0.05 and not m.spot_turning:
-		var walk_u = clampf((mag - 0.06) / 0.78, 0.0, 1.0)
-		walk_u = walk_u * walk_u * (3.0 - 2.0 * walk_u)
-		var spd = RUN_SPEED if running else lerpf(0.42, WALK_MAX, walk_u)
+		# Full deflection stays a full run (the review drag lives there).
+		# The middle of the stick is a walk, not a step up to cruise.
+		var shaped: float = 0.0
+		if mag > 0.06:
+			shaped = pow(clampf((mag - 0.06) / 0.94, 0.0, 1.0), 0.85)
+		var walk_u: float = shaped * shaped * (3.0 - 2.0 * shaped)
+		var spd: float = RUN_SPEED if running else lerpf(0.48, WALK_MAX, walk_u)
 		if m.wading:
 			spd *= 0.6
 		target_v = wish.normalized() * spd
 		m.settle_t = 0.0
-	elif m.settle_t < 0.6 and not m.spot_turning:
+	elif m.settle_t < 0.28 and not m.spot_turning:
 		if not m.boy.settling() and m.settle_t <= 0.0:
-			m.boy.begin_settle(0.42)
+			m.boy.begin_settle(0.28)
 		if m.boy.settling():
 			m.settle_t += delta
-			target_v = Vector3(-sin(m.face_yaw), 0, -cos(m.face_yaw)) * 0.40
+			target_v = Vector3(-sin(m.face_yaw), 0, -cos(m.face_yaw)) * 0.22
 		else:
 			m.settle_t = 1.0
 	var s = m.move_vel.length()
@@ -175,17 +179,11 @@ func physics_step(delta: float) -> void:
 		var mt: Array = Boy.move_turn(m.face_yaw, atan2(-target_v.x, -target_v.z), s, delta)
 		m.face_yaw = mt[0]
 		spd_t *= float(mt[1])
-	var acc: float
-	if spd_t > s:
-		if s < 0.35:
-			acc = 3.6
-		elif s < WALK_MAX * 0.9:
-			acc = 2.6
-		else:
-			acc = 1.25
-	else:
-		acc = 5.2 if s > WALK_MAX else 6.0
-	s = move_toward(s, spd_t, acc * delta)
+	# One smooth ramp. 0.70 s to speed matches the old stepped accel over the
+	# review drag, without the kink at a walk and a run. Braking is shorter
+	# so a lifted stick does not skate.
+	var smooth: float = 0.70 if spd_t > s else 0.16
+	s = lerpf(s, spd_t, 1.0 - exp(-delta / smooth))
 	m.move_vel = Vector3(-sin(m.face_yaw), 0, -cos(m.face_yaw)) * s
 	var from: Vector3 = m._body_pos if m._body_sync else m.player.position
 	var wish_step = m.move_vel * delta

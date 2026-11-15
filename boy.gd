@@ -2063,7 +2063,8 @@ static func wants_spot_turn(need: float, speed: float) -> bool:
 static func move_turn(face: float, want: float, speed: float, delta: float) -> Array:
 	var need := wrapf(want - face, -PI, PI)
 	var top := minf(STEER_TOP, STEER_GRIP / maxf(speed, 0.35))
-	var stp := minf(absf(need), minf(top, absf(need) * 8.0) * delta)
+	var k := 1.0 - exp(-delta * 7.5)
+	var stp := minf(absf(need) * k, top * delta)
 	# Heavier speed kill on sharp corners — reads as weight, not ice-skate.
 	return [face + signf(need) * stp, 1.0 - 0.82 * smoothstep(0.45, 1.55, absf(need))]
 

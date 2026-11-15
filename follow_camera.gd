@@ -1084,6 +1084,16 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	m._cam_pos_init = true
 	if not pos.is_finite() or not look.is_finite() or pos.distance_squared_to(look) < 1e-6:
 		pos = look + Vector3(0.0, 1.2, 3.5)
+	# Side stills (?side=1). The slope lift looks down past the boy and he
+	# leaves the bottom of the frame on a run-stop. Pin the lens to his chest.
+	if m._shot_side and m.mode == 0 and m.player != null:
+		var focus: Vector3 = m.player.global_position + Vector3(0.0, 0.82, 0.0)
+		var yaw_s: float = float(m.face_yaw) + PI * 0.5
+		var pitch_s: float = 0.18
+		var dist_s: float = 6.6
+		pos = focus + Vector3(sin(yaw_s) * cos(pitch_s), sin(pitch_s), cos(yaw_s) * cos(pitch_s)) * dist_s
+		pos.y = maxf(pos.y, m._surface(pos.x, pos.z) + 0.55)
+		look = focus
 	m.camera.global_position = pos
 	var up = Vector3.UP
 	var to_look = (look - pos).normalized()
