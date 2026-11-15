@@ -4,6 +4,7 @@ render_mode cull_back, diffuse_lambert, specular_disabled;
 
 uniform float game_time = 0.0;
 uniform float night_k = 0.0;
+uniform sampler2D wood_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 varying vec3 wpos;
 
 float island_r(float th) {
@@ -46,20 +47,11 @@ void fragment() {
 	vec3 c;
 	float rough = 0.92;
 	if (wood) {
-		// Boards run across the pier. Tone changes per board, not per cell,
-		// so the deck reads as planks instead of a checkerboard.
-		float boards = p.y * 2.55;
-		float id = floor(boards);
-		float f = fract(boards);
-		float seam = smoothstep(0.0, 0.035, f) * smoothstep(1.0, 0.955, f);
-		float tone = hash12(vec2(id, 2.3));
-		c = mix(vec3(0.38, 0.24, 0.12), vec3(0.66, 0.45, 0.24), tone);
-		float grain = 0.90 + 0.10 * sin(p.x * 52.0 + tone * 18.0);
-		float streak = 0.93 + 0.07 * vnoise(vec2(p.x * 2.4, id * 0.37));
-		float nail = smoothstep(0.04, 0.0, length(fract(vec2(p.x * 1.15, boards)) - vec2(0.18, 0.5)));
-		c *= grain * streak * (0.86 + 0.14 * seam);
-		c = mix(c, c * 0.45, nail * 0.55);
-		rough = 0.72;
+		// One repeat is four real boards, gaps and nails included. Mips keep
+		// the gaps from turning into a checker when the pier is far away.
+		vec2 uv = vec2(wpos.x * 0.42, wpos.z * 1.15);
+		c = texture(wood_tex, uv).rgb;
+		rough = 0.7;
 	} else {
 		float d = shore_d(p);
 		float sand = smoothstep(0.28, 1.05, wpos.y) * smoothstep(-0.8, -6.5, d);

@@ -4,6 +4,7 @@ extends Node3D
 
 const _SideArm = preload("res://character/side_arm.gd")
 const _RestPose = preload("res://character/rest_pose.gd")
+const _ClipAuthor = preload("res://character/clip_author.gd")
 
 var anim: AnimationPlayer
 var skel: Skeleton3D
@@ -43,6 +44,7 @@ func _ready() -> void:
 		skel.add_child(rest)
 	if anim != null:
 		_pick_names()
+		_ClipAuthor.build(anim)
 		anim.play(clip_idle)
 
 

@@ -72,8 +72,8 @@ func _world() -> void:
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	sun.shadow_enabled = true
 	sun.shadow_blur = 1.6
-	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-	sun.directional_shadow_max_distance = 18.0
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+	sun.directional_shadow_max_distance = 14.0
 	add_child(sun)
 	ground = Ground.new()
 	add_child(ground)
@@ -86,6 +86,7 @@ func _world() -> void:
 	water_mat = ShaderMaterial.new()
 	water_mat.shader = load("res://shaders/sea.gdshader")
 	water.material_override = water_mat
+	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	water.position.y = 0.02
 	add_child(water)
 
@@ -298,8 +299,8 @@ func _begin_rest(item: Fadable) -> void:
 	rig.yaw = yaw + PI
 	rig.pivot_y = 0.45 if rest_kind == "towel" or rest_kind == "lounger" or rest_kind == "hammock" else 0.7
 	await _glide(pos, yaw)
-	if rest_kind == "towel" or rest_kind == "lounger":
-		player.boy.lay_flat(rest_kind)
+	if rest_kind == "lounger" or rest_kind == "towel":
+		player.boy.play_clip("lounger_lie", 0.2)
 		return
 	var enter := _clip_for(rest_kind, "enter")
 	var idle := _clip_for(rest_kind, "idle")
@@ -313,9 +314,12 @@ func _begin_rest(item: Fadable) -> void:
 
 
 func _begin_lie() -> void:
-	if player.boy == null or player.boy.rest == null:
+	if player.boy == null:
 		return
-	player.boy.rest.mode = "lie"
+	if player.boy.rest != null:
+		player.boy.rest.mode = ""
+	var clip := "lounger_lie" if rest_kind == "lounger" else "bench_lie"
+	player.boy.play_clip(clip, 0.2)
 	rig.pivot_y = 0.55
 
 
@@ -411,7 +415,28 @@ func _throw() -> void:
 	var sea := Vector3(0, 0, -1)
 	player.face_yaw = atan2(-sea.x, -sea.z)
 	player.rotation.y = player.face_yaw
-	player.boy.arm.start(_crouch)
+	var clip := "throw_crouch" if _crouch else "throw_stand"
+	if player.boy.play_clip(clip, 0.05) == "":
+		player.boy.arm.start(_crouch)
+		return
+	_throw_release()
+
+
+func _throw_release() -> void:
+	await get_tree().create_timer(0.50).timeout
+	if player == null or player.boy == null or player.boy.skel == null:
+		return
+	var skel: Skeleton3D = player.boy.skel
+	var hand := skel.find_bone("mixamorig_RightHand")
+	var origin := player.global_position + Vector3(0, 0.9, 0)
+	if hand >= 0:
+		origin = (skel.global_transform * skel.get_bone_global_pose(hand)).origin
+	var fwd := Vector3(-sin(player.face_yaw), 0.0, -cos(player.face_yaw))
+	var speed := 10.4 if _crouch else 11.2
+	var lift := 1.15 if _crouch else 1.55
+	_spawn_stone(origin + fwd * 0.25, fwd * speed + Vector3.UP * lift)
+	await get_tree().create_timer(0.7).timeout
+	_on_throw_done()
 
 
 func _on_release(origin: Vector3, velocity: Vector3) -> void:

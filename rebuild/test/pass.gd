@@ -64,8 +64,12 @@ func _shots(game: Node) -> void:
 		await _place(game, spot, PI)
 		var cam: Camera3D = game.rig.cam
 		game.rig.set_process(false)
-		cam.global_position = spot + Vector3(-5.5, 5.2, -7.5)
-		cam.look_at(spot + Vector3(1.5, 1.2, 4.0), Vector3.UP)
+		if name == "hut" or name == "hammock":
+			cam.global_position = spot + Vector3(-3.2, 2.6, 3.4)
+			cam.look_at(spot + Vector3(1.2, 1.3, -0.4), Vector3.UP)
+		else:
+			cam.global_position = spot + Vector3(-5.5, 5.2, -7.5)
+			cam.look_at(spot + Vector3(1.5, 1.2, 4.0), Vector3.UP)
 		for _i in 6:
 			await process_frame
 		_save(game, dir + "/v42_%s.png" % name)
@@ -85,7 +89,7 @@ func _shots(game: Node) -> void:
 
 func _rest(game: Node) -> void:
 	var dir := _dir("m4")
-	var wanted := ["Bench", "Log", "FireLog0", "FireLog1", "FireLog2", "Hammock", "Towel", "Lounger"]
+	var wanted := ["Bench", "Lounger", "Hammock", "Towel"]
 	for name in wanted:
 		var item := _find(game, name)
 		if item == null:
@@ -115,6 +119,8 @@ func _throw(game: Node) -> void:
 	var ends := IslandData.dock_ends()
 	var spot := Vector3(0.0, Constants.DECK_Y, ends.y + 1.3)
 	await _place(game, spot, 0.0)
+	await _throw_keys(game, dir, "stand", "throw_stand")
+	await _throw_keys(game, dir, "crouch", "throw_crouch")
 	game._crouch = false
 	game._throw()
 	for _i in 16:
@@ -281,17 +287,18 @@ func _drag(game: Node) -> void:
 
 func _occ(game: Node) -> void:
 	var ends := IslandData.dock_ends()
-	var spot := Vector3(0.8, 0.0, ends.x + 2.4)
+	# Inland of the hut, looking out to sea, so the hut sits on the right and the palm row on the left.
+	var spot := Vector3(0.35, 0.0, ends.x + 3.3)
 	spot.y = game.ground.height(spot.x, spot.z)
-	await _place(game, spot, 0.15)
+	await _place(game, spot, 0.0)
 	for _i in 12:
 		await process_frame
 	game.rig.set_process(false)
 	var cam: Camera3D = game.rig.cam
 	cam.projection = Camera3D.PROJECTION_PERSPECTIVE
-	cam.fov = 55.0
-	cam.global_position = spot + Vector3(-0.2, 1.35, 2.15)
-	cam.look_at(spot + Vector3(0.15, 0.72, -0.4), Vector3.UP)
+	cam.fov = 52.0
+	cam.global_position = Vector3(-0.15, spot.y + 1.55, ends.x + 5.6)
+	cam.look_at(Vector3(1.1, spot.y + 0.85, ends.x + 0.4), Vector3.UP)
 	for _i in 4:
 		await process_frame
 	var dir := _dir("m3")
@@ -315,8 +322,32 @@ func _frame_rest(game: Node) -> void:
 	var face := Vector3(-sin(yaw), 0.0, -cos(yaw))
 	var side := Vector3(face.z, 0.0, -face.x)
 	cam.projection = Camera3D.PROJECTION_PERSPECTIVE
-	cam.global_position = p + side * 2.4 + Vector3(0, 1.15, 0) + face * 0.8
+	cam.global_position = p + side * 3.4 + Vector3(0, 1.45, 0) + face * 1.1
 	cam.look_at(p + Vector3(0, 0.55, 0), Vector3.UP)
+
+
+func _throw_keys(game: Node, dir: String, tag: String, clip: String) -> void:
+	var boy: BoyVisual = game.player.boy
+	if boy.play_clip(clip, 0.0) == "":
+		print("THROW_CLIP_MISSING ", clip)
+		return
+	if boy.ik != null:
+		boy.ik.paused = true
+	game.rig.set_process(false)
+	var cam: Camera3D = game.rig.cam
+	var p: Vector3 = game.player.global_position
+	cam.projection = Camera3D.PROJECTION_PERSPECTIVE
+	cam.global_position = p + Vector3(2.4, 1.45, 2.6)
+	cam.look_at(p + Vector3(0, 0.9, 0), Vector3.UP)
+	var times := [0.0, 0.18, 0.36, 0.50, 0.72, 1.05]
+	var names := ["windup", "load", "whip", "release", "follow", "finish"]
+	for i in times.size():
+		boy.anim.seek(times[i], true)
+		boy.anim.pause()
+		for _k in 3:
+			await process_frame
+		_save(game, dir + "/throw_%s_%s.png" % [tag, names[i]])
+	game.rig.set_process(true)
 
 
 func _until_throw_done(game: Node) -> void:

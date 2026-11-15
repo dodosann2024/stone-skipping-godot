@@ -8,15 +8,20 @@ var items: Array[Fadable] = []
 func _ready() -> void:
 	var ends := IslandData.dock_ends()
 	var shore_z: float = ends.x
-	_palm(Vector3(-2.2, 0.0, shore_z + 1.6), 4.2)
-	_palm(Vector3(-3.4, 0.0, shore_z + 3.8), 3.6)
-	_palm(Vector3(2.8, 0.0, shore_z + 0.8), 4.6)
-	_palm(Vector3(5.5, 0.0, shore_z + 5.5), 3.8)
-	_palm(Vector3(-6.0, 0.0, shore_z + 8.0), 5.0)
-	_hut(Vector3(4.4, 0.0, shore_z + 2.8))
+	_palm(Vector3(-1.7, 0.0, shore_z + 0.7), 5.4, 0.12)
+	_palm(Vector3(-2.5, 0.0, shore_z + 2.4), 4.3, -0.08)
+	_palm(Vector3(-3.3, 0.0, shore_z + 4.2), 3.7, 0.16)
+	_palm(Vector3(-4.6, 0.0, shore_z + 6.4), 4.8, -0.1)
+	_palm(Vector3(2.6, 0.0, shore_z + 0.5), 4.1, 0.06)
+	_palm(Vector3(6.2, 0.0, shore_z + 5.2), 5.1, -0.14)
+	_palm(Vector3(-6.4, 0.0, shore_z + 9.0), 3.5, 0.18)
+	_hut(Vector3(4.2, 0.0, shore_z + 2.6))
 	_bush(Vector3(1.4, 0.0, shore_z + 2.2))
 	_bush(Vector3(3.2, 0.0, shore_z + 4.6))
-	_barrel(Vector3(-1.1, 0.0, shore_z + 1.5))
+	_barrel(Vector3(-1.15, 0.0, shore_z + 1.2))
+	_barrel(Vector3(1.55, 0.0, ends.y + 2.4))
+	_barrel(Vector3(-1.7, 0.0, ends.y + 2.15))
+	_coil(Vector3(1.15, 0.0, ends.y + 1.7))
 	_sign(Vector3(-1.6, 0.0, shore_z + 0.8))
 	_lighthouse(Vector3(8.5, 0.0, 6.5))
 	_bench(Vector3(3.2, 0.0, 2.2))
@@ -26,15 +31,18 @@ func _ready() -> void:
 	for i in 3:
 		var ang := TAU * float(i) / 3.0 + 0.5
 		_log(fire_at + Vector3(cos(ang) * 0.95, 0.0, sin(ang) * 0.95), "FireLog%d" % i)
-	_hammock(Vector3(6.2, 0.0, shore_z + 4.2))
+	_hammock(Vector3(-7.4, 0.0, shore_z + 6.6))
 	_towel(Vector3(-5.0, 0.0, shore_z + 4.0))
 	_lounger(Vector3(-4.2, 0.0, shore_z + 5.2))
-	_boat(Vector3(3.6, 0.02, shore_z - 2.4))
+	_boat(Vector3(2.4, 0.05, ends.y + 0.35))
+	_rope(Vector3(1.15, 0.95, ends.y + 1.15), Vector3(2.15, 0.42, ends.y + 0.7))
+	_rope(Vector3(-1.15, 0.95, ends.y + 1.15), Vector3(-1.9, 0.35, ends.y + 0.2))
 	_grass(Vector3(1.8, 0.0, shore_z + 3.2))
 	_shells(Vector3(-1.4, 0.0, shore_z + 2.4))
+	_distant_palms()
 
 
-func _palm(at: Vector3, height: float) -> void:
+func _palm(at: Vector3, height: float, lean: float = 0.0) -> void:
 	at.y = IslandData.height_at(at.x, at.z)
 	var root := Fadable.new()
 	var st := SurfaceTool.new()
@@ -71,6 +79,7 @@ func _palm(at: Vector3, height: float) -> void:
 	body.add_child(cap)
 	root.setup(mi, body)
 	root.position = at
+	root.rotation.z = lean
 	add_child(root)
 	items.append(root)
 
@@ -82,23 +91,31 @@ func _hut(at: Vector3) -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var floor_y := 1.15
-	var wood := Color(0.62, 0.46, 0.28)
-	var post := Color(0.40, 0.28, 0.16)
-	for px in [-1.1, 1.1]:
-		for pz in [-0.9, 0.9]:
+	var wood := Color(0.58, 0.40, 0.22)
+	var plank := Color(0.68, 0.50, 0.28)
+	var post := Color(0.36, 0.24, 0.14)
+	var straw := Color(0.86, 0.72, 0.36)
+	for px in [-1.15, 1.15]:
+		for pz in [-1.0, 1.0]:
 			_cylinder(st, Vector3(px, floor_y * 0.5, pz), 0.07, floor_y, post, 6)
-	_box(st, Vector3(0, floor_y, 0), Vector3(2.6, 0.08, 2.2), wood)
-	_box(st, Vector3(0, floor_y + 0.9, -1.05), Vector3(2.5, 1.6, 0.08), wood)
-	_box(st, Vector3(-1.25, floor_y + 0.9, 0), Vector3(0.08, 1.6, 2.0), wood)
-	_box(st, Vector3(1.25, floor_y + 0.9, 0), Vector3(0.08, 1.6, 2.0), wood)
-	var straw := Color(0.86, 0.72, 0.38)
-	_box(st, Vector3(-0.7, floor_y + 2.15, 0), Vector3(1.5, 0.12, 2.5), straw)
-	_box(st, Vector3(0.7, floor_y + 2.15, 0), Vector3(1.5, 0.12, 2.5), straw)
-	_box(st, Vector3(0, floor_y + 2.45, 0), Vector3(0.35, 0.16, 2.6), Color(0.62, 0.48, 0.26))
-	for i in 6:
-		var x := -1.0 + float(i) * 0.38
-		_box(st, Vector3(x, floor_y + 0.9, -1.02), Vector3(0.06, 1.45, 0.04), Color(0.50, 0.34, 0.18) if i % 2 == 0 else wood)
-	_box(st, Vector3(0.2, floor_y + 1.35, 1.05), Vector3(0.08, 0.16, 0.08), Color(0.85, 0.55, 0.2))
+	_box(st, Vector3(0, floor_y, 0), Vector3(2.5, 0.08, 2.15), plank)
+	# Back wall and side walls. The sea-facing side is a door, not a solid sheet.
+	_box(st, Vector3(0, floor_y + 0.85, -1.02), Vector3(2.4, 1.55, 0.08), wood)
+	_box(st, Vector3(-1.2, floor_y + 0.85, 0), Vector3(0.08, 1.55, 2.0), wood)
+	_box(st, Vector3(1.2, floor_y + 0.85, 0), Vector3(0.08, 1.55, 2.0), wood)
+	_box(st, Vector3(-0.85, floor_y + 0.7, 1.02), Vector3(0.55, 1.25, 0.08), wood)
+	_box(st, Vector3(0.85, floor_y + 0.7, 1.02), Vector3(0.55, 1.25, 0.08), wood)
+	_box(st, Vector3(0, floor_y + 1.5, 1.02), Vector3(1.2, 0.28, 0.08), wood)
+	# Door leaf, swung open into the room.
+	_box(st, Vector3(0.42, floor_y + 0.7, 0.72), Vector3(0.06, 1.25, 0.48), Color(0.45, 0.30, 0.16))
+	# Interior: counter, stool, floor mat.
+	_box(st, Vector3(-0.55, floor_y + 0.42, -0.55), Vector3(0.9, 0.08, 0.42), Color(0.50, 0.34, 0.18))
+	_box(st, Vector3(0.55, floor_y + 0.22, -0.45), Vector3(0.28, 0.36, 0.28), Color(0.42, 0.28, 0.16))
+	_box(st, Vector3(0.1, floor_y + 0.05, 0.15), Vector3(0.7, 0.02, 0.9), Color(0.72, 0.28, 0.22))
+	for i in 5:
+		var x := -0.9 + float(i) * 0.45
+		_box(st, Vector3(x, floor_y + 2.05 + float(i % 2) * 0.08, 0), Vector3(0.55, 0.08, 2.5), straw)
+	_box(st, Vector3(0, floor_y + 2.35, 0), Vector3(0.28, 0.1, 2.7), Color(0.55, 0.40, 0.2))
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
@@ -318,7 +335,7 @@ func _lounger(at: Vector3) -> void:
 	var cloth := Color(0.25, 0.45, 0.72)
 	_box(st, Vector3(0, 0.28, 0.15), Vector3(0.62, 0.05, 1.1), cloth)
 	_box(st, Vector3(0, 0.5, -0.55), Vector3(0.62, 0.4, 0.06), cloth)
-	_seat(root, "lounger", 0.0, Vector3(0, 0.2, 0.1), 0.12)
+	_seat(root, "lounger", PI, Vector3(0, 0.2, -0.15), 0.12)
 	_finish(root)
 
 
@@ -459,6 +476,88 @@ func _cylinder_x(st: SurfaceTool, center: Vector3, radius: float, length: float,
 		_face(st, p0, p1, q0, q1, col)
 
 
+func _coil(at: Vector3) -> void:
+	at.y = Constants.DECK_Y + 0.04
+	var root := Fadable.new()
+	root.name = "Coil"
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rope := Color(0.72, 0.62, 0.42)
+	for turn in 3:
+		var rad := 0.12 + float(turn) * 0.045
+		var y := 0.03 + float(turn) * 0.015
+		for i in 8:
+			var a0 := TAU * float(i) / 8.0
+			var a1 := TAU * float(i + 1) / 8.0
+			var p0 := Vector3(cos(a0) * rad, y, sin(a0) * rad)
+			var p1 := Vector3(cos(a1) * rad, y, sin(a1) * rad)
+			_face(st, p0, p1, p0 + Vector3(0, 0.02, 0), p1 + Vector3(0, 0.02, 0), rope)
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = _mat(Color(1, 1, 1))
+	root.setup(mi, null)
+	root.position = at
+	add_child(root)
+	items.append(root)
+
+
+func _rope(a: Vector3, b: Vector3) -> void:
+	var root := Fadable.new()
+	root.name = "Rope"
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var col := Color(0.75, 0.66, 0.46)
+	var steps := 6
+	var prev := a
+	for i in steps:
+		var t := float(i + 1) / float(steps)
+		var p := a.lerp(b, t)
+		p.y -= sin(t * PI) * 0.18
+		var dir := (p - prev)
+		var side := dir.cross(Vector3.UP).normalized() * 0.015
+		if side.length_squared() < 1e-8:
+			side = Vector3(0.015, 0, 0)
+		_face(st, prev + side, prev - side, p + side, p - side, col)
+		prev = p
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.setup(mi, null)
+	add_child(root)
+	items.append(root)
+
+
+func _distant_palms() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_cylinder(st, Vector3(0, 1.6, 0), 0.12, 3.2, Color(0.48, 0.36, 0.24), 5)
+	for i in 5:
+		var ang := TAU * float(i) / 5.0
+		_frond(st, Vector3(0, 3.2, 0), Vector3(cos(ang), 0.2, sin(ang)), 1.3, Color(0.22, 0.5, 0.18))
+	st.generate_normals()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = st.commit()
+	var spots: Array[Vector3] = [
+		Vector3(-8.0, 0.0, 4.0), Vector3(9.0, 0.0, 2.0), Vector3(-9.0, 0.0, -2.0),
+		Vector3(7.5, 0.0, 8.0), Vector3(-3.0, 0.0, 9.5),
+	]
+	mm.instance_count = spots.size()
+	for i in spots.size():
+		var p: Vector3 = spots[i]
+		p.y = IslandData.height_at(p.x, p.z)
+		var basis := Basis(Vector3.UP, float(i) * 0.7)
+		mm.set_instance_transform(i, Transform3D(basis, p))
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
 func _seat(root: Fadable, kind: String, yaw: float, local_pos: Vector3, lift: float = 0.0) -> void:
 	root.set_meta("kind", kind)
 	root.set_meta("yaw", yaw)
@@ -527,6 +626,7 @@ func _grass(at: Vector3) -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
 	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.setup(mi, null)
 	root.position = at
 	add_child(root)

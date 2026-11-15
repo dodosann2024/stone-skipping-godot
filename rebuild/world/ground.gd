@@ -14,6 +14,9 @@ func _ready() -> void:
 	mi.mesh = mesh
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://shaders/ground.gdshader")
+	var planks := load("res://assets/tex/planks.jpg")
+	if planks != null:
+		mat.set_shader_parameter("wood_tex", planks)
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
