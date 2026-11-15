@@ -98,8 +98,8 @@ void fragment() {
 	vec3 foam_col = mix(vec3(0.97, 0.99, 1.0), vec3(0.28, 0.34, 0.44), night_k);
 	col = mix(col, foam_col, foam * mix(0.92, 0.4, night_k));
 
-	float glint = pow(max(dot(nw, normalize(vec3(0.45, 0.62, -0.64))), 0.0), 48.0);
-	col += vec3(1.0, 0.95, 0.85) * glint * 0.7 * (1.0 - night_k) * (1.0 - foam);
+	float glint = pow(max(dot(nw, normalize(vec3(0.45, 0.62, -0.64))), 0.0), 18.0);
+	col += vec3(1.0, 0.95, 0.85) * glint * 0.18 * (1.0 - night_k) * (1.0 - foam);
 
 	float alpha = mix(0.62, 0.84, smoothstep(0.0, 1.2, depth));
 	alpha = mix(alpha, 0.96, smoothstep(2.0, 4.8, depth));

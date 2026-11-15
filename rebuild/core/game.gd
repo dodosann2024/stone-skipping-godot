@@ -84,8 +84,8 @@ func _world() -> void:
 	var water := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(90, 90)
-	plane.subdivide_width = 16
-	plane.subdivide_depth = 16
+	plane.subdivide_width = 40
+	plane.subdivide_depth = 40
 	water.mesh = plane
 	water_mat = ShaderMaterial.new()
 	water_mat.shader = load("res://shaders/sea.gdshader")
@@ -197,13 +197,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			_orbit = touch.index
 		elif touch.index == _orbit:
 			_orbit = -1
+			rig.looking = false
 	elif event is InputEventScreenDrag:
 		var drag := event as InputEventScreenDrag
 		if joy.drag(drag):
 			player.stick = joy.value
 			return
 		if drag.index == _orbit:
+			rig.looking = true
 			rig.yaw -= drag.relative.x * 0.006
+			var pitch_add := drag.relative.y * 0.004
+			rig.pitch = clampf(rig.pitch + pitch_add, deg_to_rad(30.0), deg_to_rad(40.0))
 	elif event is InputEventKey and event.pressed:
 		var k := event as InputEventKey
 		if k.keycode == KEY_W:
@@ -256,9 +260,9 @@ func _on_action(name: String) -> void:
 	elif name == "半蹲" or name == "站立":
 		_crouch = not _crouch
 	elif name == "观景":
-		rig.pitch = deg_to_rad(50.0)
+		rig.hold_pitch = not rig.hold_pitch
 	elif name == "固定视角":
-		pass
+		rig.follow = not rig.follow
 	elif name == "坐下" or name == "睡觉" or name == "晒太阳":
 		var seat := _nearest_seat()
 		if seat != null:
@@ -297,7 +301,7 @@ func _begin_rest(item: Fadable) -> void:
 	rig.framing = "front"
 	rig.yaw = yaw + PI
 	rig.pivot_y = 0.45 if rest_kind == "towel" or rest_kind == "lounger" or rest_kind == "hammock" else 0.7
-	await _glide(pos, yaw)
+	await _glide(pos, yaw, true)
 	if rest_kind == "lounger" or rest_kind == "towel":
 		player.boy.play_clip("lounger_lie", 0.2)
 		return
@@ -333,12 +337,12 @@ func _end_rest() -> void:
 		if exit_name != "" and player.boy != null:
 			player.boy.play_clip(exit_name, 0.15)
 			await _wait_clip(8.0 if kind != "hammock" else 12.0)
-	if player.boy != null:
-		player.boy.clear_hold()
 	var back := player.global_position
 	var yaw := player.face_yaw
 	var step := Vector3(-sin(yaw), 0, -cos(yaw)) * -0.55
-	await _glide(back + step, yaw)
+	await _glide(back + step, yaw, true)
+	if player.boy != null:
+		player.boy.clear_hold()
 	_sitting = false
 	rest_kind = ""
 	_rest_item = null
@@ -359,18 +363,24 @@ func _clip_for(kind: String, phase: String) -> String:
 	return str(table[kind][phase])
 
 
-func _glide(pos: Vector3, yaw: float) -> void:
+func _glide(pos: Vector3, yaw: float, stepping: bool = false) -> void:
 	player.locked = true
 	player.use_anchor = true
 	var from := player.global_position
 	var from_yaw := player.face_yaw
+	var dist := from.distance_to(pos)
+	var dur := clampf(dist / 0.85, 0.4, 0.9) if stepping else 0.45
+	if stepping and player.boy != null:
+		player.boy.play_clip("walk", 0.12)
+		if player.boy.anim != null and dur > 0.05:
+			player.boy.anim.speed_scale = clampf((dist / dur) / Constants.WALK_CLIP, 0.75, 1.25)
 	var t := 0.0
-	while t < 0.45:
+	while t < dur:
 		var dt := get_process_delta_time()
 		if dt <= 0.0:
 			dt = 1.0 / 30.0
 		t += dt
-		var k := smoothstep(0.0, 1.0, clampf(t / 0.45, 0.0, 1.0))
+		var k := smoothstep(0.0, 1.0, clampf(t / dur, 0.0, 1.0))
 		player.anchor = from.lerp(pos, k)
 		player.face_yaw = lerp_angle(from_yaw, yaw, k)
 		player.rotation.y = player.face_yaw
@@ -604,6 +614,67 @@ func _pose_shot() -> void:
 		rig.set_process(true)
 		print("SHOT_READY walk")
 		return
+	if name.begins_with("loc_"):
+		var step := int(name.substr(4))
+		# Mid-dock, facing inland, so a run stays on the planks.
+		_put(Vector3(0.15, Constants.DECK_Y, ends.y + 7.5), PI)
+		player.locked = false
+		if player.boy.ik != null:
+			player.boy.ik.paused = false
+			player.boy.ik.both_down = false
+		rig.follow = true
+		rig.looking = false
+		rig.hold_pitch = false
+		rig.yaw = PI
+		rig.pitch = Constants.CAM_PITCH
+		rig.dist = Constants.CAM_DIST
+		rig.set_process(true)
+		var mag := 0.0
+		var frames := 8
+		if step == 1:
+			mag = 0.55
+			frames = 14
+		elif step == 2:
+			mag = 0.55
+			frames = 48
+		elif step == 3:
+			mag = 1.0
+			frames = 24
+		elif step == 4:
+			mag = 1.0
+			frames = 64
+		elif step == 5:
+			joy.value = Vector2(0, -1)
+			player.stick = joy.value
+			for _i in 40:
+				await get_tree().process_frame
+			joy.value = Vector2.ZERO
+			player.stick = Vector2.ZERO
+			for _i in 16:
+				await get_tree().process_frame
+			print("SHOT_READY ", name)
+			return
+		joy.value = Vector2(0, -mag)
+		player.stick = joy.value
+		for _i in frames:
+			await get_tree().process_frame
+		print("SHOT_READY ", name)
+		return
+	if name.begins_with("orbit_"):
+		var step := int(name.substr(6))
+		_put(tee, 0.0)
+		player.locked = true
+		rig.follow = false
+		rig.looking = false
+		rig.hold_pitch = false
+		rig.yaw = float(step) * TAU / 4.0
+		rig.pitch = Constants.CAM_PITCH
+		rig.dist = Constants.CAM_DIST
+		rig.set_process(true)
+		for _i in 8:
+			await get_tree().process_frame
+		print("SHOT_READY ", name)
+		return
 	if name.begins_with("throw_"):
 		_put(tee, 0.0)
 		if player.boy.ik != null:
@@ -742,13 +813,13 @@ func _show_throw_stone(shot: String) -> void:
 		origin.y = player.global_position.y + 0.40
 	var stone := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
-	mesh.radius = 0.078
-	mesh.height = 0.156
+	mesh.radius = 0.085
+	mesh.height = 0.17
 	stone.mesh = mesh
-	stone.scale = Vector3(1.25, 0.32, 1.0)
+	stone.scale = Vector3(1.15, 0.32, 0.95)
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(0.86, 0.88, 0.90)
+	mat.albedo_color = Color(0.94, 0.95, 0.96)
 	stone.material_override = mat
 	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(stone)

@@ -7,8 +7,10 @@ var pivot_y := 0.62
 var dist := Constants.CAM_DIST
 var pitch := Constants.CAM_PITCH
 var yaw := PI
-var _held := false
 var framing := ""
+var follow := true
+var looking := false
+var hold_pitch := false
 var cam: Camera3D
 
 
@@ -22,36 +24,27 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if player == null:
 		return
-	var stick_down := player.stick.length() > Constants.DEADZONE or player.route
-	var want := Constants.CAM_DIST if stick_down else Constants.CAM_DIST_WIDE
+	var want := Constants.CAM_DIST
 	if framing == "front":
-		want = 4.2
-		yaw = lerp_angle(yaw, player.face_yaw + PI, 1.0 - exp(-delta * 4.0))
+		want = 4.6
+		yaw = lerp_angle(yaw, player.face_yaw + PI, 1.0 - exp(-delta * 5.0))
 	elif framing == "side":
-		want = 5.0
-		yaw = lerp_angle(yaw, player.face_yaw + PI * 0.5, 1.0 - exp(-delta * 4.0))
-	if not stick_down and _held:
-		pass
-	_held = stick_down
-	if player.speed > 0.3:
-		var follow := lerp_angle(yaw, player.face_yaw, 1.0 - exp(-delta * 1.6))
-		yaw = follow
+		want = 5.2
+		yaw = lerp_angle(yaw, player.face_yaw + PI * 0.5, 1.0 - exp(-delta * 5.0))
+	elif follow and not looking and player.speed > 0.25:
+		var err := absf(angle_difference(yaw, player.face_yaw))
+		var rate := lerpf(2.4, 7.0, clampf(err / 1.1, 0.0, 1.0))
+		yaw = lerp_angle(yaw, player.face_yaw, 1.0 - exp(-delta * rate))
+	var pitch_goal := deg_to_rad(40.0) if hold_pitch else Constants.CAM_PITCH
+	pitch = lerpf(pitch, pitch_goal, 1.0 - exp(-delta * 2.2))
+	pitch = clampf(pitch, deg_to_rad(30.0), deg_to_rad(40.0))
 	var chest := _chest()
 	var arm := _arm_dir()
 	var desired := chest + arm * want
 	var cleared := _clear(chest, desired)
-	var want_dist := chest.distance_to(cleared)
-	if want_dist < Constants.CAM_MIN_DIST:
-		pitch = minf(pitch + delta * 0.6, deg_to_rad(55.0))
-		arm = _arm_dir()
-		desired = chest + arm * Constants.CAM_MIN_DIST
-		cleared = _clear(chest, desired)
-		want_dist = chest.distance_to(cleared)
-	else:
-		pitch = lerpf(pitch, Constants.CAM_PITCH, 1.0 - exp(-delta * 1.5))
-	var tau := 0.08 if want_dist < dist else 0.45
-	if not stick_down:
-		tau = 0.25
+	# Stay far enough that the hat brim is not the camera. Pitch stays inside 30–40.
+	var want_dist := maxf(chest.distance_to(cleared), Constants.CAM_MIN_DIST)
+	var tau := 0.12 if want_dist < dist - 0.05 else 0.22
 	dist = lerpf(dist, want_dist, 1.0 - exp(-delta / tau))
 	var pos := chest + arm * dist
 	if chest.distance_to(pos) > dist:

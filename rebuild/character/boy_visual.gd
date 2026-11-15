@@ -67,12 +67,13 @@ func set_speed(speed: float) -> void:
 	var scale := 1.0
 	if speed > 1.35:
 		clip = clip_run
-		scale = clampf(speed / Constants.RUN_CLIP, 0.85, 1.15)
+		scale = clampf(speed / Constants.RUN_CLIP, 0.7, 1.15)
 	elif speed > 0.08:
 		clip = clip_walk
-		scale = clampf(speed / Constants.WALK_CLIP, 0.85, 1.15)
+		scale = clampf(speed / Constants.WALK_CLIP, 0.62, 1.15)
 	if clip != _clip:
-		anim.play(clip)
+		var blend := 0.2 if clip == clip_idle or _clip == clip_idle else 0.16
+		anim.play(clip, blend)
 		_clip = clip
 	anim.speed_scale = scale
 
