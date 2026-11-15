@@ -80,3 +80,9 @@ void fragment() {
 	ROUGHNESS = rough;
 	EMISSION = vec3(0.08, 0.12, 0.14) * night_k;
 }
+
+void light() {
+	// The compatibility renderer skips the default shadow term on a custom
+	// spatial shader. ATTENUATION is the directional shadow.
+	DIFFUSE_LIGHT += clamp(dot(NORMAL, LIGHT), 0.0, 1.0) * ATTENUATION * LIGHT_COLOR;
+}

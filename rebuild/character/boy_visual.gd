@@ -31,9 +31,9 @@ func _ready() -> void:
 	model.position.y = Constants.CAPSULE_BOTTOM
 	_keep_full_lod(model)
 	add_child(model)
-	_blob()
 	anim = _find_player(model)
 	skel = _find_skel(model)
+	_shadow_proxy()
 	if skel != null:
 		ik = FootIK.new()
 		ik.name = "FootIK"
@@ -143,30 +143,46 @@ func _keep_full_lod(node: Node) -> void:
 	if node is GeometryInstance3D:
 		var geo := node as GeometryInstance3D
 		geo.lod_bias = 16.0
-		# The skinned shadow pass redraws all 47k triangles. A flat contact
-		# blob replaces it so close frames stay under the prim cap.
+		# Colour pass keeps the full mesh. The shadow is the 5k proxy.
 		geo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	for c in node.get_children():
 		_keep_full_lod(c)
 
 
-func _blob() -> void:
-	var blob := MeshInstance3D.new()
-	var disc := CylinderMesh.new()
-	disc.top_radius = 0.26
-	disc.bottom_radius = 0.26
-	disc.height = 0.015
-	disc.radial_segments = 12
-	blob.mesh = disc
-	blob.position = Vector3(0.0, 0.02, 0.02)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.05, 0.04, 0.03, 0.42)
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
-	blob.material_override = mat
-	blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(blob)
+func _shadow_proxy() -> void:
+	if skel == null:
+		return
+	var packed := load("res://assets/boy_shadow.glb") as PackedScene
+	if packed == null:
+		push_error("boy shadow proxy missing")
+		return
+	var inst := packed.instantiate()
+	var src := _find_mesh(inst)
+	if src == null or src.mesh == null or src.skin == null:
+		inst.free()
+		push_error("boy shadow proxy has no skin")
+		return
+	var proxy := MeshInstance3D.new()
+	proxy.name = "ShadowProxy"
+	proxy.mesh = src.mesh
+	proxy.skin = src.skin
+	proxy.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+	var caster := StandardMaterial3D.new()
+	caster.albedo_color = Color(0.15, 0.15, 0.15)
+	proxy.material_override = caster
+	skel.add_child(proxy)
+	proxy.skeleton = proxy.get_path_to(skel)
+	inst.free()
+
+
+func _find_mesh(node: Node) -> MeshInstance3D:
+	if node is MeshInstance3D:
+		return node
+	for c in node.get_children():
+		var found := _find_mesh(c)
+		if found != null:
+			return found
+	return null
 
 
 func _pick_names() -> void:
