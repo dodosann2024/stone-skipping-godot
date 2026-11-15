@@ -35,7 +35,7 @@ func _ready() -> void:
 		dbg.visible = true
 	if q.contains("occ=0"):
 		fader.enabled = false
-	if OS.get_environment("R42_ROUTE") == "1" or DisplayServer.get_name() == "headless":
+	if OS.get_environment("R42_ROUTE") == "1" or OS.get_environment("R42_SHOT") == "1" or DisplayServer.get_name() == "headless":
 		_begin()
 	else:
 		_start_gate()

@@ -29,7 +29,7 @@ The new game lives in `rebuild/` and exports to `docs/game_v42/`. Trial path: `d
 | P-2 prims ≤ 110k | **Pass with shadows off.** The drag debug line reads **51774**. Shadow-on prims are not measured yet. | drag stills |
 | P-3 boy ≤ 25k triangles | **Fail.** The approved mesh is still 47,194 triangles. It was not decimated. | `docs/V42_SPEC.md` asset note |
 | Walk p95 | **Not an iPhone number.** SwiftShader on this drag reports walk p95 **139.5–141.7 ms**. | drag stills |
-| O-6 pier cutout regression | **Not reproduced as a pass.** The reference shot is saved. The new fader does not discard fragments, but the drag never framed the hut and palms, and there is no id-color on/off pair. | `screenshots/v42/occlusion_bug_iphone.png` |
+| O-6 pier cutout regression | **No cut in the new stills.** Fade on and `occ` off at the pier / hut are the same picture: hut, bush, sign, and steps stay whole. This is not a pixel match of the old iPhone frame. | `screenshots/v42/m3/occ_on.png`, `occ_off.png`, reference `screenshots/v42/occlusion_bug_iphone.png` |
 | M4 sit / lie / hammock | **Not met.** 坐下 only stops the stick. The bench/hammock clips are not driven. | — |
 | M5 side-arm throw | **Not met.** 打水漂 spawns a sphere. There is no side-arm clip. | — |
 | M6 water / night / audio polish | **Partial.** A flat water shader, a night toggle, and the ocean loop are wired. Not scored against F. | — |
