@@ -15,6 +15,22 @@ const MODE_EXPLORE = 0
 var ground: Ground
 var host: Node
 var pelvis_step_m = 0.0
+var _route_m = 0.0
+var _route_n = 0
+var _route_wp: Array[Vector2] = []
+var _route_wi := 0
+var _route_pause := 0.0
+var _route_stuck := 0
+var _route_still := 0
+var _route_anchor := Vector2.ZERO
+var _route_kinds := {}
+var _route_knee_max := 0.0
+var _route_len_min := 1.0
+var _route_gnd_min := 99.0
+var _route_worst := Vector3.ZERO
+var _route_pelvis_max := 0.0
+var _route_bad := 0
+var _route_seen_stop := false
 
 
 func setup(p_ground: Ground, p_host: Node = null) -> void:
@@ -84,6 +100,8 @@ func present() -> void:
 func physics_step(delta: float) -> void:
 	var m = host
 	var inp: Vector2 = m.joy.read_move(m.demo_mode, m.demo_input) if m.joy != null else Vector2.ZERO
+	if OS.get_environment("V39_ROUTE") == "1":
+		inp = _route_stick(delta)
 	var mag = inp.length()
 	if mag >= RUN_STICK_ON or (m.demo_mode and m.demo_run):
 		m.stick_running = true
@@ -175,6 +193,23 @@ func physics_step(delta: float) -> void:
 	m.dbg_max_step = maxf(m.dbg_max_step, step_xz)
 	m._body_pos = to
 	m._body_yaw = m.face_yaw
+	if OS.get_environment("V39_ROUTE") == "1":
+		_route_m += Vector2(to.x - from.x, to.z - from.z).length()
+		_route_n += 1
+		_route_note(to, m.cur_speed)
+		if _route_n % 90 == 0:
+			var fk = m.boy.foot_ik if m.boy != null else null
+			var kl = fk.knee_flex_deg[0] if fk != null else 0.0
+			var kr = fk.knee_flex_deg[1] if fk != null else 0.0
+			var sl = fk.shin_len_ratio[0] if fk != null else 1.0
+			var sr = fk.shin_len_ratio[1] if fk != null else 1.0
+			var gnd = fk.mesh_gap_min * 100.0 if fk != null else 0.0
+			var shin = fk.shin_gap_min * 100.0 if fk != null else 0.0
+			var hip = fk._hip_lift * 100.0 if fk != null else 0.0
+			print("ROUTE_STEP m=%.1f x=%.1f z=%.1f y=%.2f %s knee=%.0f/%.0f len=%.2f/%.2f gnd=%.1f shin=%.1f hip=%.1f" % [
+				_route_m, to.x, to.z, to.y, m._surface_kind(to.x, to.z), kl, kr, sl, sr, gnd, shin, hip])
+		if _route_m >= 110.0:
+			_route_finish(true)
 	m.wading = not m._on_dock(to.x, to.z) and to.y < -0.03
 	m.boy.wading = m.wading
 	m.boy.pivoting = m.spot_turning
@@ -185,6 +220,163 @@ func physics_step(delta: float) -> void:
 	if m.cur_speed < 0.05:
 		m.boy.set_idle()
 	m._update_action_kind()
+
+
+## Fixed-timestep coverage drive. World waypoints, not stick-up: stick-up
+## follows the spawn facing and walks off the pier into the sea.
+func _route_stick(delta: float) -> Vector2:
+	var m = host
+	if _route_wp.is_empty():
+		var ds: float = m.island.dock_start_z
+		var de: float = m.island.dock_end_z
+		# Stay off the summit. The knob around z > dock_start+10 is a cliff
+		# the boy cannot step, and stick-up from spawn walks into the sea.
+		_route_wp = [
+			Vector2(6.0, ds + 5.0),
+			Vector2(8.0, ds + 7.5),
+			Vector2(-6.0, ds + 7.5),
+			Vector2(-8.0, ds + 4.0),
+			Vector2(0.25, ds - 2.0),
+			Vector2(0.12, de + 7.0),
+			Vector2(0.25, ds + 0.4),
+			Vector2(7.0, ds + 2.5),
+			Vector2(7.0, ds + 6.0),
+			Vector2(-7.0, ds + 6.0),
+			Vector2(-7.0, ds + 2.5),
+			Vector2(2.6, ds + 6.5),
+			Vector2(10.0, ds + 5.0),
+			Vector2(-10.0, ds + 5.0),
+			Vector2(0.2, ds + 1.0),
+			Vector2(0.12, (ds + de) * 0.5),
+			Vector2(4.0, ds + 3.5),
+			Vector2(-4.0, ds + 8.0),
+			Vector2(9.0, ds + 8.0),
+			Vector2(1.2, ds + 4.0),
+		]
+		_route_anchor = Vector2(m._body_pos.x, m._body_pos.z)
+	if _route_pause > 0.0:
+		_route_pause -= delta
+		return Vector2.ZERO
+	var pos := Vector2(m._body_pos.x, m._body_pos.z)
+	if _route_wi >= _route_wp.size():
+		_route_wi = 0
+	if pos.distance_to(_route_wp[_route_wi]) < 1.15:
+		_route_wi += 1
+		if _route_wi % 4 == 0:
+			_route_pause = 0.45
+			_route_seen_stop = true
+			return Vector2.ZERO
+		if _route_wi >= _route_wp.size():
+			_route_wi = 0
+	var goal: Vector2 = _route_wp[_route_wi]
+	var ds: float = m.island.dock_start_z
+	if pos.distance_to(_route_anchor) < 0.04:
+		_route_still += 1
+	else:
+		_route_still = 0
+		_route_anchor = pos
+	if _route_still > 50:
+		print("ROUTE_SKIP i=%d x=%.1f z=%.1f" % [_route_wi, pos.x, pos.y])
+		_route_wi += 1
+		_route_still = 0
+		return Vector2.ZERO
+	var dir := goal - pos
+	if dir.length_squared() < 1e-6:
+		return Vector2.ZERO
+	dir = dir.normalized()
+	# Pier goals stay on the deck centerline. Lateral slide drops into the sea.
+	var on_pier := absf(goal.x) < 0.45 and goal.y < ds + 0.2
+	if on_pier:
+		if absf(pos.x) > 0.28:
+			dir = Vector2(-signf(pos.x), 0.0)
+		else:
+			dir = Vector2(0.0, signf(goal.y - pos.y))
+	var from: Vector3 = m._body_pos
+	var step := 0.55
+	if on_pier and not can_stand(from.y, from.x + dir.x * step, from.z + dir.y * step):
+		_route_wi += 1
+		return Vector2.ZERO
+	if not on_pier and not can_stand(from.y, from.x + dir.x * step, from.z + dir.y * step):
+		var best := dir
+		var best_s := -2.0
+		for k in 16:
+			var a := TAU * float(k) / 16.0
+			var c := Vector2(cos(a), sin(a))
+			if can_stand(from.y, from.x + c.x * step, from.z + c.y * step):
+				var sc := c.dot(dir)
+				if sc > best_s:
+					best_s = sc
+					best = c
+		if best_s < 0.15:
+			_route_stuck += 1
+			if _route_stuck > 20:
+				_route_wi += 1
+				_route_stuck = 0
+			return Vector2.ZERO
+		dir = best
+		_route_stuck = 0
+	else:
+		_route_stuck = 0
+	var ey: float = m.ex_yaw
+	var ix := dir.x * cos(ey) - dir.y * sin(ey)
+	var iy := dir.x * sin(ey) + dir.y * cos(ey)
+	# Every 5th leg is a walk so the knee check sees both gaits.
+	var mag := 0.55 if _route_wi % 5 == 1 else 1.0
+	return Vector2(ix, iy) * mag
+
+
+func _route_note(to: Vector3, speed: float) -> void:
+	var m = host
+	var kind: String = m._surface_kind(to.x, to.z)
+	_route_kinds[kind] = true
+	# Spawn writes the root from 0 up to the beach; that is not a walking step.
+	if _route_n > 60:
+		_route_pelvis_max = maxf(_route_pelvis_max, pelvis_step_m)
+	var fk = m.boy.foot_ik if m.boy != null else null
+	if fk == null or not fk.pose_ready or _route_n < 40:
+		return
+	var gnd: float = fk.mesh_gap_min * 100.0
+	var shin: float = fk.shin_gap_min * 100.0
+	if gnd < _route_gnd_min:
+		_route_gnd_min = gnd
+		_route_worst = to
+	var why := ""
+	for side in 2:
+		var flex: float = fk.knee_flex_deg[side]
+		var ln: float = fk.shin_len_ratio[side]
+		_route_knee_max = maxf(_route_knee_max, flex)
+		_route_len_min = minf(_route_len_min, ln)
+		# This clip's own walk/run peaks near 116°. A crushed shin folds past that
+		# and shortens the knee-to-ankle segment. 140° is the crouch line.
+		if ln < 0.97 or ln > 1.03:
+			why = "len"
+		elif flex > 140.0:
+			why = "knee"
+	if gnd < -1.0 or shin < -1.0:
+		why = "bury"
+	elif _route_n > 60 and pelvis_step_m > 0.03:
+		why = "pelvis"
+	elif speed < 0.05 and (gnd > 1.5 or fk.mesh_gap_max * 100.0 > 1.5):
+		why = "float"
+	if why != "":
+		_route_bad += 1
+		if _route_bad <= 12:
+			print("ROUTE_BAD %s m=%.1f x=%.1f z=%.1f y=%.2f spd=%.2f gnd=%.1f shin=%.1f knee=%.0f/%.0f len=%.2f/%.2f pel=%.1f" % [
+				why, _route_m, to.x, to.z, to.y, speed, gnd, shin,
+				fk.knee_flex_deg[0], fk.knee_flex_deg[1],
+				fk.shin_len_ratio[0], fk.shin_len_ratio[1], pelvis_step_m * 100.0])
+
+
+func _route_finish(ok_dist: bool) -> void:
+	var kinds := ""
+	for k in _route_kinds.keys():
+		kinds += str(k) + ","
+	var ok := ok_dist and _route_bad == 0 and _route_len_min > 0.92 and _route_gnd_min >= -1.0
+	print("ROUTE_DONE m=%.1f ok=%s kinds=%s knee_max=%.0f len_min=%.2f gnd_min=%.1f at=%.1f,%.1f,%.2f pelvis=%.1f bad=%d stop=%s" % [
+		_route_m, ok, kinds, _route_knee_max, _route_len_min, _route_gnd_min,
+		_route_worst.x, _route_worst.z, _route_worst.y,
+		_route_pelvis_max * 100.0, _route_bad, _route_seen_stop])
+	host.get_tree().quit()
 
 
 func can_stand(from_h: float, x: float, z: float) -> bool:

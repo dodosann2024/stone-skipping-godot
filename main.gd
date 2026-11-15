@@ -100,6 +100,8 @@ var dragging := false
 var demo_cam := false
 var demo_nocut := false   # showcase stills of a prop: no see-through cut-out towards the boy
 var ex_yaw := 0.0
+## Debug stills only (?side=1). View yaw, not the stick yaw.
+var _shot_side := false
 # slightly telephoto follow camera, pitched down enough to see eyes + smile under the hat brim
 var ex_pitch := 0.26
 var ex_dist := 4.5
@@ -485,6 +487,7 @@ func _build_player() -> void:
 	ground_y = sp.y
 	# Default view: 3/4-front so the Tripo face is readable (drag still orbits 360°)
 	ex_yaw = face_yaw + PI + 0.45
+	_shot_side = _opt("side") == "1"
 	# Higher default pitch: low follow looking *up* a grass slope hid the legs
 	# behind the hillside (gnd 0 cm but shorts-level silhouette). ~0.66 clears soles.
 	# Slightly lower pitch + enough arm so head/hat stay inside the top margin
@@ -1961,11 +1964,12 @@ func _export_frame_probe() -> void:
 
 ## HUD gnd = worst skinned-sole gap (burial preferred). Matches the picture.
 func _refresh_gnd_hud_from_soles(min_gap: float, max_gap: float) -> void:
-	# Negative gap = burial into terrain — that's what the player sees as sink.
+	# Burial wins. Otherwise report the closest foot, not the swinging one.
+	# A shin in the air used to print ~10 cm while the sandal sat on the grass.
 	if min_gap < 0.0:
 		dbg_gnd_err = absf(min_gap)
 	else:
-		dbg_gnd_err = absf(max_gap)
+		dbg_gnd_err = min_gap
 	if dbg:
 		dbg.gnd_err = dbg_gnd_err
 		dbg.max_step = dbg_max_step
@@ -2057,6 +2061,11 @@ func _export_ground_probe() -> void:
 		"speed": cur_speed,
 		"yaw": ex_yaw,
 		"face": face_yaw,
+		"shin_cm": boy.foot_ik.shin_gap_min * 100.0 if boy.foot_ik != null else 0.0,
+		"knee_l": boy.foot_ik.knee_flex_deg[0] if boy.foot_ik != null else 0.0,
+		"knee_r": boy.foot_ik.knee_flex_deg[1] if boy.foot_ik != null else 0.0,
+		"shin_l": boy.foot_ik.shin_len_ratio[0] if boy.foot_ik != null else 1.0,
+		"shin_r": boy.foot_ik.shin_len_ratio[1] if boy.foot_ik != null else 1.0,
 		"pos": [player.global_position.x, player.global_position.y, player.global_position.z],
 	}
 	JavaScriptBridge.eval("window.__ground = " + JSON.stringify(g), true)

@@ -259,6 +259,11 @@ func _explore_cam() -> Array:
 	var zoom = clampf(m.ex_dist, 3.0, 14.0)
 	var dist = maxf(zoom, 6.70 if tall else 6.35)
 	var pitch = clampf(m.ex_pitch, 0.28, 0.36)
+	var yaw = m.ex_yaw
+	# Profile stills: lens perpendicular to travel, stick yaw unchanged.
+	if m._shot_side:
+		yaw = m.face_yaw + PI * 0.5
+		pitch = 0.20
 	var gx = m.player.global_position.x
 	var gz = m.player.global_position.z
 	var ahead_p = m.player.global_position + ahead_dir * 1.2
@@ -266,7 +271,7 @@ func _explore_cam() -> Array:
 	if grade > 0.12:
 		dist = maxf(dist, 6.30)
 		t.y += clampf(grade * 0.12, 0.0, 0.20)
-	return [t, m.ex_yaw, pitch, dist]
+	return [t, yaw, pitch, dist]
 
 
 ## Critically damped spring (Game Programming Gems / Ryan Juckett).
@@ -749,7 +754,9 @@ func _update_camera(delta: float) -> void:
 		m._cam_dist_vel = float(dd[1])
 		# Stick motion is camera-relative via ex_yaw. Do NOT write cam_dist/pitch
 		# back into ex_* — those are user zoom/orbit prefs; framing may pad dist.
-		m.ex_yaw = m.cam_yaw
+		# A side still uses cam_yaw for the lens only.
+		if not m._shot_side:
+			m.ex_yaw = m.cam_yaw
 		_mix_cam_blend()
 		_apply_camera(delta)
 		m._cam_stick_lock = false

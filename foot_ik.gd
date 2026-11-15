@@ -33,6 +33,9 @@ var posed_feet := Vector3(0, -100, 0)
 var posed_chest := Vector3(0, -100, 0)
 var mesh_gap_min := 0.0
 var mesh_gap_max := 0.0
+var shin_gap_min := 0.0
+var knee_flex_deg: Array[float] = [0.0, 0.0]
+var shin_len_ratio: Array[float] = [1.0, 1.0]
 var mesh_sole_y: Array[float] = [0.0, 0.0]
 var mesh_hit_y: Array[float] = [0.0, 0.0]
 var plant_hit_y: Array[float] = [0.0, 0.0]
@@ -53,6 +56,7 @@ var _up_bi: Array[int] = [-1, -1]
 var _knee_bi: Array[int] = [-1, -1]
 var _hips_bi := -1
 var _head_bi := -1
+var _shin_rest: Array[float] = [0.2, 0.2]
 
 
 func setup(p_boy: CharacterBody3D, p_ground: Ground) -> void:
@@ -132,10 +136,7 @@ func _ensure_mesh(skel: Skeleton3D) -> void:
 				var b: int = _bones[vi * 4 + j]
 				if b == _foot_bi[side] or b == _toe_bi[side]:
 					w += _weights[vi * 4 + j]
-			# Dominant foot/toe weight only. A 0.22 blend pulled in shin verts that
-			# sit centimetres under the sandal during a step and made the probe
-			# report a burial the picture does not have.
-			if w >= 0.55:
+			if w >= 0.85:
 				(_foot_idx[side] as Array).append(vi)
 	# Ankle→sole from the bind (rest) pose, used only when a foot has no weighted verts.
 	skel.force_update_all_bone_transforms()
@@ -148,6 +149,10 @@ func _ensure_mesh(skel: Skeleton3D) -> void:
 		if sy < 1000.0:
 			drop = maxf(drop, ankle_y - sy)
 	sole_offset = clampf(drop, 0.03, 0.14)
+	for side in range(2):
+		if _knee_bi[side] < 0 or _foot_bi[side] < 0:
+			continue
+		_shin_rest[side] = _world_xf(skel, _knee_bi[side]).origin.distance_to(_world_xf(skel, _foot_bi[side]).origin)
 	if boy.get("sole_offset") != null:
 		boy.sole_offset = sole_offset
 	_ready_mesh = true
@@ -182,57 +187,49 @@ func _clear_leg_overrides(skel: Skeleton3D) -> void:
 
 func _solve(skel: Skeleton3D, _delta: float) -> void:
 	var body_y := boy.global_position.y
-	# Do not accumulate a hip lift. The skeleton restores bone poses after the
-	# skin upload, so the next frame measured the *animation* again and added
-	# another 2.9 cm whenever that sole was 8 cm under the ray. After a short
-	# walk the accumulator was ~1 m. The HUD printed that risen pose ("gnd
-	# 97.8cm") while the sandals in the picture were the planted animation.
-	_hip_lift = 0.0
 	var fwd := -boy.global_transform.basis.z
 	fwd.y = 0.0
 	fwd = Vector3(0, 0, -1) if fwd.length_squared() < 1e-6 else fwd.normalized()
+	if proof == "lift":
+		var ankle0: Vector3 = _world_xf(skel, _foot_bi[0]).origin
+		var target := ankle0
+		target.y += 0.42
+		var pole := ankle0 + fwd * 0.62 + Vector3(0, 0.42, 0)
+		_two_bone(skel, 0, target, pole, ground.normal(ankle0.x, ankle0.z, body_y))
+		return
+	# The v39 foot-bone slide put the sandal on the probe and left the shin in
+	# the ground. Do not translate the foot. Raise the hips by how far the
+	# authored sole (ankle minus the rest drop) is under the collision, and
+	# never keep a lift from a previous frame — that is the runaway accumulator.
+	var sink := 0.0
 	for side in range(2):
-		if _foot_bi[side] < 0 or _up_bi[side] < 0 or _knee_bi[side] < 0:
+		if _foot_bi[side] < 0:
 			stance_locked[side] = false
 			continue
-		var ankle: Vector3 = _world_xf(skel, _foot_bi[side]).origin
-		var nrm := ground.normal(ankle.x, ankle.z, body_y)
 		stance_locked[side] = true
-		if proof == "lift" and side == 0:
-			var target := ankle
-			target.y += 0.42
-			var pole := ankle + fwd * 0.62 + Vector3(0, 0.42, 0)
-			_two_bone(skel, side, target, pole, nrm)
-			continue
-		# Slide the foot bone so the skinned sole (the uploaded matrix) rests
-		# on the surface. Both shoes — a swing foot left in the air fails the bar.
-		var sole0 := _lowest_sole(skel, side)
-		if sole0.y > 500.0:
-			sole0 = Vector3(ankle.x, ankle.y - sole_offset, ankle.z)
-		# Freeze the surface for this foot. Re-querying after each nudge let a
-		# slope face above the shoe climb with the foot, so the gap never closed.
-		var hit_y := _surface_under(sole0.x, sole0.z, sole0.y, body_y)
-		plant_hit_y[side] = hit_y
-		plant_ankle_xz[side] = Vector2(sole0.x, sole0.z)
-		for _pass in range(4):
-			var sole_p := _lowest_sole(skel, side)
-			if sole_p.y > 500.0:
-				break
-			var nudge := clampf(SOLE_TARGET - (sole_p.y - hit_y), -0.20, 0.20)
-			if absf(nudge) <= 0.0015:
-				break
-			var foot_xf := _world_xf(skel, _foot_bi[side])
-			foot_xf.origin.y += nudge
-			_set_world(skel, _foot_bi[side], foot_xf)
-		# A blended shoe vert only moves by its foot weight. Overshoot the bone
-		# once so the skinned sole, not the bone origin, lands on the hit.
-		var sole_end := _lowest_sole(skel, side)
-		if sole_end.y < 500.0:
-			var left := SOLE_TARGET - (sole_end.y - hit_y)
-			if absf(left) > 0.004:
-				var foot_xf2 := _world_xf(skel, _foot_bi[side])
-				foot_xf2.origin.y += clampf(left / 0.82, -0.16, 0.16)
-				_set_world(skel, _foot_bi[side], foot_xf2)
+		var ankle: Vector3 = _world_xf(skel, _foot_bi[side]).origin
+		var shell := _lowest_sole(skel, side)
+		var sole_y := shell.y if shell.y < 500.0 else ankle.y - sole_offset
+		var sx := shell.x if shell.y < 500.0 else ankle.x
+		var sz := shell.z if shell.y < 500.0 else ankle.z
+		var surface := _foot_surface(sx, sz, sole_y, body_y)
+		plant_hit_y[side] = surface
+		plant_ankle_xz[side] = Vector2(sx, sz)
+		sink = maxf(sink, surface + SOLE_TARGET - sole_y)
+	var want := maxf(sink, 0.0)
+	if want < _hip_lift:
+		_hip_lift = want
+	else:
+		_hip_lift = minf(want, _hip_lift + MAX_HIP_STEP)
+	if _hips_bi >= 0 and _hip_lift > 0.001:
+		var hp := skel.get_bone_pose(_hips_bi)
+		var parent_g := Transform3D.IDENTITY
+		var parent := skel.get_bone_parent(_hips_bi)
+		if parent >= 0:
+			parent_g = skel.get_bone_global_pose(parent)
+		var skel_up := skel.global_transform.basis.inverse() * Vector3(0, _hip_lift, 0)
+		hp.origin += parent_g.basis.inverse() * skel_up
+		skel.set_bone_pose(_hips_bi, hp)
 
 
 ## Swing the foot by rotating the knee only. Bone lengths stay the animated
@@ -333,6 +330,61 @@ func _set_world(skel: Skeleton3D, bone: int, world_xf: Transform3D) -> void:
 	skel.set_bone_global_pose(bone, skel.global_transform.affine_inverse() * world_xf)
 
 
+## Lowest drawn point of this leg: sandal or shin. Same upload matrix as the sole.
+## Vertical collision under a leg point. A sample more than 40 cm above the
+## leg is a face over the shoe, not the ground it is standing on. A real slope
+## stays, including when it disagrees with the body sample.
+func _foot_surface(x: float, z: float, leg_y: float, body_y: float) -> float:
+	var h := ground.height(x, z, body_y)
+	if h > leg_y + 0.40:
+		return ground.height(boy.global_position.x, boy.global_position.z, body_y)
+	return h
+
+
+func _leg_bottom(skel: Skeleton3D, side: int) -> Vector3:
+	var sole := _lowest_sole(skel, side)
+	var shin := _lowest_on_bone(skel, _knee_bi[side], 0.40)
+	if shin.y < sole.y:
+		return shin
+	return sole
+
+
+func _lowest_on_bone(skel: Skeleton3D, bone: int, min_w: float) -> Vector3:
+	if bone < 0 or _verts.is_empty():
+		return Vector3(0, 10000, 0)
+	var xfs: Array[Transform3D] = []
+	xfs.resize(skel.get_bone_count())
+	var seen := {}
+	var best_y := 10000.0
+	var best := Vector3(0, 10000, 0)
+	for vi in _verts.size():
+		var bw := 0.0
+		for j in 4:
+			if _bones[vi * 4 + j] == bone:
+				bw += _weights[vi * 4 + j]
+		if bw < min_w:
+			continue
+		var acc := Vector3.ZERO
+		var wsum := 0.0
+		for j in 4:
+			var bi: int = _bones[vi * 4 + j]
+			var w: float = _weights[vi * 4 + j]
+			if w <= 0.0 or bi < 0 or bi >= xfs.size():
+				continue
+			if not seen.has(bi):
+				xfs[bi] = skel.global_transform * (skel.get_bone_global_pose(bi) * _bind[bi])
+				seen[bi] = true
+			acc += xfs[bi] * _verts[vi] * w
+			wsum += w
+		if wsum < 0.01:
+			continue
+		var p := acc / wsum
+		if p.y < best_y:
+			best_y = p.y
+			best = p
+	return best
+
+
 ## Lowest skinned foot vertex. The matrix is the one the skin upload writes:
 ## skeleton.global * (bone.global_pose * skin.bind_pose).
 func _lowest_sole(skel: Skeleton3D, side: int) -> Vector3:
@@ -352,8 +404,6 @@ func _lowest_sole(skel: Skeleton3D, side: int) -> Vector3:
 			var bj: int = _bones[vi * 4 + j]
 			if bj == foot_b or bj == toe_b:
 				fw += _weights[vi * 4 + j]
-		# Almost fully on the shoe. Blended shin verts stay under the sandal
-		# when the foot bone lifts, and the probe was reading those.
 		if fw < 0.85:
 			continue
 		var acc := Vector3.ZERO
@@ -442,29 +492,51 @@ func _min_sole_y(skel: Skeleton3D, side: int) -> float:
 
 
 func _measure_and_store(skel: Skeleton3D) -> void:
-	var gaps: Array[float] = []
+	var sole_gaps: Array[float] = []
+	var shin_gaps: Array[float] = []
+	var body_y := boy.global_position.y
 	for side in range(2):
 		var ankle := Vector3.ZERO
+		var knee := Vector3.ZERO
+		var hip := Vector3.ZERO
 		if _foot_bi[side] >= 0:
 			ankle = _world_xf(skel, _foot_bi[side]).origin
-		# Drawn sole only. The old ankle-minus-offset fallback is what disagreed
-		# with the picture by tens of centimetres.
+		if _knee_bi[side] >= 0:
+			knee = _world_xf(skel, _knee_bi[side]).origin
+		if _up_bi[side] >= 0:
+			hip = _world_xf(skel, _up_bi[side]).origin
 		var sole_p := _lowest_sole(skel, side)
 		var sy := sole_p.y
 		var xz := Vector2(sole_p.x, sole_p.z)
 		if sy > 500.0:
 			sy = ankle.y - sole_offset
 			xz = Vector2(ankle.x, ankle.z)
-		var hy := plant_hit_y[side]
-		if absf(hy - sy) > 0.35 or absf(hy) < 0.001:
-			hy = _surface_under(xz.x, xz.y, sy, boy.global_position.y) if ground != null else sy
+		var shin_p := _lowest_on_bone(skel, _knee_bi[side], 0.45)
+		var hy := _foot_surface(xz.x, xz.y, sy, body_y) if ground != null else sy
 		mesh_sole_y[side] = sy
 		mesh_hit_y[side] = hy
 		plant_hit_y[side] = hy
 		plant_ankle_xz[side] = xz
-		gaps.append(sy - hy)
-	mesh_gap_min = minf(gaps[0], gaps[1])
-	mesh_gap_max = maxf(gaps[0], gaps[1])
+		sole_gaps.append(sy - hy)
+		if shin_p.y < 500.0:
+			var shy := _foot_surface(shin_p.x, shin_p.z, shin_p.y, body_y) if ground != null else shin_p.y
+			shin_gaps.append(shin_p.y - shy)
+		var shin_len := knee.distance_to(ankle)
+		var rest_len := maxf(_shin_rest[side], 0.05)
+		shin_len_ratio[side] = shin_len / rest_len
+		if hip.distance_squared_to(knee) > 1e-6 and knee.distance_squared_to(ankle) > 1e-6:
+			knee_flex_deg[side] = rad_to_deg((knee - hip).angle_to(ankle - knee))
+	shin_gap_min = shin_gaps[0] if not shin_gaps.is_empty() else 0.0
+	for g in shin_gaps:
+		shin_gap_min = minf(shin_gap_min, g)
+	mesh_gap_min = sole_gaps[0]
+	mesh_gap_max = sole_gaps[0]
+	for g in sole_gaps:
+		mesh_gap_min = minf(mesh_gap_min, g)
+		mesh_gap_max = maxf(mesh_gap_max, g)
+	# A shin in the ground is the picture. A shin in the air is a step, not a float.
+	if shin_gap_min < mesh_gap_min:
+		mesh_gap_min = shin_gap_min
 	var feet := Vector3.ZERO
 	var n := 0
 	for side in range(2):
@@ -483,10 +555,10 @@ func _measure_and_store(skel: Skeleton3D) -> void:
 	posed_chest = posed_feet.lerp(posed_head, 0.52)
 	pose_ready = true
 	if Engine.get_process_frames() == 50 or Engine.get_process_frames() == 51:
-		var a0 := _world_xf(skel, _foot_bi[0]).origin.y if _foot_bi[0] >= 0 else 0.0
-		print("SOLE_MESH gap_cm %.2f..%.2f sole_y %.3f %.3f ankle0 %.3f body_y %.3f" % [
-			mesh_gap_min * 100.0, mesh_gap_max * 100.0, mesh_sole_y[0], mesh_sole_y[1],
-			a0, boy.global_position.y])
+		print("SOLE_MESH gap_cm %.2f..%.2f shin_cm %.2f knee %.0f/%.0f len %.2f/%.2f hip %.1f sole_y %.3f %.3f body_y %.3f" % [
+			mesh_gap_min * 100.0, mesh_gap_max * 100.0, shin_gap_min * 100.0,
+			knee_flex_deg[0], knee_flex_deg[1], shin_len_ratio[0], shin_len_ratio[1],
+			_hip_lift * 100.0, mesh_sole_y[0], mesh_sole_y[1], boy.global_position.y])
 	if boy.get("sole_offset") != null:
 		boy.sole_offset = sole_offset
 	# Mirror plant flags the rest of the game already reads.
