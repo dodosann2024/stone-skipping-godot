@@ -14,12 +14,14 @@ static func build(player: AnimationPlayer) -> void:
 	var sit_anim := player.get_animation(sit)
 	var idle_anim := player.get_animation(idle)
 	_add(player, "bench_lie", _offset(sit_anim, {
-		"mixamorig_Spine": 34.0,
-		"mixamorig_Spine1": 16.0,
-		"mixamorig_Spine2": 8.0,
-		"mixamorig_LeftUpLeg": -45.0,
-		"mixamorig_LeftLeg": 18.0,
-		"mixamorig_Head": -10.0,
+		"mixamorig_Spine": 68.0,
+		"mixamorig_Spine1": 30.0,
+		"mixamorig_Spine2": 14.0,
+		"mixamorig_LeftUpLeg": -58.0,
+		"mixamorig_RightUpLeg": -52.0,
+		"mixamorig_LeftLeg": 6.0,
+		"mixamorig_RightLeg": 6.0,
+		"mixamorig_Head": -16.0,
 	}))
 	_add(player, "lounger_lie", _offset(sit_anim, {
 		"mixamorig_Spine": 46.0,

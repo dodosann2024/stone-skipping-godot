@@ -18,23 +18,23 @@ The new game lives in `rebuild/` and the playable build is `docs/game_v42/`. Tri
 
 ## Gates
 
-Numbers below are from the decimated boy (24,499 triangles), except the face pair, which is the 47,194-triangle mesh and the 24,499-triangle mesh from the same camera.
+Numbers below are from the exported page `docs/game_v42/game_v42.html` in Chrome at 390×844. The boy in that export is the approved 47,194-triangle `boy_flateyes` mesh. The 24,499-triangle decimation is not used: it sampled the wrong atlas islands and left dark blotches on the hat, vest and legs.
 
 | Gate | Result | Evidence |
 |---|---|---|
 | A-5 drag, three frames, full shins and both sandals | **Pass on the exported page.** The walk frame from `game_v42.html` shows both sandals on the plank texture. The earlier three-frame drag on the editor build still shows the body on the planks. | `screenshots/v42/web/walk.png`, `screenshots/v42/drag/d41_a.png` |
-| A-1 stance sole within ±1 cm on 110 m | **Pass, re-run after this export.** 5476 stance samples, **100%** inside ±1 cm. Walk skate **0.14 cm**. `shin_min=1.00`. | `screenshots/v42/m6/route.log` |
+| A-1 stance sole within ±1 cm on 110 m | **Pass, re-run after this export.** 5469 stance samples, **100%** inside ±1 cm. Skate max **0.56 cm**, walk skate **0.10 cm**. `shin_min=1.00`. | `screenshots/v42/m6/route.log` |
 | A-2 ortho ruler stills | **34 stills.** Banner gap is 0.00 cm on 31 of them. The worst three are **0.24 cm**, **-0.04 cm**, and **-0.05 cm**, all inside 0.5 cm. The red tick is the zero line under the sole. | `screenshots/v42/a2/foot_00.png` … `foot_33.png`, `ruler.log` |
-| B-1 skate ≤ 1 cm on a straight walk | **Pass.** Walk-segment max drift from the plant lock is **0.14 cm**. | same route log |
+| B-1 skate ≤ 1 cm on a straight walk | **Pass.** Walk-segment max drift from the plant lock is **0.10 cm**. | same route log |
 | Shin length ≥ 0.95 | **Pass.** `shin_min=1.00`. | same route log |
 | C-1 first step ≤ 100 ms | **Pass on this machine.** A screen-touch at the stick, then a drag to full deflection, moved the body 2.81 cm in **67.5 ms** (2 frames). This is SwiftShader, not an iPhone. | log line `LATENCY_MS 67.5` |
-| P-2 prims ≤ 110k | **Pass on the exported page, shadows on.** Wide pier view **33294**. Throw close-up **55442**. Hut view **58812**. Behind-the-boy view **58662**. | `screenshots/v42/web/spawn.png`, `throw_whip.png`, `hut.png`, `occ_on.png` |
-| P-3 boy ≤ 25k triangles | **Pass.** `rebuild/assets/boy.glb` is a real file (not the symlink) with **24,499** triangles and **14,162** vertices. The source `boy/boy.glb` is still 47,194. UVs and joints were copied from the surviving vertices; head-weighted vertices kept their old positions. | `rebuild/tools/decimate_boy.py` |
-| Face after the decimation | The two close-ups are the same boy. Straw hat, eyes, buttons, and the flower shorts are intact at this distance. | `screenshots/v42/m6/face_full.png`, `face_lod.png` |
-| M6 look vs v40 | **In the export.** The pier is the mip-mapped board texture, the sea has depth colour and lace, the pier has a rope rail, and the hut has plank walls, a thatched roof, a sign reading 钓鱼小屋, a blue door, a porch and a lantern. v40 still has denser foliage and a more finished boat. | `screenshots/v42/web/spawn.png`, `hut.png`. v40 pairs stay in `screenshots/v42/m6/v40_*.png` |
-| M4 sit / lie / sun | **From the export.** The hammock is on the open beach and he lies in the cloth. Bench and lounger use the lie clips. | `screenshots/v42/web/hammock_rest.png`, `bench_lie.png`, `lounger.png` |
-| M5 side-arm throw | **From the export, 3/4 camera.** The whip frame has the throwing arm back and the knees bent. The release frame has the arm extended and the torso turned. The crouch frame is low, with the arm out to the side. The follow frame brings the arm across the chest. | `screenshots/v42/web/throw_whip.png`, `throw_release.png`, `throw_crouch.png`, `throw_follow.png` |
-| O-6 cutout regression | **No holes on the export.** Fade on and fade off are the same frame from behind the boy: planks, rope posts, and the bush stay whole. It is not a pixel copy of the iPhone hut-and-palm-row frame. | `screenshots/v42/web/occ_on.png`, `occ_off.png` |
+| P-2 prims ≤ 110k | **Pass on the exported page, shadows on.** Face close-up **101,210**. Spawn **104,068**. Pier **107,146**. Occlusion **105,494**. Throw, the heaviest of these, **109,882**. | `screenshots/v42/web/face.png`, `spawn.png`, `pier.png`, `occ_on.png`, `throw_whip.png` |
+| Boy mesh | **The approved model.** `rebuild/assets/boy.glb` is a real copy of `boy/boy.glb`: **47,194** triangles. Mesh LOD bias on the instances is 16 so the play camera stays on that mesh. Palms and pier posts do not cast shadows, and the water grid is 16×16, which is what keeps the close throw under 110k. | `screenshots/v42/web/face.png` |
+| Face | Clean straw hat, flat eyes, red vest with three buttons, flower shorts. No dark atlas blotches. The sea behind him shows the wave normals. | `screenshots/v42/web/face.png` |
+| M6 look vs v40 | **In the export.** Plank boards and the rope rail stay. The sea uses the v40 shallow / mid / deep / abyss colours, a depth ramp that goes dark past the pier, wave normals, a shore breaker and open-water lace. The sky blob on the drag was the distant-palm multimesh; that mesh is no longer in the scene. Extra palms, bushes, reeds, a second boat, a lantern, a crate and an umbrella fill the island out. | `screenshots/v42/web/spawn.png`, `pier.png`, `face.png` |
+| M4 sit / lie / sun | **From the export.** The bench is slats, rails and legs, and he lies on the slats. The hammock is posts, sagging ropes and cloth, and he lies in the curve. | `screenshots/v42/web/bench_lie.png`, `hammock_rest.png` |
+| M5 side-arm throw | **From the export, camera on his throwing side.** Both sandals stay on the planks in the windup, whip, release and crouch frames. The arm is out at hip height. The release frame has the stone off the hand and in the air. The crouch frame bends the knees further. Foot IK is not paused for the throw; both feet are weighted down and the standing sole orientation is kept. | `screenshots/v42/web/throw_windup.png`, `throw_whip.png`, `throw_release.png`, `throw_crouch.png` |
+| O-6 cutout regression | **No discarded pixels.** Fade minimum stays 0.35. The pair shows the boy on the dock, the hut on the right and one palm, at **105,494** prims. Nothing vanishes between fade on and fade off. It is not yet the iPhone framing (a palm row on the left, the boy centred behind the occluders). | `screenshots/v42/web/occ_on.png`, `occ_off.png` |
 | Walk p95 | **Not an iPhone number.** The drag debug line reads walk p95 **33.3 ms** on SwiftShader. | drag stills |
 | M7 index.html | **Not switched.** `docs/index.html` still points at v35. | — |
 
@@ -44,4 +44,8 @@ The 26 cm dock gap was a ray that missed a hole where terrain under the pier had
 
 ## This pass
 
-Rest and throw pause the foot IK so a clip can hold the hips. Bench, log, and the three fire logs use the library sit clips. `bench_lie` and `lounger_lie` add spine and leg keys on top of that sit. `throw_stand` and `throw_crouch` are full-body keys (hips, spine, both arms, both legs). The stone is still kinematic. The dock samples `assets/tex/planks.jpg` with mipmaps and anisotropic filtering. Shadows are one cascade so the close camera stays under 110k. The decimated boy replaces the symlink at `rebuild/assets/boy.glb`. `boy/boy.glb` is unchanged. `docs/index.html` is unchanged.
+The throw keeps Foot IK on and weights both feet, so the soles stay on the deck while the hips drop and the spine twists. The throwing-side camera is what makes the short chibi arm read as a sidearm. The stone mesh sits in the hand for the windup and whip, and is placed ahead of the hand for the release and follow. The bench is a slatted seat with legs and a low back. The hammock is two posts, edge ropes that follow the sag, and a cloth surface; the sleep clip is aligned to that axis. The distant palm multimesh that read as a dark blob over the sea is gone. `boy/boy.glb` is unchanged. `docs/index.html` is unchanged.
+
+The standing sentence is still in `docs/V42_SPEC.md`:
+
+「耐玩度要达到3A制作水准，操作细节和画面要细到离谱。新的版本做完要把这个要求放到下一个版本的要求中。直到达到这个水准。」

@@ -75,7 +75,7 @@ func _world() -> void:
 	sun.shadow_enabled = true
 	sun.shadow_blur = 1.6
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	sun.directional_shadow_max_distance = 14.0
+	sun.directional_shadow_max_distance = 10.0
 	add_child(sun)
 	ground = Ground.new()
 	add_child(ground)
@@ -83,7 +83,9 @@ func _world() -> void:
 	add_child(props)
 	var water := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(80, 80)
+	plane.size = Vector2(90, 90)
+	plane.subdivide_width = 16
+	plane.subdivide_depth = 16
 	water.mesh = plane
 	water_mat = ShaderMaterial.new()
 	water_mat.shader = load("res://shaders/sea.gdshader")
@@ -291,12 +293,7 @@ func _begin_rest(item: Fadable) -> void:
 	player.stick = Vector2.ZERO
 	player.locked = true
 	var yaw := float(item.get_meta("yaw", 0.0))
-	var local: Vector3 = item.get_meta("seat_local", Vector3.ZERO)
-	var pos: Vector3 = item.global_transform * local
-	pos.y = ground.height(pos.x, pos.z)
-	if pos.y < -1.5:
-		pos.y = item.global_position.y
-	pos.y += float(item.get_meta("lift", 0.0))
+	var pos := _seat_pos(item)
 	rig.framing = "front"
 	rig.yaw = yaw + PI
 	rig.pivot_y = 0.45 if rest_kind == "towel" or rest_kind == "lounger" or rest_kind == "hammock" else 0.7
@@ -411,7 +408,9 @@ func _throw() -> void:
 	player.stick = Vector2.ZERO
 	player.locked = true
 	if player.boy.ik != null:
-		player.boy.ik.paused = true
+		player.boy.ik.paused = false
+		player.boy.ik.both_down = true
+		player.boy.ik.contact_y = Constants.DECK_Y
 	player.boy.holding = true
 	rig.framing = "side"
 	var sea := Vector3(0, 0, -1)
@@ -455,6 +454,8 @@ func _on_throw_done() -> void:
 	player.boy.holding = false
 	if player.boy.ik != null:
 		player.boy.ik.paused = false
+		player.boy.ik.both_down = false
+		player.boy.ik.contact_y = 0.0
 	rig.framing = ""
 
 
@@ -545,15 +546,31 @@ func _pose_shot() -> void:
 	player.speed = 0.0
 	fader.enabled = false
 	rig.set_process(false)
+	rig.cam.fov = 48.0
 	var cam: Camera3D = rig.cam
 	var tee := Vector3(0.0, Constants.DECK_Y, ends.y + 1.3)
+	if name == "face":
+		_put(tee, PI)
+		if player.boy.ik != null:
+			player.boy.ik.paused = true
+		player.boy.set_speed(0.0)
+		_cam(cam, tee + Vector3(0.15, 1.15, 1.15), tee + Vector3(0, 0.95, 0))
+		print("SHOT_READY face")
+		return
 	if name == "occ":
-		var occ := Vector3(0.35, 0.0, ends.x + 3.3)
+		var occ := Vector3(0.15, 0.0, ends.x + 1.4)
 		var gy: float = ground.height(occ.x, occ.z)
 		if gy > -2.0:
 			occ.y = gy
 		_put(occ, 0.0)
-		_cam(cam, Vector3(-0.15, occ.y + 1.55, ends.x + 5.6), Vector3(1.1, occ.y + 0.85, ends.x + 0.4))
+		player.boy.play_clip("walk", 0.0)
+		if player.boy.anim != null:
+			player.boy.anim.seek(0.28, true)
+			player.boy.anim.pause()
+		if not _query().contains("occ=0"):
+			fader.enabled = true
+		cam.fov = 74.0
+		_cam(cam, Vector3(-1.6, occ.y + 1.65, ends.x + 6.6), Vector3(1.2, occ.y + 1.1, ends.x + 1.2))
 		print("SHOT_READY occ")
 		return
 	if name == "walk":
@@ -569,7 +586,9 @@ func _pose_shot() -> void:
 	if name.begins_with("throw_"):
 		_put(tee, 0.0)
 		if player.boy.ik != null:
-			player.boy.ik.paused = true
+			player.boy.ik.paused = false
+			player.boy.ik.both_down = true
+			player.boy.ik.contact_y = Constants.DECK_Y
 		player.boy.arm.playing = true
 		player.boy.arm.hold = true
 		player.boy.arm.crouch = name == "throw_crouch"
@@ -578,12 +597,14 @@ func _pose_shot() -> void:
 		for _i in 4:
 			await get_tree().process_frame
 		var p := player.global_position
-		_cam(cam, p + Vector3(2.5, 2.15, 2.3), p + Vector3(0, 0.7, 0))
+		# His right is -X. Stand on that side so the low sidearm reads across the frame.
+		_cam(cam, p + Vector3(-2.3, 1.45, 2.1), p + Vector3(0, 0.75, 0))
+		_show_throw_stone(name)
 		print("SHOT_READY ", name)
 		return
 	if name == "bench_lie" or name == "lounger" or name == "hammock_rest":
 		var seat_name: String = {"bench_lie": "Bench", "lounger": "Lounger", "hammock_rest": "Hammock"}[name]
-		var clip: String = {"bench_lie": "bench_lie", "lounger": "lounger_lie", "hammock_rest": "hammock_sleep"}[name]
+		var clip: String = {"bench_lie": "hammock_sleep", "lounger": "lounger_lie", "hammock_rest": "hammock_sleep"}[name]
 		_put_on_seat(seat_name)
 		if player.boy.ik != null:
 			player.boy.ik.paused = true
@@ -593,7 +614,18 @@ func _pose_shot() -> void:
 			player.boy.anim.pause()
 		for _i in 4:
 			await get_tree().process_frame
-		_frame_for_shot(cam)
+		var p := player.global_position
+		var yaw := player.face_yaw
+		var face := Vector3(-sin(yaw), 0.0, -cos(yaw))
+		var side := Vector3(face.z, 0.0, -face.x)
+		if name == "hammock_rest":
+			var ham := _seat_named("Hammock")
+			var c := ham.global_position if ham != null else p
+			_cam(cam, c + Vector3(0.15, 1.65, 3.1), c + Vector3(0, 0.75, 0))
+		elif name == "bench_lie":
+			_cam(cam, p + side * 3.4 + Vector3(0, 1.9, 0) + face * 1.2, p + Vector3(0, 0.4, 0))
+		else:
+			_frame_for_shot(cam)
 		print("SHOT_READY ", name)
 		return
 	var spot := tee
@@ -627,18 +659,61 @@ func _seat_named(node_name: String) -> Fadable:
 	return null
 
 
+func _show_throw_stone(shot: String) -> void:
+	var skel: Skeleton3D = player.boy.skel
+	if skel == null:
+		return
+	var hand := skel.find_bone("mixamorig_RightHand")
+	if hand < 0:
+		return
+	var xf := skel.global_transform * skel.get_bone_global_pose(hand)
+	var elbow := skel.find_bone("mixamorig_RightForeArm")
+	var origin := xf.origin
+	if elbow >= 0:
+		var ep := (skel.global_transform * skel.get_bone_global_pose(elbow)).origin
+		var along := origin - ep
+		if along.length_squared() > 1e-6:
+			origin += along.normalized() * 0.07
+	var fwd := Vector3(-sin(player.face_yaw), 0.0, -cos(player.face_yaw))
+	if shot == "throw_release":
+		origin += fwd * 0.42 + Vector3.UP * 0.2
+	elif shot == "throw_follow":
+		origin += fwd * 0.85 + Vector3.UP * 0.28
+	origin.y = maxf(origin.y, player.global_position.y + 0.55)
+	var stone := MeshInstance3D.new()
+	var mesh := SphereMesh.new()
+	mesh.radius = 0.045
+	mesh.height = 0.09
+	stone.mesh = mesh
+	stone.scale = Vector3(1.15, 0.75, 0.95)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.55, 0.52, 0.46)
+	stone.material_override = mat
+	add_child(stone)
+	stone.global_position = origin
+
+
+func _seat_pos(item: Fadable) -> Vector3:
+	var local: Vector3 = item.get_meta("seat_local", Vector3.ZERO)
+	var pos: Vector3 = item.global_transform * local
+	if bool(item.get_meta("on_prop", false)):
+		pos.y += float(item.get_meta("lift", 0.0))
+		return pos
+	var gy: float = ground.height(pos.x, pos.z)
+	if gy > -1.5:
+		pos.y = gy
+	else:
+		pos.y = item.global_position.y
+	pos.y += float(item.get_meta("lift", 0.0))
+	return pos
+
+
 func _put_on_seat(node_name: String) -> void:
 	var item := _seat_named(node_name)
 	if item == null:
 		return
 	var yaw := float(item.get_meta("yaw", 0.0))
-	var local: Vector3 = item.get_meta("seat_local", Vector3.ZERO)
-	var pos: Vector3 = item.global_transform * local
-	var gy: float = ground.height(pos.x, pos.z)
-	if gy > -2.0:
-		pos.y = gy
-	pos.y += float(item.get_meta("lift", 0.0))
-	_put(pos, yaw)
+	_put(_seat_pos(item), yaw)
 
 
 func _put(spot: Vector3, yaw: float) -> void:

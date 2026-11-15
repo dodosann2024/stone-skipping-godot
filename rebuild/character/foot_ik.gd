@@ -27,14 +27,23 @@ var _drop := 0.0
 var _drop_v := 0.0
 var _ready := false
 var paused := false
+var both_down := false
+var _flat_basis: Array[Basis] = []
 
 
 func _process_modification_with_delta(delta: float) -> void:
 	if paused:
+		_flat_basis.clear()
 		return
 	var skel := get_skeleton()
 	if skel == null or ground == null:
 		return
+	if both_down and _flat_basis.size() < 2:
+		_bind(skel)
+		for side in 2:
+			_flat_basis.append(skel.get_bone_global_pose(_bi[side]).basis)
+	elif not both_down:
+		_flat_basis.clear()
 	if delta <= 0.0:
 		delta = 1.0 / 60.0
 	_bind(skel)
@@ -50,12 +59,19 @@ func _process_modification_with_delta(delta: float) -> void:
 	for side in 2:
 		var gy := ground.height(ankle[side].x, ankle[side].z)
 		above[side] = (ankle[side].y - outsole_drop) - _surface_y(gy, gy, contact_y if contact_y != 0.0 else ankle[side].y)
-	for side in 2:
-		var rel: float = above[side] - above[1 - side]
-		raw[side] = clampf(1.0 - rel / 0.05, 0.0, 1.0)
+	if both_down:
+		raw[0] = 1.0
+		raw[1] = 1.0
+	else:
+		for side in 2:
+			var rel: float = above[side] - above[1 - side]
+			raw[side] = clampf(1.0 - rel / 0.05, 0.0, 1.0)
 	for side in 2:
 		var ease := 1.0 - exp(-delta / 0.07)
-		weight[side] = lerpf(weight[side], raw[side], ease)
+		if both_down:
+			weight[side] = 1.0
+		else:
+			weight[side] = lerpf(weight[side], raw[side], ease)
 		var here := Vector2(ankle[side].x, ankle[side].z)
 		if raw[side] >= 0.98:
 			if not _locked[side] or here.distance_to(_lock[side]) > 0.40:
@@ -143,15 +159,17 @@ func _plant(skel: Skeleton3D, side: int, ankle: Vector3) -> void:
 	_solve_leg(skel, up_i, knee_i, foot_i, goal, fwd)
 	var after := _world(skel, knee_i).origin.distance_to(_world(skel, foot_i).origin)
 	if before > 0.02 and absf(after / before - 1.0) > 0.02:
+		if both_down:
+			_orient_foot(skel, foot_i, n, weight[side], side)
 		return
-	_tilt_foot(skel, foot_i, n, weight[side])
+	_orient_foot(skel, foot_i, n, weight[side], side)
 	var now := _world(skel, foot_i).origin
 	var err := planted.y - now.y
 	if absf(err) > 0.001 and absf(err) < 0.04:
 		var again := now
 		again.y += err
 		_solve_leg(skel, up_i, knee_i, foot_i, again, fwd)
-		_tilt_foot(skel, foot_i, n, weight[side])
+		_orient_foot(skel, foot_i, n, weight[side], side)
 		now = _world(skel, foot_i).origin
 	if _locked[side]:
 		skate_m = maxf(skate_m, Vector2(now.x, now.z).distance_to(_lock[side]))
@@ -229,6 +247,15 @@ func _aim(skel: Skeleton3D, parent_i: int, child_i: int, world_target: Vector3) 
 		q = Quaternion(a, b)
 	var basis := (Basis(q) * parent.basis).orthonormalized()
 	skel.set_bone_global_pose(parent_i, Transform3D(basis, parent.origin))
+
+
+func _orient_foot(skel: Skeleton3D, foot_i: int, normal: Vector3, amount: float, side: int) -> void:
+	if both_down and _flat_basis.size() == 2:
+		var flat := skel.get_bone_global_pose(foot_i)
+		flat.basis = _flat_basis[side]
+		skel.set_bone_global_pose(foot_i, flat)
+		return
+	_tilt_foot(skel, foot_i, normal, amount)
 
 
 func _tilt_foot(skel: Skeleton3D, foot_i: int, normal: Vector3, amount: float) -> void:

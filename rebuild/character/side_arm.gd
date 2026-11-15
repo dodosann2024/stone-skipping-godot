@@ -44,36 +44,30 @@ func _process_modification_with_delta(delta: float) -> void:
 	var right := skel.global_transform.basis.x
 	right.y = 0.0
 	right = Vector3(1, 0, 0) if right.length_squared() < 1e-6 else right.normalized()
-	var feet: Array[Vector3] = []
-	for side in 2:
-		var fi := _bone(skel, ["mixamorig_LeftFoot", "mixamorig:LeftFoot"] if side == 0 else ["mixamorig_RightFoot", "mixamorig:RightFoot"])
-		feet.append(_world(skel, fi) if fi >= 0 else Vector3.ZERO)
 	if _bi[6] >= 0:
 		var hp := skel.get_bone_pose(_bi[6])
-		var drop := 0.34 if crouch else 0.08
-		var twist := sin(s * PI) * (0.7 if crouch else 0.45)
+		# Pose units are pre-scale. FootIK plants the soles after this drop.
+		var drop := (0.16 if crouch else 0.09) / Constants.MODEL_SCALE
 		hp.origin.y -= drop
-		hp.basis = hp.basis * Basis(Vector3.UP, twist)
 		skel.set_bone_pose(_bi[6], hp)
 		var spine := _bone(skel, ["mixamorig_Spine", "mixamorig:Spine"])
 		if spine >= 0:
 			var sp := skel.get_bone_pose(spine)
-			sp.basis = sp.basis * Basis(Vector3.UP, -twist * 0.65)
+			var twist := sin(s * PI) * (0.65 if crouch else 0.48)
+			sp.basis = sp.basis * Basis(Vector3.UP, -twist)
 			skel.set_bone_pose(spine, sp)
+		var spine2 := _bone(skel, ["mixamorig_Spine2", "mixamorig:Spine2"])
+		if spine2 >= 0:
+			var s2 := skel.get_bone_pose(spine2)
+			s2.basis = s2.basis * Basis(Vector3.UP, -sin(s * PI) * 0.35)
+			skel.set_bone_pose(spine2, s2)
 		skel.force_update_all_bone_transforms()
-		for side in 2:
-			var up_n := ["mixamorig_LeftUpLeg", "mixamorig:LeftUpLeg"] if side == 0 else ["mixamorig_RightUpLeg", "mixamorig:RightUpLeg"]
-			var mid_n := ["mixamorig_LeftLeg", "mixamorig:LeftLeg"] if side == 0 else ["mixamorig_RightLeg", "mixamorig:RightLeg"]
-			var end_n := ["mixamorig_LeftFoot", "mixamorig:LeftFoot"] if side == 0 else ["mixamorig_RightFoot", "mixamorig:RightFoot"]
-			var goal := feet[side]
-			goal.y = minf(goal.y, _world(skel, _bi[6]).y - 0.05)
-			_solve(skel, _bone(skel, up_n), _bone(skel, mid_n), _bone(skel, end_n), goal, fwd * 0.8 + Vector3.UP * 0.2)
 	var shoulder := _world(skel, _bi[0])
-	var low := -0.28 if crouch else -0.12
-	# Back, then fully out to the side at hip height, then across the body.
-	var cocked := shoulder - fwd * 0.42 + right * 0.2 + Vector3.UP * low
-	var side_low := shoulder + right * 0.78 + Vector3.UP * (low - 0.05)
-	var across := shoulder + fwd * 0.55 - right * 0.25 + Vector3.UP * 0.05
+	var low := -0.34 if crouch else -0.2
+	# Back, then fully out to the side below the shoulder, then across the body.
+	var cocked := shoulder - fwd * 0.38 + right * 0.18 + Vector3.UP * low
+	var side_low := shoulder + right * 0.92 + Vector3.UP * (low - 0.06)
+	var across := shoulder + fwd * 0.48 - right * 0.22 + Vector3.UP * (low + 0.08)
 	var hand := cocked.lerp(side_low, clampf(s / 0.55, 0.0, 1.0))
 	if s >= 0.55:
 		hand = side_low.lerp(across, clampf((s - 0.55) / 0.45, 0.0, 1.0))
@@ -173,8 +167,11 @@ func _aim(skel: Skeleton3D, parent_i: int, child_i: int, world_target: Vector3) 
 		q = Quaternion(axis.normalized(), PI)
 	else:
 		q = Quaternion(a, b)
-	var basis := (Basis(q) * parent.basis).orthonormalized()
-	skel.set_bone_global_pose(parent_i, Transform3D(basis, parent.origin))
+	var spun := (Basis(q) * parent.basis).orthonormalized()
+	spun.x *= parent.basis.x.length()
+	spun.y *= parent.basis.y.length()
+	spun.z *= parent.basis.z.length()
+	skel.set_bone_global_pose(parent_i, Transform3D(spun, parent.origin))
 
 
 func _world(skel: Skeleton3D, bone: int) -> Vector3:

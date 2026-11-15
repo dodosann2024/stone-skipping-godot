@@ -34,12 +34,21 @@ func _ready() -> void:
 	_hammock(Vector3(-7.4, 0.0, shore_z + 6.6))
 	_towel(Vector3(-5.0, 0.0, shore_z + 4.0))
 	_lounger(Vector3(-4.2, 0.0, shore_z + 5.2))
-	_boat(Vector3(2.4, 0.05, ends.y + 0.35))
+	_boat(Vector3(2.4, 0.05, ends.y + 0.35), 0.35)
+	_boat(Vector3(-3.6, 0.02, shore_z - 1.1), 2.4)
+	_lantern(Vector3(0.72, 0.0, ends.y + 3.4))
+	_crate(Vector3(-0.82, 0.0, ends.x + 1.6))
+	_umbrella(Vector3(-3.4, 0.0, shore_z + 3.6))
+	_bush(Vector3(-2.4, 0.0, shore_z + 5.6))
+	_bush(Vector3(5.1, 0.0, shore_z + 3.5))
+	_bush(Vector3(1.1, 0.0, shore_z + 7.2))
+	_palm(Vector3(3.6, 0.0, shore_z + 7.8), 4.5, 0.08)
+	_palm(Vector3(-5.6, 0.0, shore_z + 2.8), 4.2, -0.1)
+	_reeds(shore_z)
 	_rope(Vector3(1.15, 0.95, ends.y + 1.15), Vector3(2.15, 0.42, ends.y + 0.7))
 	_rope(Vector3(-1.15, 0.95, ends.y + 1.15), Vector3(-1.9, 0.35, ends.y + 0.2))
 	_grass(Vector3(1.8, 0.0, shore_z + 3.2))
 	_shells(Vector3(-1.4, 0.0, shore_z + 2.4))
-	_distant_palms()
 	_pier_rail(ends)
 	_ground_cover(shore_z)
 
@@ -69,6 +78,7 @@ func _palm(at: Vector3, height: float, lean: float = 0.0) -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
 	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var body := StaticBody3D.new()
 	body.collision_layer = Constants.LAYER_BLOCK
 	body.collision_mask = 0
@@ -254,8 +264,18 @@ func _bench(at: Vector3) -> void:
 	var root := Fadable.new()
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_box(st, Vector3(0, 0.28, 0), Vector3(1.4, 0.08, 0.42), Color(0.50, 0.36, 0.22))
-	_box(st, Vector3(0, 0.55, -0.16), Vector3(1.4, 0.4, 0.08), Color(0.50, 0.36, 0.22))
+	var wood := Color(0.55, 0.38, 0.22)
+	var leg := Color(0.38, 0.26, 0.14)
+	for lx in [-0.62, 0.62]:
+		for lz in [-0.18, 0.18]:
+			_box(st, Vector3(lx, 0.2, lz), Vector3(0.06, 0.4, 0.06), leg)
+	for i in 8:
+		var x := -0.62 + float(i) * 0.18
+		_box(st, Vector3(x, 0.42, 0.02), Vector3(0.12, 0.035, 0.46), wood.lightened(0.04) if i % 2 == 0 else wood)
+	_box(st, Vector3(0.0, 0.4, -0.18), Vector3(1.45, 0.05, 0.045), leg)
+	_box(st, Vector3(0.0, 0.4, 0.22), Vector3(1.45, 0.05, 0.045), leg)
+	for i in 3:
+		_box(st, Vector3(0.0, 0.56 + float(i) * 0.08, -0.26), Vector3(1.4, 0.04, 0.04), wood)
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
@@ -265,14 +285,15 @@ func _bench(at: Vector3) -> void:
 	body.collision_mask = 0
 	var cs := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(1.4, 0.7, 0.5)
+	box.size = Vector3(1.55, 0.55, 0.55)
 	cs.shape = box
-	cs.position = Vector3(0, 0.35, 0)
+	cs.position = Vector3(0, 0.45, 0.0)
 	body.add_child(cs)
 	root.setup(mi, body)
 	root.position = at
 	root.name = "Bench"
-	_seat(root, "bench", PI, Vector3(0, 0, -0.22))
+	root.set_meta("on_prop", true)
+	_seat(root, "bench", 0.0, Vector3(0.26, 0.32, 0.63), 0.0)
 	add_child(root)
 	items.append(root)
 
@@ -338,11 +359,40 @@ func _hammock(at: Vector3) -> void:
 	var root := _solid_visual(at, "Hammock", Constants.LAYER_PROP, Vector3(0, 0.6, 0), Vector3(2.2, 1.4, 0.6))
 	var st: SurfaceTool = root.get_meta("st")
 	var post := Color(0.4, 0.28, 0.16)
-	_cylinder(st, Vector3(-0.9, 0.7, 0), 0.06, 1.4, post, 6)
-	_cylinder(st, Vector3(0.9, 0.7, 0), 0.06, 1.4, post, 6)
-	var cloth := Color(0.85, 0.45, 0.38)
-	_box(st, Vector3(0, 0.72, 0), Vector3(1.6, 0.06, 0.42), cloth)
-	_seat(root, "hammock", PI * 0.5, Vector3(0, 0.15, 0), 0.48)
+	_cylinder(st, Vector3(-1.05, 0.7, 0), 0.055, 1.4, post, 6)
+	_cylinder(st, Vector3(1.05, 0.7, 0), 0.055, 1.4, post, 6)
+	var rope := Color(0.72, 0.62, 0.4)
+	var cloth := Color(0.82, 0.28, 0.3)
+	var cols := 8
+	var rows := 4
+	for i in cols:
+		for j in rows:
+			var t0 := float(i) / float(cols)
+			var t1 := float(i + 1) / float(cols)
+			var u0 := float(j) / float(rows) - 0.5
+			var u1 := float(j + 1) / float(rows) - 0.5
+			var sag0 := sin(t0 * PI)
+			var sag1 := sin(t1 * PI)
+			var a := Vector3(lerpf(-0.9, 0.9, t0), 0.95 - sag0 * 0.42, u0 * 0.55)
+			var b := Vector3(lerpf(-0.9, 0.9, t1), 0.95 - sag1 * 0.42, u0 * 0.55)
+			var c := Vector3(lerpf(-0.9, 0.9, t0), 0.95 - sag0 * 0.42, u1 * 0.55)
+			var d := Vector3(lerpf(-0.9, 0.9, t1), 0.95 - sag1 * 0.42, u1 * 0.55)
+			_face(st, a, c, b, d, cloth if (i + j) % 2 == 0 else cloth.lightened(0.08))
+	_cord(st, Vector3(-1.05, 1.38, 0.22), Vector3(-0.9, 0.95, 0.26), 0.012, rope)
+	_cord(st, Vector3(-1.05, 1.38, -0.22), Vector3(-0.9, 0.95, -0.26), 0.012, rope)
+	_cord(st, Vector3(1.05, 1.38, 0.22), Vector3(0.9, 0.95, 0.26), 0.012, rope)
+	_cord(st, Vector3(1.05, 1.38, -0.22), Vector3(0.9, 0.95, -0.26), 0.012, rope)
+	for i in 6:
+		var t0 := float(i) / 6.0
+		var t1 := float(i + 1) / 6.0
+		var x0 := lerpf(-0.9, 0.9, t0)
+		var x1 := lerpf(-0.9, 0.9, t1)
+		var y0 := 0.95 - sin(t0 * PI) * 0.42
+		var y1 := 0.95 - sin(t1 * PI) * 0.42
+		_cord(st, Vector3(x0, y0, 0.26), Vector3(x1, y1, 0.26), 0.01, rope)
+		_cord(st, Vector3(x0, y0, -0.26), Vector3(x1, y1, -0.26), 0.01, rope)
+	root.set_meta("on_prop", true)
+	_seat(root, "hammock", 0.0, Vector3(0.26, 0.34, 0.63), 0.0)
 	_finish(root)
 
 
@@ -591,6 +641,7 @@ func _post(at: Vector3) -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
 	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var body := StaticBody3D.new()
 	body.collision_layer = Constants.LAYER_PROP
 	body.collision_mask = 0
@@ -673,7 +724,121 @@ func _seat(root: Fadable, kind: String, yaw: float, local_pos: Vector3, lift: fl
 	root.set_meta("lift", lift)
 
 
-func _boat(at: Vector3) -> void:
+func _cord(st: SurfaceTool, a: Vector3, b: Vector3, radius: float, col: Color) -> void:
+	var n := b - a
+	if n.length_squared() < 1e-8:
+		return
+	n = n.normalized()
+	var side := n.cross(Vector3.UP)
+	if side.length_squared() < 1e-6:
+		side = Vector3.RIGHT
+	side = side.normalized()
+	var up := n.cross(side).normalized()
+	_face(st, a + side * radius, a - side * radius, b + side * radius, b - side * radius, col)
+	_face(st, a + up * radius, a - up * radius, b + up * radius, b - up * radius, col)
+
+
+func _lantern(at: Vector3) -> void:
+	at.y = Constants.DECK_Y
+	var root := Fadable.new()
+	root.name = "Lantern"
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_box(st, Vector3(0, 0.55, 0), Vector3(0.08, 1.1, 0.08), Color(0.32, 0.22, 0.12))
+	_box(st, Vector3(0, 1.15, 0), Vector3(0.22, 0.28, 0.22), Color(0.95, 0.82, 0.28))
+	_box(st, Vector3(0, 1.32, 0), Vector3(0.26, 0.06, 0.26), Color(0.25, 0.18, 0.1))
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.setup(mi, null)
+	root.position = at
+	add_child(root)
+	items.append(root)
+
+
+func _crate(at: Vector3) -> void:
+	at.y = Constants.DECK_Y
+	var root := Fadable.new()
+	root.name = "Crate"
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var wood := Color(0.62, 0.46, 0.26)
+	_box(st, Vector3(0, 0.16, 0), Vector3(0.42, 0.32, 0.42), wood)
+	_box(st, Vector3(0, 0.33, 0), Vector3(0.44, 0.03, 0.06), wood.darkened(0.15))
+	_box(st, Vector3(0, 0.33, 0), Vector3(0.06, 0.03, 0.44), wood.darkened(0.15))
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.setup(mi, null)
+	root.position = at
+	add_child(root)
+	items.append(root)
+
+
+func _umbrella(at: Vector3) -> void:
+	at.y = IslandData.height_at(at.x, at.z)
+	var root := Fadable.new()
+	root.name = "Umbrella"
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_cylinder(st, Vector3(0, 0.7, 0), 0.025, 1.4, Color(0.85, 0.84, 0.8), 5)
+	var cloth := Color(0.86, 0.28, 0.32)
+	for i in 8:
+		var a0 := TAU * float(i) / 8.0
+		var a1 := TAU * float(i + 1) / 8.0
+		var tip := Vector3(0, 1.55, 0)
+		var p0 := Vector3(cos(a0) * 0.7, 1.28, sin(a0) * 0.7)
+		var p1 := Vector3(cos(a1) * 0.7, 1.28, sin(a1) * 0.7)
+		_face(st, tip, p0, tip + Vector3(0, -0.01, 0), p1, cloth if i % 2 == 0 else cloth.lightened(0.12))
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.setup(mi, null)
+	root.position = at
+	add_child(root)
+	items.append(root)
+
+
+func _reeds(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in 5:
+		var x := -0.18 + float(i) * 0.09
+		var h := 0.55 + float(i % 2) * 0.18
+		var lean := 0.08 if i % 2 == 0 else -0.06
+		_face(st, Vector3(x, 0, 0), Vector3(x + 0.02, 0, 0), Vector3(x + lean, h, 0.02), Vector3(x + lean + 0.015, h, 0), Color(0.25, 0.5, 0.28))
+	st.generate_normals()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = st.commit()
+	var spots: Array[Vector3] = []
+	for i in 18:
+		var x := -8.0 + float(i) * 0.95
+		if absf(x) < 2.2:
+			continue
+		var p := Vector3(x, 0, shore_z + 0.35 + float(i % 3) * 0.25)
+		p.y = IslandData.height_at(p.x, p.z)
+		if p.y < 0.02 or p.y > 0.8:
+			continue
+		spots.append(p)
+	mm.instance_count = spots.size()
+	for i in spots.size():
+		var b := Basis(Vector3.UP, float(i) * 0.4)
+		mm.set_instance_transform(i, Transform3D(b, spots[i]))
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
+func _boat(at: Vector3, yaw: float = 0.2) -> void:
 	var root := Fadable.new()
 	root.name = "Boat"
 	var st := SurfaceTool.new()
@@ -715,6 +880,7 @@ func _boat(at: Vector3) -> void:
 	body.add_child(cs)
 	root.setup(mi, body)
 	root.position = at
+	root.rotation.y = yaw
 	add_child(root)
 	items.append(root)
 

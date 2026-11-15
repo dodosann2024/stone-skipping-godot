@@ -29,6 +29,7 @@ func _ready() -> void:
 	model.rotation.y = PI
 	# Capsule bottom is this far above the body origin. The mesh feet sit on that contact.
 	model.position.y = Constants.CAPSULE_BOTTOM
+	_keep_full_lod(model)
 	add_child(model)
 	anim = _find_player(model)
 	skel = _find_skel(model)
@@ -39,6 +40,7 @@ func _ready() -> void:
 		arm = _SideArm.new()
 		arm.name = "SideArm"
 		skel.add_child(arm)
+		skel.move_child(arm, 0)
 		rest = _RestPose.new()
 		rest.name = "RestPose"
 		skel.add_child(rest)
@@ -134,6 +136,13 @@ func lay_flat(kind: String) -> void:
 	else:
 		model.rotation = Vector3(deg_to_rad(-80.0), PI, 0)
 		model.position = Vector3(0, 0.20, 0.02)
+
+
+func _keep_full_lod(node: Node) -> void:
+	if node is GeometryInstance3D:
+		(node as GeometryInstance3D).lod_bias = 16.0
+	for c in node.get_children():
+		_keep_full_lod(c)
 
 
 func _pick_names() -> void:
