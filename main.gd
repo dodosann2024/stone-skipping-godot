@@ -480,8 +480,7 @@ func _build_player() -> void:
 	add_child(boy)
 	# start on the beach near the dock, facing the pier — camera sits on the open-sand side
 	var sp := Vector3(1.35, 0, island.dock_start_z + 4.0)
-	var dh := island.drawn_h(sp.x, sp.z, 8.0)
-	sp.y = dh if dh > -900.0 else _surface(sp.x, sp.z)
+	sp.y = _surface(sp.x, sp.z)
 	player_ctrl.write_position(sp)
 	face_yaw = -0.35
 	player_ctrl.write_yaw(face_yaw)

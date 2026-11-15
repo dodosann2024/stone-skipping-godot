@@ -68,11 +68,12 @@ var bush_spots: Array = []
 var leaves: Array = []    # [Transform3D, Color tint (a = sway), Color(outward normal, ao)] per leaf spray
 var leaf_mat: ShaderMaterial
 var terrain_mi: MeshInstance3D
+## Camera line-of-sight only. Walk height does not read these.
+var _tri_faces := PackedVector3Array()
+var _tri_bins := {}
 ## Exact walkable collision — same tris as the rendered terrain + dock deck boxes.
 ## Body Y and foot IK raycast this; mesh_h / bilinear are NOT the walk surface.
 var ground_body: StaticBody3D
-var _tri_faces: PackedVector3Array = PackedVector3Array()
-var _tri_bins: Dictionary = {}
 var ground_space_rid: RID
 var campfire: Campfire
 var torches: Array[Torch] = []
@@ -754,99 +755,7 @@ func _build_ground_collision() -> void:
 		var z := lerpf(ramp_z1, ramp_z0, t)
 		var y := lerpf(minf(sand0, sand1), DECK_Y, smoothstep(0.0, 1.0, t))
 		_add_deck_collider(Vector3(0.0, y, z), Vector3(2.40, 0.10, 0.22))
-	_bin_terrain_tris()
 	print("GROUND_COLLISION tris=%d deck_boxes=%d" % [tri_count, ground_body.get_child_count() - (1 if tri_count > 0 else 0)])
-
-
-## Drawn terrain triangles, binned by 1 m cells so a foot query reads the same
-## face the mesh shows, not whatever a physics ray fell through to.
-func _bin_terrain_tris() -> void:
-	_tri_bins.clear()
-	_tri_faces = PackedVector3Array()
-	if terrain_mi == null or terrain_mi.mesh == null:
-		return
-	_tri_faces = terrain_mi.mesh.get_faces()
-	var i := 0
-	while i + 2 < _tri_faces.size():
-		var a: Vector3 = _tri_faces[i]
-		var b: Vector3 = _tri_faces[i + 1]
-		var c: Vector3 = _tri_faces[i + 2]
-		var key := Vector2i(int(floor((a.x + b.x + c.x) / 3.0)), int(floor((a.z + b.z + c.z) / 3.0)))
-		var list: Array = _tri_bins.get(key, [])
-		list.append(i)
-		_tri_bins[key] = list
-		i += 3
-
-
-## Walkable top under (x, z). cos(40°) — the same limit as the body capsule.
-const WALK_NY := 0.766
-## Nearest walkable triangle at or below `probe_y` whose XZ footprint contains
-## the point. Not the highest face in the column: that picked cliff and
-## overhang planes and threw a sandal up beside the hat.
-## `near_hint` >= 0: the highest upright face within 40 cm of the body.
-## A face further away is a shelf or a buried terrace, not the sand he is on.
-## Without it, the highest face at or below `probe_y` (camera occlusion).
-func drawn_h(x: float, z: float, probe_y: float = 1000.0, near_hint: float = -999.0) -> float:
-	if _tri_faces.is_empty():
-		return -999.0
-	var best := -999.0
-	var closest := -999.0
-	var closest_d := 999.0
-	var cx := int(floor(x))
-	var cz := int(floor(z))
-	for ox in [-1, 0, 1]:
-		for oz in [-1, 0, 1]:
-			var list: Array = _tri_bins.get(Vector2i(cx + ox, cz + oz), [])
-			for idx in list:
-				var i := int(idx)
-				var a: Vector3 = _tri_faces[i]
-				var b: Vector3 = _tri_faces[i + 1]
-				var c: Vector3 = _tri_faces[i + 2]
-				var h := _tri_height(x, z, a, b, c)
-				if h < -900.0 or h > probe_y:
-					continue
-				if near_hint > -900.0:
-					var d := absf(h - near_hint)
-					if d <= 0.40 and h > best:
-						best = h
-					if d < closest_d:
-						closest = h
-						closest_d = d
-				elif h > best:
-					best = h
-	if near_hint > -900.0:
-		# A face more than 40 cm away is not the sand under him. Callers keep
-		# the current height instead of climbing onto a shelf or a buried terrace.
-		if best > -900.0:
-			return best
-		if closest_d <= 0.40:
-			return closest
-		return -999.0
-	return best
-
-
-func _tri_height(x: float, z: float, a: Vector3, b: Vector3, c: Vector3) -> float:
-	var ab := b - a
-	var ac := c - a
-	var n := ab.cross(ac)
-	var nl := n.length()
-	if nl < 1e-8:
-		return -999.0
-	n /= nl
-	# The mesh is wound either way. Steepness is |n.y|; a cliff is rejected.
-	if absf(n.y) < WALK_NY:
-		return -999.0
-	var ap := Vector2(x - a.x, z - a.z)
-	var v0 := Vector2(c.x - a.x, c.z - a.z)
-	var v1 := Vector2(b.x - a.x, b.z - a.z)
-	var den := v0.x * v1.y - v0.y * v1.x
-	if absf(den) < 1e-8:
-		return -999.0
-	var u := (ap.x * v1.y - ap.y * v1.x) / den
-	var v := (v0.x * ap.y - v0.y * ap.x) / den
-	if u < -0.002 or v < -0.002 or u + v > 1.002:
-		return -999.0
-	return a.y + (c.y - a.y) * u + (b.y - a.y) * v
 
 
 func _add_deck_collider(center: Vector3, size: Vector3) -> void:
@@ -906,18 +815,6 @@ func collision_h_walk(x: float, z: float, hint_y: float = 10.0, exclude: Array =
 		return hint_y
 	# Off walkable band: keep last hint (do NOT drop to analytic sea).
 	return hint_y
-
-
-## Highest upright triangle of the drawn terrain in this column. A probe that
-## started at a sunk root only saw a lower terrace, and the shorts sat in the
-## sand while the HUD read a few centimetres. Steep faces stay rejected.
-func collision_h_exact(x: float, z: float, _hint_y: float = 10.0, _exclude: Array = []) -> float:
-	if absf(x) < 5.0 and z <= dock_start_z + 0.35 and z >= dock_end_z - 3.0:
-		return DECK_Y
-	var drawn := drawn_h(x, z, 64.0, _hint_y)
-	if drawn > -900.0:
-		return drawn
-	return -999.0
 
 
 ## Normal of the collision surface under (x,z), or UP if miss.
@@ -3079,3 +2976,68 @@ func _build_buoys() -> void:
 		lbl.visibility_range_begin = 9.0
 		bn.add_child(lbl)
 		buoys.append(bn)
+
+
+## Highest upright drawn triangle at or below probe_y. The camera uses this to
+## see if the crest blocks the lens. Walk height and foot IK do not call it.
+const _WALK_NY := 0.766
+
+
+func drawn_h(x: float, z: float, probe_y: float = 1000.0) -> float:
+	_ensure_tri_bins()
+	if _tri_faces.is_empty():
+		return -999.0
+	var best := -999.0
+	var cx := int(floor(x))
+	var cz := int(floor(z))
+	for ox in [-1, 0, 1]:
+		for oz in [-1, 0, 1]:
+			var list: Array = _tri_bins.get(Vector2i(cx + ox, cz + oz), [])
+			for idx in list:
+				var i := int(idx)
+				var h := _tri_h(x, z, _tri_faces[i], _tri_faces[i + 1], _tri_faces[i + 2], probe_y)
+				if h > best:
+					best = h
+	return best
+
+
+func _ensure_tri_bins() -> void:
+	if not _tri_faces.is_empty():
+		return
+	if terrain_mi == null or terrain_mi.mesh == null:
+		return
+	_tri_faces = terrain_mi.mesh.get_faces()
+	var i := 0
+	while i + 2 < _tri_faces.size():
+		var a: Vector3 = _tri_faces[i]
+		var b: Vector3 = _tri_faces[i + 1]
+		var c: Vector3 = _tri_faces[i + 2]
+		var key := Vector2i(int(floor((a.x + b.x + c.x) / 3.0)), int(floor((a.z + b.z + c.z) / 3.0)))
+		var list: Array = _tri_bins.get(key, [])
+		list.append(i)
+		_tri_bins[key] = list
+		i += 3
+
+
+func _tri_h(x: float, z: float, a: Vector3, b: Vector3, c: Vector3, probe_y: float) -> float:
+	var n := (b - a).cross(c - a)
+	var nl := n.length()
+	if nl < 1e-8:
+		return -999.0
+	n /= nl
+	if absf(n.y) < _WALK_NY:
+		return -999.0
+	var ap := Vector2(x - a.x, z - a.z)
+	var v0 := Vector2(c.x - a.x, c.z - a.z)
+	var v1 := Vector2(b.x - a.x, b.z - a.z)
+	var den := v0.x * v1.y - v0.y * v1.x
+	if absf(den) < 1e-8:
+		return -999.0
+	var u := (ap.x * v1.y - ap.y * v1.x) / den
+	var v := (v0.x * ap.y - v0.y * ap.x) / den
+	if u < -0.002 or v < -0.002 or u + v > 1.002:
+		return -999.0
+	var h := a.y + (c.y - a.y) * u + (b.y - a.y) * v
+	if h > probe_y:
+		return -999.0
+	return h

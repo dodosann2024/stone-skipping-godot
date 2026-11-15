@@ -6,29 +6,35 @@ Branch `cursor/v39-drawn-sole-route-d4ce`, cut from `cursor/v38-real-pipeline-d4
 
 `9a62dcd` moved the foot bone until the vertices that are at least 85% foot or toe sat on the probe surface. The knee did not follow, so the shin stayed in the terrain. In the review drag the shorts sat on the sandals, and after release one leg ended at the knee, while the HUD read gnd 0.0–0.8 cm.
 
-That slide is gone. The root stands on the drawn walkable triangle near the body, raised by the animated sole hang so the sandal meets that face. The hips only trim a few centimetres of slope. The foot bone is not translated. Shin length stays the animated knee-to-ankle length (ratio 1.00). Knee flex on the 110 m harness peaked at 116°, this clip's own run swing.
+That slide is gone because the v39 foot IK that aimed the legs at a drawn probe is gone. Ground, root height, and foot IK are the v38 code again. The drawn-triangle probe is used by the uphill camera only. It does not set the root and it does not move a bone. Knee flex on the 110 m harness peaked at 116°.
 
 The camera release fix is unchanged on flat ground: one explore frame, arm floor 0.82, release eases over about 0.45 s. On an uphill the lens now pitches with the grade and lifts until the segment from the camera to the feet stays above the drawn triangles. Rest, throw, HUD and demo stay in their modules. `main.gd` is 2739 lines.
 
-## The rise, then the flung sandal
+## Bisect of drag39.py frame b
 
-The 2.8 s frame was the crest in front of the lens. The side view of that gesture shows full legs. Raising the camera with the slope fixed that picture, and it is kept.
+`drag39.py` is Playwright, Chrome `--use-gl=swiftshader`, the iPhone 13 profile at 390×844, a fresh context, and a 6 s wait after the tap. Each row is that script against the export stored in that commit. The 2.8 s frame is the grass rise.
 
-Taking the highest drawn triangle in the column did not. On `bb693a3` the 300 ms frame sank until the shorts read as a stump (HUD gnd 26.9 cm), and at 2.8 s one sandal was up by the hat while the torso folded into a crawl. That face was a steep or overlapping triangle above the foot. The query now keeps a triangle only when its XZ footprint contains the point, its normal is at least as upright as the 40° walk slope (`|n.y| ≥ cos 40°`), and its height is the nearest one at or below a probe just above the sandal. A miss leaves the animated leg alone and the root on the controller height.
+| commit | frame b | stills |
+| --- | --- | --- |
+| `37454af` (v38) | both shins, both sandals, HUD gnd 19.5 cm | `screenshots/v39/bisect/37454af_a.png` `_b.png` `_c.png` |
+| `5bfc309` | shorts on the grass, no legs, HUD gnd 0.8 cm | `screenshots/v39/bisect/5bfc309_*.png` |
+| `9a62dcd` | same sink, HUD gnd 0.8 cm | `screenshots/v39/bisect/9a62dcd_*.png` |
+| `2e3610d` | same sink, HUD gnd 11.0 cm | `screenshots/v39/bisect/2e3610d_*.png` |
+| `bb693a3` | same sink, HUD gnd 25.9 cm | `screenshots/v39/bisect/bb693a3_*.png` |
+| `3440402` | same sink, HUD gnd 1.8 cm | `screenshots/v39/bisect/3440402_*.png` |
+| `a3b6806` | same sink, HUD gnd 33.2 cm | `screenshots/v39/bisect/a3b6806_*.png` |
 
-A probe that started at a sunk root only saw a lower terrace, so the root walked down into it and the shorts met the sand. Walk height is now one query: the highest upright drawn triangle within 40 cm of the body. Faces further away are ignored. The controller's physics ray is no longer a second height. The root follows the average of the two foot contacts on that surface, plus the sole hang, smoothed to 3 cm per frame. Foot IK is an 8 cm vertical trim, not a 12 cm rescue, and it does not aim the knee.
+The break is `5bfc309`. That commit replaced the foot IK. The new solver aimed the legs at the probe, and every later commit kept a probe-driven pose. v38's ground, root height, and foot IK are restored. The camera release, the crest line-of-sight check, the `main.gd` split, and the removal of the old web exports stay. `drawn_h` is called by the camera only.
 
-`3440402` did not reproduce this on the owner's script. That script is Playwright, Chrome `--use-gl=swiftshader`, the iPhone 13 profile at 390×844, a fresh context, `docs/` from `python http.server`, and a 6 s wait after the tap before the drag. The earlier stills used puppeteer with ANGLE/SwiftShader and waited 1.5 s after the tap, so they were taken before the root had finished stepping down onto the lower terrace. Running the owner's script unchanged against that export reproduced the sink: shorts in the sand at 300 ms (HUD gnd 1.5 cm) and the body cut off at the waist at 2.8 s (HUD gnd 4.2 cm).
-
-The same script against this export:
+This commit's export, same script:
 
 | still | picture | HUD gnd |
 | --- | --- | ---: |
-| `screenshots/v39/drag39_a.png` | both shins, both sandals, on the sand path | 21.7 cm |
-| `screenshots/v39/drag39_b.png` | full body on the grass, both sandals, ground visible ahead | 25.7 cm |
-| `screenshots/v39/drag39_c.png` | both sandals planted | 0.8 cm |
+| `screenshots/v39/drag39_a.png` | both shins, both sandals, on the sand path | 6.5 cm |
+| `screenshots/v39/drag39_b.png` | both shins, both sandals, on the grass rise | 1.6 cm |
+| `screenshots/v39/drag39_c.png` | both sandals planted | 74.0 cm |
 
-The HUD on the first two stills is still not the sole gap the picture shows. The legs are in the frame.
+Frame c's HUD number is not the picture. The sandals are on the grass.
 
 Eight slope headings are `screenshots/v39/slope_dir_*.png`. The drag test is `dev/cdp_side_v39.mjs` (390×844, dpr 3, 60 s, tap 195,420, touch from 54,754 by +3,−6 ×10 at 30 ms, shots at 300 ms, 2.8 s, and 0.8 s after release).
 
@@ -62,10 +68,10 @@ SwiftShader frame time on these stills was about 22–48 ms. That is not an iPho
 SwiftShader does not walk 100 m in a CDP session: the HUD can read ~1.7 m/s while the body barely moves between samples. `V39_ROUTE=1` drives the same `player_controller.gd` in headless Godot, fixed 60 Hz physics, waypoints on the beach, the grass rise, and the dock centerline. Stick-up from spawn walks off the pier; the harness does not do that.
 
 ```
-ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood, knee_max=116 len_min=1.00 gnd_min=-63.8 at=7.0,-8.0,1.56 pelvis=3.0 bad=1184 bury=804 float=376 float_pct=4.70 scored=8003 pelvis_n=4 stop=true
+ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood, knee_max=116 len_min=0.97 gnd_min=-5.2 at=4.3,-7.4,2.04 pelvis=41.0 bad=7994 bury=101 float=6117 float_pct=76.52 scored=7994 pelvis_n=1 stop=true
 ```
 
-110 m of sand, grass, and dock wood. Not a pass. 804 frames have the lower sole or a same-terrace shin under the surface. 376 frames, 4.70% of the 8003 scored frames, have the lower sole more than 1.5 cm up. The bar asked for bury 0 and float at or under 1%. The worst gap is −63.8 cm at (7.0, −8.0), a foot whose walkable face is that far from the sole while the root is still catching up at 3 cm per frame. Four frames moved the displayed root more than 3 cm. Shin length stayed 1.00. Knee peak is 116°.
+This is the v38 ground, scored by the same collision height the feet use. It is not an improvement on the later v39 harness, and it is not bury 0 or float ≤ 1%. 101 frames are under the surface. 6117 frames, 76.52% of 7994, read the lower sole more than 1.5 cm up. The worst bury is −5.2 cm. One displayed root step was 41 cm, which is the v38 root write with no 3 cm clamp. Knee peak is 116°. A drawn-triangle score was tried as a measurement only and made the float reading worse, so the harness stays on the collision height. The pose was not changed to chase the number.
 
 ## Where this version still misses the AAA bar
 
@@ -73,7 +79,7 @@ ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood, knee_max=116 len_min=1.00 gnd
 
 ### Release blockers
 
-1. **Grounding.** Not met. The owner's drag now shows both shins and both sandals at 300 ms, 2.8 s, and after release (`screenshots/v39/drag39_a.png`, `drag39_b.png`, `drag39_c.png`). The root and the feet share the drawn walkable query. The 110 m harness is still outside the bar: bury 804, float 376 (4.70% of 8003 frames), worst gap −63.8 cm, knee max 116°, shin length 1.00. Float under 1% and bury 0 are not met.
+1. **Grounding.** The owner's drag is back to the v38 picture. `drag39_b.png` on this commit shows both shins and both sandals on the grass rise (HUD gnd 1.6 cm). `drag39_a.png` and `drag39_c.png` show both sandals. The 110 m harness is not met: bury 101, float 76.52% (6117 of 7994), worst gap −5.2 cm, one root step 41 cm.
 
 2. **Occluder dither.** Not re-proven. `shaders/cutout.gdshaderinc`, `foliage.gdshader`, `leaf.gdshader` and `static.gdshader` still dither foliage and props in the compatibility renderer. This version has no on/off pair from the export. The drag stills are not a proof: nothing thick was between the lens and the boy, and `side_run_stop.png` loses him for a different reason.
 
@@ -95,8 +101,8 @@ ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood, knee_max=116 len_min=1.00 gnd
 
 ## What the next versions should do, in order
 
-1. Get the 110 m harness to bury 0 and float at or under 1%. This run is bury 804 and float 4.70% (376 of 8003). The misses are feet whose walkable face is still tens of centimetres from the sole while the root is limited to 3 cm per frame. The owner's three drag frames now show both shins and both sandals.
-2. Keep the displayed root step smooth. Four frames this run moved it more than 3 cm. The largest printed step was 3.0 cm.
+1. Bring the 110 m sole reading inside −1…+1.5 cm without putting the probe back in charge of the pose. On this v38 ground the drag shows the legs, and the harness still reads float on 76.52% of frames.
+2. The v38 root write moved 41 cm in one displayed frame. A clamp there has to be checked against `drag39_b.png` before it ships.
 3. Keep the boy in frame on a steep side view after release. `side_run_stop.png` still loses him off the bottom.
 4. Shoot foliage and prop dither on and off from the export.
 5. Tighten the stop so the sole does not hang 16 cm up while the stick is already at zero.
