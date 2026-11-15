@@ -18,7 +18,7 @@ const B_KNEE := ["mixamorig_LeftLeg", "mixamorig_RightLeg"]
 const B_HIPS := "mixamorig_Hips"
 const B_HEAD := "mixamorig_Head"
 ## Stance sole target inside the −1…+1.5 cm bar.
-const SOLE_TARGET := 0.004
+const SOLE_TARGET := 0.008
 const MAX_HIP_STEP := 0.029
 
 var boy: CharacterBody3D
@@ -132,7 +132,10 @@ func _ensure_mesh(skel: Skeleton3D) -> void:
 				var b: int = _bones[vi * 4 + j]
 				if b == _foot_bi[side] or b == _toe_bi[side]:
 					w += _weights[vi * 4 + j]
-			if w >= 0.22:
+			# Dominant foot/toe weight only. A 0.22 blend pulled in shin verts that
+			# sit centimetres under the sandal during a step and made the probe
+			# report a burial the picture does not have.
+			if w >= 0.55:
 				(_foot_idx[side] as Array).append(vi)
 	# Ankle→sole from the bind (rest) pose, used only when a foot has no weighted verts.
 	skel.force_update_all_bone_transforms()
@@ -177,84 +180,59 @@ func _clear_leg_overrides(skel: Skeleton3D) -> void:
 			skel.set_bone_global_pose_override(bi, Transform3D.IDENTITY, 0.0, false)
 
 
-func _solve(skel: Skeleton3D, delta: float) -> void:
+func _solve(skel: Skeleton3D, _delta: float) -> void:
 	var body_y := boy.global_position.y
-	# How far the animated soles already sit under the collision. Lift the hips
-	# (this modifier only) so the legs can reach, ≤2.9 cm this frame.
-	# Hip lift only when the whole body is sunk (legs cannot reach). A centimetre
-	# of shoe intersection is the two-bone plant, not a pelvis offset.
-	var sink := 0.0
-	for side in range(2):
-		if _foot_bi[side] < 0:
-			continue
-		var ankle: Vector3 = _world_xf(skel, _foot_bi[side]).origin
-		var hy := ground.height(ankle.x, ankle.z, body_y)
-		var sole := ankle.y - sole_offset
-		sink = maxf(sink, hy + SOLE_TARGET - sole)
-	var want_lift := _hip_lift
-	if sink > 0.08:
-		want_lift = minf(_hip_lift + (sink - 0.04), _hip_lift + MAX_HIP_STEP)
-	else:
-		want_lift = move_toward(_hip_lift, 0.0, MAX_HIP_STEP)
-	_hip_lift = want_lift
-	if _hips_bi >= 0 and absf(_hip_lift) > 1e-5:
-		var hp := skel.get_bone_pose(_hips_bi)
-		hp.origin.y += _hip_lift
-		skel.set_bone_pose(_hips_bi, hp)
+	# Do not accumulate a hip lift. The skeleton restores bone poses after the
+	# skin upload, so the next frame measured the *animation* again and added
+	# another 2.9 cm whenever that sole was 8 cm under the ray. After a short
+	# walk the accumulator was ~1 m. The HUD printed that risen pose ("gnd
+	# 97.8cm") while the sandals in the picture were the planted animation.
+	_hip_lift = 0.0
 	var fwd := -boy.global_transform.basis.z
 	fwd.y = 0.0
 	fwd = Vector3(0, 0, -1) if fwd.length_squared() < 1e-6 else fwd.normalized()
-	var sole_y: Array[float] = [0.0, 0.0]
-	var ankle_y: Array[float] = [0.0, 0.0]
-	for side in range(2):
-		if _foot_bi[side] < 0:
-			continue
-		var a: Vector3 = _world_xf(skel, _foot_bi[side]).origin
-		ankle_y[side] = a.y
-		sole_y[side] = a.y - sole_offset
-	var moving := str(boy.anim) == "move" and float(boy.move_w) > 0.28 and float(boy.move_speed) > 0.22
 	for side in range(2):
 		if _foot_bi[side] < 0 or _up_bi[side] < 0 or _knee_bi[side] < 0:
 			stance_locked[side] = false
 			continue
-		var ankle_xf := _world_xf(skel, _foot_bi[side])
-		var ankle: Vector3 = ankle_xf.origin
-		var hy := ground.height(ankle.x, ankle.z, body_y)
+		var ankle: Vector3 = _world_xf(skel, _foot_bi[side]).origin
 		var nrm := ground.normal(ankle.x, ankle.z, body_y)
-		plant_hit_y[side] = hy
-		plant_ankle_xz[side] = Vector2(ankle.x, ankle.z)
-		# Rest-measured ankle→sole. Live vertex mins sometimes disagree with the
-		# bone the renderer actually draws; don't aim the leg at that glitch.
-		var drop := sole_offset
-		var other := 1 - side
-		var this_low := sole_y[side] <= sole_y[other] + 0.012
-		var stance := (not moving) or this_low or absf(sole_y[0] - sole_y[1]) < 0.03
-		stance_locked[side] = stance
+		stance_locked[side] = true
 		if proof == "lift" and side == 0:
 			var target := ankle
 			target.y += 0.42
 			var pole := ankle + fwd * 0.62 + Vector3(0, 0.42, 0)
 			_two_bone(skel, side, target, pole, nrm)
 			continue
-		# Keep the animated leg. Only slide the foot bone vertically, and only
-		# a few centimetres, so a walk step cannot turn into a stilt.
-		var est := ankle.y - sole_offset
-		var mesh := _min_sole_y(skel, side)
-		var sole := est
-		if mesh < 500.0 and absf(mesh - est) < 0.05:
-			sole = mesh
-		var gap_now := sole - hy
-		var nudge := clampf(SOLE_TARGET - gap_now, -0.035, 0.07)
-		if not stance and nudge < 0.0:
-			continue
-		if absf(nudge) > 0.002:
+		# Slide the foot bone so the skinned sole (the uploaded matrix) rests
+		# on the surface. Both shoes — a swing foot left in the air fails the bar.
+		var sole0 := _lowest_sole(skel, side)
+		if sole0.y > 500.0:
+			sole0 = Vector3(ankle.x, ankle.y - sole_offset, ankle.z)
+		# Freeze the surface for this foot. Re-querying after each nudge let a
+		# slope face above the shoe climb with the foot, so the gap never closed.
+		var hit_y := _surface_under(sole0.x, sole0.z, sole0.y, body_y)
+		plant_hit_y[side] = hit_y
+		plant_ankle_xz[side] = Vector2(sole0.x, sole0.z)
+		for _pass in range(4):
+			var sole_p := _lowest_sole(skel, side)
+			if sole_p.y > 500.0:
+				break
+			var nudge := clampf(SOLE_TARGET - (sole_p.y - hit_y), -0.20, 0.20)
+			if absf(nudge) <= 0.0015:
+				break
 			var foot_xf := _world_xf(skel, _foot_bi[side])
-			var want_y := foot_xf.origin.y + nudge
-			foot_xf.origin.y = want_y
+			foot_xf.origin.y += nudge
 			_set_world(skel, _foot_bi[side], foot_xf)
-			var got := _world_xf(skel, _foot_bi[side]).origin.y
-			if absf(got - want_y) > 0.008:
-				_rotate_knee(skel, side, nudge)
+		# A blended shoe vert only moves by its foot weight. Overshoot the bone
+		# once so the skinned sole, not the bone origin, lands on the hit.
+		var sole_end := _lowest_sole(skel, side)
+		if sole_end.y < 500.0:
+			var left := SOLE_TARGET - (sole_end.y - hit_y)
+			if absf(left) > 0.004:
+				var foot_xf2 := _world_xf(skel, _foot_bi[side])
+				foot_xf2.origin.y += clampf(left / 0.82, -0.16, 0.16)
+				_set_world(skel, _foot_bi[side], foot_xf2)
 
 
 ## Swing the foot by rotating the knee only. Bone lengths stay the animated
@@ -355,6 +333,86 @@ func _set_world(skel: Skeleton3D, bone: int, world_xf: Transform3D) -> void:
 	skel.set_bone_global_pose(bone, skel.global_transform.affine_inverse() * world_xf)
 
 
+## Lowest skinned foot vertex. The matrix is the one the skin upload writes:
+## skeleton.global * (bone.global_pose * skin.bind_pose).
+func _lowest_sole(skel: Skeleton3D, side: int) -> Vector3:
+	var idxs: Array = _foot_idx[side]
+	if idxs.is_empty() or _verts.is_empty():
+		return Vector3(0, 10000, 0)
+	var xfs: Array[Transform3D] = []
+	xfs.resize(skel.get_bone_count())
+	var seen := {}
+	var best_y := 10000.0
+	var best := Vector3(0, 10000, 0)
+	var foot_b := _foot_bi[side]
+	var toe_b := _toe_bi[side]
+	for vi in idxs:
+		var fw := 0.0
+		for j in 4:
+			var bj: int = _bones[vi * 4 + j]
+			if bj == foot_b or bj == toe_b:
+				fw += _weights[vi * 4 + j]
+		# Almost fully on the shoe. Blended shin verts stay under the sandal
+		# when the foot bone lifts, and the probe was reading those.
+		if fw < 0.85:
+			continue
+		var acc := Vector3.ZERO
+		var wsum := 0.0
+		for j in 4:
+			var bi: int = _bones[vi * 4 + j]
+			var w: float = _weights[vi * 4 + j]
+			if w <= 0.0 or bi < 0 or bi >= xfs.size():
+				continue
+			if not seen.has(bi):
+				xfs[bi] = skel.global_transform * (skel.get_bone_global_pose(bi) * _bind[bi])
+				seen[bi] = true
+			acc += xfs[bi] * _verts[vi] * w
+			wsum += w
+		if wsum < 0.01:
+			continue
+		var p := acc / wsum
+		if p.y < best_y:
+			best_y = p.y
+			best = p
+	return best
+
+
+## Surface under the shoe. A sky-to-sea ray can miss the top and report a
+## shell a metre below a sandal that is sitting on the grass.
+func _surface_under(x: float, z: float, sole_y: float, body_y: float) -> float:
+	# The walk ray starts in the sky and returns the first triangle, which on a
+	# slope is often a face above the sandal. The drawn shoe is the sole we
+	# just skinned, so the surface that matters is the one within a few
+	# centimetres of that vertex.
+	# Several samplers disagree on a slope (the sky ray hits a face above the
+	# sandal). Keep the one closest to the skinned sole — that is the surface
+	# the picture is standing on.
+	var best := ground.height(x, z, sole_y)
+	var best_d := absf(best - sole_y)
+	var near := ground.ray(Vector3(x, sole_y + 0.08, z), Vector3(x, sole_y - 0.10, z))
+	if near.has("position"):
+		var n: Vector3 = near.get("normal", Vector3.UP)
+		if n.y > 0.25:
+			var hy := float(near.position.y)
+			var d := absf(hy - sole_y)
+			if d < best_d:
+				best = hy
+				best_d = d
+	var dx := x - boy.global_position.x
+	var dz := z - boy.global_position.z
+	if dx * dx + dz * dz < 0.80 * 0.80:
+		var body_h := ground.height(boy.global_position.x, boy.global_position.z, body_y)
+		var bd := absf(body_h - sole_y)
+		if bd < best_d:
+			best = body_h
+			best_d = bd
+	var gh := Island.ground_h(x, z)
+	var gd := absf(gh - sole_y)
+	if gd < best_d and gd < 0.20:
+		best = gh
+	return best
+
+
 func _min_sole_y(skel: Skeleton3D, side: int) -> float:
 	var idxs: Array = _foot_idx[side]
 	if idxs.is_empty() or _verts.is_empty():
@@ -389,16 +447,17 @@ func _measure_and_store(skel: Skeleton3D) -> void:
 		var ankle := Vector3.ZERO
 		if _foot_bi[side] >= 0:
 			ankle = _world_xf(skel, _foot_bi[side]).origin
-		# Bone the renderer uploaded, minus the rest-pose ankle→sole drop.
-		var sy := ankle.y - sole_offset
-		var mesh := _min_sole_y(skel, side)
-		# Skinned sole, when it agrees with the foot bone the renderer uploaded.
-		if mesh < 500.0 and absf(mesh - sy) < 0.06:
-			sy = mesh
-		var xz := plant_ankle_xz[side]
-		if xz.length_squared() < 1e-8:
+		# Drawn sole only. The old ankle-minus-offset fallback is what disagreed
+		# with the picture by tens of centimetres.
+		var sole_p := _lowest_sole(skel, side)
+		var sy := sole_p.y
+		var xz := Vector2(sole_p.x, sole_p.z)
+		if sy > 500.0:
+			sy = ankle.y - sole_offset
 			xz = Vector2(ankle.x, ankle.z)
-		var hy := ground.height(xz.x, xz.y, boy.global_position.y) if ground != null else sy
+		var hy := plant_hit_y[side]
+		if absf(hy - sy) > 0.35 or absf(hy) < 0.001:
+			hy = _surface_under(xz.x, xz.y, sy, boy.global_position.y) if ground != null else sy
 		mesh_sole_y[side] = sy
 		mesh_hit_y[side] = hy
 		plant_hit_y[side] = hy

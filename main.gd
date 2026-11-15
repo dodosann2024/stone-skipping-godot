@@ -300,6 +300,15 @@ var demo_track: Array = []
 var demo_seg := ""
 var selftest: RefCounted
 
+const _GameUIScript = preload("res://game_ui.gd")
+const _ThrowSessionScript = preload("res://throw_session.gd")
+const _RestPoseScript = preload("res://rest_pose.gd")
+const _DemoSequenceScript = preload("res://demo_sequence.gd")
+var game_ui
+var throw_session
+var rest_pose
+var demo_seq
+
 func _ready() -> void:
 	rng.seed = 99
 	# After boy (priority 10): move then camera so follow uses the same-frame pose.
@@ -325,6 +334,14 @@ func _ready() -> void:
 	player_ctrl.setup(ground_sys, self)
 	follow_cam = FollowCamera.new()
 	follow_cam.setup(self)
+	game_ui = _GameUIScript.new()
+	game_ui.bind(self)
+	throw_session = _ThrowSessionScript.new()
+	throw_session.bind(self)
+	rest_pose = _RestPoseScript.new()
+	rest_pose.bind(self)
+	demo_seq = _DemoSequenceScript.new()
+	demo_seq.bind(self)
 	foliage = FoliageOcclusion.new()
 	night_fx = NightFx.new()
 	add_child(night_fx)
@@ -641,419 +658,45 @@ func _build_birds() -> void:
 		birds.append({"node": root, "wings": wings, "c": Vector3(rng.randf_range(-15, 15), rng.randf_range(9, 16), rng.randf_range(-25, 10)), "r": rng.randf_range(8, 18), "sp": rng.randf_range(0.25, 0.45) * (1.0 if i % 2 == 0 else -1.0), "ph": rng.randf() * TAU})
 
 func _label(size: int, col := Color.WHITE) -> Label:
-	var l := Label.new()
-	l.add_theme_font_override("font", ui_font)
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", col)
-	l.add_theme_color_override("font_outline_color", Color(0.04, 0.18, 0.32, 0.9))
-	l.add_theme_constant_override("outline_size", 9)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return l
+	return game_ui._label(size, col)
 
-# ------------------------------------------------------------------ UI
 
 func _btn(text: String, size: int, primary := false) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.add_theme_font_override("font", ui_font)
-	b.add_theme_font_size_override("font_size", size)
-	b.focus_mode = Control.FOCUS_NONE
-	for st_name in ["normal", "hover", "pressed", "disabled"]:
-		var sb := StyleBoxFlat.new()
-		if primary:
-			sb.bg_color = Color(1.0, 0.82, 0.3, 0.95) if st_name != "pressed" else Color(1.0, 0.92, 0.6, 1.0)
-			sb.border_color = Color(0.55, 0.3, 0.05)
-		else:
-			# Slightly less opaque — over the lighthouse climb the old 0.82 white pills
-			# fused with the tower into one "ghost panel" on iPhone Safari.
-			sb.bg_color = Color(1, 1, 1, 0.72) if st_name != "pressed" else Color(0.85, 0.95, 1, 0.90)
-			sb.border_color = Color(0.1, 0.45, 0.65)
-		sb.set_corner_radius_all(40)
-		sb.set_border_width_all(3)
-		sb.content_margin_left = 18; sb.content_margin_right = 18
-		sb.content_margin_top = 6; sb.content_margin_bottom = 6
-		b.add_theme_stylebox_override(st_name, sb)
-	var fc := Color(0.45, 0.2, 0.02) if primary else Color(0.05, 0.35, 0.55)
-	for cn in ["font_color", "font_hover_color", "font_pressed_color"]:
-		b.add_theme_color_override(cn, fc)
-	return b
+	return game_ui._btn(text, size, primary)
+
 
 func _build_ui() -> void:
-	var layer := CanvasLayer.new()
-	add_child(layer)
-	var root := Control.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(root)
-	ui_root = root
+	return game_ui._build_ui()
 
-	# joystick: the bottom-left part of the screen (explore mode)
-	joy = InputJoystick.new()
-	joy.anchor_left = 0.0; joy.anchor_right = 0.5; joy.anchor_top = 0.55; joy.anchor_bottom = 1.0
-	root.add_child(joy)
-
-	top_box = VBoxContainer.new()
-	top_box.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	top_box.offset_left = 18; top_box.offset_top = 12; top_box.offset_right = -190
-	top_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	top_box.add_theme_constant_override("separation", 0)
-	root.add_child(top_box)
-	lbl_title = _label(26, Color(1, 0.95, 0.7))
-	lbl_title.text = "海岛打水漂"
-	top_box.add_child(lbl_title)
-	lbl_stats = _label(32)
-	top_box.add_child(lbl_stats)
-	lbl_best = _label(22, Color(0.9, 0.97, 1))
-	top_box.add_child(lbl_best)
-
-	throw_pad = ThrowPad.new()
-	throw_pad.font = ui_font
-	throw_pad.set_anchors_preset(Control.PRESET_FULL_RECT)
-	throw_pad.visible = false
-	root.add_child(throw_pad)
-	el_slider = _angle_slider("仰角", "el", EL_MIN, EL_MAX, aim_pitch, Vector2(0, 10))
-	tilt_slider = _angle_slider("倾角", "tilt", 0.0, TILT_MAX, aim_tilt, Vector2(15, 25))
-	el_slider.changed.connect(func(v: float) -> void: aim_pitch = v)
-	tilt_slider.changed.connect(func(v: float) -> void: aim_tilt = v)
-
-	right_box = VBoxContainer.new()
-	right_box.anchor_left = 1.0; right_box.anchor_right = 1.0
-	right_box.offset_left = -176; right_box.offset_right = -14; right_box.offset_top = 14
-	right_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	right_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	right_box.add_theme_constant_override("separation", 10)
-	root.add_child(right_box)
-	view_btn = _btn("观景", 26)
-	view_btn.custom_minimum_size = Vector2(162, 62)
-	view_btn.pressed.connect(_toggle_view)
-	right_box.add_child(view_btn)
-	cam_mode_btn = _btn("固定视角", 22)
-	cam_mode_btn.custom_minimum_size = Vector2(162, 50)
-	cam_mode_btn.pressed.connect(_toggle_cam_fixed)
-	right_box.add_child(cam_mode_btn)
-	var zoom_row := HBoxContainer.new()
-	zoom_row.add_theme_constant_override("separation", 8)
-	zoom_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	right_box.add_child(zoom_row)
-	zoom_out_btn = _btn("−", 28)
-	zoom_out_btn.custom_minimum_size = Vector2(74, 48)
-	zoom_out_btn.pressed.connect(func() -> void: _nudge_zoom(1.0 / 0.85))
-	zoom_row.add_child(zoom_out_btn)
-	zoom_in_btn = _btn("+", 28)
-	zoom_in_btn.custom_minimum_size = Vector2(74, 48)
-	zoom_in_btn.pressed.connect(func() -> void: _nudge_zoom(0.85))
-	zoom_row.add_child(zoom_in_btn)
-	sound_btn = _btn("声音：开", 22)
-	sound_btn.custom_minimum_size = Vector2(162, 50)
-	sound_btn.pressed.connect(_toggle_sound)
-	right_box.add_child(sound_btn)
-	night_btn = _btn("夜晚", 22)
-	night_btn.custom_minimum_size = Vector2(162, 50)
-	night_btn.pressed.connect(_toggle_night)
-	right_box.add_child(night_btn)
-	stance_btn = _btn("姿势：站立", 22)
-	stance_btn.custom_minimum_size = Vector2(162, 56)
-	stance_btn.pressed.connect(_toggle_stance)
-	right_box.add_child(stance_btn)
-	leave_btn = _btn("离开码头", 22)
-	leave_btn.custom_minimum_size = Vector2(162, 56)
-	leave_btn.pressed.connect(_leave_throw)
-	right_box.add_child(leave_btn)
-
-	# context action (打水漂 / 睡觉 / 晒太阳 / 起来), bottom right
-	action_btn = _btn("打水漂", 34, true)
-	action_btn.anchor_left = 1.0; action_btn.anchor_right = 1.0; action_btn.anchor_top = 1.0; action_btn.anchor_bottom = 1.0
-	action_btn.offset_left = -214; action_btn.offset_right = -24; action_btn.offset_top = -134; action_btn.offset_bottom = -40
-	action_btn.pressed.connect(_on_action)
-	root.add_child(action_btn)
-	lie_btn = _btn("躺下", 30, true)
-	lie_btn.anchor_left = 1.0; lie_btn.anchor_right = 1.0; lie_btn.anchor_top = 1.0; lie_btn.anchor_bottom = 1.0
-	lie_btn.pressed.connect(_lie_down)
-	root.add_child(lie_btn)
-
-	bottom_box = VBoxContainer.new()
-	bottom_box.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	bottom_box.offset_left = 18; bottom_box.offset_right = -18; bottom_box.offset_bottom = -14
-	bottom_box.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	bottom_box.alignment = BoxContainer.ALIGNMENT_END
-	bottom_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(bottom_box)
-	power_box = VBoxContainer.new()
-	power_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bottom_box.add_child(power_box)
-	lbl_aim = _label(28)
-	lbl_aim.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	power_box.add_child(lbl_aim)
-	power_bar = ProgressBar.new()
-	power_bar.custom_minimum_size = Vector2(0, 26)
-	power_bar.show_percentage = false
-	power_bar.max_value = 1.0
-	power_bar.step = 0.001
-	power_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0, 0.15, 0.3, 0.5)
-	bg.set_corner_radius_all(13)
-	var fg := StyleBoxFlat.new()
-	fg.bg_color = Color(1.0, 0.8, 0.25)
-	fg.set_corner_radius_all(13)
-	power_bar.add_theme_stylebox_override("background", bg)
-	power_bar.add_theme_stylebox_override("fill", fg)
-	power_box.add_child(power_bar)
-	power_box.visible = false
-	lbl_hint = _label(24, Color(1, 1, 1, 0.96))
-	lbl_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	bottom_box.add_child(lbl_hint)
-
-	lbl_toast = _label(44, Color(1, 0.95, 0.55))
-	lbl_toast.anchor_left = 0.0; lbl_toast.anchor_right = 1.0
-	lbl_toast.anchor_top = 0.24; lbl_toast.anchor_bottom = 0.24
-	lbl_toast.offset_left = 10; lbl_toast.offset_right = -10
-	lbl_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl_toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	lbl_toast.add_theme_constant_override("outline_size", 12)
-	root.add_child(lbl_toast)
-
-	# "no sound?" tip (web only), dismissible
-	tip_box = PanelContainer.new()
-	var tsb := StyleBoxFlat.new()
-	tsb.bg_color = Color(0.02, 0.15, 0.28, 0.82)
-	tsb.set_corner_radius_all(18)
-	tsb.content_margin_left = 16; tsb.content_margin_right = 8; tsb.content_margin_top = 8; tsb.content_margin_bottom = 8
-	tip_box.add_theme_stylebox_override("panel", tsb)
-	tip_box.anchor_left = 0.5; tip_box.anchor_right = 0.5; tip_box.anchor_top = 0.0
-	tip_box.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	tip_box.offset_top = 150
-	var th := HBoxContainer.new()
-	tip_box.add_child(th)
-	var tl := _label(22, Color(1, 0.95, 0.75))
-	tl.text = "没声音？请关闭 iPhone 侧边静音开关并调高音量"
-	tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tl.custom_minimum_size = Vector2(260, 0)
-	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	th.add_child(tl)
-	var tx := _btn("×", 26)
-	tx.custom_minimum_size = Vector2(52, 52)
-	tx.pressed.connect(func() -> void: tip_box.visible = false)
-	th.add_child(tx)
-	tip_box.visible = false
-	root.add_child(tip_box)
-
-	# iOS / browsers only allow sound after a tap: a "tap to start" curtain unlocks the audio
-	if not audio_started:
-		start_overlay = ColorRect.new()
-		(start_overlay as ColorRect).color = Color(0.02, 0.12, 0.22, 0.55)
-		start_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-		start_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-		start_overlay.gui_input.connect(_on_start_input)
-		root.add_child(start_overlay)
-		var big := _label(64, Color(1, 0.95, 0.6))
-		big.text = "点击开始"
-		big.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		big.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		big.set_anchors_preset(Control.PRESET_FULL_RECT)
-		big.offset_bottom = -60
-		start_overlay.add_child(big)
-		var small := _label(26)
-		small.text = "轻点屏幕开始，开启海浪声\niPhone 请先关闭侧边静音开关、调高音量"
-		small.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		small.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		small.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		small.set_anchors_preset(Control.PRESET_FULL_RECT)
-		small.offset_top = 110; small.offset_left = 16; small.offset_right = -16
-		start_overlay.add_child(small)
-	get_viewport().size_changed.connect(_layout_ui)
-	bottom_box.resized.connect(_fit_action)
-	right_box.resized.connect(_layout_ui)
-	_layout_ui()
 
 func _angle_slider(t: String, k: String, lo: float, hi: float, v: float, band: Vector2) -> AngleSlider:
-	var s := AngleSlider.new()
-	s.title = t
-	s.kind = k
-	s.vmin = lo
-	s.vmax = hi
-	s.value = v
-	s.band = band
-	s.font = ui_font
-	s.anchor_left = 1.0; s.anchor_right = 1.0; s.anchor_top = 1.0; s.anchor_bottom = 1.0
-	s.visible = false
-	ui_root.add_child(s)
-	return s
+	return game_ui._angle_slider(t, k, lo, hi, v, band)
+
 
 func _tall() -> bool:
-	var vs := get_viewport().get_visible_rect().size
-	return vs.x < vs.y
+	return game_ui._tall()
 
-## Screen insets (notch / Dynamic Island, home indicator, rounded corners) in UI units: top, right,
-## bottom, left. The page asks for viewport-fit=cover and reports env(safe-area-inset-*) (export
-## head_include); `--safe=t,r,b,l` (CSS px) fakes a phone's insets for desktop checks.
 var safe := Vector4.ZERO
 var safe_css := ""
 var safe_t := 0.0
 
 func _read_safe_area() -> bool:
-	var raw := ""
-	var css_h := float(DisplayServer.window_get_size().y)
-	if OS.has_feature("web"):
-		raw = str(JavaScriptBridge.eval("window.__safeArea ? window.__safeArea() : ''", true))
-	else:
-		for a0 in OS.get_cmdline_user_args():
-			if a0.begins_with("--safe="):
-				raw = a0.substr(7) + ",0," + str(css_h)
-	if raw == safe_css:
-		return false
-	safe_css = raw
-	var v := raw.split(",")
-	if v.size() < 6 or float(v[5]) <= 0.0:
-		safe = Vector4.ZERO
-		return true
-	var k := get_viewport().get_visible_rect().size.y / float(v[5])
-	safe = Vector4(float(v[0]), float(v[1]), float(v[2]), float(v[3])) * k
-	return true
+	return game_ui._read_safe_area()
 
-## The context buttons sit bottom right; on a tall screen the hint spans the width, so they stand on top of it.
 func _fit_action() -> void:
-	var tall := _tall()
-	var base := 56.0 if tall else 36.0
-	if tall and is_instance_valid(bottom_box) and lbl_hint.text != "":
-		base = maxf(base, 14.0 + bottom_box.size.y + 14.0)
-	action_btn.offset_right = -24 - safe.y
-	action_btn.offset_left = action_btn.offset_right - 190
-	action_btn.offset_bottom = -base - safe.z
-	action_btn.offset_top = action_btn.offset_bottom - 94
-	lie_btn.offset_left = action_btn.offset_left; lie_btn.offset_right = action_btn.offset_right
-	lie_btn.offset_bottom = action_btn.offset_top - 16
-	lie_btn.offset_top = lie_btn.offset_bottom - 80
+	return game_ui._fit_action()
 
-## portrait: smaller title, action button a bit higher; landscape: roomier. Everything anchored to an
-## edge keeps clear of the safe-area insets.
 func _layout_ui() -> void:
-	if not is_instance_valid(action_btn):
-		return
-	_read_safe_area()
-	var st := safe.x
-	var sr := safe.y
-	var sb := safe.z
-	var sl := safe.w
-	var tall := _tall()
-	lbl_title.add_theme_font_size_override("font_size", 24 if tall else 26)
-	lbl_stats.add_theme_font_size_override("font_size", 28 if tall else 32)
-	top_box.offset_left = 18 + sl
-	top_box.offset_top = 12 + st
-	top_box.offset_right = -184 - sr
-	right_box.offset_top = 14 + st
-	right_box.offset_right = -14 - sr
-	right_box.offset_left = right_box.offset_right - 162
-	_fit_action()
-	joy.anchor_top = 0.6 if tall else 0.45
-	joy.anchor_right = 0.62 if tall else 0.45
-	joy.offset_left = sl
-	joy.offset_bottom = -sb
-	joy.radius = 66.0 if tall else 72.0
-	joy.lift = 62.0 if tall else 0.0
-	bottom_box.offset_left = 18 + sl
-	bottom_box.offset_right = -18 - sr
-	bottom_box.offset_bottom = -14 - sb
-	# (portrait: the tip spans most of the 720 units across, so it starts below the button column)
-	tip_box.offset_top = maxf((170.0 if tall else 120.0) + st, right_box.offset_top + right_box.size.y + 16.0) if tall else 120.0 + st
-	# throw mode: the two angle sliders bottom right, the stone pad bottom centre (both above the hint)
-	var sw := 92.0
-	var sh := 320.0 if tall else 250.0
-	var lift := (150.0 if tall else 112.0) + sb
-	for i in 2:
-		var s: AngleSlider = tilt_slider if i == 0 else el_slider
-		s.offset_right = -14.0 - sr - i * (sw + 12.0)
-		s.offset_left = s.offset_right - sw
-		s.offset_bottom = -lift
-		s.offset_top = -lift - sh
-	var vs := get_viewport().get_visible_rect().size
-	throw_pad.pad_r = 54.0 if tall else 50.0
-	throw_pad.pad_c = Vector2((vs.x + sl - sr) * 0.5, vs.y - lift - throw_pad.pad_r + (24.0 if tall else 4.0))
-	throw_pad.queue_redraw()
+	return game_ui._layout_ui()
+
 
 func _toast(t: String, dur := 1.4) -> void:
-	lbl_toast.text = t
-	lbl_toast.modulate.a = 1.0
-	toast_timer = dur
+	return game_ui._toast(t, dur)
+
 
 func _update_ui() -> void:
-	var throw_mode := mode == Mode.THROW
-	lbl_stats.visible = throw_mode
-	lbl_best.visible = throw_mode or mode == Mode.EXPLORE
-	lbl_stats.text = "弹跳 %d 次   距离 %.1f 米" % [skips, throw_dist]
-	lbl_best.text = "最高纪录：弹跳 %d 次 · 最远 %.1f 米" % [best_skips, best_dist]
-	view_btn.text = "返回" if mode == Mode.VIEW else "观景"
-	view_btn.visible = (mode == Mode.EXPLORE) or mode == Mode.VIEW or (throw_mode and state == State.READY)
-	if cam_mode_btn:
-		# Label is the mode you switch TO (same pattern as 白天/夜晚).
-		cam_mode_btn.text = "跟随视角" if cam_fixed else "固定视角"
-		cam_mode_btn.visible = mode == Mode.EXPLORE or mode == Mode.REST or mode == Mode.VIEW
-	if zoom_in_btn and zoom_out_btn:
-		var show_zoom := cam_fixed and (mode == Mode.EXPLORE or mode == Mode.REST or mode == Mode.VIEW)
-		zoom_in_btn.get_parent().visible = show_zoom
-	sound_btn.text = "声音：关" if muted else "声音：开"
-	night_btn.text = "白天" if night_on else "夜晚"
-	stance_btn.visible = throw_mode and state == State.READY
-	stance_btn.text = "姿势：半蹲" if boy.stance == "crouch" else "姿势：站立"
-	leave_btn.visible = throw_mode and state == State.READY
-	joy.visible = mode == Mode.EXPLORE
-	if mode != Mode.EXPLORE:
-		joy._end()
-	var act := ""
-	if mode == Mode.EXPLORE:
-		act = {"throw": "打水漂", "sleep": "睡觉", "sun": "晒太阳", "seat": "坐下"}.get(action_kind, "")
-	elif mode == Mode.REST and rest_phase == 4:
-		act = "起来"
-	action_btn.visible = act != ""
-	action_btn.text = act
-	lie_btn.visible = mode == Mode.REST and rest_phase == 4 and rest_kind == "seat" and not seat_lying \
-		and seat_i >= 0 and island.seats[seat_i]["can_lie"]
-	match mode:
-		Mode.VIEW:
-			lbl_hint.text = "观景：单指拖动 360° 旋转，双指捏合缩放（电脑：拖鼠标 / 滚轮）\n点右上角「返回」继续玩"
-		Mode.EXPLORE:
-			var h := "左下摇杆走路，推到底就跑（电脑：WASD/方向键，Shift 跑）· 拖动屏幕转视角"
-			match action_kind:
-				"throw":
-					h = "到码头尽头了！点「打水漂」开始扔石子"
-				"sleep":
-					h = "椰子树间的吊床，点「睡觉」躺上去打个盹"
-				"sun":
-					h = "沙滩毛巾，点「晒太阳」躺下晒一会儿"
-				"seat":
-					h = island.seats[seat_i]["hint"]
-				_:
-					if _tall():
-						h = "左下摇杆走路，推到底就跑 · 拖屏幕转视角\n打水漂要去码头尽头"
-					else:
-						h += "\n打水漂要走到码头尽头；吊床可以睡觉，沙滩毛巾可以晒太阳，长椅和篝火边可以坐"
-			lbl_hint.text = h
-		Mode.REST:
-			var rh := {"sleep": "呼……睡着了 · 轻点屏幕或「起来」叫醒他", "sun": "晒太阳中 · 轻点屏幕或「起来」站起来", "seat": "坐着歇一会儿 · 轻点屏幕或「起来」站起来",
-				"seatcan": "坐着歇一会儿 · 点「躺下」翘腿躺一会儿，轻点屏幕或「起来」站起来",
-				"seatlie": "草帽盖脸，翘着腿躺着 · 轻点屏幕或「起来」起身"}
-			var rk := rest_kind
-			if rest_kind == "seat" and seat_lying:
-				rk = "seatlie"
-			elif rest_kind == "seat" and island.seats[seat_i]["can_lie"]:
-				rk = "seatcan"
-			lbl_hint.text = rh[rk] if rest_phase == 4 else ""
-		_:
-			match state:
-				State.READY:
-					if last_tip != "":
-						lbl_hint.text = last_tip
-					elif _tall():
-						lbl_hint.text = "按住石头往海面划：方向 = 瞄准，越长越用力\n松手时顺势一甩 = 旋转 · 右边调仰角和倾角"
-					else:
-						lbl_hint.text = "按住石头往海面划：方向 = 瞄准，越长越用力，松手时顺势一甩 = 旋转\n右边调出手仰角和石头倾角（20° 最好）· 键盘：←→ 瞄准  ↑↓ 仰角  Q/E 倾角  按住空格蓄力"
-				State.AIMING:
-					lbl_hint.text = {"swipe": "松手扔出 · 往回拉取消", "key": "看准力度条，松开空格投出！"}.get(aim_src, "看准力度条，松手投出！")
-				_:
-					lbl_hint.text = ""
-	power_box.visible = state == State.AIMING and throw_mode
-	power_bar.visible = aim_src != "swipe"
+	return game_ui._update_ui()
+
 
 func _toggle_view() -> void:
 	if mode == Mode.VIEW:
@@ -1171,67 +814,16 @@ var throw_walk := false
 var throw_spot := Vector3.ZERO
 
 func _enter_throw() -> void:
-	mode = Mode.THROW
-	state = State.READY
-	move_vel = Vector3.ZERO
-	# step to the nearest clear spot on the front edge of the T platform (between the posts)
-	var p := player.position
-	var best_x := 0.0
-	for sx: float in [-2.1, 0.0, 2.1]:
-		if absf(p.x - sx) < absf(p.x - best_x):
-			best_x = sx
-	throw_spot = Vector3(best_x, Island.DECK_Y + 0.04, island.dock_end_z + 0.85)
-	throw_walk = Vector2(p.x - throw_spot.x, p.z - throw_spot.z).length() > 0.08
-	aim_yaw = face_yaw
-	var keep_yaw := player.rotation.y
-	player_ctrl.write_position(throw_spot)
-	if absf(wrapf(aim_yaw, -PI, PI)) > 1.2:
-		aim_yaw = 0.0
-	if not _open_sea(aim_yaw):
-		for k in range(1, 19):
-			if _open_sea(aim_yaw + k * 0.17):
-				aim_yaw += k * 0.17
-				break
-			if _open_sea(aim_yaw - k * 0.17):
-				aim_yaw -= k * 0.17
-				break
-	player_ctrl.write_position(p)
-	player_ctrl.write_yaw(keep_yaw)
-	cam_aim_yaw = aim_yaw
-	_toast("打水漂！按住石头往海面划", 1.8)
-	_update_ui()
+	return throw_session._enter_throw()
+
 
 func _throw_walk_tick(delta: float) -> void:
-	var d := throw_spot - player.position
-	d.y = 0.0
-	if d.length() < 0.04:
-		player_ctrl.write_position(Vector3(throw_spot.x, player.position.y, throw_spot.z))
-		throw_walk = false
-		move_vel = Vector3.ZERO
-		boy.set_move(0.0)
-		boy.set_idle()
-		return
-	var spd := minf(1.1, d.length() * 3.0 + 0.35)
-	move_vel = move_vel.move_toward(d.normalized() * spd, 8.0 * delta)
-	var step := move_vel * delta
-	if step.length() > d.length():
-		step = d
-	player_ctrl.write_position(player.position + (step))
-	player_ctrl.write_position(Vector3(player.position.x, Island.DECK_Y + 0.04, player.position.z))
-	player_ctrl.write_yaw(lerp_angle(player.rotation.y, atan2(-move_vel.x, -move_vel.z), 1.0 - exp(-delta * 10.0)))
-	boy.set_move(move_vel.length())
+	return throw_session._throw_walk_tick(delta)
+
 
 func _leave_throw() -> void:
-	if mode != Mode.THROW or state != State.READY:
-		return
-	mode = Mode.EXPLORE
-	face_yaw = player.rotation.y
-	ex_yaw = face_yaw + PI
-	boy.set_idle()
-	_sync_body_pose(true)
-	_hide_preview()
-	_update_ui()
-# ------------------------------------------------------------------ explore: walking / running
+	return throw_session._leave_throw()
+
 
 func _on_dock(x: float, z: float) -> bool:
 	return (absf(x) < 1.15 and z < island.dock_start_z + 0.1 and z > island.dock_end_z + 3.6) or (absf(x) < 3.1 and z <= island.dock_end_z + 3.95 and z > island.dock_end_z - 0.12)
@@ -1379,139 +971,28 @@ func _on_footstep(side: int, running: bool) -> void:
 # ------------------------------------------------------------------ rest: hammock nap / sunbathing
 
 func _ensure_rest_align() -> void:
-	if not rest_align.is_empty():
-		return
-	var path := "res://props/alignment.json"
-	var abs_path := ProjectSettings.globalize_path(path)
-	if not FileAccess.file_exists(abs_path):
-		return
-	var f := FileAccess.open(abs_path, FileAccess.READ)
-	if f == null:
-		return
-	var parsed = JSON.parse_string(f.get_as_text())
-	f.close()
-	if typeof(parsed) == TYPE_DICTIONARY:
-		rest_align = parsed
+	return rest_pose._ensure_rest_align()
+
 
 
 func _begin_rest(kind: String) -> void:
-	_begin_cam_blend()
-	mode = Mode.REST
-	rest_kind = kind
-	rest_phase = 0
-	rest_t = 0.0
-	rest_cam_yaw = INF
-	rest_cam_pitch = 0.2
-	rest_cam_dist = 2.8
-	rest_cam_ease = 0.0
-	rest_exit_cam_t = 0.0
-	rest_touch_dragged = false
-	move_vel = Vector3.ZERO
-	rest_use_clips = false
-	rest_clip_phase = ""
-	rest_clip_prop = ""
-	set_meta("lie_snapped", false)
-	set_meta("lie_mesh_nudged", false)
-	set_meta("fix_rest_locked", false)
-	_ensure_rest_align()
-	# Prefer authored Blender clips for bench / log / hammock.
-	if kind == "sleep" and boy.ap and boy.ap.has_animation("hammock_enter"):
-		rest_use_clips = true
-		rest_clip_prop = "hammock"
-		_setup_hammock_clip_rest()
-	elif kind == "seat" and seat_i >= 0 and seat_i < island.seats.size():
-		var st0: Dictionary = island.seats[seat_i]
-		var nm := String(st0.get("name", ""))
-		if nm == "长椅" and boy.ap and boy.ap.has_animation("bench_sit_enter"):
-			rest_use_clips = true
-			rest_clip_prop = "bench"
-			_setup_seat_clip_rest(st0)
-		elif nm == "坐木" and boy.ap and boy.ap.has_animation("log_sit_enter"):
-			rest_use_clips = true
-			rest_clip_prop = "log"
-			_setup_seat_clip_rest(st0)
-	if rest_use_clips:
-		boy.end_activity()
-		boy.set_hat_mode("head")
-		if kind == "sleep":
-			island.set_hammock_clip_frame("empty", 0)
-		player_ctrl.write_yaw(face_yaw)
-		_update_ui()
-		return
-	# Legacy procedural path (lounger / missing clips).
-	if kind == "sleep":
-		_setup_hammock_rest()
-	elif kind == "seat":
-		var st: Dictionary = island.seats[seat_i]
-		var face: Vector3 = seat_face.normalized()
-		seat_lying = false
-		rest_side = face.cross(Vector3.UP).normalized()
-		rest_sit_b = Basis(Vector3.UP, atan2(-face.x, -face.z))
-		rest_approach = seat_ap
-		var pl0 := boy.activity("seat", 1.0, 0.0, 0.0)
-		var top: Vector3 = st["top"]
-		rest_seat = top + Vector3(0, pl0.y - Island.SEAT_TOP, 0)
-		rest_lie = top + Vector3(0, LIE_BACK, 0) - rest_side * 0.1
-		rest_lie_b = _lie_basis(rest_side)
-	else:
-		_setup_lounger_rest()
-	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
-	var pl := boy.activity(kind, 1.0, 0.0, 0.0)
-	rest_root_sit = rest_seat - rest_sit_b * pl
-	if kind == "seat" or kind == "sleep":
-		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-		for _s in 12:
-			_snap_sit_contact()
-			pl = boy.activity(kind, 1.0, 0.0, 0.0)
-			rest_root_sit = rest_seat - rest_sit_b * pl
-			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-	boy.end_activity()
-	if kind == "sleep":
-		island.set_hammock_load([] as Array[Vector3])
-	player_ctrl.write_yaw(face_yaw)
-	_update_ui()
+	return rest_pose._begin_rest(kind)
+
 
 
 func _setup_seat_clip_rest(st: Dictionary) -> void:
-	seat_lying = false
-	var face: Vector3 = seat_face.normalized()
-	rest_side = face.cross(Vector3.UP).normalized()
-	rest_prop_xf = st.get("prop_xf", Transform3D.IDENTITY)
-	if rest_prop_xf == Transform3D.IDENTITY:
-		rest_prop_xf = Transform3D(Basis(Vector3.UP, atan2(-face.x, -face.z) + PI),
-			Vector3(st["top"].x, _surface(st["top"].x, st["top"].z), st["top"].z))
-	rest_approach = st["approach"]
-	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
-	rest_seat = st["top"]
-	rest_sit_b = rest_prop_xf.basis
-	# Clip enter starts at root_pos (0,0,-0.5) yaw 0 in prop frame (exact prop Y).
-	var clip_key := "bench_sit_enter" if rest_clip_prop == "bench" else "log_sit_enter"
-	var cinfo: Dictionary = rest_align.get("clips", {}).get(clip_key, {})
-	var rp: Array = cinfo.get("root_pos_prop", [0, 0, -0.5])
-	var local := Vector3(float(rp[0]), float(rp[1]), float(rp[2]))
-	rest_root_sit = rest_prop_xf * local
-	rest_approach = rest_prop_xf * Vector3(0.0, 0.0, -0.50)
-	rest_approach.y = rest_prop_xf.origin.y
+	return rest_pose._setup_seat_clip_rest(st)
+
 
 
 func _setup_hammock_clip_rest() -> void:
-	rest_prop_xf = island.hammock_node.global_transform if island.hammock_node else Transform3D.IDENTITY
-	hammock_prop_side()
-	var cinfo: Dictionary = rest_align.get("clips", {}).get("hammock_enter", {})
-	var rp: Array = cinfo.get("root_pos_prop", [0, -0.96, 0.63])
-	var local := Vector3(float(rp[0]), float(rp[1]), float(rp[2]))
-	rest_root_sit = rest_prop_xf * local
-	# Approach = start of enter (inland side).
-	rest_approach = rest_root_sit
-	rest_approach.y = _surface(rest_approach.x, rest_approach.z)
-	rest_seat = rest_prop_xf * Vector3(0, 0, 0)
-	rest_sit_b = rest_prop_xf.basis
-	rest_side = (rest_prop_xf.basis * Vector3(0, 0, 1)).normalized()
+	return rest_pose._setup_hammock_clip_rest()
+
 
 
 func hammock_prop_side() -> void:
-	if island.hammock_node:
-		rest_side = island.hammock_node.global_transform.basis.z.normalized()
+	return rest_pose.hammock_prop_side()
+
 
 const LIE_BACK := 0.085   # pelvis centre above the seat when lying on the back
 const SEAT_LIE_DUR := 1.6
@@ -1523,1171 +1004,139 @@ const LIE_CONTACT_TOL := 0.02  # 0–2 cm gap target after snap
 
 ## Hammock nap: hips at the sag centre, head/feet slightly raised; body follows the fabric curve.
 func _setup_hammock_rest() -> void:
-	var hs := _hammock_spot()
-	var along: Vector3 = hs[1]
-	var side: Vector3 = hs[2]
-	rest_side = side
-	var bed: Vector3 = island.hammock_point(0.5)
-	# Head on the upper end, hips mid-pocket — body along the hammock centreline.
-	var head_t := 0.72
-	var hip_t := 0.48
-	var foot_t := 0.24
-	var hip_f: Dictionary = island.hammock_frame(hip_t)
-	var head_f: Dictionary = island.hammock_frame(head_t)
-	var foot_f: Dictionary = island.hammock_frame(foot_t)
-	var head_dir: Vector3 = ((head_f["pos"] as Vector3) - (hip_f["pos"] as Vector3))
-	if head_dir.length_squared() < 1e-6:
-		head_dir = along
-	else:
-		head_dir = head_dir.normalized()
-	if head_dir.dot(along) < 0.0:
-		var tmp := head_t
-		head_t = foot_t
-		foot_t = tmp
-		head_f = island.hammock_frame(head_t)
-		foot_f = island.hammock_frame(foot_t)
-		head_dir = ((head_f["pos"] as Vector3) - (hip_f["pos"] as Vector3)).normalized()
-	# Keep the spine on the centreline (no diagonal twist into the rails).
-	var into: Vector3 = (-Vector3.UP).lerp(-(hip_f["normal"] as Vector3).normalized(), 0.25).normalized()
-	rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Nest ~8 cm into the dish so fabric sides rise above the torso without burying him.
-	var hip_pos: Vector3 = hip_f["pos"] as Vector3
-	rest_lie = hip_pos - (hip_f["normal"] as Vector3) * 0.08
-	# Sit facing OUT toward the approach so thighs hang over the near edge to the ground.
-	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
-	var sit_frame: Dictionary = island.hammock_frame(0.50)
-	var sit_n: Vector3 = (sit_frame["normal"] as Vector3).normalized()
-	var sit_side: Vector3 = (sit_frame["side"] as Vector3).normalized()
-	if sit_side.dot(side) < 0.0:
-		sit_side = -sit_side
-	rest_seat = (sit_frame["pos"] as Vector3) + sit_side * (island.hammock_half_w * 0.90) + sit_n * 0.08
-	# Stand on sand beside the hammock, ≥0.6 m from any palm trunk.
-	rest_approach = _hammock_stand_clear(bed, side)
-	boy.hat_beside_world = Vector3.ZERO
-	set_meta("lie_head_t", head_t)
-	set_meta("lie_hip_t", hip_t)
-	set_meta("lie_foot_t", foot_t)
-	set_meta("lie_foot_pos", foot_f["pos"])
+	return rest_pose._setup_hammock_rest()
 
-
-## Pick a stand pose beside the hammock that clears palm trunks by ≥ min_clear metres.
 func _hammock_stand_clear(bed: Vector3, side: Vector3, min_clear := 0.6) -> Vector3:
-	var candidates: Array[Vector3] = []
-	for sgn in [1.0, -1.0]:
-		for dist in [0.95, 1.15, 1.40, 1.70]:
-			var p: Vector3 = bed + side * sgn * (island.hammock_half_w + dist)
-			p.y = _surface(p.x, p.z)
-			candidates.append(p)
-	var best := candidates[0]
-	var best_d := -1.0
-	for p in candidates:
-		var d := _nearest_trunk_dist(p)
-		if d >= min_clear and d > best_d:
-			best_d = d
-			best = p
-	if best_d < min_clear:
-		# Nudge the better side away until clear.
-		best = candidates[0]
-		for _i in 16:
-			var d2 := _nearest_trunk_dist(best)
-			if d2 >= min_clear:
-				break
-			var away := _nearest_trunk_away(best)
-			best += away * (min_clear - d2 + 0.08)
-			best.y = _surface(best.x, best.z)
-		rest_side = (best - bed).normalized()
-		rest_side.y = 0.0
-		if rest_side.length_squared() < 1e-6:
-			rest_side = side
-		else:
-			rest_side = rest_side.normalized()
-	return best
+	return rest_pose._hammock_stand_clear(bed, side, min_clear)
+
 
 
 func _nearest_trunk_dist(p: Vector3) -> float:
-	var best := 1e9
-	for tr in island.trunks:
-		if tr.is_empty():
-			continue
-		var base: Vector3 = tr[0]
-		best = minf(best, Vector2(p.x - base.x, p.z - base.z).length())
-	return best
+	return rest_pose._nearest_trunk_dist(p)
+
 
 
 func _nearest_trunk_away(p: Vector3) -> Vector3:
-	var best := 1e9
-	var away := Vector3.RIGHT
-	for tr in island.trunks:
-		if tr.is_empty():
-			continue
-		var base: Vector3 = tr[0]
-		var d := Vector2(p.x - base.x, p.z - base.z).length()
-		if d < best:
-			best = d
-			away = Vector3(p.x - base.x, 0.0, p.z - base.z)
-	if away.length_squared() < 1e-6:
-		return rest_side if rest_side.length_squared() > 1e-6 else Vector3.RIGHT
-	return away.normalized()
+	return rest_pose._nearest_trunk_away(p)
 
-
-## Sunbathing on the chaise: hips in the seat–back crease, spine+head on the ~45° pad,
-## heels on the seat cushion. Hat is off (on chest / sand). Snap by skinned mesh only.
 func _setup_lounger_rest() -> void:
-	# Real chaise: hips on the seat just forward of the crease (butt on cushion, not in the hinge
-	# corner), spine along the ~45° pad, head on the pad.
-	# Hips just forward of the crease so thighs rest on the seat top (not in the hinge).
-	var seat_hip_u := 0.82
-	var hip_s := 0.42
-	var head_s := 0.82
-	var foot_s := 0.10
-	var seat_h: Dictionary = island.lounger_seat_point(seat_hip_u)
-	# Head mid-pad so the skull rests on cushion (reachable, not past the top rail).
-	var back_h: Dictionary = island.lounger_back_point(0.62)
-	var back_mid: Dictionary = island.lounger_back_point(0.42)
-	var seat_along: Vector3 = (seat_h["along"] as Vector3).normalized()
-	var seat_n: Vector3 = (seat_h["normal"] as Vector3).normalized()
-	var back_n: Vector3 = (back_mid["normal"] as Vector3).normalized()
-	# Head axis = up the backrest pad from the crease (must point toward the head end).
-	var to_head: Vector3 = (back_h["pos"] as Vector3) - (seat_h["pos"] as Vector3)
-	var head_dir: Vector3 = (back_h["along"] as Vector3).normalized()
-	if head_dir.dot(to_head) < 0.0:
-		head_dir = -head_dir
-	# Prefer the pad along, but keep a little of the crease→head chord so hips stay near the hinge.
-	if to_head.length_squared() > 1e-6:
-		head_dir = head_dir.lerp(to_head.normalized(), 0.25).normalized()
-	var side: Vector3 = seat_along.cross(Vector3.UP).normalized()
-	if side.length_squared() < 1e-6:
-		side = island.lounger_xf.basis.x.normalized()
-	rest_side = side
-	var st_i := -1
-	for i in island.seats.size():
-		if island.seats[i]["name"] == "躺椅":
-			st_i = i
-			break
-	if st_i >= 0:
-		rest_approach = island.seats[st_i]["approach"]
-		rest_seat = island.seats[st_i]["top"] + Vector3(0, 0.05, 0)
-	else:
-		rest_seat = (seat_h["pos"] as Vector3) + side * 0.35
-		rest_approach = rest_seat + side * 0.4
-	rest_sit_b = Basis(Vector3.UP, atan2(-side.x, -side.z))
-	# Into: follow the backrest so the torso lies ON the pad (not hunched forward).
-	var into: Vector3 = (-back_n * 0.90 - seat_n * 0.10).normalized()
-	rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Guard: face (= −into after basis) must look skyward.
-	if (-rest_lie_b.z).dot(Vector3.UP) < 0.50:
-		into = (-back_n * 0.96 - seat_n * 0.04).normalized()
-		rest_lie_b = _lie_basis_oriented(head_dir, into)
-	# Start ~14 cm above foam; snap settles the back onto the pad.
-	var hip_target: Vector3 = (seat_h["pos"] as Vector3) + seat_n * 0.14
-	hip_target += back_n * 0.025
-	rest_lie = hip_target
-	set_meta("lie_head_s", head_s)
-	set_meta("lie_foot_s", foot_s)
-	set_meta("lie_hip_s", hip_s)
-	set_meta("lie_seat_hip_u", seat_hip_u)
-	set_meta("lie_foot_plane_u", 0.12)
-	set_meta("lie_back_n", back_n)
-	set_meta("lie_head_target", (back_h["pos"] as Vector3) + back_n * 0.04)
-	# Sand beside the chaise — clearly off the body, flat on the ground (no float).
-	var sand_hat: Vector3 = (island.lounger_xf.origin) + side * 1.25 + seat_along * 0.15
-	sand_hat.y = Island.ground_h(sand_hat.x, sand_hat.z) + 0.015
-	set_meta("lie_hat_sand", sand_hat)
-	boy.hat_beside_world = sand_hat
+	return rest_pose._setup_lounger_rest()
 
-## sit -> lie back along the bench / log (the seated boy's「躺下」)
 func _lie_down() -> void:
-	if mode != Mode.REST or rest_kind != "seat" or rest_phase != 4 or seat_lying:
-		return
-	if not island.seats[seat_i]["can_lie"]:
-		return
-	seat_lying = true
-	rest_phase = 3
-	rest_t = 0.0
-	_update_ui()
+	return rest_pose._lie_down()
+
 
 func _act_kind() -> String:
-	return "seatlie" if rest_kind == "seat" and seat_lying else rest_kind
+	return rest_pose._act_kind()
 
-## Lying on the back (supine): local +Y = head_dir, local +Z = into the bed.
-## Tripo mesh faces model +Z; with model.rotation.y = PI that maps to boy −Z, so −Z (= −into)
-## is the chest/face direction (sky / away from the pad).
 func _lie_basis(head_dir: Vector3) -> Basis:
-	return _lie_basis_oriented(head_dir, Vector3.DOWN)
+	return rest_pose._lie_basis(head_dir)
 
-
-## Build a supine basis from an explicit head axis and an into-the-support direction.
 func _lie_basis_oriented(head_dir: Vector3, into_bed: Vector3) -> Basis:
-	var y := head_dir.normalized()
-	var z := into_bed - y * into_bed.dot(y)
-	if z.length_squared() < 1e-8:
-		z = Vector3.DOWN - y * Vector3.DOWN.dot(y)
-	z = z.normalized()
-	# Chest/face (= boy −Z) must have an upward component so selftest face_up passes.
-	if (-z).dot(Vector3.UP) < 0.0:
-		z = -z
-	return Basis(y.cross(z), y, z)
+	return rest_pose._lie_basis_oriented(head_dir, into_bed)
 
-
-## Direction from the body toward the support surface (boy +Z; chest is −Z).
 func _lie_into_bed() -> Vector3:
-	return rest_lie_b.z.normalized()
+	return rest_pose._lie_into_bed()
 
-
-## Current hammock swing that maps rest-world → swung-world (identity when not sleeping).
 func _lie_swing() -> Transform3D:
-	if rest_kind == "sleep" and island.hammock_node:
-		var mid := (island.hammock_a + island.hammock_b) * 0.5
-		return island.hammock_node.global_transform * Transform3D(Basis.IDENTITY, -mid)
-	return Transform3D.IDENTITY
+	return rest_pose._lie_swing()
 
-
-## Raise/lower the sit root so butt + thigh mesh rests ON the seat top (sky-side positive).
-## Uses skinned verts near the hips over the seat footprint — not the hip bone alone.
-## Seat top Y comes from the prop entry (mesh AABB / authored surface), never a hardcoded offset alone.
 func _snap_sit_contact() -> void:
-	if seat_lying:
-		return
-	if rest_kind == "sleep":
-		_snap_hammock_sit_contact()
-		return
-	if rest_kind != "seat" or seat_i < 0 or seat_i >= island.seats.size():
-		return
-	var st: Dictionary = island.seats[seat_i]
-	var top: Vector3 = st["top"]
-	var face: Vector3 = seat_face.normalized()
-	# Iterate in-place so one call settles even when process is ticking.
-	# Logs (坐木) need a wider contact cloud + more passes: short Tripo butt can
-	# miss a tight hip sphere, leaving a 3–4 cm hover or a 2 cm dig from the back.
-	var is_log := String(st.get("name", "")) == "坐木"
-	var is_bench := String(st.get("name", "")) == "长椅"
-	var passes := 12 if is_log else 10
-	for _iter in passes:
-		# Clear foot overrides before measuring — a prior soft-plant can stretch Tripo
-		# shorts through the board and fool the deepest sample into a false dig/float.
-		boy.clear_foot_plant()
-		boy.activity("seat", 1.0, 0.0, gt)
-		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-		var hips: Vector3 = boy.lie_bone_world("mixamorig_Hips")
-		var samples: Array[Vector3] = boy.skinned_sample_world(1200)
-		var depths: Array[float] = []
-		var hip_r := 0.38 if is_log else 0.30
-		var lat_max := 0.70 if is_log else 0.50
-		for s in samples:
-			# Contact cloud: underside of butt + proximal thighs over the board.
-			if s.distance_to(hips) > hip_r:
-				continue
-			if (s - hips).dot(face) > 0.22:
-				continue
-			if s.y > hips.y + 0.02:
-				continue
-			# Ignore Tripo shorts spike verts that hang far below the hip — they dig
-			# the metric while the visible sit surface still floats.
-			if hips.y - s.y > 0.11:
-				continue
-			var lat: float = (s - top).dot(rest_side)
-			var along: float = (s - top).dot(-face)
-			# Stay over the plank (bench front half); logs allow a little behind.
-			if absf(lat) > lat_max or along < (-0.22 if is_log else -0.05) or along > (0.50 if is_log else 0.28):
-				continue
-			depths.append(s.y - top.y)
-		var deepest: float
-		if depths.is_empty():
-			# Tripo ischia hang ~10–12 cm below the hip bone at the visual sit shell.
-			deepest = (hips.y - 0.11) - top.y
-		else:
-			depths.sort()
-			# Low percentile — ignore a few remaining spikes.
-			var idx := mini(maxi(int(depths.size() * 0.15), 0), depths.size() - 1)
-			deepest = depths[idx]
-		# Bench: slight float so Tripo shorts don't bury through the plank; log kisses closer.
-		var target := 0.012 if is_bench else 0.003
-		var err := target - deepest
-		if absf(err) < 0.004:
-			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-			break
-		var step := clampf(err, -0.08, 0.08)
-		rest_root_sit.y += step
-		rest_seat.y += step
-	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-	# Gentle sole kiss / soft hang — never rubber-hose short Tripo shins through the board.
-	if is_bench or is_log:
-		var gnd := Vector3(rest_root_sit.x, _surface(rest_root_sit.x, rest_root_sit.z), rest_root_sit.z)
-		# Short Tripo shins hang above the sand — allow a longer soft pull toward ground.
-		boy.plant_feet_soft(gnd, Vector3.UP, 0.02, 0.28)
+	return rest_pose._snap_sit_contact()
 
-
-## Settle butt onto the near-edge hammock fabric while seated (legs hang outside).
 func _snap_hammock_sit_contact() -> void:
-	if rest_kind != "sleep":
-		return
-	for _iter in 8:
-		boy.activity("sleep", 1.0, 0.0, gt)
-		boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-		_update_hammock_load()
-		var sit_frame: Dictionary = island.hammock_frame(0.50)
-		var n: Vector3 = (sit_frame["normal"] as Vector3).normalized()
-		if n.y < 0.2:
-			n = Vector3.UP
-		var sit_side: Vector3 = (sit_frame["side"] as Vector3).normalized()
-		if sit_side.dot(rest_side) < 0.0:
-			sit_side = -sit_side
-		# Contact target = near-edge lip (matches rest_seat), not cradle centre.
-		var top: Vector3 = (sit_frame["pos"] as Vector3) + sit_side * (island.hammock_half_w * 0.92)
-		var hips: Vector3 = boy.lie_bone_world("mixamorig_Hips")
-		var samples: Array[Vector3] = boy.skinned_sample_world(700)
-		var deepest := 1e9
-		var hit := false
-		for s in samples:
-			if s.distance_to(hips) > 0.28:
-				continue
-			if s.y > hips.y + 0.05:
-				continue
-			# Near-edge samples only (ignore hanging thighs outside the fabric).
-			if (s - top).length() > 0.42:
-				continue
-			hit = true
-			deepest = minf(deepest, (s - top).dot(n))
-		if not hit:
-			deepest = (hips - top).dot(n) - 0.10
-		var target := 0.02
-		var err := target - deepest
-		if absf(err) < 0.004:
-			_update_hammock_load()
-			return
-		var step := clampf(err, -0.05, 0.05)
-		rest_root_sit += n * step
-		rest_seat += n * step
-	boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-	_update_hammock_load()
+	return rest_pose._snap_hammock_sit_contact()
 
-
-## After the lie pose is applied, nudge rest_lie so the skinned mesh sits on the support
-## (no poke-through deeper than ~0, no large float). Includes baked hat verts.
 func _snap_lie_contact() -> void:
-	if rest_kind != "sun" and rest_kind != "sleep":
-		return
-	var into_bed: Vector3 = _lie_into_bed()
-	# Skin shell toward the bed. Tiny hammock offset — large offsets made the snap
-	# "settle" while the visible hip bone still floated above the fabric.
-	var mesh_off := 0.04 if rest_kind == "sleep" else 0.08
-	var pts: Dictionary = boy.lie_contact_points(into_bed, mesh_off)
-	var swing := _lie_swing()
-	# Include baked hat verts for hammock fabric; lounger uses bone snap (hat tip ~kiss).
-	var mesh_d := lie_mesh_penetration_depth(true)
-	if rest_kind == "sleep":
-		var hip_f: Dictionary = island.hammock_frame(float(get_meta("lie_hip_t", 0.48)))
-		var head_f0: Dictionary = island.hammock_frame(float(get_meta("lie_head_t", 0.68)))
-		var head_w: Vector3 = boy.lie_bone_world("mixamorig_Head")
-		var hip_p: Vector3 = swing * (hip_f["pos"] as Vector3)
-		var head_p0: Vector3 = swing * (head_f0["pos"] as Vector3)
-		var hip_side: Vector3 = (swing.basis * (hip_f["side"] as Vector3)).normalized()
-		var hn0: Vector3 = (swing.basis * (hip_f["normal"] as Vector3)).normalized()
-		var head_n0: Vector3 = (swing.basis * (head_f0["normal"] as Vector3)).normalized()
-		if hn0.y < 0.2:
-			hn0 = Vector3.UP
-		# Keep hips + head on the cradle centreline.
-		var hip_lat0: float = (pts["hips"] - hip_p).dot(hip_side)
-		var head_lat0: float = (head_w - head_p0).dot(hip_side)
-		var corr: float = 0.6 * hip_lat0 + 0.4 * head_lat0
-		if absf(corr) > 0.004:
-			rest_lie -= hip_side * clampf(corr, -0.16, 0.16)
-		# Vertical: lift for poke-through (hat brim included); settle light floats.
-		var hip_gap := _signed_gap(pts["hips"], hip_p, hn0)
-		var spine_gap := _signed_gap(pts["spine"], hip_p, hn0)
-		var head_gap := _signed_gap(pts["head"], head_p0, head_n0)
-		var sink_gap := minf(hip_gap, minf(spine_gap, head_gap))
-		# Only settle down when hips AND spine are both floating — never push a
-		# penetrating hip deeper just because the spine still floats a bit.
-		var both_float := hip_gap > 0.012 and spine_gap > 0.012
-		var float_gap := minf(hip_gap, spine_gap)
-		# Nest ~10 cm into the dish so fabric sides rise above the torso.
-		const NEST := -0.08
-		if sink_gap < NEST - 0.06:
-			rest_lie += hn0 * minf(-(sink_gap - NEST) * 0.45, 0.08)
-		elif hip_gap > NEST + 0.025 or both_float:
-			rest_lie -= hn0 * minf(hip_gap - NEST, 0.16)
-		if head_gap < -0.02 and hip_gap < 0.05:
-			rest_lie += head_n0 * minf(-head_gap, 0.04) * 0.35
-		return
-	# Lounger: foam sink OK; fail only on wood-board punch. Settle hips/head onto the pads.
-	# Bone snap only — hat tip may kiss foam within 1 cm; over-lifting floats the torso.
-	var seat_u: float = float(get_meta("lie_seat_hip_u", 0.96))
-	var hip_s: Dictionary = island.lounger_seat_point(seat_u)
-	var mid_b: Dictionary = island.lounger_back_point(0.38)
-	var head_b: Dictionary = island.lounger_back_point(0.62)
-	var back_n: Vector3 = (mid_b["normal"] as Vector3).normalized()
-	var head_n: Vector3 = (head_b["normal"] as Vector3).normalized()
-	var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
-	var seat_along: Vector3 = (hip_s["along"] as Vector3).normalized()  # toward hinge
-	# Bone gaps with a skin shell. Wide mesh probes at Spine2 falsely "kiss" via butt verts
-	# at the crease while the torso floats ~12 cm in front of the pad (#45 hunch look).
-	var spine1_w: Vector3 = boy.lie_bone_world("mixamorig_Spine1")
-	var spine2_w: Vector3 = boy.lie_bone_world("mixamorig_Spine2")
-	var head_w: Vector3 = boy.lie_bone_world("mixamorig_Head")
-	var hips_w: Vector3 = boy.lie_bone_world("mixamorig_Hips")
-	# Skin shell so bones settle onto the pad without burying Tripo flesh.
-	const SKIN_BACK := 0.045
-	const SKIN_HEAD := 0.055
-	const SKIN_HIP := 0.08
-	var g_s2 := minf(
-		_signed_gap(spine1_w, mid_b["pos"], back_n) - SKIN_BACK,
-		_signed_gap(spine2_w, mid_b["pos"], back_n) - SKIN_BACK)
-	var g_head := _signed_gap(head_w, head_b["pos"], head_n) - SKIN_HEAD
-	var g_hip := _signed_gap(hips_w, hip_s["pos"], seat_n) - SKIN_HIP
-	var move := Vector3.ZERO
-	# Pull the reclined torso onto the pad. -back_n sinks into the seat — compensate.
-	if g_s2 > 0.012:
-		var pull := minf(g_s2 - 0.006, 0.035)
-		move -= back_n * pull
-		move += seat_n * pull * 0.45
-	elif g_s2 < -0.01:
-		move += back_n * minf(-g_s2 - 0.002, 0.04)
-	if g_head > 0.012:
-		var hpull := minf(g_head - 0.006, 0.035)
-		move -= head_n * hpull
-		move += seat_n * hpull * 0.35
-		move += seat_along * minf(hpull * 0.2, 0.01)
-	elif g_head < -0.01:
-		move += head_n * minf(-g_head - 0.002, 0.04)
-	if g_hip > 0.015:
-		move -= seat_n * minf(g_hip - 0.008, 0.022)
-	elif g_hip < -0.01:
-		move += seat_n * minf(-g_hip - 0.002, 0.03)
-	# Cap hat/body dig at ~8 mm: tip may kiss foam, but approach-angle leftovers must clear.
-	if mesh_d < -0.01 and move.dot(head_n) < 0.008:
-		move += head_n * minf(-mesh_d - 0.005, 0.014)
-	if move.length() > 0.05:
-		move = move.normalized() * 0.05
-	rest_lie += move
+	return rest_pose._snap_lie_contact()
+
 
 
 func _signed_gap(point: Vector3, surface: Vector3, normal: Vector3) -> float:
-	# positive ⇒ point is on the outward (sky) side of the surface = floating
-	return (point - surface).dot(normal.normalized())
+	return rest_pose._signed_gap(point, surface, normal)
 
-
-## Gaps for selftest / debug: {hips, spine, head, foot_l, foot_r} in metres (sky-side positive).
 func lie_contact_gaps() -> Dictionary:
-	if rest_kind != "sun" and rest_kind != "sleep":
-		return {}
-	var into_bed: Vector3 = _lie_into_bed()
-	# Shell ≈ Tripo skin thickness so gap≈0 when the mesh kisses the support.
-	var shell := 0.28 if rest_kind == "sleep" else 0.08
-	var pts: Dictionary = boy.lie_contact_points(into_bed, shell)
-	var swing := _lie_swing()
-	var out := {}
-	if rest_kind == "sleep":
-		var hip_f: Dictionary = island.hammock_frame(float(get_meta("lie_hip_t", 0.48)))
-		var head_f: Dictionary = island.hammock_frame(float(get_meta("lie_head_t", 0.68)))
-		var foot_f: Dictionary = island.hammock_frame(float(get_meta("lie_foot_t", 0.28)))
-		var hip_p: Vector3 = swing * (hip_f["pos"] as Vector3)
-		var hip_n: Vector3 = (swing.basis * (hip_f["normal"] as Vector3)).normalized()
-		var head_p: Vector3 = swing * (head_f["pos"] as Vector3)
-		var head_n: Vector3 = (swing.basis * (head_f["normal"] as Vector3)).normalized()
-		var foot_p: Vector3 = swing * (foot_f["pos"] as Vector3)
-		var foot_n: Vector3 = (swing.basis * (foot_f["normal"] as Vector3)).normalized()
-		out["hips"] = _signed_gap(pts["hips"], hip_p, hip_n)
-		out["spine"] = _signed_gap(pts["spine"], hip_p, hip_n)
-		out["head"] = _signed_gap(pts["head"], head_p, head_n)
-		out["foot_l"] = _signed_gap(pts["foot_l"], foot_p, foot_n)
-		out["foot_r"] = _signed_gap(pts["foot_r"], foot_p, foot_n)
-	else:
-		var seat_u: float = float(get_meta("lie_seat_hip_u", 0.96))
-		var hip_s: Dictionary = island.lounger_seat_point(seat_u)
-		var foot_s: Dictionary = island.lounger_seat_point(float(get_meta("lie_foot_plane_u", 0.10)))
-		var head_s: Dictionary = island.lounger_back_point(0.62)
-		var mid_s: Dictionary = island.lounger_back_point(0.38)
-		var back_n: Vector3 = (mid_s["normal"] as Vector3).normalized()
-		var head_n: Vector3 = (head_s["normal"] as Vector3).normalized()
-		var seat_n: Vector3 = (hip_s["normal"] as Vector3).normalized()
-		# Mesh-near-bone gaps: contact ≤2 cm means the skin kisses the pad, not a bone capsule.
-		# Bone + skin shell. Tight mesh probes only (r≤0.08) — wide probes read butt as spine.
-		out["hips"] = _signed_gap(boy.lie_bone_world("mixamorig_Hips"), hip_s["pos"], seat_n) - 0.08
-		out["spine"] = minf(
-			_signed_gap(boy.lie_bone_world("mixamorig_Spine1"), mid_s["pos"], back_n) - 0.045,
-			_signed_gap(boy.lie_bone_world("mixamorig_Spine2"), mid_s["pos"], back_n) - 0.045)
-		out["head"] = _signed_gap(boy.lie_bone_world("mixamorig_Head"), head_s["pos"], head_n) - 0.055
-		out["foot_l"] = _signed_gap(pts["foot_l"], foot_s["pos"], seat_n)
-		out["foot_r"] = _signed_gap(pts["foot_r"], foot_s["pos"], seat_n)
-	return out
+	return rest_pose.lie_contact_gaps()
 
-
-## Closest skinned sample near a bone, signed along the support normal (sky-side positive).
 func _mesh_gap_near(bone_pos: Vector3, surface: Vector3, normal: Vector3, radius: float) -> float:
-	var samples: Array[Vector3] = boy.skinned_sample_world(500)
-	normal = normal.normalized()
-	var best := 1e9
-	var hit := false
-	for s in samples:
-		if s.distance_to(bone_pos) > radius:
-			continue
-		hit = true
-		best = minf(best, _signed_gap(s, surface, normal))
-	if not hit:
-		# Fallback: bone with a small shell.
-		return _signed_gap(bone_pos - normal * 0.08, surface, normal)
-	return best
+	return rest_pose._mesh_gap_near(bone_pos, surface, normal, radius)
 
-
-## After a lounger hips-pitch, plant heels on the seat plane so they don't punch through.
 func _plant_lie_feet() -> void:
-	if rest_kind != "sun":
-		return
-	var foot_plane: Dictionary = island.lounger_seat_point(float(get_meta("lie_foot_plane_u", 0.05)))
-	boy.lie_foot_plane_point = foot_plane["pos"]
-	boy.lie_foot_plane_normal = foot_plane["normal"]
-	boy.lie_foot_plant = true
-	# Heels + knees above foam top; hips carry the thighs (no UpLeg override).
-	boy.lie_foot_plant_gap = 0.015
-	boy.plant_feet_on_plane(boy.lie_foot_plane_point, boy.lie_foot_plane_normal, boy.lie_foot_plant_gap, true)
+	return rest_pose._plant_lie_feet()
 
-
-## Deepest penetration of lie contact points into the support (negative = into the surface).
-## Used by selftest: fail if any sample is deeper than 1 cm.
 func lie_penetration_depth() -> float:
-	var gaps: Dictionary = lie_contact_gaps()
-	if gaps.is_empty():
-		return 0.0
-	var deepest := 0.0
-	for k in gaps.keys():
-		deepest = minf(deepest, float(gaps[k]))
-	return deepest
+	return rest_pose.lie_penetration_depth()
 
-
-## Skinned samples vs the rigid backrest BOARD under the foam. Foam kiss is OK.
 func lie_backrest_penetration_depth() -> float:
-	if rest_kind != "sun":
-		return 1.0
-	var samples: Array[Vector3] = boy.skinned_sample_world(280)
-	if samples.is_empty():
-		return 1.0
-	var back: Dictionary = island.lounger_back_point(0.55)
-	var back_n: Vector3 = (back["normal"] as Vector3).normalized()
-	var foam_h: float = maxf(island.lounger_back_half.y * 2.0, 0.08)
-	var board_pos: Vector3 = (back["pos"] as Vector3) - back_n * foam_h
-	var foot_l: Vector3 = boy.lie_bone_world("mixamorig_LeftFoot")
-	var foot_r: Vector3 = boy.lie_bone_world("mixamorig_RightFoot")
-	var thigh_l: Vector3 = boy.lie_bone_world("mixamorig_LeftUpLeg")
-	var thigh_r: Vector3 = boy.lie_bone_world("mixamorig_RightUpLeg")
-	var hips_p: Vector3 = boy.lie_bone_world("mixamorig_Hips")
-	var torso: Array[Vector3] = [
-		boy.lie_bone_world("mixamorig_Spine1"),
-		boy.lie_bone_world("mixamorig_Spine2"),
-		boy.lie_bone_world("mixamorig_Head"),
-	]
-	var deepest := 1e9
-	var hit := false
-	for s in samples:
-		if not island.lounger_back_contains(s, 0.04):
-			continue
-		if s.distance_to(foot_l) < 0.25 or s.distance_to(foot_r) < 0.25:
-			continue
-		if s.distance_to(thigh_l) < 0.18 or s.distance_to(thigh_r) < 0.18:
-			continue
-		if s.distance_to(hips_p) < 0.20:
-			continue
-		var near_torso := false
-		for tp in torso:
-			if s.distance_to(tp) < 0.28:
-				near_torso = true
-				break
-		if not near_torso:
-			continue
-		var g := _signed_gap(s, board_pos, back_n)
-		if g < -0.25:
-			continue
-		hit = true
-		deepest = minf(deepest, g)
-	return deepest if hit else 0.02
+	return rest_pose.lie_backrest_penetration_depth()
+
 
 
 func lounger_back_slab_clear() -> float:
-	return island.lounger_back_half.y * 2.0 + 0.08
+	return rest_pose.lounger_back_slab_clear()
 
-
-## Skinned samples vs the rigid seat BOARD under the foam cushion.
-## 2–4 cm foam compress is expected; failing means punching through the wood.
 func lie_seat_penetration_depth() -> float:
-	if rest_kind != "sun":
-		return 1.0
-	var samples: Array[Vector3] = boy.skinned_sample_world(360)
-	if samples.is_empty():
-		return 1.0
-	var seat: Dictionary = island.lounger_seat_point(0.5)
-	var seat_n: Vector3 = (seat["normal"] as Vector3).normalized()
-	var foam_h: float = maxf(island.lounger_seat_half.y * 2.0, 0.06)
-	var board_pos: Vector3 = (seat["pos"] as Vector3) - seat_n * foam_h
-	var deepest := 1e9
-	var hit := false
-	for s in samples:
-		if not island.lounger_seat_contains(s, 0.05):
-			continue
-		if island.lounger_back_contains(s, 0.02):
-			continue
-		var g := _signed_gap(s, board_pos, seat_n)
-		# Ignore wrap-around under the thin board.
-		if g < -0.25:
-			continue
-		hit = true
-		deepest = minf(deepest, g)
-	return deepest if hit else 0.02
+	return rest_pose.lie_seat_penetration_depth()
 
-
-## Skinned body (+ baked hat crown/brim verts) vs the support surface.
-## Returns the deepest signed gap (negative = into the furniture). Selftest fails below −1 cm.
 func lie_mesh_penetration_depth(include_hat := true) -> float:
-	if rest_kind != "sun" and rest_kind != "sleep":
-		return 0.0
-	var samples: Array[Vector3] = boy.skinned_sample_world(450)
-	# Include hat samples when the brim is still on the head (chest mode clears fabric).
-	if include_hat and boy.hat_mode == "head":
-		samples.append_array(boy.hat_sample_world(140))
-	if samples.is_empty():
-		return 0.0
-	var deepest := 1e9
-	var hit := false
-	var swing := _lie_swing()
-	if rest_kind == "sleep":
-		var along: Vector3 = (island.hammock_b - island.hammock_a).normalized()
-		var mid: Vector3 = (island.hammock_a + island.hammock_b) * 0.5
-		var ham_len := maxf(island.hammock_a.distance_to(island.hammock_b), 0.01)
-		# Torso contact chain — ignore far limb tips that clip the gathered ends.
-		var torso: Array[Vector3] = [
-			boy.lie_bone_world("mixamorig_Hips"),
-			boy.lie_bone_world("mixamorig_Spine1"),
-			boy.lie_bone_world("mixamorig_Spine2"),
-			boy.lie_bone_world("mixamorig_Head"),
-		]
-		for s in samples:
-			var near_torso := false
-			for tp in torso:
-				if s.distance_to(tp) < 0.28:
-					near_torso = true
-					break
-			if not near_torso:
-				continue
-			var t := clampf(0.5 + (s - mid).dot(along) / ham_len, 0.06, 0.94)
-			var fr: Dictionary = island.hammock_frame(t)
-			var fp: Vector3 = swing * (fr["pos"] as Vector3)
-			var fn: Vector3 = (swing.basis * (fr["normal"] as Vector3)).normalized()
-			var side: Vector3 = (swing.basis * (fr["side"] as Vector3)).normalized()
-			if absf((s - fp).dot(side)) > 0.48:
-				continue
-			hit = true
-			deepest = minf(deepest, _signed_gap(s, fp, fn))
-	else:
-		var seat: Dictionary = island.lounger_seat_point(0.5)
-		var back: Dictionary = island.lounger_back_point(0.45)
-		var seat_n: Vector3 = (seat["normal"] as Vector3).normalized()
-		var back_n: Vector3 = (back["normal"] as Vector3).normalized()
-		var seat_pos: Vector3 = seat["pos"] as Vector3
-		var back_pos: Vector3 = back["pos"] as Vector3
-		# Planted heels sit on the seat — don't let foot-skin verts keep the lift loop alive.
-		var foot_l: Vector3 = boy.lie_bone_world("mixamorig_LeftFoot")
-		var foot_r: Vector3 = boy.lie_bone_world("mixamorig_RightFoot")
-		var knee_l: Vector3 = boy.lie_bone_world("mixamorig_LeftLeg")
-		var knee_r: Vector3 = boy.lie_bone_world("mixamorig_RightLeg")
-		var thigh_l: Vector3 = boy.lie_bone_world("mixamorig_LeftUpLeg")
-		var thigh_r: Vector3 = boy.lie_bone_world("mixamorig_RightUpLeg")
-		# Upper-back / head skin only — hinge/hip/leg clips are seat-side geometry.
-		var torso: Array[Vector3] = [
-			boy.lie_bone_world("mixamorig_Spine2"),
-			boy.lie_bone_world("mixamorig_Neck"),
-			boy.lie_bone_world("mixamorig_Head"),
-		]
-		var hips_p: Vector3 = boy.lie_bone_world("mixamorig_Hips")
-		for s in samples:
-			# Legs are owned by seat plant / thigh pose — don't let them drive pad penet.
-			if s.distance_to(foot_l) < 0.25 or s.distance_to(foot_r) < 0.25:
-				continue
-			if s.distance_to(knee_l) < 0.18 or s.distance_to(knee_r) < 0.18:
-				continue
-			if s.distance_to(thigh_l) < 0.18 or s.distance_to(thigh_r) < 0.18:
-				continue
-			if s.distance_to(hips_p) < 0.22:
-				continue
-			if island.lounger_back_contains(s, 0.04):
-				var near_torso := false
-				for tp in torso:
-					if s.distance_to(tp) < 0.16:
-						near_torso = true
-						break
-				if not near_torso:
-					continue
-				# Foam sink OK — fail only if we punch the wood board under the pad.
-				var foam_b := maxf(island.lounger_back_half.y * 2.0, 0.08)
-				var board_b := back_pos - back_n * foam_b
-				var gb := _signed_gap(s, board_b, back_n)
-				if gb < -0.25:
-					continue
-				hit = true
-				deepest = minf(deepest, gb)
-			elif island.lounger_seat_contains(s, 0.04):
-				var foam_h := maxf(island.lounger_seat_half.y * 2.0, 0.06)
-				var board := seat_pos - seat_n * foam_h
-				var gs := _signed_gap(s, board, seat_n)
-				if gs < -0.25:
-					continue
-				hit = true
-				deepest = minf(deepest, gs)
-	if not hit:
-		return 0.0
-	return deepest
+	return rest_pose.lie_mesh_penetration_depth(include_hat)
+
 
 func _wake() -> void:
-	if mode == Mode.REST and rest_phase == 4:
-		_begin_cam_blend()
-		if rest_use_clips:
-			rest_phase = 6
-			rest_t = 0.0
-			rest_clip_phase = "exit"
-			_play_rest_exit_clip()
-		else:
-			rest_phase = 6 if rest_kind == "seat" and not seat_lying else 5
-			rest_t = 0.0
-		_update_ui()
+	return rest_pose._wake()
+
 
 
 func _clip_name(phase: String) -> String:
-	match rest_clip_prop:
-		"bench":
-			return "bench_sit_%s" % phase
-		"log":
-			return "log_sit_%s" % phase
-		"hammock":
-			if phase == "idle":
-				return "hammock_sleep"
-			return "hammock_%s" % phase
-	return ""
+	return rest_pose._clip_name(phase)
+
 
 
 func _apply_boy_prop_root(clip_key: String) -> void:
-	var cinfo: Dictionary = rest_align.get("clips", {}).get(clip_key, {})
-	var rp: Array = cinfo.get("root_pos_prop", [0, 0, -0.5])
-	var yaw_deg := float(cinfo.get("root_yaw_deg", 0.0))
-	var local := Vector3(float(rp[0]), float(rp[1]), float(rp[2]))
-	# Prop-frame placement exactly as authored (do NOT re-snap Y to terrain — slope was
-	# burying the boy ~10–15 cm into the seat). player == boy, so never overwrite after.
-	var pos := rest_prop_xf * local
-	# alignment.json yaw 0 => faces +Z; boy.gd model.rotation.y = PI flips Mixamo +Z to game −Z,
-	# so add PI when placing the boy node to match authored facing.
-	var yaw := rest_prop_xf.basis.get_euler().y + deg_to_rad(yaw_deg) + PI
-	boy.global_transform = Transform3D(Basis(Vector3.UP, yaw), pos)
-	face_yaw = yaw
-	ground_y = pos.y
+	return rest_pose._apply_boy_prop_root(clip_key)
+
 
 
 func _play_rest_enter_clip() -> void:
-	var clip := _clip_name("enter")
-	rest_clip_phase = "enter"
-	_apply_boy_prop_root(clip)
-	boy.play_prop_clip(clip, false, 0.15)
-	if rest_clip_prop == "hammock":
-		island.set_hammock_clip_frame("hammock_enter", 0)
-		boy.set_face_expr("idle")
+	return rest_pose._play_rest_enter_clip()
+
 
 
 func _play_rest_idle_clip() -> void:
-	var clip := _clip_name("idle")
-	rest_clip_phase = "idle"
-	_apply_boy_prop_root(_clip_name("enter"))  # same root as enter
-	boy.play_prop_clip(clip, true, 0.12)
-	if rest_clip_prop == "hammock":
-		island.set_hammock_clip_frame("hammock_sleep", 0)
-		boy.set_face_expr("sleep")
-	else:
-		boy.set_face_expr("smile")
+	return rest_pose._play_rest_idle_clip()
+
 
 
 func _play_rest_exit_clip() -> void:
-	var clip := _clip_name("exit")
-	rest_clip_phase = "exit"
-	_apply_boy_prop_root(_clip_name("enter"))
-	boy.play_prop_clip(clip, false, 0.12)
-	if rest_clip_prop == "hammock":
-		island.set_hammock_clip_frame("hammock_exit", 0)
-		boy.set_face_expr("idle")
+	return rest_pose._play_rest_exit_clip()
+
 
 
 func _finish_rest_exit() -> void:
-	var clip := _clip_name("exit")
-	var cinfo: Dictionary = rest_align.get("clips", {}).get(clip, {})
-	var after: Dictionary = cinfo.get("after_exit", {})
-	if after.has("new_root_pos_prop"):
-		var np: Array = after["new_root_pos_prop"]
-		var local := Vector3(float(np[0]), float(np[1]), float(np[2]))
-		var pos := rest_prop_xf * local
-		var yaw := rest_prop_xf.basis.get_euler().y + deg_to_rad(float(after.get("new_yaw_deg", 180.0))) + PI
-		boy.global_transform = Transform3D(Basis(Vector3.UP, yaw), pos)
-		face_yaw = yaw
-		ground_y = pos.y
-		rest_approach = Vector3(pos.x, _surface(pos.x, pos.z), pos.z)
-	else:
-		# Fallback: end_root_shift in prop XZ (shift is [x,z]).
-		var sh: Array = cinfo.get("end_root_shift_prop", [0, 0])
-		var yaw_d := deg_to_rad(float(cinfo.get("end_yaw_delta_deg", 180.0)))
-		var enter_key := _clip_name("enter")
-		var einfo: Dictionary = rest_align.get("clips", {}).get(enter_key, {})
-		var rp0: Array = einfo.get("root_pos_prop", [0, 0, -0.5])
-		var local0 := Vector3(float(rp0[0]), float(rp0[1]), float(rp0[2]))
-		var base := rest_prop_xf * local0
-		var shift := rest_prop_xf.basis * Vector3(float(sh[0]), 0.0, float(sh[1]))
-		var pos2 := base + shift
-		# After exit: stand on terrain at the new XZ (authored pad should be flat).
-		pos2.y = _surface(pos2.x, pos2.z)
-		var yaw0 := rest_prop_xf.basis.get_euler().y + deg_to_rad(float(einfo.get("root_yaw_deg", 0.0))) + PI
-		var yaw2 := yaw0 + yaw_d
-		boy.global_transform = Transform3D(Basis(Vector3.UP, yaw2), pos2)
-		face_yaw = yaw2
-		ground_y = pos2.y
-	boy.end_prop_clip(0.2)
-	if rest_clip_prop == "hammock":
-		island.set_hammock_clip_frame("empty", 0)
-	island.set_hammock_load([] as Array[Vector3])
-	move_vel = Vector3.ZERO
-	ground_y = _surface(player.position.x, player.position.z)
-	mode = Mode.EXPLORE
-	# Ease back to follow from the last sit framing (don't snap behind).
-	ex_yaw = cam_yaw
-	ex_pitch = cam_pitch
-	ex_dist = cam_dist
-	rest_exit_cam_t = 0.8
-	rest_use_clips = false
-	rest_clip_phase = ""
-	_update_action_kind()
-	_update_ui()
+	return rest_pose._finish_rest_exit()
+
 
 
 func _sync_hammock_cloth_to_boy() -> void:
-	if rest_clip_prop != "hammock":
-		return
-	var clip := boy.prop_clip
-	if clip == "":
-		return
-	island.set_hammock_clip_frame(clip, boy.prop_clip_frame(24.0))
+	return rest_pose._sync_hammock_cloth_to_boy()
+
 
 
 func _rest_tick_clips(delta: float) -> void:
-	rest_t += delta
-	match rest_phase:
-		0:
-			# Walk to the prop marker (approach).
-			var d := rest_approach - player.position
-			d.y = 0.0
-			if d.length() < 0.08 or rest_t > 8.0:
-				player_ctrl.write_position(Vector3(rest_approach.x, player.position.y, rest_approach.z))
-				move_vel = Vector3.ZERO
-				boy.set_move(0.0)
-				boy.set_idle()
-				rest_phase = 1
-				rest_t = 0.0
-				_play_rest_enter_clip()
-			else:
-				var spd := minf(1.0, d.length() * 3.0 + 0.3)
-				move_vel = move_vel.move_toward(d.normalized() * spd, 8.0 * delta)
-				face_yaw = lerp_angle(face_yaw, atan2(-d.x, -d.z), 1.0 - exp(-delta * 10.0))
-				var to := _try_move(player.position, move_vel * delta)
-				if to.distance_to(player.position) < move_vel.length() * delta * 0.2 and rest_t > 0.5:
-					# Stuck — snap ahead.
-					player_ctrl.write_position(Vector3(rest_approach.x, player.position.y, rest_approach.z))
-				else:
-					player_ctrl.write_position(to)
-				player_ctrl.write_position(Vector3(player.position.x, _surface(player.position.x, player.position.z), player.position.z))
-				player_ctrl.write_yaw(face_yaw)
-				boy.set_move(move_vel.length())
-		1, 2, 3:
-			# Enter clip playing (root fixed; hips carry root-motion).
-			_sync_hammock_cloth_to_boy()
-			if boy.prop_clip_finished() or rest_t > boy.prop_clip_length() + 0.3:
-				rest_phase = 4
-				rest_t = 0.0
-				_play_rest_idle_clip()
-			zzz.visible = false
-		4:
-			# Idle / sleep loop.
-			_sync_hammock_cloth_to_boy()
-			zzz.visible = rest_kind == "sleep"
-			if zzz.visible:
-				var head: Vector3 = (boy.parts["head"] as Node3D).global_position
-				var cyc := fmod(rest_t * 0.5, 1.0)
-				zzz.text = ["z", "z Z", "z Z z", "z Z z"][int(cyc * 4.0) % 4]
-				zzz.global_position = head + Vector3(0, 0.38 + cyc * 0.12, 0) + rest_side * 0.1
-				zzz.modulate.a = 1.0 - smoothstep(0.75, 1.0, cyc)
-		5, 6:
-			# Exit clip.
-			zzz.visible = false
-			_sync_hammock_cloth_to_boy()
-			if boy.prop_clip_finished() or rest_t > boy.prop_clip_length() + 0.35:
-				_finish_rest_exit()
-		_:
-			pass
-	_update_ui()
+	return rest_pose._rest_tick_clips(delta)
+
 
 
 func _rest_tick(delta: float) -> void:
-	if rest_frozen:
-		# Shot / selftest hold: keep hammock sag + Zzz, do not advance phases.
-		if rest_kind == "sleep" and rest_phase in [2, 3, 4, 5, 6]:
-			if rest_use_clips:
-				_sync_hammock_cloth_to_boy()
-			else:
-				_update_hammock_load()
-			if rest_phase == 4:
-				zzz.visible = true
-				var head_z: Vector3 = (boy.parts["head"] as Node3D).global_position
-				zzz.global_position = head_z + Vector3(0, 0.42, 0) + rest_side * 0.1
-				zzz.modulate.a = 0.85
-			else:
-				zzz.visible = false
-		return
-	if rest_use_clips:
-		_rest_tick_clips(delta)
-		return
-	rest_t += delta
-	var sleep := rest_kind == "sleep"
-	var swing := Transform3D.IDENTITY
-	match rest_phase:
-		0:
-			# walk to the spot next to the bed
-			var d := rest_approach - player.position
-			d.y = 0.0
-			if d.length() < 0.06 or rest_t > 7.0:
-				player_ctrl.write_position(Vector3(rest_approach.x, player.position.y, rest_approach.z))
-				move_vel = Vector3.ZERO
-				boy.set_move(0.0)
-				boy.set_idle()
-				rest_phase = 1
-				rest_t = 0.0
-			else:
-				var spd := minf(1.0, d.length() * 3.0 + 0.3)
-				move_vel = move_vel.move_toward(d.normalized() * spd, 8.0 * delta)
-				face_yaw = lerp_angle(face_yaw, atan2(-d.x, -d.z), 1.0 - exp(-delta * 10.0))
-				var to := _try_move(player.position, move_vel * delta)
-				if to.distance_to(player.position) < move_vel.length() * delta * 0.2 and rest_t > 0.5:
-					to = player.position + move_vel * delta   # wedged: the spot is right there, just go
-				var h := _surface(to.x, to.z)
-				ground_y = lerpf(ground_y, h, 1.0 - exp(-delta * 18.0))
-				to.y = ground_y
-				player_ctrl.write_position(to)
-				player_ctrl.write_yaw(face_yaw)
-				boy.set_move(move_vel.length())
-		1:
-			# turn around: back to the bed (hammock) / face the sea (towel)
-			var want := rest_sit_b.get_euler().y
-			face_yaw = lerp_angle(face_yaw, want, 1.0 - exp(-delta * 9.0))
-			player_ctrl.write_yaw(face_yaw)
-			if rest_t > 0.55:
-				face_yaw = want
-				rest_phase = 2
-				rest_t = 0.0
-		2, 6:
-			var dur := 1.05
-			var k := clampf(rest_t / dur, 0.0, 1.0)
-			if rest_phase == 6:
-				k = 1.0 - k
-			var ks := smoothstep(0.0, 1.0, k)
-			var pl := boy.activity(rest_kind, k, 0.0, gt)
-			var root: Vector3
-			if sleep:
-				# Side perch → settle onto mid fabric; lift clears the rail.
-				var edge := rest_approach.lerp(rest_root_sit, 0.55)
-				edge.y = maxf(edge.y, rest_root_sit.y + 0.06)
-				root = rest_approach.lerp(edge, clampf(ks * 1.35, 0.0, 1.0)).lerp(rest_root_sit, smoothstep(0.45, 1.0, ks))
-				root.y += 0.16 * sin(PI * ks)
-			else:
-				root = rest_approach.lerp(rest_root_sit, ks)
-				# Clear the seat board mid-lerp; settle by snap near the end.
-				var is_log_exit := rest_kind == "seat" and seat_i >= 0 and seat_i < island.seats.size() \
-					and String(island.seats[seat_i].get("name", "")) == "坐木"
-				root.y += (0.24 if is_log_exit else 0.17) * sin(PI * ks)
-				if rest_phase == 6:
-					# Hold seat-height Y until the sit clip has mostly stood up.
-					var stand_u := smoothstep(0.06, 0.62, 1.0 - ks)
-					var y_pad := 0.16 if is_log_exit else 0.07
-					var y_hold := lerpf(rest_root_sit.y + y_pad, rest_approach.y, stand_u)
-					root.y = maxf(root.y, y_hold)
-					# Slide further off the seat so standing legs don't clip the log volume.
-					var away: Vector3 = rest_approach - rest_seat
-					away.y = 0.0
-					if away.length() > 0.05:
-						root += away.normalized() * ((0.32 if is_log_exit else 0.16) * (1.0 - ks))
-			swing = island.swing_hammock(swing_amp * sin(gt * 1.3)) if sleep else Transform3D.IDENTITY
-			boy.global_transform = swing * Transform3D(rest_sit_b, root)
-			# Seat exit: live mesh clearance against the seat top footprint.
-			if rest_kind == "seat" and rest_phase == 6 and seat_i >= 0 and seat_i < island.seats.size():
-				var st_ex: Dictionary = island.seats[seat_i]
-				var top_ex: Vector3 = st_ex["top"]
-				var face_ex: Vector3 = seat_face.normalized()
-				var side_ex: Vector3 = rest_side.normalized() if rest_side.length() > 0.1 else face_ex.cross(Vector3.UP).normalized()
-				var hips_ex: Vector3 = boy.lie_bone_world("mixamorig_Hips")
-				var dig_ex := 1e9
-				var hit_ex := false
-				for s_ex in boy.skinned_sample_world(500):
-					if s_ex.distance_to(hips_ex) > 0.38:
-						continue
-					if s_ex.y > hips_ex.y + 0.05:
-						continue
-					var lat_ex: float = (s_ex - top_ex).dot(side_ex)
-					var along_ex: float = (s_ex - top_ex).dot(-face_ex)
-					if absf(lat_ex) > 0.70 or along_ex < -0.22 or along_ex > 0.45:
-						continue
-					hit_ex = true
-					dig_ex = minf(dig_ex, s_ex.y - top_ex.y)
-				if hit_ex and dig_ex < -0.008:
-					root.y += minf(-dig_ex + 0.02, 0.16)
-					var away2: Vector3 = rest_approach - rest_seat
-					away2.y = 0.0
-					if away2.length() > 0.05:
-						root += away2.normalized() * minf(-dig_ex, 0.10)
-					boy.global_transform = Transform3D(rest_sit_b, root)
-			if rest_kind == "seat" and rest_phase == 2 and ks > 0.72:
-				_snap_sit_contact()
-				pl = boy.activity("seat", 1.0, 0.0, gt)
-				rest_root_sit = rest_seat - rest_sit_b * pl
-				var settled := rest_approach.lerp(rest_root_sit, ks)
-				settled.y += 0.08 * sin(PI * ks)
-				boy.global_transform = Transform3D(rest_sit_b, settled)
-			if sleep and rest_phase == 2 and ks > 0.70:
-				_snap_sit_contact()
-				pl = boy.activity("sleep", 1.0, 0.0, gt)
-				rest_root_sit = rest_seat - rest_sit_b * pl
-				boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-				_update_hammock_load()
-			if rest_t >= dur:
-				rest_t = 0.0
-				if rest_phase == 2:
-					if rest_kind == "seat":
-						_snap_sit_contact()
-						pl = boy.activity("seat", 1.0, 0.0, gt)
-						rest_root_sit = rest_seat - rest_sit_b * pl
-					elif sleep:
-						_snap_sit_contact()
-						pl = boy.activity("sleep", 1.0, 0.0, gt)
-						rest_root_sit = rest_seat - rest_sit_b * pl
-						_update_hammock_load()
-					rest_phase = 4 if rest_kind == "seat" else 3
-					_update_ui()
-				else:
-					boy.end_activity()
-					if sleep:
-						island.set_hammock_load([] as Array[Vector3])
-					player_ctrl.write_position(_blocked_by(rest_approach))
-					player_ctrl.write_yaw(face_yaw)
-					ground_y = _surface(player.position.x, player.position.z)
-					move_vel = Vector3.ZERO
-					mode = Mode.EXPLORE
-					ex_yaw = cam_yaw
-					ex_pitch = cam_pitch
-					ex_dist = cam_dist
-					rest_exit_cam_t = 0.8
-					_update_action_kind()
-					_update_ui()
-		3, 5:
-			var dur2 := SEAT_LIE_DUR if rest_kind == "seat" else LIE_BLEND_DUR
-			var k2 := clampf(rest_t / dur2, 0.0, 1.0)
-			if rest_phase == 5:
-				k2 = 1.0 - k2
-			var ks2 := smoothstep(0.0, 1.0, k2)
-			var pl2 := boy.activity(_act_kind(), 1.0, k2, gt)
-			var b := rest_sit_b.slerp(rest_lie_b, ks2)
-			var w := rest_seat.lerp(rest_lie, ks2) + Vector3(0, 0.10 * sin(PI * k2), 0)
-			if rest_kind == "sun":
-				# Keep butt/back/hat clear of lounger foam during tip-back AND tip-up (exit).
-				# Prior lifts still dug ~11 cm into the pad mid-exit — clear the foam fully.
-				w.y += 0.24 * sin(PI * k2)
-				var back_n: Vector3 = (-rest_lie_b.z).normalized()
-				if back_n.y < 0.15:
-					back_n = Vector3.UP
-				w += back_n * (0.14 * sin(PI * k2))
-			if rest_kind == "seat" and island.seats[seat_i]["name"] == "长椅":
-				# shuffles forward on the seat as he turns to lie back: head (and hat) clear of the backrest
-				w += seat_face * 0.18 * sin(PI * k2)
-			if sleep:
-				# Stay above the fabric while tipping into/out of the cradle; snap settles at phase 4.
-				var ham_n: Vector3 = (island.hammock_frame(0.5)["normal"] as Vector3).normalized()
-				w += ham_n * (0.20 * sin(PI * k2))
-				swing_amp = lerpf(swing_amp, 0.06 * ks2 + 0.01, 1.0 - exp(-delta * 2.0))
-				swing = island.swing_hammock(swing_amp * sin(gt * 1.3))
-				_update_hammock_load()
-			boy.global_transform = swing * Transform3D(b, w - b * pl2)
-			# Lounger tip (enter+exit): if mid-blend still penetrates, lift fully clear.
-			if rest_kind == "sun" and rest_phase in [3, 5] and rest_t > 0.15:
-				var dig: float = lie_mesh_penetration_depth(true)
-				if dig < -0.008:
-					w += Vector3.UP * minf(-dig + 0.01, 0.14)
-					boy.global_transform = Transform3D(b, w - b * pl2)
-			if rest_t >= dur2:
-				if sleep and rest_phase == 5:
-					island.set_hammock_load([] as Array[Vector3])
-				rest_t = 0.0
-				rest_phase = 4 if rest_phase == 3 else 6
-				if rest_phase == 6 and rest_kind == "seat":
-					seat_lying = false
-				_update_ui()
-		4 when rest_kind == "seat" and not seat_lying:
-			# lie_k must stay 0 — lie_k=1 switches the pelvis local offset and digs the butt into the board.
-			boy.activity("seat", 1.0, 0.0, rest_t)
-			boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-			# Keep butt on the seat if the sit clip drifts.
-			if fmod(rest_t, 0.35) < delta:
-				_snap_sit_contact()
-				var pl_s := boy.activity("seat", 1.0, 0.0, gt)
-				rest_root_sit = rest_seat - rest_sit_b * pl_s
-				boy.global_transform = Transform3D(rest_sit_b, rest_root_sit)
-		4:
-			# Drop prior foot overrides before posing — planted knees while hips float
-			# stretch Tripo thighs through the cushion.
-			if rest_kind == "sun":
-				boy.clear_foot_plant()
-			var pl3 := boy.activity(_act_kind(), 1.0, 1.0, gt)
-			if sleep:
-				swing_amp = lerpf(swing_amp, 0.07, 1.0 - exp(-delta * 1.0))
-				swing = island.swing_hammock(swing_amp * sin(gt * 1.3))
-			boy.global_transform = swing * Transform3D(rest_lie_b, rest_lie - rest_lie_b * pl3)
-			# contact snap so skinned mesh sits on the support (few passes — over-iterating walks off the pad)
-			if rest_t > 0.05 and (not get_meta("lie_snapped", false) or fmod(rest_t, 1.5) < delta):
-				var passes := 6 if not get_meta("lie_snapped", false) else 2
-				for _pass in passes:
-					_snap_lie_contact()
-					pl3 = boy.activity(_act_kind(), 1.0, 1.0, gt)
-					boy.global_transform = swing * Transform3D(rest_lie_b, rest_lie - rest_lie_b * pl3)
-				set_meta("lie_snapped", true)
-			if sleep:
-				_update_hammock_load()
-			_plant_lie_feet()
-	# floating Zzz above the sleeping head
-	zzz.visible = sleep and rest_phase == 4
-	if zzz.visible:
-		var head: Vector3 = (boy.parts["head"] as Node3D).global_position
-		var cyc := fmod(rest_t * 0.5, 1.0)
-		zzz.text = ["z", "z Z", "z Z z", "z Z z"][int(cyc * 4.0) % 4]
-		zzz.global_position = head + Vector3(0, 0.38 + cyc * 0.12, 0) + rest_side * 0.1
-		zzz.modulate.a = 1.0 - smoothstep(0.75, 1.0, cyc)
+	return rest_pose._rest_tick(delta)
+
 
 func _idle_hammock(delta: float) -> void:
-	if mode == Mode.REST and rest_kind == "sleep":
-		return
-	swing_amp = lerpf(swing_amp, 0.015, 1.0 - exp(-delta * 1.0))
-	island.swing_hammock(swing_amp * sin(gt * 1.1))
-	# Empty hammock: light resting sag.
-	if island.hammock_occupied:
-		island.set_hammock_load([] as Array[Vector3])
+	return rest_pose._idle_hammock(delta)
 
-
-## Push hip / shoulder / heel samples into the deformable hammock so the fabric takes his weight.
 func _update_hammock_load() -> void:
-	var pts: Array[Vector3] = []
-	pts.append(boy.lie_bone_world("mixamorig_Hips"))
-	pts.append(boy.lie_bone_world("mixamorig_Spine1"))
-	pts.append(boy.lie_bone_world("mixamorig_Spine2"))
-	pts.append(boy.lie_bone_world("mixamorig_Head"))
-	pts.append(boy.lie_bone_world("mixamorig_LeftFoot"))
-	pts.append(boy.lie_bone_world("mixamorig_RightFoot"))
-	island.set_hammock_load(pts)
+	return rest_pose._update_hammock_load()
 
-
-# ------------------------------------------------------------------ input
 
 func _unhandled_input(event: InputEvent) -> void:
 	if demo_mode:
@@ -2742,152 +1191,43 @@ func _orbit_by(rel: Vector2) -> void:
 	follow_cam._orbit_by(rel)
 
 func _throw_input(event: InputEvent) -> void:
-	var now := Time.get_ticks_usec() / 1e6
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed:
-			if state == State.READY and not throw_walk:
-				_swipe_press(event.position, now)
-		elif state == State.AIMING and aim_src == "swipe":
-			_swipe_release(event.position, now)
-	elif event is InputEventMouseMotion and state == State.AIMING and aim_src == "swipe":
-		_swipe_move(event.position, now)
-	elif event is InputEventKey and event.physical_keycode == KEY_SPACE and not event.echo:
-		if event.pressed and state == State.READY and not throw_walk:
-			_begin_aim(Vector2.ZERO, "key")
-		elif not event.pressed and state == State.AIMING and aim_src == "key":
-			throw_spin = KEY_SPIN
-			_throw()
+	return throw_session._throw_input(event)
 
-## arrow keys / A D aim, W S (or up / down) the launch elevation, Q E the stone's tilt; hold space to charge
 func _throw_keys(delta: float) -> void:
-	if mode != Mode.THROW or throw_walk or not (state == State.READY or (state == State.AIMING and aim_src == "key")):
-		return
-	var k := func(a: Key, b: Key) -> float: return 1.0 if Input.is_physical_key_pressed(a) or Input.is_physical_key_pressed(b) else 0.0
-	var turn: float = k.call(KEY_LEFT, KEY_A) - k.call(KEY_RIGHT, KEY_D)
-	var el: float = k.call(KEY_UP, KEY_W) - k.call(KEY_DOWN, KEY_S)
-	var tl: float = k.call(KEY_E, KEY_PAGEUP) - k.call(KEY_Q, KEY_PAGEDOWN)
-	if turn != 0.0:
-		aim_yaw = clampf(aim_yaw + turn * 0.8 * delta, -AIM_LIM, AIM_LIM)
-	if el != 0.0 or tl != 0.0:
-		key_angles += Vector2(el * 14.0, tl * 16.0) * delta
-		_set_angles(aim_pitch + key_angles.x, aim_tilt + key_angles.y)
-		# whole degrees, but holding the key keeps creeping
-		key_angles -= Vector2(roundf(key_angles.x), roundf(key_angles.y))
-	else:
-		key_angles = Vector2.ZERO
+	return throw_session._throw_keys(delta)
+
 
 func _set_angles(el: float, tilt: float) -> void:
-	aim_pitch = clampf(roundf(el), EL_MIN, EL_MAX)
-	aim_tilt = clampf(roundf(tilt), 0.0, TILT_MAX)
-	el_slider.set_value(aim_pitch)
-	tilt_slider.set_value(aim_tilt)
+	return throw_session._set_angles(el, tilt)
 
-## scripted / keyboard charge: the power bar ping-pongs while held (POWER_CYCLE)
 func _begin_aim(p: Vector2, src := "script") -> void:
-	state = State.AIMING
-	aim_src = src
-	press_pos = p
-	charge_t = 0.0
-	power = 0.0
-	yaw_at_press = aim_yaw
-	_update_ui()
+	return throw_session._begin_aim(p, src)
+
 
 func _swipe_unit() -> float:
-	var vs := get_viewport().get_visible_rect().size
-	return minf(vs.x, vs.y)
+	return throw_session._swipe_unit()
+
 
 func _swipe_press(p: Vector2, t: float) -> void:
-	state = State.AIMING
-	aim_src = "swipe"
-	press_pos = p
-	swipe_hist = [[t, p]]
-	swipe_d = Vector2.ZERO
-	charge_t = 0.0
-	power = 0.0
-	yaw_at_press = aim_yaw
-	view_at_press = cam_aim_yaw
-	_update_ui()
+	return throw_session._swipe_press(p, t)
+
 
 func _swipe_move(p: Vector2, t: float) -> void:
-	swipe_hist.append([t, p])
-	swipe_move_frame = Engine.get_process_frames()
-	while swipe_hist.size() > 3 and t - float(swipe_hist[1][0]) > 0.5:
-		swipe_hist.pop_front()
-	_apply_swipe(p - press_pos)
+	return throw_session._swipe_move(p, t)
+
 
 func _swipe_release(p: Vector2, t: float) -> void:
-	# a slow device can hand over the lift a frame after the finger's last move: it left the glass moving
-	var last: Array = swipe_hist[swipe_hist.size() - 1]
-	if swipe_hist.size() > 1 and Engine.get_process_frames() - swipe_move_frame <= 1 and p.distance_to(last[1]) < _swipe_unit() * 0.02:
-		t = minf(t, float(last[0]))
-	swipe_hist.append([t, p])
-	var fl := _flick(swipe_hist)
-	_apply_swipe(fl[1] if fl[1] != null else p - press_pos)
-	throw_spin = fl[0]
-	_throw()
+	return throw_session._swipe_release(p, t)
 
-## power from the swipe's length, aim from its direction; pointing back towards the kid means "cancel"
 func _apply_swipe(d: Vector2) -> void:
-	swipe_d = d
-	var unit := _swipe_unit()
-	if d.y > unit * 0.03 or d.length() < unit * SWIPE_DEAD:
-		power = 0.0
-		aim_yaw = yaw_at_press
-		return
-	power = clampf((d.length() - unit * SWIPE_DEAD) / (unit * SWIPE_FULL), 0.0, 1.0)
-	# at most 70 deg off straight up: a sideways swipe is not a throw along the dock
-	var a := atan2(d.x, -d.y)
-	if absf(a) > deg_to_rad(70.0):
-		var c := signf(a) * deg_to_rad(70.0)
-		d = Vector2(sin(c), -cos(c)) * d.length()
-	aim_yaw = _swipe_yaw(d)
+	return throw_session._apply_swipe(d)
 
-## The swipe's angle off straight up is the aim's angle off the view line the camera had when the finger
-## went down (it sits right behind the release point). A true screen-to-water projection would squeeze a
-## 30 deg swipe into ~7 deg near the horizon, which feels dead under the thumb.
 func _swipe_yaw(d: Vector2) -> float:
-	return clampf(wrapf(view_at_press - atan2(d.x, -d.y), -PI, PI), -AIM_LIM, AIM_LIM)
+	return throw_session._swipe_yaw(d)
 
-## Spin from how fast the finger was going when it let go (over the last ~90 ms). A finger that rested on
-## an aim and then flicked (within ~0.2 s) throws the aim it rested on, so aiming carefully and then
-## flicking works as well as one quick swipe. Returns [spin 0.2..1, the rested swipe vector or null].
 func _flick(hist: Array) -> Array:
-	var unit := _swipe_unit()
-	var n := hist.size()
-	var t1: float = hist[n - 1][0]
-	var p1: Vector2 = hist[n - 1][1]
-	var j := n - 1
-	while j > 0 and t1 - float(hist[j - 1][0]) <= 0.09:
-		j -= 1
-	# a slow frame can hand over a whole flick at once (moves merged, all stamped with the same time): measure
-	# from the sample before it, as if that was at most 50 ms ago
-	var dt := t1 - float(hist[j][0])
-	if dt < 1.0 / 240.0 and j > 0:
-		j -= 1
-		dt = minf(t1 - float(hist[j][0]), 0.05)
-	var speed := 0.0
-	if j < n - 1:
-		speed = (p1 - (hist[j][1] as Vector2)).length() / maxf(dt, 1.0 / 120.0) / unit
-	var s := clampf(0.2 + 0.8 * smoothstep(0.6, 3.2, speed), 0.2, 1.0)
-	var held: Variant = null
-	if speed > 1.5:
-		for k in range(n - 1, 0, -1):
-			var a: Array = hist[k - 1]
-			var b: Array = hist[k]
-			var v := ((b[1] as Vector2) - (a[1] as Vector2)).length() / maxf(float(b[0]) - float(a[0]), 1e-3) / unit
-			if v < 0.5:
-				var hd: Vector2 = (a[1] as Vector2) - press_pos
-				if t1 - float(a[0]) < 0.22 and hd.length() > unit * 0.12 and hd.y < 0.0:
-					held = hd
-				break
-	return [s, held]
+	return throw_session._flick(hist)
 
-# ------------------------------------------------------------------ physics
-# After Clanet, Hersen & Bocquet, "Secrets of successful stone-skipping" (Nature 2004): the stone's own tilt
-# to the water (attack angle) works best near 20 deg; its flight path must come in low (the steepest entry
-# that still bounces shrinks for a badly tilted, slow or spin-less stone); every bounce costs a roughly fixed
-# amount of kinetic energy (so the number of skips grows with the speed squared), more for a badly tilted
-# stone; spin keeps the tilt steady - without it the stone wobbles and pitches up a little at each bounce.
 
 static func launch_speed(p: float) -> float:
 	return lerp(7.0, 25.0, p)
@@ -2954,218 +1294,52 @@ static func simulate(p: Vector3, v: Vector3, s: float, tilt: float) -> Dictionar
 	return {"skips": n, "dist": Vector2(p.x - o.x, p.z - o.z).length(), "entry": entry, "why": why}
 
 func _aim_dir() -> Vector3:
-	return Vector3(0, 0, -1).rotated(Vector3.UP, aim_yaw)
+	return throw_session._aim_dir()
 
-## where the stone leaves the kid's hand (the release key pose, power independent)
 func _hand_pos() -> Vector3:
-	return _ideal_hand(aim_yaw)
+	return throw_session._hand_pos()
 
-## the release point if he faced `yaw` (the throw turns him square to the aim before the release)
 func _ideal_hand(yaw: float) -> Vector3:
-	var b := Basis(Vector3.UP, yaw).scaled(player.global_basis.get_scale())
-	return player.global_position + b * boy.release_local
+	return throw_session._ideal_hand(yaw)
+
 
 func _initial_velocity() -> Vector3:
-	var dir := _aim_dir()
-	# half-kneeling: lower release, flatter angle, a little less power
-	var crouch := boy.stance == "crouch"
-	dir = dir.rotated(dir.cross(Vector3.UP).normalized(), deg_to_rad(aim_pitch - (1.0 if crouch else 0.0)))
-	return dir * launch_speed(power) * (0.92 if crouch else 1.0)
+	return throw_session._initial_velocity()
+
 
 func _throw() -> void:
-	if power < 0.04:
-		state = State.READY
-		boy.set_idle()
-		_hide_preview()
-		_update_ui()
-		return
-	if aim_src == "script":
-		throw_spin = launch_spin(power)
-	# the swing starts now; the stone leaves the hand on the release frame (Boy.released -> _launch)
-	state = State.THROWING
-	boy.start_throw(power)
-	_play("whoosh", lerpf(-13.0, -3.0, power), lerpf(0.85, 1.15, power) * rng.randf_range(0.96, 1.04))
-	_hide_preview()
-	_update_ui()
+	return throw_session._throw()
+
 
 func _hide_preview() -> void:
-	for d in preview_dots:
-		d.visible = false
-	preview_ring.visible = false
+	return throw_session._hide_preview()
+
 
 func _launch() -> void:
-	if state != State.THROWING:
-		return
-	state = State.FLYING
-	fly_t = 0.0
-	stone_pos = _hand_pos()
-	throw_origin = stone_pos
-	stone_vel = _initial_velocity()
-	spin = clampf(throw_spin * rng.randf_range(0.95, 1.03), 0.1, 1.0)
-	stone_tilt = aim_tilt + rng.randf_range(-1.5, 1.5)
-	launch_spin_v = spin
-	first_entry = -1.0
-	spin_ang = 0.0
-	skips = 0
-	throw_dist = 0.0
-	stone.position = stone_pos
-	stone.visible = true
-	demo_release_pending = 1
-	_update_ui()
+	return throw_session._launch()
+
 
 func _hdist(p: Vector3) -> float:
-	return Vector2(p.x - throw_origin.x, p.z - throw_origin.z).length()
+	return throw_session._hdist(p)
+
 
 func _hit_test(p: Vector3) -> String:
-	var gh := Island.ground_h(p.x, p.z)
-	if gh > -0.05 and p.y <= gh + 0.06:
-		return "石头落在沙滩上了"
-	# dock deck
-	if p.y < Island.DECK_Y + 0.06 and p.y > Island.DECK_Y - 0.25:
-		if (absf(p.x) < 1.2 and p.z < island.dock_start_z and p.z > island.dock_end_z) or (absf(p.x) < 3.1 and p.z < island.dock_end_z + 3.9 and p.z > island.dock_end_z - 0.1):
-			return "咚！砸到码头上了"
-	for o in island.obstacles:
-		var c: Vector2 = o[0]
-		if p.y < float(o[2]) and p.y > float(o[4]) - 0.5 and Vector2(p.x - c.x, p.z - c.y).length() < float(o[1]) + 0.08:
-			return "砰！撞到了%s" % o[3]
-	return ""
+	return throw_session._hit_test(p)
+
 
 func _step_stone(dt: float) -> void:
-	stone_vel.y -= GRAVITY * dt
-	stone_pos += stone_vel * dt
-	_orient_stone(dt)
-	if _hdist(stone_pos) > 1.0:
-		var hit := _hit_test(stone_pos)
-		if hit != "":
-			_hit_sound(hit)
-			throw_dist = _hdist(stone_pos)
-			result_text = hit + ("" if skips == 0 else "（之前漂了 %d 下）" % skips)
-			last_tip = "朝开阔的海面瞄准"
-			stone_vel = Vector3(0, -1.0, 0)
-			state = State.SINKING
-			sink_timer = 0.6
-			if stone_pos.y < 0.3:
-				_splash(Vector3(stone_pos.x, 0.0, stone_pos.z), 0.6, false, Vector3.ZERO)
-				_play("sink", -8.0, rng.randf_range(1.0, 1.15))
-			return
-	if stone_pos.y <= 0.02 and stone_vel.y < 0.0:
-		stone_pos.y = 0.02
-		var res := water_contact(stone_vel, spin, stone_tilt, rng.randf_range(-1, 1))
-		throw_dist = _hdist(stone_pos)
-		if first_entry < 0.0:
-			first_entry = res[4]
-		if res[0]:
-			skips += 1
-			stone_vel = res[1]
-			spin = res[2]
-			stone_tilt = res[3]
-			_splash(stone_pos, 0.55, false, stone_vel)
-			_skip_sound(Vector2(stone_vel.x, stone_vel.z).length())
-			_float_text(stone_pos, "%d" % skips)
-			if skips == 5:
-				_toast("5 连跳！")
-				_play("combo", -6.0)
-			elif skips == 10:
-				_toast("10 连跳！太强了！")
-				_play("combo", -5.0, 1.12)
-			elif skips == 15:
-				_toast("15 连跳！水漂大师！")
-				_play("combo", -4.0, 1.26)
-			elif skips == 20:
-				_toast("20 连跳！完美！")
-				_play("combo", -3.0, 1.4)
-			for bn in island.buoys:
-				if Vector2(stone_pos.x - bn.position.x, stone_pos.z - bn.position.z).length() < 2.0:
-					_toast("擦过浮标！")
-		else:
-			_splash(stone_pos, 1.2, true, Vector3.ZERO)
-			_play("sink", -2.0 + rng.randf_range(-1.0, 1.0), rng.randf_range(0.92, 1.06))
-			_judge(res[5], res[4])
-			state = State.SINKING
-			sink_timer = 0.0
-	elif state == State.FLYING and skips > 0:
-		throw_dist = max(throw_dist, _hdist(stone_pos))
-	_update_ui()
+	return throw_session._step_stone(dt)
 
-## the stone flies nose-up by its tilt and spins flat about its own axis; with little spin it wobbles
 func _orient_stone(dt: float) -> void:
-	stone.position = stone_pos
-	spin_ang += spin * 40.0 * dt
-	var f := Vector3(stone_vel.x, 0, stone_vel.z)
-	if f.length() < 0.1:
-		f = _aim_dir()
-	var wob := (1.0 - spin) * 0.35 * sin(fly_t * 9.0)
-	var b := Basis(Vector3.UP, atan2(-f.x, -f.z)) * Basis(Vector3.RIGHT, deg_to_rad(stone_tilt)) \
-		* Basis(Vector3.FORWARD, wob) * Basis(Vector3.UP, spin_ang)
-	stone.basis = b * Basis.from_scale(Vector3(0.7, 0.24, 0.6))
+	return throw_session._orient_stone(dt)
 
-## when the stone goes under: the toast says what happened, the hint bar keeps a quiet tip for the next go
 func _judge(why: String, ang: float) -> void:
-	var tip := ""
-	var tilt := aim_tilt
-	if skips == 0:
-		match why:
-			"tilt":
-				result_text = "扑通！石头倾角太陡，一头扎进水里"
-				tip = "倾角 20° 左右最好"
-			"flat":
-				result_text = "啪！石头太平，拍在水面上停住了"
-				tip = "倾角调到 20° 左右：前端微微翘起"
-			"slow":
-				result_text = "扑通！速度不够，沉了"
-				tip = "往海面划得更长 = 更用力"
-			_:
-				result_text = "扑通！入水角 %d°，太陡了" % roundi(ang)
-				if tilt < 10.0 or tilt > 32.0:
-					tip = "倾角 %d° 不合适，调到 20° 左右" % roundi(tilt)
-				elif aim_pitch > 10.0:
-					tip = "出手仰角 %d° 太高，放低一点" % roundi(aim_pitch)
-				elif power < 0.6:
-					tip = "划得更长、更用力，石头飞得更平"
-				elif launch_spin_v < 0.45:
-					tip = "松手时顺势快甩，转起来的石头更稳"
-				else:
-					tip = "试试半蹲，出手更低"
-	else:
-		result_text = "漂了 %d 下！" % skips
-		if launch_spin_v < 0.45:
-			tip = "旋转不足：松手时顺势快速一甩"
-		elif tilt < 12.0:
-			tip = "倾角偏平：跳得矮、停得快，20° 左右最好"
-		elif tilt > 28.0:
-			tip = "倾角偏陡：每跳都损失很多速度"
-		elif first_entry > 22.0:
-			tip = "入水偏陡（%d°），放低仰角会跳得更多" % roundi(first_entry)
-		elif power < 0.7:
-			tip = "多用点力，跳得更多"
-		elif skips >= 15:
-			tip = "完美的一甩！"
-	last_tip = "上一投：入水 %d° · 倾角 %d° · 旋转 %d%%" % [roundi(maxf(first_entry, 0.0)), roundi(tilt), roundi(launch_spin_v * 100.0)]
-	if tip != "":
-		last_tip += "\n" + tip
+	return throw_session._judge(why, ang)
+
 
 func _finish() -> void:
-	stone.visible = false
-	var rec := false
-	if skips > best_skips:
-		best_skips = skips
-		rec = true
-	if throw_dist > best_dist and skips > 0:
-		best_dist = throw_dist
-		rec = true
-	if rec:
-		_save_best()
-		_play("record", -4.0)
-	_toast(result_text + ("\n新纪录！" if rec else "") + "\n%.1f 米" % throw_dist, 3.0)
-	state = State.READY
-	if skips >= 5 or (rec and skips > 0):
-		boy.react("cheer")
-	elif skips == 0:
-		boy.react("oops")
-	else:
-		boy.react("")
-	finish_hold = 1.2
-	_update_ui()
+	return throw_session._finish()
+
 
 func _stamp_footprint(side: int) -> void:
 	# Phase-driven plant under the stance foot; skinned heel/ball refine yaw + placement.
@@ -3881,6 +2055,8 @@ func _export_ground_probe() -> void:
 		"disc_on": any_disc,
 		"moving": boy.anim == "move" and boy.move_w > 0.2,
 		"speed": cur_speed,
+		"yaw": ex_yaw,
+		"face": face_yaw,
 		"pos": [player.global_position.x, player.global_position.y, player.global_position.z],
 	}
 	JavaScriptBridge.eval("window.__ground = " + JSON.stringify(g), true)
@@ -4404,2154 +2580,151 @@ func _save_best() -> void:
 # ------------------------------------------------------------------ test hooks
 
 func _run_sim_report() -> void:
-	for stc in ["stand", "crouch"]:
-		boy.stance = stc
-		print("SIM stance ", stc, " release ", boy.release_local)
-		_sim_block()
-	boy.stance = "stand"
-	for line in sim_sweeps():
-		print("SIM sweep ", line)
-	print("SIM obstacles=%d palms=%d" % [island.obstacles.size(), island.palm_spots.size()])
-	# gait stress test (dev/ is not exported, so only where the sources are)
-	if ResourceLoader.exists("res://dev/gait_probe.gd"):
-		for line in load("res://dev/gait_probe.gd").stress(self):
-			print("SIM ", line)
-	if ResourceLoader.exists("res://dev/hat_probe.gd"):
-		var hs: Array = load("res://dev/hat_probe.gd").sim(self)
-		for line: String in hs[0]:
-			print("SIM ", line)
-		print("SIM hat stays on the head: %s (worst offset from its seat %.3f mm)" % ["yes" if hs[2] else "NO", float(hs[1]) * 1000.0])
-	_walk_metrics_report()
+	return demo_seq._run_sim_report()
 
-## gait kinematics at the walking and running speeds (dev/walk_metrics.gd)
 func _walk_metrics_report() -> void:
-	if not ResourceLoader.exists("res://dev/walk_metrics.gd"):
-		return
-	# Tripo Mixamo bone names don't match the procedural game_engine profile walk_metrics expects
-	if boy.meta.get("tripo", false):
-		print("SIM gait metrics skipped — Tripo Mixamo (no game_engine bone map)")
-		return
-	for sp: Array in [["stroll", 0.55], ["walk 0.85", 0.85], ["walk", 1.15], ["run", 2.7]]:
-		var r: Array = load("res://dev/walk_metrics.gd").measure(self, float(sp[1]))
-		for line: String in r[0]:
-			print("SIM gait %s  %s" % [sp[0], line])
+	return demo_seq._walk_metrics_report()
+
 
 func _sim_block() -> void:
-	aim_yaw = 0.0
-	aim_tilt = TILT_BEST
-	for pw in [0.5, 0.7, 0.85, 1.0]:
-		for pitch in [0.0, 5.0, 10.0]:
-			power = pw
-			aim_pitch = pitch
-			var r := simulate(_hand_pos(), _initial_velocity(), launch_spin(pw), aim_tilt)
-			print("SIM power=%.2f pitch=%4.1f skips=%2d dist=%5.1f entry=%4.1f" % [pw, pitch, r["skips"], r["dist"], r["entry"]])
+	return demo_seq._sim_block()
 
-## one swept throw setting from the standing release: {skips, dist, entry, why}
 func sim_throw(pw: float, el: float, tilt: float, s: float, stance := "stand") -> Dictionary:
-	var keep := [boy.stance, power, aim_pitch, aim_yaw]
-	boy.stance = stance
-	power = pw
-	aim_pitch = el
-	aim_yaw = 0.0
-	var r := simulate(_hand_pos(), _initial_velocity(), s, tilt)
-	boy.stance = keep[0]; power = keep[1]; aim_pitch = keep[2]; aim_yaw = keep[3]
-	return r
+	return demo_seq.sim_throw(pw, el, tilt, s, stance)
 
-## the angle sweeps: launch elevation, stone tilt and spin each change the skips (full power, standing)
 func sim_sweeps() -> Array[String]:
-	var out: Array[String] = []
-	for row: Array in [["elevation", [-5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0]], ["tilt", [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0]],
-			["spin", [0.2, 0.4, 0.6, 0.8, 1.0]], ["power", [0.2, 0.4, 0.6, 0.8, 1.0]]]:
-		for x: float in row[1]:
-			var r: Dictionary
-			match row[0]:
-				"elevation": r = sim_throw(1.0, x, TILT_BEST, 1.0)
-				"tilt": r = sim_throw(1.0, 4.0, x, 1.0)
-				"spin": r = sim_throw(1.0, 4.0, TILT_BEST, x)
-				_: r = sim_throw(x, 4.0, TILT_BEST, 1.0)
-			out.append("%-9s %5.1f  skips=%2d  dist=%5.1f m  entry=%4.1f deg  %s" % [row[0], x, r["skips"], r["dist"], r["entry"],
-				("sank: " + str(r["why"])) if r["why"] != "slow" or r["skips"] == 0 else "ran out of speed"])
-	return out
+	return demo_seq.sim_sweeps()
+
 
 func _demo_shot(name: String) -> void:
-	if demo_shots.has(name):
-		return
-	demo_shots[name] = true
-	var prefix := ""
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--shotprefix="):
-			prefix = a.substr(13)
-	var img := get_viewport().get_texture().get_image()
-	var path := ProjectSettings.globalize_path("res://screenshots/%s/%s%s.png" % [shot_dir, prefix, name])
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--shotdir="):
-			path = a.substr(10).path_join(prefix + name + ".png")
-	img.save_png(path)
-	print("DEMO screenshot ", path)
+	return demo_seq._demo_shot(name)
 
-# ------------------------------------------------------------------ v4/v5 scripted demo (screenshots / video)
-# godot --path . --fixed-fps 30 --resolution 1280x720 -- --demo4 [--portrait] [--shotdir=/abs/dir]
-# godot --path . --fixed-fps 30 --write-movie x.avi -- --video4=walk|throw|sleep|sun|getup|gait|prints
 
 func _wait(sec: float) -> void:
-	var t0 := gt
-	while gt - t0 < sec:
-		await get_tree().process_frame
+	await demo_seq._wait(sec)
+
 
 var walk_gen := 0
 
 func _walk_to(target: Vector3, run: bool, timeout := 14.0) -> void:
-	walk_gen += 1
-	var my := walk_gen
-	demo_run = run
-	var t0 := gt
-	while gt - t0 < timeout:
-		if my != walk_gen:
-			return
-		var d := target - player.position
-		d.y = 0.0
-		if d.length() < 0.35:
-			break
-		var fwd := Vector3(-sin(ex_yaw), 0, -cos(ex_yaw))
-		var right := Vector3(cos(ex_yaw), 0, -sin(ex_yaw))
-		var dn := d.normalized()
-		demo_input = Vector2(dn.dot(right), -dn.dot(fwd)) * (1.0 if run else 0.72)
-		await get_tree().process_frame
-	if my == walk_gen:
-		demo_input = Vector2.ZERO
-		demo_run = false
+	await demo_seq._walk_to(target, run, timeout)
+
 
 func _hd(a: Vector3, b: Vector3) -> float:
-	return Vector2(a.x - b.x, a.z - b.z).length()
+	return demo_seq._hd(a, b)
+
 
 func _stop_walk() -> void:
-	walk_gen += 1
-	demo_input = Vector2.ZERO
-	demo_run = false
+	return demo_seq._stop_walk()
+
 
 func _place(p: Vector3, yaw: float) -> void:
-	_stop_walk()
-	toast_timer = 0.0
-	lbl_toast.modulate.a = 0.0
-	p.y = _surface(p.x, p.z)
-	player_ctrl.write_position(p)
-	ground_y = p.y
-	face_yaw = yaw
-	player_ctrl.write_yaw(yaw)
-	move_vel = Vector3.ZERO
-	_sync_body_pose(true)
-	_cam_slide = 0.0
-	_cam_slide_want = 0.0
-	_cam_arm_k = 1.0
-	_cam_arm_want = 1.0
-	_snap_explore_cam()
-	_update_action_kind()
+	return demo_seq._place(p, yaw)
+
 
 func _track(yaw_off: float, pitch: float, dist: float, h: float) -> void:
-	demo_cam = true
-	demo_track = [yaw_off, pitch, dist, h]
+	return demo_seq._track(yaw_off, pitch, dist, h)
+
 
 func _free_cam() -> void:
-	demo_cam = false
-	demo_track = []
+	return demo_seq._free_cam()
+
 
 func _fixed_cam(target: Vector3, yaw: float, pitch: float, dist: float) -> void:
-	demo_cam = true
-	demo_track = []
-	cam_target = target; cam_yaw = yaw; cam_pitch = pitch; cam_dist = dist
+	return demo_seq._fixed_cam(target, yaw, pitch, dist)
+
 
 func _shot(name: String) -> void:
-	if demo_seg == "":
-		_demo_shot(name)
+	return demo_seq._shot(name)
+
 
 func _throw_sequence(pre: String, crouch: bool, close: bool) -> void:
-	_place(Vector3(0.3, 0, island.dock_end_z + 1.6), 0.1)
-	await _wait(0.5)
-	_shot(pre + "dock_ui")
-	_enter_throw()
-	boy.stance = "crouch" if crouch else "stand"
-	_toast("半蹲投掷：出手更低、贴着水面" if crouch else "站立投掷", 1.4)
-	_update_ui()
-	await _wait(1.3)
-	_shot(pre + "throw_ready")
-	_begin_aim(Vector2.ZERO)
-	aim_pitch = 3.0
-	var t0 := gt
-	while gt - t0 < 1.5:
-		charge_t = minf((gt - t0) / 1.1, 1.0) * 0.9 * POWER_CYCLE * 0.5
-		if demo_seg != "":
-			aim_yaw = 0.1 + sin((gt - t0) * 2.0) * 0.05
-		await get_tree().process_frame
-	_shot(pre + "charge_game")
-	if close:
-		_fixed_cam(player.global_position + Vector3(0, 0.45, 0) + _aim_dir() * 0.2, aim_yaw + 1.45, 0.08, 2.4)
-		await _wait(0.25)
-		charge_t = 0.9 * POWER_CYCLE * 0.5
-		_shot(pre + "crouch_charge_side" if crouch else pre + "stand_charge_side")
-	charge_t = 0.9 * POWER_CYCLE * 0.5
-	_throw()
-	while state == State.THROWING:
-		await get_tree().process_frame
-	await get_tree().process_frame
-	_shot(pre + ("crouch_release" if crouch else "stand_release"))
-	while boy.anim == "throw" and boy.anim_t < 0.5:
-		await get_tree().process_frame
-	_shot(pre + ("crouch_follow" if crouch else "stand_follow"))
-	_free_cam()
-	fly_t = 0.0
-	while state == State.FLYING and skips < 4:
-		await get_tree().process_frame
-	await _wait(0.2)
-	_shot(pre + "skipping")
-	while state != State.READY:
-		await get_tree().process_frame
-	await _wait(0.9)
-	_shot(pre + "result")
-	await _wait(1.0)
-	_shot(pre + "result_b")
-	await _wait(1.4)
-	_shot(pre + "result_c")
+	await demo_seq._throw_sequence(pre, crouch, close)
+
 
 func _rest_sequence(pre: String, kind: String, close: bool) -> void:
-	if kind == "sleep":
-		var hs := _hammock_spot()
-		var bed: Vector3 = hs[0]
-		var side: Vector3 = hs[2]
-		var p := bed + side * 1.6
-		_place(p, atan2(side.x, side.z))
-	else:
-		var td := island.towel_dir
-		var sd := td.cross(Vector3.UP).normalized()
-		var p2 := island.towel_pos + sd * 1.4 + td * 0.6
-		_place(p2, atan2(sd.x, sd.z))
-	await _wait(0.6)
-	_shot(pre + kind + "_prompt")
-	_begin_rest(kind)
-	while rest_phase < 3:
-		await get_tree().process_frame
-	_shot(pre + kind + "_seated")
-	await _wait(0.45)
-	_shot(pre + kind + "_lying_down")
-	while rest_phase < 4:
-		await get_tree().process_frame
-	await _wait(2.4)
-	_shot(pre + kind + "_rest")
-	if close:
-		var head: Vector3 = (boy.parts["head"] as Node3D).global_position
-		var off := rest_side
-		if kind == "sun":
-			off = (island.towel_dir * 0.8 + rest_side * 0.6).normalized()
-		_fixed_cam(head + Vector3(0, -0.05, 0), atan2(off.x, off.z) + (0.3 if kind == "sleep" else 0.0), 0.75 if kind == "sleep" else 0.6, 1.25)
-		await _wait(0.3)
-		_shot(pre + kind + "_close")
-		var pel: Vector3 = (boy.parts["pelvis"] as Node3D).global_position
-		_fixed_cam(pel + Vector3(0, 0.1, 0), atan2(off.x, off.z) - 0.2, 0.55, 2.3)
-		await _wait(0.3)
-		_shot(pre + kind + "_body")
-		_free_cam()
+	await demo_seq._rest_sequence(pre, kind, close)
 
-## the sea along the beach: shallows, seabed, foam lines (high 3/4 view like the game, low and wide)
 func _shore_sequence(pre: String) -> void:
-	for th: float in [-1.05, 2.2]:
-		var tag := "a" if th < 0.0 else "b"
-		var sea := Island.dir_at(th)
-		var p := island.shore_pt(th, 0.9)
-		var along := sea.cross(Vector3.UP)
-		_place(p, atan2(-sea.x, -sea.z) + 0.5)
-		await _wait(0.6)
-		_fixed_cam(p + sea * 2.2 + Vector3(0, 0.2, 0), atan2(sea.x, sea.z) + 0.55, 0.72, 7.0)
-		await _wait(0.4)
-		_shot(pre + "13%s_shore_top" % tag)
-		_fixed_cam(p + sea * 1.2 + Vector3(0, 0.4, 0), atan2(along.x, along.z) - 0.5, 0.2, 5.0)
-		await _wait(0.4)
-		_shot(pre + "14%s_shore_low" % tag)
-		_fixed_cam(p + sea * 3.0, atan2(sea.x, sea.z) - 0.6, 0.5, 14.0)
-		await _wait(0.4)
-		_shot(pre + "15%s_shore_wide" % tag)
-		_free_cam()
-	var wp := island.shore_pt(-1.2, -1.3)
-	_place(wp, 0.4)
-	_walk_to.call(island.shore_pt(-1.35, -1.1), false)
-	await _wait(1.2)
-	_shot(pre + "16_wading")
-	_stop_walk()
+	await demo_seq._shore_sequence(pre)
 
-## v8 stills: the doodled sign, the campfire, sitting on the bench / log / lounger, throw reach
 func _v8_sequence(pre: String) -> void:
-	var sb := island.sign_board
-	var sn := sb.global_basis.z.normalized()
-	var sc := sb.global_position
-	_place(sc + sn * 2.6 + Vector3(0.8, 0, 0), 0.0)
-	_fixed_cam(sc + Vector3(0, -0.05, 0), atan2(sn.x, sn.z) + 0.12, 0.08, 1.45)
-	await _wait(0.5)
-	_shot(pre + "20_sign_close")
-	_fixed_cam(sc + Vector3(0, -0.55, 0), atan2(sn.x, sn.z) + 0.5, 0.1, 3.0)
-	await _wait(0.4)
-	_shot(pre + "21_sign_post")
-	_fixed_cam(sc + Vector3(0, -0.05, 0), atan2(-sn.x, -sn.z) - 0.2, 0.1, 1.6)
-	await _wait(0.4)
-	_shot(pre + "22_sign_back")
-	# campfire close and with the kid on a log
-	var c := island.campfire_pos
-	_place(c + Vector3(3.5, 0, 3.5), 0.0)
-	_fixed_cam(c + Vector3(0, 0.45, 0), 0.6, 0.22, 2.4)
-	await _wait(1.0)
-	_shot(pre + "23_fire_close")
-	_fixed_cam(c + Vector3(0, 0.3, 0), 2.0, 0.42, 5.5)
-	await _wait(0.3)
-	_shot(pre + "24_fire_wide")
-	for i in island.seats.size():
-		var st: Dictionary = island.seats[i]
-		var face: Vector3 = st["face"]
-		_place((st["approach"] as Vector3) + face * 0.9, atan2(face.x, face.z))
-		_free_cam()
-		await _wait(0.4)
-		_shot(pre + "25_seat_prompt_%d" % i)
-		_on_action()
-		while rest_phase < 4:
-			await get_tree().process_frame
-		await _wait(1.6)
-		_shot(pre + "26_seat_%d" % i)
-		_wake()
-		while mode != Mode.EXPLORE:
-			await get_tree().process_frame
-	# throw: the arm reaching out after the release, gameplay camera and from the side
-	for crouch: bool in [false, true]:
-		for side: bool in [false, true]:
-			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.0)
-			await _wait(0.2)
-			_enter_throw()
-			boy.stance = "crouch" if crouch else "stand"
-			await _wait(1.3)
-			if side:
-				demo_cam = true
-				demo_track = [aim_yaw + PI * 0.5 + 0.1, 0.1, 2.5, 0.55 if not crouch else 0.4, true]
-			_begin_aim(Vector2.ZERO)
-			aim_pitch = 3.0
-			charge_t = 0.9 * POWER_CYCLE * 0.5
-			await _wait(1.0)
-			_throw()
-			var tag := ("crouch" if crouch else "stand") + ("_side" if side else "_game")
-			for k: Array in [[0.0, "a_cock"], [0.15, "b_release"], [0.21, "c_reach"], [0.32, "d_sweep"], [0.46, "e_wrap"]]:
-				while boy.anim_t < float(k[0]) - 0.001:
-					await get_tree().process_frame
-				_shot(pre + "27_throw_%s_%s" % [tag, k[1]])
-			_free_cam()
-			while state != State.READY:
-				await get_tree().process_frame
-			_leave_throw()
-			await _wait(0.6)
+	await demo_seq._v8_sequence(pre)
 
-## v9 stills: shore water through a surf cycle, wading close-ups, lying on the bench / a log, night.
-## part "" = all, or one of shore / wade / lie / night
 func _v9_sequence(pre: String, part: String) -> void:
-	if part == "" or part == "shore":
-		for th: float in [-1.05, 2.2]:
-			var tag := "a" if th < 0.0 else "b"
-			var sea := Island.dir_at(th)
-			var p := island.shore_pt(th, 1.4)
-			var along := sea.cross(Vector3.UP)
-			_place(p, atan2(-sea.x, -sea.z) + 0.5)
-			await _wait(0.4)
-			for k in 4:
-				_fixed_cam(p + sea * 1.6 + Vector3(0, 0.2, 0), atan2(sea.x, sea.z) + 0.55, 0.62, 5.0)
-				await _wait(0.05)
-				_shot(pre + "30%s_shore_%d" % [tag, k])
-				_fixed_cam(p + sea * 1.0 + Vector3(0, 0.3, 0), atan2(along.x, along.z) - 0.5, 0.16, 3.6)
-				await _wait(0.05)
-				_shot(pre + "31%s_shore_low_%d" % [tag, k])
-				await _wait(2.3)
-			_free_cam()
-	if part == "" or part == "wade":
-		var wp := island.shore_pt(-1.2, -1.6)
-		_place(wp, 0.4)
-		_walk_to.call(island.shore_pt(-1.32, -2.0), false)
-		await _wait(1.5)
-		_shot(pre + "32_wading_game")
-		_stop_walk()
-		await _wait(0.6)
-		var bp := player.global_position
-		_fixed_cam(bp + Vector3(0, 0.25, 0), face_yaw + 1.2, 0.12, 1.9)
-		await _wait(0.3)
-		_shot(pre + "33_wading_low")
-		_fixed_cam(bp + Vector3(0, 0.2, 0), face_yaw + 0.5, 0.55, 2.2)
-		await _wait(0.3)
-		_shot(pre + "34_wading_high")
-		var dp := Vector3(0.0, 0.0, lerpf(island.dock_start_z, island.dock_end_z, 0.35))
-		_fixed_cam(dp + Vector3(0, -0.2, 0), 1.3, 0.22, 4.2)
-		await _wait(0.3)
-		_shot(pre + "35_dock_posts")
-		_free_cam()
-	if part == "" or part == "lie" or part == "lieq":
-		for i: int in ([0, 1, 2, 3] if part != "lieq" else [1]):
-			var st: Dictionary = island.seats[i]
-			var face: Vector3 = st["face"]
-			var from_back := i == 2
-			var spot: Vector3 = (st["back_approach"] as Vector3) - face * 0.7 if from_back else (st["approach"] as Vector3) + face * 0.7
-			_place(_blocked_by(spot), 0.0)
-			_free_cam()
-			await _wait(0.3)
-			_on_action()
-			while rest_phase != 4:
-				await get_tree().process_frame
-			await _wait(0.8)
-			_shot(pre + "36_seat_%d_sit" % i)
-			_lie_down()
-			await _wait(SEAT_LIE_DUR * 0.5)
-			_shot(pre + "37_seat_%d_lying_down" % i)
-			while rest_phase != 4:
-				await get_tree().process_frame
-			await _wait(1.5)
-			_shot(pre + "38_seat_%d_lie" % i)
-			_fixed_cam(rest_lie + Vector3(0, 0.1, 0), atan2(seat_face.x, seat_face.z) + 0.35, 0.35, 1.8)
-			await _wait(0.4)
-			_shot(pre + "39_seat_%d_lie_close" % i)
-			_free_cam()
-			_wake()
-			while mode != Mode.EXPLORE:
-				await get_tree().process_frame
-			await _wait(0.3)
+	await demo_seq._v9_sequence(pre, part)
 
-	if part == "" or part == "night":
-		var c := island.campfire_pos
-		_place(c + Vector3(2.4, 0, 2.4), 0.0)
-		await _wait(0.3)
-		_shot(pre + "40_day_ui")
-		_fixed_cam(c + Vector3(0, 0.4, 0), 0.7, 0.25, 4.2)
-		await _wait(0.4)
-		_shot(pre + "40b_day_fire")
-		_free_cam()
-		await _wait(0.2)
-		_toggle_night()
-		await _wait(1.25)
-		_shot(pre + "41_dusk_transition")
-		await _wait(1.6)
-		_shot(pre + "42_night_ui")
-		_fixed_cam(c + Vector3(0, 0.4, 0), 0.7, 0.25, 4.2)
-		await _wait(0.4)
-		_shot(pre + "43_night_fire")
-		var st: Dictionary = island.seats[1]
-		_place(_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.7), 0.0)
-		_free_cam()
-		await _wait(0.2)
-		_on_action()
-		while rest_phase != 4:
-			await get_tree().process_frame
-		await _wait(1.0)
-		_shot(pre + "44_night_sit_fire")
-		_wake()
-		while mode != Mode.EXPLORE:
-			await get_tree().process_frame
-		_place(Vector3(0.3, 0, island.dock_end_z + 1.6), 0.1)
-		await _wait(0.5)
-		_shot(pre + "45_night_dock")
-		_enter_throw()
-		await _wait(1.3)
-		_shot(pre + "46_night_throw_view")
-		_leave_throw()
-		await _wait(0.6)
-		_fixed_cam(Vector3(0, 1.0, island.dock_start_z - 2.0), 2.6, 0.32, 26.0)
-		await _wait(0.4)
-		_shot(pre + "47_night_wide")
-		_fixed_cam(island.beacon_pos + Vector3(0, -3.0, 0), 1.9, 0.12, 18.0)
-		await _wait(0.4)
-		_shot(pre + "48_night_lighthouse")
-		var wp := island.shore_pt(-1.2, -1.6)
-		_place(wp, 0.4)
-		_walk_to.call(island.shore_pt(-1.32, -2.0), false)
-		await _wait(1.5)
-		_shot(pre + "49_night_wading")
-		_stop_walk()
-		_free_cam()
-		_toggle_night()
-		await _wait(2.8)
-
-## v11 stills: the ground round the campfire logs, the water reflection. part "" = all, logs or refl
 func _v11_sequence(pre: String, part: String) -> void:
-	if part == "" or part == "refl":
-		for night in [false, true]:
-			var tag := "night" if night else "day"
-			if night:
-				_toggle_night()
-				await _wait(2.9)
-			_fixed_cam(Vector3(0, 1.0, island.dock_start_z - 2.0), 2.6, 0.32, 26.0)
-			await _wait(0.4)
-			_shot(pre + "61_%s_wide" % tag)
-			_fixed_cam(island.beacon_pos + Vector3(0, -3.0, 0), 1.9, 0.12, 18.0)
-			await _wait(0.4)
-			_shot(pre + "62_%s_lighthouse" % tag)
-			_fixed_cam(Vector3(0, 1.5, island.dock_start_z - 4.0), PI + 0.15, 0.07, 30.0)
-			await _wait(0.4)
-			_shot(pre + "63_%s_low_from_sea" % tag)
-			_fixed_cam(island.campfire_pos + Vector3(0, 0.5, 0), 0.9, 0.1, 16.0)
-			await _wait(0.4)
-			_shot(pre + "64_%s_fire_from_shore" % tag)
-		_free_cam()
-		_toggle_night()
-		await _wait(2.8)
-	if part == "" or part == "logs":
-		var c := island.campfire_pos
-		_place(c + Vector3(6.0, 0, 6.0), 0.0)
-		_fixed_cam(c + Vector3(0, 0.2, 0), 0.4, 0.55, 7.5)
-		await _wait(0.5)
-		_shot(pre + "50_logs_wide")
-		_fixed_cam(c + Vector3(0, 0.2, 0), -2.5, 0.3, 6.5)
-		await _wait(0.3)
-		_shot(pre + "51_logs_from_hill")
-		for i in 3:
-			var a := 0.6 + i * 2.1
-			var lp := island.gp(c.x + cos(a) * 1.7, c.z + sin(a) * 1.7)
-			# along the log (its bank in profile), from the fire side looking past it, and from outside
-			_fixed_cam(lp + Vector3(0, 0.3, 0), atan2(-sin(a), cos(a)), 0.3, 4.2)
-			await _wait(0.3)
-			_shot(pre + "52_log_%d_profile" % i)
-			_fixed_cam(lp + Vector3(0, 0.3, 0), atan2(-cos(a), -sin(a)) + 0.3, 0.12, 3.6)
-			await _wait(0.3)
-			_shot(pre + "53_log_%d_from_fire" % i)
-			_fixed_cam(lp + Vector3(0, 0.25, 0), atan2(cos(a), sin(a)) + 0.35, 0.35, 3.6)
-			await _wait(0.3)
-			_shot(pre + "54_log_%d_outside" % i)
-		_free_cam()
+	await demo_seq._v11_sequence(pre, part)
 
-## v12 stills: the reflection at the screen edges, day and night, round 360 degrees and zoomed in / out
 func _v12_sequence(pre: String, part: String) -> void:
-	if part == "" or part == "bush":
-		var best: Array = island.bush_spots[0]
-		for b: Array in island.bush_spots:
-			if _hd(b[0], island.hut_pos) < _hd(best[0], island.hut_pos) and _hd(b[0], island.hut_pos) > 4.5:
-				best = b
-		var bp: Vector3 = best[0]
-		var bs: float = best[1]
-		var away := Vector3(bp.x - island.hut_pos.x, 0, bp.z - island.hut_pos.z).normalized()
-		var yaw := atan2(away.x, away.z)
-		_place(bp + away * (0.9 + 0.5 * bs), yaw)
-		_fixed_cam(bp + Vector3(0, 0.55 * bs, 0), yaw + 0.5, 0.2, 2.6 * bs)
-		await _wait(0.6)
-		_shot(pre + "80_bush_close")
-		_fixed_cam(bp + Vector3(0, 0.45 * bs, 0), yaw + 2.4, 0.08, 2.0 * bs)
-		await _wait(0.4)
-		_shot(pre + "81_bush_close_side")
-		_fixed_cam(bp + away * 1.2 + Vector3(0, 0.15, 0), yaw - 1.2, 0.05, 1.6)
-		await _wait(0.4)
-		_shot(pre + "82_grass_low")
-		_free_cam()
-		_snap_explore_cam()
-		await _wait(1.0)
-		_shot(pre + "83_bush_game_view")
+	await demo_seq._v12_sequence(pre, part)
 
-	if part == "" or part == "edges":
-		for night in [false, true]:
-			var tag := "night" if night else "day"
-			if night:
-				_toggle_night()
-				await _wait(2.9)
-			var c := Vector3(0, 1.0, island.dock_end_z + 1.0)
-			for k in 8:
-				_fixed_cam(c, k * TAU / 8.0, 0.1, 9.0)
-				await _wait(0.35)
-				_shot(pre + "70_%s_yaw%d" % [tag, k * 45])
-			for z: Array in [[3.5, 0.06, "near"], [30.0, 0.16, "far"]]:
-				_fixed_cam(c, 0.6, z[1], z[0])
-				await _wait(0.35)
-				_shot(pre + "71_%s_zoom_%s" % [tag, z[2]])
-			_fixed_cam(Vector3(0, 1.5, island.dock_start_z - 4.0), PI + 0.15, 0.07, 30.0)
-			await _wait(0.35)
-			_shot(pre + "72_%s_low_from_sea" % tag)
-			if night:
-				_toggle_night()
-				await _wait(2.9)
-		_free_cam()
-	if part == "" or part == "torch":
-		var c := island.campfire_pos
-		_place(c + Vector3(5.0, 0, 5.0), 0.0)
-		demo_nocut = true
-		for night in [false, true]:
-			var tag := "night" if night else "day"
-			if night:
-				_toggle_night()
-				await _wait(2.9)
-			var tp := island.torches[0].global_position
-			var out := Vector3(tp.x - c.x, 0, tp.z - c.z).normalized()
-			var yaw := atan2(out.x, out.z)
-			for sh: Array in [[tp + Vector3(0, -0.05, 0), yaw + PI - 0.5, 0.12, 0.9, "90_%s_torch_head"], [tp + Vector3(0, -0.05, 0), yaw + 0.6, 0.1, 0.9, "90_%s_torch_head_back"], [tp + Vector3(0, -0.8, 0), yaw + PI - 0.9, 0.1, 2.6, "91_%s_torch_full"], [c + Vector3(0, 0.6, 0), yaw + 1.3, 0.22, 7.5, "92_%s_torches_camp"]]:
-				var cy: float = sh[1]
-				_fixed_cam(sh[0], cy, sh[2], sh[3])
-				await _wait(0.5)
-				_shot(pre + (sh[4] as String) % tag)
-			if night:
-				_toggle_night()
-				await _wait(2.9)
-		demo_nocut = false
-		_free_cam()
-
-## v14 stills: the rowboat moored by the dock, from the sea, low over the water, from the dock and above,
-## far enough out to see its reflection, and in the game camera; day and night
 func _v14_sequence(pre: String) -> void:
-	var bp := Vector3(2.3, 0.0, (island.dock_start_z + island.dock_end_z) * 0.5 - 1.0)
-	var c := bp + Vector3(0, 0.1, 0)
-	demo_nocut = true
-	for night in [false, true]:
-		var tag := "night" if night else "day"
-		_place(Vector3(0, 0, island.dock_start_z - 1.0), PI)
-		if night:
-			_toggle_night()
-			await _wait(2.9)
-		for sh: Array in [[c, PI * 0.5 + 0.25, 0.12, 4.6, "95_%s_boat_side"], [c, 0.55, 0.07, 3.8, "96_%s_boat_bow_low"],
-				[c, PI - 0.7, 0.22, 4.2, "97_%s_boat_stern"], [c, -PI * 0.5 + 0.35, 0.72, 3.3, "98_%s_boat_from_dock"],
-				[c, PI * 0.5, 1.35, 4.2, "99_%s_boat_top"], [c, PI * 0.5 + 0.6, 0.05, 9.0, "99_%s_boat_far_reflection"]]:
-			var cy: float = sh[1]
-			_fixed_cam(sh[0], cy, sh[2], sh[3])
-			await _wait(0.5)
-			_shot(pre + (sh[4] as String) % tag)
-		# the beached boat on the sand shares the hull
-		var bb := island.shore_pt(-0.75, 1.6) + Vector3(0, 0.3, 0)
-		var bo := Island.dir_at(-0.75)
-		for sh: Array in [[bb, atan2(bo.x, bo.z) + 0.9, 0.3, 4.2, "99_%s_beached_boat"], [bb, atan2(bo.x, bo.z) - 0.4, 0.95, 3.6, "99_%s_beached_boat_above"]]:
-			var cy: float = sh[1]
-			_fixed_cam(sh[0], cy, sh[2], sh[3])
-			await _wait(0.5)
-			_shot(pre + (sh[4] as String) % tag)
-		_place(Vector3(0.75, 0, bp.z - 0.3), -PI * 0.5)
-		_free_cam()
-		_snap_explore_cam()
-		await _wait(1.2)
-		_shot(pre + "99_%s_boat_game_view" % tag)
-		if night:
-			_toggle_night()
-			await _wait(2.9)
-	demo_nocut = false
-	_free_cam()
+	await demo_seq._v14_sequence(pre)
 
-## A scripted swipe through the real gesture code: the finger goes down at `from`, slides by `to` (short-side
-## units) over `sec`, rests `hold` s (shot `shot` then), and lets go - after a quick flick on along the swipe,
-## or slowly.
 func _demo_swipe(from: Vector2, to: Vector2, sec: float, hold: float, flick: bool, shot := "") -> void:
-	var u := _swipe_unit()
-	_swipe_press(from, gt)
-	var t0 := gt
-	while gt - t0 < sec:
-		_swipe_move(from + to * u * smoothstep(0.0, 1.0, (gt - t0) / sec), gt)
-		await get_tree().process_frame
-	var t1 := gt
-	while gt - t1 < hold:
-		_swipe_move(from + to * u, gt)
-		await get_tree().process_frame
-	if shot != "":
-		_shot(shot)
-	if not flick:
-		_swipe_release(from + to * u, gt)
-		return
-	# the finger leaves the glass still moving: the release comes with the last move
-	var d := to.normalized() * u * 0.32
-	for k in range(1, 4):
-		await get_tree().process_frame
-		_swipe_move(from + to * u + d * (k / 3.0), gt)
-	_swipe_release(from + to * u + d, gt)
+	await demo_seq._demo_swipe(from, to, sec, hold, flick, shot)
+
 
 func _demo_wait_ready(shots: Array) -> void:
-	while state == State.THROWING:
-		await get_tree().process_frame
-	if shots.size() > 0 and shots[0] != "":
-		await _wait(0.12)
-		_shot(shots[0])
-	fly_t = 0.0
-	while state == State.FLYING and skips < 3:
-		await get_tree().process_frame
-	await _wait(0.25)
-	if shots.size() > 1 and shots[1] != "":
-		_shot(shots[1])
-	while state != State.READY:
-		await get_tree().process_frame
-	await _wait(0.9)
-	if shots.size() > 2 and shots[2] != "":
-		_shot(shots[2])
-	await _wait(1.6)
+	await demo_seq._demo_wait_ready(shots)
 
-## the right shoulder (between the clavicle end and the arm joint), in the world
 func _shoulder_pos(side := "r") -> Vector3:
-	var sk := boy.skel
-	var a := sk.get_bone_global_pose(sk.find_bone("upperarm_" + side)).origin
-	var c := sk.get_bone_global_pose(sk.find_bone("clavicle_" + side)).origin
-	return sk.global_transform * a.lerp(c, 0.25)
+	return demo_seq._shoulder_pos(side)
 
-## v16: shoulder close-ups in daylight - rest pose all round, arm raised, the throws, walk / run, then the
-## hammock and the towel (camera yaw relative to his facing: 0 behind, PI in front, +PI/2 his right)
 func _v16_sequence(pre: String) -> void:
-	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-	await _wait(0.6)
-	demo_nocut = true
-	ui_root.visible = false
-	var k := float(_opt("shdist", "1.0"))
-	var y0 := player.rotation.y
-	for s: Array in [["rest_front", "idle", 0.0, 0.3, PI - 0.15, 0.05, 0.75], ["rest_34", "idle", 0.0, 0.3, PI * 0.72, 0.15, 0.6],
-			["rest_side", "idle", 0.0, 0.3, PI * 0.5, 0.06, 0.6], ["rest_back34", "idle", 0.0, 0.3, PI * 0.28, 0.2, 0.6],
-			["rest_back", "idle", 0.0, 0.3, 0.1, 0.12, 0.75], ["rest_top", "idle", 0.0, 0.3, PI * 0.6, 0.85, 0.6],
-			["raise_front", "cheer", 1.0, 0.45, PI * 0.8, 0.1, 0.8], ["raise_back", "cheer", 1.0, 0.45, PI * 0.25, 0.2, 0.8],
-			["throw_windup", "charge", 1.0, 0.3, PI * 0.4, 0.15, 0.85], ["throw_windup_back", "charge", 1.0, 0.3, 0.2, 0.25, 0.85],
-			["throw_release", "release", 1.0, 0.3, PI * 0.75, 0.12, 0.85], ["throw_follow", "follow", 1.0, 0.3, 0.3, 0.2, 0.9],
-			["crouch_windup", "charge_c", 1.0, 0.3, PI * 0.4, 0.2, 0.85], ["crouch_release", "release_c", 1.0, 0.3, PI * 0.75, 0.15, 0.85],
-			["walk", "walk", 0.25, 0.25, PI * 0.55, 0.1, 0.75], ["run", "run", 0.2, 0.2, PI * 0.6, 0.1, 0.8]]:
-		player_ctrl.write_yaw(y0)
-		boy.debug_pose(s[1], s[2], s[3])
-		await get_tree().process_frame
-		_fixed_cam(_shoulder_pos(), y0 + float(s[4]), s[5], float(s[6]) * k)
-		await _wait(0.3)
-		_shot(pre + "v16_" + s[0])
-	boy.frozen = false
-	_free_cam()
-	demo_nocut = false
-	# lying down: the hammock, then the towel
-	var hs := _hammock_spot()
-	var bed: Vector3 = hs[0]
-	var side: Vector3 = hs[2]
-	_place(bed + side * 1.2, atan2(side.x, side.z))
-	_begin_rest("sleep")
-	while rest_phase < 4:
-		await get_tree().process_frame
-	await _wait(1.0)
-	demo_nocut = true
-	_fixed_cam(_shoulder_pos(), atan2(side.x, side.z) + 0.3, 0.7, 0.9)
-	await _wait(0.3)
-	_shot(pre + "v16_hammock")
-	demo_nocut = false
-	_free_cam()
-	_wake()
-	while mode != Mode.EXPLORE:
-		await get_tree().process_frame
-	var td := island.towel_dir
-	var sd := td.cross(Vector3.UP).normalized()
-	_place(island.towel_pos + sd * 1.3 + td * 0.4, atan2(sd.x, sd.z))
-	_begin_rest("sun")
-	while rest_phase < 4:
-		await get_tree().process_frame
-	await _wait(1.0)
-	demo_nocut = true
-	_fixed_cam(_shoulder_pos(), atan2(sd.x, sd.z) + 0.4, 0.75, 0.9)
-	await _wait(0.3)
-	_shot(pre + "v16_sun")
-	demo_nocut = false
-	ui_root.visible = true
-	_free_cam()
+	await demo_seq._v16_sequence(pre)
 
-## v21 video: the camera on his face (head bone, smoothed), yaw relative to his facing
 func _face_cam(yaw: float, pitch: float, dist: float) -> void:
-	var h := _bone_pos("head", 0.03)
-	face_cam_tgt = h if face_cam_tgt == Vector3.INF else face_cam_tgt.lerp(h, 0.2)
-	_fixed_cam(face_cam_tgt, player.rotation.y + yaw, pitch, dist)
+	return demo_seq._face_cam(yaw, pitch, dist)
+
 
 func _follow_head(dur: float, yaw: float, pitch: float, dist: float, yaw_end := INF) -> void:
-	var t0 := gt
-	while gt - t0 < dur:
-		_face_cam(yaw if yaw_end == INF else lerpf(yaw, yaw_end, (gt - t0) / dur), pitch, dist)
-		await get_tree().process_frame
+	await demo_seq._follow_head(dur, yaw, pitch, dist, yaw_end)
 
-## a bone's position in the world, raised by `up` (m) along the world up axis
 func _bone_pos(bone: String, up := 0.0) -> Vector3:
-	var sk := boy.skel
-	return sk.global_transform * sk.get_bone_global_pose(sk.find_bone(bone)).origin + Vector3(0, up, 0)
+	return demo_seq._bone_pos(bone, up)
 
-## v17 close-ups in the game's light: the hair (front / side / back / three-quarter / top, with and without
-## the hat, day and night, the hammock and the towel, the water reflection) and the clothes (front / side /
-## back, standing, walking, running, the throws, day and night). part "" = all, "hair" or "clothes".
-## Camera yaw is relative to his facing: 0 behind him, PI in front, +PI/2 his right.
 func _v17_sequence(pre: String, part: String) -> void:
-	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-	await _wait(0.6)
-	demo_nocut = true
-	ui_root.visible = false
-	var y0 := player.rotation.y
-	var k := float(_opt("hdist", "1.0"))
-	for night in [false, true]:
-		var tag := "night" if night else "day"
-		if night:
-			_toggle_night()
-			await _wait(2.9)
-		if part == "" or part == "hair":
-			var views := [["front", PI - 0.12, 0.06], ["34", PI * 0.75, 0.12], ["side", PI * 0.5, 0.06],
-					["back34", PI * 0.25, 0.18], ["back", 0.05, 0.12], ["top", PI * 0.7, 0.8]]
-			for hat_on in [true, false]:
-				boy.hat.visible = hat_on
-				for s: Array in views:
-					if night and String(s[0]) in ["side", "back", "top"]:
-						continue
-					player_ctrl.write_yaw(y0)
-					boy.debug_pose("idle", 1.0, 0.3)
-					await get_tree().process_frame
-					_fixed_cam(_bone_pos("head", 0.05), y0 + float(s[1]), s[2], 0.55 * k)
-					await _wait(0.4)
-					_shot(pre + "v17_hair_%s_%s%s" % [tag, s[0], "" if hat_on else "_nohat"])
-			boy.hat.visible = true
-		if part == "" or part == "clothes":
-			for s: Array in [["front", "idle", 0.0, 0.3, PI - 0.1, 0.08, 1.35], ["34", "idle", 0.0, 0.3, PI * 0.72, 0.15, 1.35],
-					["side", "idle", 0.0, 0.3, PI * 0.5, 0.08, 1.35], ["back", "idle", 0.0, 0.3, 0.08, 0.12, 1.35],
-					["back34", "idle", 0.0, 0.3, PI * 0.28, 0.2, 1.35], ["walk", "walk", 1.0, 0.25, PI * 0.55, 0.1, 1.45],
-					["run", "run", 1.0, 0.2, PI * 0.6, 0.1, 1.5], ["windup", "charge", 1.0, 0.3, PI * 0.4, 0.15, 1.5],
-					["release", "release", 1.0, 0.3, PI * 0.75, 0.12, 1.5], ["crouch", "charge_c", 1.0, 0.3, PI * 0.45, 0.2, 1.4],
-					["shorts_front", "idle", 0.0, 0.3, PI - 0.25, 0.1, 0.8], ["vest_close", "idle", 0.0, 0.3, PI * 0.8, 0.1, 0.75]]:
-				if night and String(s[0]) in ["walk", "run", "windup", "release", "crouch", "back34"]:
-					continue
-				player_ctrl.write_yaw(y0)
-				boy.debug_pose(s[1], s[2], s[3])
-				await get_tree().process_frame
-				var tgt := _bone_pos("spine_01", 0.0)
-				if String(s[0]) == "shorts_front":
-					tgt = _bone_pos("pelvis", -0.1)
-				elif String(s[0]) == "vest_close":
-					tgt = _bone_pos("spine_03", 0.0)
-				_fixed_cam(tgt, y0 + float(s[4]), s[5], float(s[6]) * k)
-				await _wait(0.4)
-				_shot(pre + "v17_clothes_%s_%s" % [tag, s[0]])
-		boy.frozen = false
-	_toggle_night()
-	await _wait(2.8)
-	if part == "" or part == "hair" or part == "refl":
-		# the reflection: standing at the end of the dock, seen from above the water in front of it (his
-		# mirror image lands on the water a metre or so out from the dock, clear of the deck)
-		_place(Vector3(0.0, 0, island.dock_end_z + 0.35), 0.0)
-		await _wait(1.0)
-		var hp := _bone_pos("head")
-		_fixed_cam(Vector3(hp.x, 0.4, hp.z - 2.4), player.rotation.y + PI - 0.15, 0.3, 3.8 * k)
-		await _wait(0.6)
-		_shot(pre + "v17_hair_day_reflection")
-		_free_cam()
-		# lying down: hat off in the hammock and on the towel
-		var hs := _hammock_spot()
-		var side: Vector3 = hs[2]
-		_place(hs[0] + side * 1.2, atan2(side.x, side.z))
-		_begin_rest("sleep")
-		while rest_phase < 4:
-			await get_tree().process_frame
-		await _wait(1.0)
-		_fixed_cam(_bone_pos("head"), atan2(side.x, side.z) + 0.5, 0.6, 0.8 * k)
-		await _wait(0.4)
-		_shot(pre + "v17_hair_day_hammock")
-		_free_cam()
-		_wake()
-		while mode != Mode.EXPLORE:
-			await get_tree().process_frame
-		var td := island.towel_dir
-		var sd := td.cross(Vector3.UP).normalized()
-		_place(island.towel_pos + sd * 1.3 + td * 0.4, atan2(sd.x, sd.z))
-		_begin_rest("sun")
-		while rest_phase < 4:
-			await get_tree().process_frame
-		await _wait(1.0)
-		_fixed_cam(_bone_pos("head"), atan2(sd.x, sd.z) + 0.6, 0.6, 0.8 * k)
-		await _wait(0.4)
-		_shot(pre + "v17_hair_day_sun")
-		_free_cam()
-		_wake()
-		while mode != Mode.EXPLORE:
-			await get_tree().process_frame
-	demo_nocut = false
-	ui_root.visible = true
-	_free_cam()
+	await demo_seq._v17_sequence(pre, part)
 
-## v18 close-ups of the four v17 leftovers: the hair in the hat brim's shadow (day, and night by the lamp),
-## the hair card edges very close up, the back of the left armhole (tank top edge under the vest) and the
-## vest's sides under the arms. Camera yaw is relative to his facing: 0 behind him, PI in front, +PI/2 his right.
 func _v18_sequence(pre: String) -> void:
-	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-	await _wait(0.6)
-	demo_nocut = true
-	ui_root.visible = false
-	var y0 := player.rotation.y
-	# [name, pose, p, tt, cam yaw, pitch, dist, bone, up, hat, night]
-	var shots := [
-		["brim_front", "idle", 1.0, 0.3, PI - 0.12, 0.02, 0.4, "head", 0.03, true, false],
-		["brim_34", "idle", 1.0, 0.3, PI * 0.75, 0.05, 0.4, "head", 0.03, true, false],
-		["brim_side", "idle", 1.0, 0.3, PI * 0.5, 0.02, 0.38, "head", 0.03, true, false],
-		["brim_back34", "idle", 1.0, 0.3, PI * 0.25, 0.08, 0.42, "head", 0.03, true, false],
-		["brim_l34", "idle", 1.0, 0.3, -PI * 0.7, 0.04, 0.4, "head", 0.03, true, false],
-		["edge_side", "idle", 1.0, 0.3, PI * 0.5, 0.05, 0.2, "head", 0.06, false, false],
-		["edge_back", "idle", 1.0, 0.3, 0.1, 0.15, 0.2, "head", 0.06, false, false],
-		["edge_fringe", "idle", 1.0, 0.3, PI - 0.35, 0.0, 0.2, "head", 0.0, true, false],
-		["armhole_idle", "idle", 1.0, 0.3, -PI * 0.2, 0.1, 0.32, "upperarm_l", -0.03, true, false],
-		["armhole_charge", "charge", 0.6, 0.3, -PI * 0.2, 0.1, 0.34, "upperarm_l", -0.03, true, false],
-		["armhole_cheer", "cheer", 1.0, 1.0, -PI * 0.15, 0.05, 0.34, "upperarm_l", -0.05, true, false],
-		["armhole_in_charge", "charge", 0.6, 0.3, -PI * 0.62, 0.12, 0.26, "upperarm_l", -0.07, true, false],
-		["armhole_in_crouch", "charge_c", 0.6, 0.3, -PI * 0.62, 0.12, 0.26, "upperarm_l", -0.07, true, false],
-		["underarm_l_idle", "idle", 1.0, 0.3, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
-		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
-		["underarm_r_cheer", "cheer", 1.0, 1.0, PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, false],
-		["underarm_l_charge", "charge", 0.6, 0.3, -PI * 0.45, 0.05, 0.45, "spine_03", 0.08, true, false],
-		["underarm_r_walk", "walk", 1.0, 0.3, PI * 0.5, 0.05, 0.45, "spine_03", 0.08, true, false],
-		["brim_34", "idle", 1.0, 0.3, PI * 0.75, 0.05, 0.4, "head", 0.03, true, true],
-		["brim_front", "idle", 1.0, 0.3, PI - 0.12, 0.02, 0.4, "head", 0.03, true, true],
-		["underarm_l_cheer", "cheer", 1.0, 1.0, -PI * 0.5, 0.05, 0.42, "spine_03", 0.08, true, true],
-	]
-	for s: Array in shots:
-		if not String(s[0]).begins_with(_opt("only")):
-			continue
-		if bool(s[10]) != night_on:
-			_toggle_night()
-			await _wait(2.9)
-		boy.hat.visible = bool(s[9])
-		player_ctrl.write_yaw(y0)
-		boy.debug_pose(s[1], s[2], s[3])
-		await get_tree().process_frame
-		_fixed_cam(_bone_pos(s[7], s[8]), y0 + float(s[4]), s[5], s[6])
-		await _wait(0.4)
-		_shot(pre + "v18_%s_%s" % ["night" if night_on else "day", s[0]])
-	boy.hat.visible = true
-	boy.frozen = false
-	if night_on:
-		_toggle_night()
-	demo_nocut = false
-	ui_root.visible = true
-	_free_cam()
+	await demo_seq._v18_sequence(pre)
 
-## v19 close-ups: the nape tips, the card edges up close and edge-on, the vest underarm folds with the arms
-## raised (cheer, release, wind-up, sunbathing), and the hair at night
 func _v19_sequence(pre: String) -> void:
-	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-	await _wait(0.6)
-	demo_nocut = true
-	ui_root.visible = false
-	var y0 := player.rotation.y
-	# [name, pose, p, tt, cam yaw, pitch, dist, bone, up, hat, night]
-	var shots := [] if _opt("ropeonly") == "1" else [
-		["nape_back34", "idle", 1.0, 0.3, PI * 0.25, 0.08, 0.42, "head", 0.03, true, false],
-		["nape_back", "idle", 1.0, 0.3, 0.05, 0.05, 0.36, "head", 0.0, true, false],
-		["nape_close", "idle", 1.0, 0.3, PI * 0.15, 0.02, 0.24, "head", -0.03, true, false],
-		["nape_nohat", "idle", 1.0, 0.3, PI * 0.2, 0.1, 0.4, "head", 0.03, false, false],
-		["edge_side", "idle", 1.0, 0.3, PI * 0.5, 0.05, 0.2, "head", 0.06, false, false],
-		["edge_back", "idle", 1.0, 0.3, 0.1, 0.15, 0.2, "head", 0.06, false, false],
-		["edge_top", "idle", 1.0, 0.3, PI * 0.6, 0.02, 0.16, "head", 0.1, false, false],
-		["edge_fringe", "idle", 1.0, 0.3, PI - 0.35, 0.0, 0.2, "head", 0.0, true, false],
-		["fold_cheer_front", "cheer", 1.0, 1.0, PI - 0.25, 0.05, 0.6, "spine_03", 0.06, true, false],
-		["fold_cheer_side", "cheer", 1.0, 1.0, PI * 0.5, 0.05, 0.45, "spine_03", 0.08, true, false],
-		["fold_cheer_back", "cheer", 1.0, 1.0, 0.2, 0.05, 0.6, "spine_03", 0.06, true, false],
-		["fold_release_front", "release", 1.0, 0.3, PI - 0.3, 0.05, 0.65, "spine_03", 0.06, true, false],
-		["fold_charge_back", "charge", 0.6, 0.3, 0.0, 0.08, 0.85, "spine_03", 0.0, true, false],
-		["fold_sun", "sun", 1.0, 0.3, PI * 0.5, 0.75, 1.0, "spine_03", 0.0, false, false],
-		["fold_sun_close", "sun", 1.0, 0.3, PI * 0.3, 0.5, 0.55, "upperarm_r", 0.0, false, false],
-		["night_brim_34", "idle", 1.0, 0.3, PI * 0.75, 0.05, 0.4, "head", 0.03, true, true],
-		["night_brim_front", "idle", 1.0, 0.3, PI - 0.12, 0.02, 0.4, "head", 0.03, true, true],
-		["night_back34", "idle", 1.0, 0.3, PI * 0.25, 0.08, 0.42, "head", 0.03, true, true],
-		["night_side", "idle", 1.0, 0.3, -PI * 0.5, 0.02, 0.4, "head", 0.03, true, true],
-		["night_nohat", "idle", 1.0, 0.3, PI * 0.7, 0.08, 0.42, "head", 0.05, false, true],
-	]
-	for s: Array in shots:
-		if not String(s[0]).begins_with(_opt("only")):
-			continue
-		if bool(s[10]) != night_on:
-			_toggle_night()
-			await _wait(2.9)
-		boy.hat.visible = bool(s[9])
-		player_ctrl.write_yaw(y0)
-		boy.debug_pose(s[1], s[2], s[3])
-		await get_tree().process_frame
-		_fixed_cam(_bone_pos(s[7], s[8]), y0 + float(s[4]), s[5], s[6])
-		await _wait(0.4)
-		_shot(pre + "v19_%s" % s[0])
-	boy.hat.visible = true
-	boy.frozen = false
-	if night_on:
-		_toggle_night()
-		await _wait(2.9)
-	# the mooring line's dock end while the boat bobs: two frames 1.3 s apart, same camera
-	# (and how far that end would wander if it rode on the boat, as it did up to v18)
-	_fixed_cam(island.boat_tie, 0.6, 0.3, 1.0)
-	var drift := 0.0
-	for k in 3:
-		var t0 := gt
-		while gt - t0 < 1.3:
-			var rigid: Vector3 = island.dock_boat.transform * (island.boat_rest.affine_inverse() * island.boat_tie)
-			drift = maxf(drift, (rigid - island.boat_tie).length())
-			await get_tree().process_frame
-		_shot(pre + "v19_rope_%d" % k)
-	print("V19 mooring line dock end: rides the boat up to %.1f cm off the knot (pinned since v19)" % (drift * 100.0))
-	demo_nocut = false
-	ui_root.visible = true
-	_free_cam()
+	await demo_seq._v19_sequence(pre)
 
-## v20: the straw hat stays on his head. part "lie": the real hammock / towel / bench / log rest from the
-## game (lying down, lying, close-ups at the head, getting up); part "pose": close-ups of the hat on the hair
-## through walk / run / the throws / cheer / oops. part "" = both.
 func _v20_sequence(pre: String, part: String) -> void:
-	if part == "" or part == "lie":
-		var hs := _hammock_spot()
-		var td := island.towel_dir
-		var sd := td.cross(Vector3.UP).normalized()
-		for spec: Array in [["hammock", "sleep", hs[0] + hs[2] * 1.6], ["towel", "sun", island.towel_pos + sd * 1.4], ["bench", 0, null], ["log", 1, null]]:
-			var nm: String = spec[0]
-			if _opt("only") != "" and not nm.begins_with(_opt("only")):
-				continue
-			_free_cam()
-			if spec[1] is String:
-				_place(spec[2], 0.0)
-				await _wait(0.3)
-				_begin_rest(spec[1])
-				while rest_phase != 3:
-					await get_tree().process_frame
-			else:
-				var st: Dictionary = island.seats[spec[1]]
-				var face: Vector3 = st["face"]
-				_place(_blocked_by((st["approach"] as Vector3) + face * 0.7), 0.0)
-				await _wait(0.3)
-				_on_action()
-				while rest_phase != 4:
-					await get_tree().process_frame
-				await _wait(0.5)
-				_lie_down()
-			var dur := SEAT_LIE_DUR if rest_kind == "seat" else 1.0
-			# across him: from the open side (in front of a seat)
-			var lat: Vector3 = seat_face if rest_kind == "seat" else rest_side
-			await _wait(dur * 0.55)
-			_shot(pre + "v20_%s_1_lying_down" % nm)
-			_fixed_cam((boy.parts["head"] as Node3D).global_position, atan2(lat.x, lat.z), 0.3, 1.1)
-			await get_tree().process_frame
-			_shot(pre + "v20_%s_1b_lying_down_close" % nm)
-			_free_cam()
-			while rest_phase != 4:
-				await get_tree().process_frame
-			await _wait(1.2)
-			_shot(pre + "v20_%s_2_lie" % nm)
-			var head: Vector3 = (boy.parts["head"] as Node3D).global_position
-			var hd := rest_lie_b.y
-			_fixed_cam(head, atan2(lat.x, lat.z), 0.3, 0.95)
-			await _wait(0.3)
-			_shot(pre + "v20_%s_3_close_side" % nm)
-			_fixed_cam(head, atan2(hd.x, hd.z) + 0.5, 0.12, 0.8)
-			await _wait(0.3)
-			_shot(pre + "v20_%s_4_close_head_end" % nm)
-			_free_cam()
-			_wake()
-			while rest_phase != 5 and rest_phase != 6:
-				await get_tree().process_frame
-			await _wait(dur * 0.45)
-			_shot(pre + "v20_%s_5_getting_up" % nm)
-			while mode != Mode.EXPLORE:
-				await get_tree().process_frame
-			await _wait(0.3)
-	if part == "" or part == "pose":
-		_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-		await _wait(0.6)
-		demo_nocut = true
-		ui_root.visible = false
-		var y0 := player.rotation.y
-		# [name, pose, p, tt, cam yaw, pitch, dist]
-		var shots := [
-			["idle_side", "idle", 1.0, 0.3, PI * 0.5, 0.05, 0.55],
-			["idle_front", "idle", 1.0, 0.3, PI - 0.3, 0.05, 0.55],
-			["walk", "walk", 1.0, 0.3, PI * 0.6, 0.05, 0.6],
-			["run", "run", 1.0, 0.15, PI * 0.6, 0.05, 0.6],
-			["charge", "charge", 1.0, 0.3, PI * 0.35, 0.1, 0.7],
-			["release", "release", 1.0, 0.3, PI * 0.7, 0.05, 0.7],
-			["follow", "follow", 1.0, 0.3, PI * 0.75, 0.05, 0.7],
-			["crouch_release", "release_c", 1.0, 0.3, PI * 0.7, 0.1, 0.7],
-			["cheer", "cheer", 1.0, float(_opt("cheer_t", "1.0")), PI - 0.4, 0.05, 0.7],
-			["oops", "oops", 1.0, float(_opt("oops_t", "0.8")), PI - 0.3, 0.05, 0.6],
-		]
-		for s: Array in shots:
-			if not Array(_opt("only").split(",")).any(func(o: String) -> bool: return String(s[0]).begins_with(o)):
-				continue
-			player_ctrl.write_yaw(y0)
-			boy.debug_pose(s[1], s[2], s[3])
-			await get_tree().process_frame
-			_fixed_cam(_bone_pos("head", 0.04), y0 + float(s[4]), s[5], s[6])
-			await _wait(0.4)
-			_shot(pre + "v20_pose_%s" % s[0])
-		boy.frozen = false
-		demo_nocut = false
-		ui_root.visible = true
-		_free_cam()
+	await demo_seq._v20_sequence(pre, part)
 
-## v21 face: close-ups (front / three-quarter / side), the expressions, the sleeping face (hat hidden: it lies
-## over his face then), the game camera with him turned toward it; then at night by a torch
 func _v21_sequence(pre: String, ver := "v21", dk := 1.0) -> void:
-	demo_nocut = true
-	var ex0 := [ex_dist, ex_pitch]
-	for night: bool in [false, true]:
-		var tag := "night" if night else "day"
-		var p := Vector3(0.0, 0, island.dock_end_z + 1.6)
-		var y0 := PI * 0.5
-		if night:
-			_toggle_night()
-			var c := island.campfire_pos
-			var tp := island.torches[0].global_position
-			var out := Vector3(tp.x - c.x, 0, tp.z - c.z).normalized()
-			p = Vector3(tp.x, 0, tp.z) - out * 0.8 + out.cross(Vector3.UP) * 0.35
-			y0 = atan2(out.x, out.z) + 0.4
-			await _wait(2.9)
-		_place(p, y0)
-		await _wait(0.6)
-		ui_root.visible = false
-		# [name, pose, p, tt, cam yaw, pitch, dist]
-		var shots := [["front", "idle", 1.0, 0.3, PI, 0.03, 0.4], ["34", "idle", 1.0, 0.3, PI - 0.75, 0.04, 0.4],
-			["side", "idle", 1.0, 0.3, PI * 0.5, 0.03, 0.42], ["up", "idle", 1.0, 0.3, PI - 0.35, 0.75, 0.55]]
-		if not night:
-			shots += [["focus", "charge", 1.0, 0.3, PI - 0.6, -0.25, 0.45], ["cheer", "cheer", 1.0, 1.0, PI - 0.3, 0.04, 0.5],
-				["oops", "oops", 1.0, 0.8, PI - 0.25, -0.3, 0.45], ["sleep", "sleep", 1.0, 0.3, PI - 0.4, 0.04, 0.42],
-				["closed", "idle", 1.0, 0.3, PI - 0.4, 0.04, 0.42]]
-		if ver != "v21":
-			shots += [["body", "idle", 1.0, 0.3, PI - 0.3, 0.08, 1.6 / dk], ["bodyside", "idle", 1.0, 0.3, PI * 0.5, 0.08, 1.6 / dk]]
-		for s: Array in shots:
-			if not Array(_opt("only").split(",")).any(func(o: String) -> bool: return String(s[0]).begins_with(o)):
-				continue
-			player_ctrl.write_yaw(y0)
-			boy.debug_pose(s[1], s[2], s[3])
-			if s[0] == "closed":
-				boy.blink_t = 0.08
-				boy._update_face(0.0)
-			boy.hat.visible = s[0] != "sleep"
-			if s[0] == "sleep":
-				boy.glasses.visible = false
-			await get_tree().process_frame
-			var tgt := _bone_pos("head", 0.03)
-			if String(s[0]).begins_with("body"):
-				tgt = _bone_pos("pelvis", 0.0) + Vector3(0, 0.12, 0)
-			_fixed_cam(tgt, y0 + float(s[4]), s[5], float(s[6]) * dk)
-			await _wait(0.3)
-			_shot(pre + "%s_%s_%s" % [ver, tag, s[0]])
-			boy.hat.visible = true
-		boy.frozen = false
-		# the game camera, him turned toward it
-		_free_cam()
-		ui_root.visible = true
-		_place(p, y0)
-		ex_yaw = face_yaw + PI
-		var ec := _explore_cam()
-		cam_target = ec[0]; cam_yaw = ec[1]; cam_pitch = ec[2]; cam_dist = ec[3]
-		await _wait(1.2)
-		_shot(pre + "%s_%s_game" % [ver, tag])
-		# pinched in and dragged lower, as a player does to look at him
-		ex_dist = 3.0
-		ex_pitch = 0.55
-		ec = _explore_cam()
-		cam_target = ec[0]; cam_yaw = ec[1]; cam_pitch = ec[2]; cam_dist = ec[3]
-		await _wait(0.8)
-		_shot(pre + "%s_%s_game_zoom" % [ver, tag])
-		ex_dist = ex0[0]
-		ex_pitch = ex0[1]
-		if night:
-			_toggle_night()
-			await _wait(2.9)
-	demo_nocut = false
+	await demo_seq._v21_sequence(pre, ver, dk)
 
-## v15: aiming by swipe - the pad and angle sliders, aiming left / right (arrow, preview, readout, the chest
-## turning first), cancel, a flicked throw, a too-steep launch, a too-flat stone, a slow release (no spin)
 func _v15_sequence(pre: String) -> void:
-	_place(Vector3(0.0, 0, island.dock_end_z + 1.6), 0.0)
-	await _wait(0.4)
-	_enter_throw()
-	await _wait(1.8)
-	_shot(pre + "v15_1_ready")
-	var c := throw_pad.pad_c
-	_swipe_press(c, gt)
-	for k in 12:
-		_swipe_move(c + Vector2(-0.2, -0.3) * _swipe_unit() * (k + 1) / 12.0, gt)
-		await get_tree().process_frame
-	await _wait(0.9)
-	_shot(pre + "v15_2_aim_left")
-	if not portrait_demo:
-		_fixed_cam(player.global_position + Vector3(0, 0.75, 0), aim_yaw + 2.2, 0.25, 2.6)
-		await _wait(0.2)
-		_shot(pre + "v15_2b_aim_left_body")
-		_free_cam()
-	for k in 10:
-		_swipe_move(c + Vector2(-0.2, -0.3).lerp(Vector2(0.02, 0.1), (k + 1) / 10.0) * _swipe_unit(), gt)
-		await get_tree().process_frame
-	await _wait(0.3)
-	_shot(pre + "v15_3_cancel")
-	_swipe_release(c + Vector2(0.02, 0.1) * _swipe_unit(), gt)
-	await _wait(1.2)
-	await _demo_swipe(c, Vector2(0.17, -0.4), 0.5, 0.8, true, pre + "v15_4_aim_right")
-	await _demo_wait_ready([pre + "v15_5_release", pre + "v15_6_skipping", pre + "v15_7_result"])
-	_set_angles(28.0, 20.0)
-	await _wait(0.6)
-	await _demo_swipe(c, Vector2(0.0, -0.45), 0.4, 0.6, true, pre + "v15_8_steep_aim")
-	await _demo_wait_ready(["", "", pre + "v15_9_steep_result"])
-	_set_angles(4.0, 3.0)
-	await _wait(0.6)
-	await _demo_swipe(c, Vector2(-0.05, -0.45), 0.4, 0.6, true, pre + "v15_10_flat_aim")
-	await _demo_wait_ready(["", "", pre + "v15_11_flat_result"])
-	_set_angles(4.0, 20.0)
-	await _wait(0.6)
-	await _demo_swipe(c, Vector2(0.0, -0.45), 0.4, 0.8, false)
-	await _demo_wait_ready(["", "", pre + "v15_12_slow_release_result"])
-	if not portrait_demo:
-		_toggle_night()
-		await _wait(2.9)
-		await _demo_swipe(c, Vector2(-0.08, -0.42), 0.5, 0.8, true, pre + "v15_13_night_aim")
-		await _demo_wait_ready(["", "", ""])
-		_toggle_night()
-		await _wait(2.9)
+	await demo_seq._v15_sequence(pre)
 
-## gameplay follow camera along the beach (style checks): walk, run, then stand
 func _explore_sequence(pre: String) -> void:
-	var a := island.shore_pt(-1.3, 2.2)
-	_place(a, 0.0)
-	var b := island.shore_pt(-0.95, 2.2)
-	var dirv := (b - a).normalized()
-	face_yaw = atan2(-dirv.x, -dirv.z)
-	player_ctrl.write_yaw(face_yaw)
-	_snap_explore_cam()
-	_walk_to.call(b, false)
-	await _wait(2.5)
-	_shot(pre + "e1_walk")
-	_walk_to.call(island.shore_pt(-0.4, 3.6), true)
-	await _wait(2.0)
-	_shot(pre + "e2_run")
-	_stop_walk()
-	await _wait(1.5)
-	_shot(pre + "e3_stand")
+	await demo_seq._explore_sequence(pre)
+
 
 func _run_demo4() -> void:
-	await _wait(0.5)
-	if demo_seg != "":
-		await _video_seg(demo_seg)
-		get_tree().quit()
-		return
-	var pre := "p_" if portrait_demo else ""
-	var close := not portrait_demo
-	for a0 in OS.get_cmdline_user_args():
-		if a0.begins_with("--from="):
-			var what := a0.substr(7)
-			if what == "throw":
-				await _throw_sequence(pre + "08_", true, close)
-			elif what == "shore":
-				await _shore_sequence(pre)
-			elif what == "explore":
-				await _explore_sequence(pre)
-			elif what == "v8":
-				await _v8_sequence(pre)
-			elif what.begins_with("v9"):
-				await _v9_sequence(pre, what.substr(2).trim_prefix("_"))
-			elif what == "v14":
-				await _v14_sequence(pre)
-			elif what == "v15":
-				await _v15_sequence(pre)
-			elif what == "v16":
-				await _v16_sequence(pre)
-			elif what.begins_with("v17"):
-				await _v17_sequence(pre, what.substr(3).trim_prefix("_"))
-			elif what == "v18":
-				await _v18_sequence(pre)
-			elif what == "v19":
-				await _v19_sequence(pre)
-			elif what.begins_with("v20"):
-				await _v20_sequence(pre, what.substr(3).trim_prefix("_"))
-			elif what == "v21":
-				await _v21_sequence(pre)
-			elif what == "v22":
-				await _v21_sequence(pre, "v22", 1.2)
-			elif what.begins_with("v12"):
-				await _v12_sequence(pre, what.substr(3).trim_prefix("_"))
-			elif what.begins_with("v11"):
-				await _v11_sequence(pre, what.substr(3).trim_prefix("_"))
-			else:
-				await _rest_sequence(pre + ("10_" if what == "sleep" else "11_"), what, close)
-			get_tree().quit()
-			return
-	if close:
-		_track(PI, 0.04, 0.95, 1.0)
-		await _wait(0.4)
-		_shot("01_face_front")
-		_track(PI - 0.65, 0.06, 1.0, 1.0)
-		await _wait(0.3)
-		_shot("02_face_34")
-		_track(PI - 0.35, 0.1, 2.3, 0.62)
-		await _wait(0.3)
-		_shot("03_body_vest_front")
-		_track(0.7, 0.22, 2.4, 0.62)
-		await _wait(0.3)
-		_shot("04_body_vest_back34")
-		_free_cam()
-	# walk then run along the beach toward the dock
-	var a := island.shore_pt(-1.05, 1.6)
-	_place(a, 0.0)
-	var dock_foot := Vector3(0.0, 0, island.dock_start_z + 1.5)
-	var sea_dir := Island.dir_at(-1.3)
-	var dirv := (dock_foot - a).normalized()
-	face_yaw = atan2(-dirv.x, -dirv.z)
-	player_ctrl.write_yaw(face_yaw)
-	_snap_explore_cam()
-	var mid := island.shore_pt(-1.32, 1.4)
-	if close:
-		demo_cam = true
-		demo_track = [atan2(sea_dir.x, sea_dir.z) - 0.25, 0.1, 3.0, 0.6, true]
-	var t_walk := gt
-	_walk_to.call(mid, false)
-	await _wait(1.8)
-	_shot(pre + "05_walk")
-	await _wait(0.35)
-	_shot(pre + "05b_walk")
-	while _hd(player.position, mid) > 0.5 and gt - t_walk < 10.0:
-		await get_tree().process_frame
-	_walk_to.call(dock_foot, true)
-	await _wait(1.2)
-	_shot(pre + "06_run")
-	await _wait(0.25)
-	_shot(pre + "06b_run")
-	_free_cam()
-	while _hd(player.position, dock_foot) > 0.5 and gt - t_walk < 20.0:
-		await get_tree().process_frame
-	_walk_to.call(Vector3(0, 0, island.dock_end_z + 2.0), true)
-	await _wait(1.6)
-	_shot(pre + "07_explore_follow")
-	_stop_walk()
-	await _wait(0.2)
-	await _throw_sequence(pre + "08_", true, close)
-	_leave_throw()
-	if close:
-		await _throw_sequence("09_", false, true)
-		_leave_throw()
-	await _rest_sequence(pre + "10_", "sleep", close)
-	_wake()
-	while mode != Mode.EXPLORE:
-		await get_tree().process_frame
-	await _wait(0.3)
-	_shot(pre + "10_sleep_woke")
-	await _rest_sequence(pre + "11_", "sun", close)
-	if not portrait_demo:
-		_wake()
-		while mode != Mode.EXPLORE:
-			await get_tree().process_frame
-		_toggle_view()
-		await _wait(1.5)
-		_shot("12_view_mode")
-	get_tree().quit()
+	await demo_seq._run_demo4()
+
 
 func _video_seg(seg: String) -> void:
-	match seg:
-		"walk":
-			var a := island.shore_pt(-1.05, 1.6)
-			var mid := island.shore_pt(-1.32, 1.4)
-			var dock_foot := Vector3(0.0, 0, island.dock_start_z + 1.5)
-			var dirv := (mid - a).normalized()
-			_place(a, atan2(-dirv.x, -dirv.z))
-			ex_yaw = face_yaw + 1.1
-			_snap_cam_now()
-			await _walk_to(mid, false, 3.4)
-			await _walk_to(dock_foot, true, 4.0)
-			await _walk_to(Vector3(0, 0, island.dock_end_z + 2.2), true, 3.0)
-			await _wait(0.3)
-		"throw":
-			# standing and half-kneeling throws seen from the front-right (the throwing side), then one in the game camera
-			_place(Vector3(0.0, 0, island.dock_end_z + 3.0), 0.0)
-			await _walk_to(Vector3(0.2, 0, island.dock_end_z + 1.5), false, 2.0)
-			await _wait(0.4)
-			_enter_throw()
-			for k in 3:
-				await _wait(0.5)
-				if (k == 1) != (boy.stance == "crouch"):
-					_toggle_stance()
-					await _wait(0.9)
-				if k < 2:
-					demo_cam = true
-					demo_track = [player.rotation.y + PI * 0.5 + 0.55, 0.22, 2.9, 0.5, true]
-				else:
-					_free_cam()
-				_begin_aim(Vector2.ZERO)
-				aim_pitch = 3.0
-				var t0 := gt
-				while gt - t0 < 1.5:
-					charge_t = minf((gt - t0) / 1.2, 1.0) * 0.9 * POWER_CYCLE * 0.5
-					aim_yaw = 0.1 + sin((gt - t0) * 2.0) * 0.04
-					await get_tree().process_frame
-				charge_t = 0.9 * POWER_CYCLE * 0.5
-				_throw()
-				fly_t = 0.0
-				if k < 2:
-					await _wait(3.2)
-				while state != State.READY:
-					await get_tree().process_frame
-				await _wait(1.0 if k < 2 else 3.0)
-			_free_cam()
-		"sleep":
-			var hs := _hammock_spot()
-			var bed: Vector3 = hs[0]
-			var side: Vector3 = hs[2]
-			_place(bed + side * 2.2 + (island.hammock_b - island.hammock_a).normalized() * 0.8, atan2(side.x, side.z))
-			ex_yaw = face_yaw + PI + 0.5
-			_snap_cam_now()
-			await _walk_to(bed + side * 1.2, false, 1.8)
-			_begin_rest("sleep")
-			while rest_phase < 4:
-				await get_tree().process_frame
-			await _wait(2.6)
-		"sun":
-			var td := island.towel_dir
-			var sd := td.cross(Vector3.UP).normalized()
-			_place(island.towel_pos + sd * 1.3 + td * 0.4, atan2(sd.x, sd.z))
-			ex_yaw = face_yaw + PI + 0.6
-			_snap_cam_now()
-			_begin_rest("sun")
-			while rest_phase < 4:
-				await get_tree().process_frame
-			await _wait(2.2)
-		"getup":
-			# sunbathe -> get up -> walk away on the real touch stick (the v5 bug: stuck after getting up)
-			var td2 := island.towel_dir
-			var sd2 := td2.cross(Vector3.UP).normalized()
-			_place(island.towel_pos + sd2 * 1.4 + td2 * 0.4, atan2(sd2.x, sd2.z))
-			_snap_cam_now()
-			_begin_rest("sun")
-			while rest_phase < 4:
-				await get_tree().process_frame
-			await _wait(1.8)
-			_toast("点「起来」", 1.0)
-			_wake()
-			while mode != Mode.EXPLORE:
-				await get_tree().process_frame
-			await _wait(0.4)
-			await _stick_walk([Vector2(0.2, -1), Vector2(1, -0.3), Vector2(0.4, 1)], 1.6)
-			await _wait(0.8)
-		"gait":
-			# side-on camera out over the water: walk, run, stop; then the same stretch in the game camera
-			var sea_side := Island.dir_at(-1.1)
-			for game_cam: bool in [false, true]:
-				var g0 := island.shore_pt(-1.38, 2.4)
-				var gm := island.shore_pt(-1.15, 2.4)
-				var g1 := island.shore_pt(-0.86, 2.6)
-				var gd := (gm - g0).normalized()
-				_place(g0, atan2(-gd.x, -gd.z))
-				ex_yaw = face_yaw
-				_snap_cam_now()
-				if game_cam:
-					_free_cam()
-				else:
-					demo_cam = true
-					demo_track = [atan2(sea_side.x, sea_side.z), 0.08, 2.3, 0.62, true]
-				await _wait(0.6)
-				await _walk_to(gm, false, 5.0)
-				await _walk_to(g1, true, 4.0)
-				_stop_walk()
-				await _wait(1.2)
-			_free_cam()
+	await demo_seq._video_seg(seg)
 
-		"face21":
-			# the face up close: idle with its blinks (front round to the side), a throw (focus, then the cheer),
-			# an oops, by a torch at night; then the game camera with him turned toward it
-			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-			await _wait(0.5)
-			ui_root.visible = false
-			face_cam_tgt = Vector3.INF
-			await _follow_head(3.2, PI, 0.03, 0.45)
-			await _follow_head(3.0, PI, 0.03, 0.45, PI * 0.5)
-			await _follow_head(0.8, PI * 0.5, 0.03, 0.45)
-			_enter_throw()
-			await _follow_head(1.2, PI - 0.55, -0.15, 0.6)
-			_begin_aim(Vector2.ZERO)
-			aim_pitch = 3.0
-			var ft0 := gt
-			while gt - ft0 < 1.4:
-				charge_t = minf((gt - ft0) / 1.2, 1.0) * 0.9 * POWER_CYCLE * 0.5
-				_face_cam(PI - 0.55, -0.15, 0.6)
-				await get_tree().process_frame
-			charge_t = 0.9 * POWER_CYCLE * 0.5
-			_throw()
-			fly_t = 0.0
-			while state != State.READY:
-				_face_cam(PI - 0.55, -0.15, 0.6)
-				await get_tree().process_frame
-			if boy.anim != "react":
-				boy.react("cheer")
-			await _follow_head(2.4, PI - 0.4, -0.1, 0.6)
-			boy.react("oops")
-			await _follow_head(2.4, PI - 0.3, -0.25, 0.55)
-			_leave_throw()
-			var c := island.campfire_pos
-			var tp := island.torches[0].global_position
-			var out := Vector3(tp.x - c.x, 0, tp.z - c.z).normalized()
-			night_on = true
-			night_k = 1.0
-			_update_night(0.0, true)
-			_place(Vector3(tp.x, 0, tp.z) - out * 0.8 + out.cross(Vector3.UP) * 0.35, atan2(out.x, out.z) + 0.4)
-			await get_tree().process_frame
-			face_cam_tgt = Vector3.INF
-			await _follow_head(4.0, PI - 0.4, 0.03, 0.45)
-			night_on = false
-			night_k = 0.0
-			_update_night(0.0, true)
-			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-			_free_cam()
-			ui_root.visible = true
-			ex_yaw = face_yaw + PI
-			var ec := _explore_cam()
-			cam_target = ec[0]; cam_yaw = ec[1]; cam_pitch = ec[2]; cam_dist = ec[3]
-			await _wait(3.0)
-
-		"hat20":
-			# the hat, followed at head height: walk, sharp turns, run onto the dock, a throw and a cheer, then the
-			# hammock, where his hand takes it over his face and back
-			var a := island.shore_pt(-1.32, 1.4)
-			var dock_foot := Vector3(0.0, 0, island.dock_start_z + 1.5)
-			var d0 := (dock_foot - a).normalized()
-			_place(a, atan2(-d0.x, -d0.z))
-			ex_yaw = face_yaw
-			_snap_cam_now()
-			demo_cam = true
-			demo_track = [face_yaw + PI * 0.5 + 0.5, 0.14, 2.6, 0.75, true]
-			var r := Vector3(d0.z, 0, -d0.x)
-			await _walk_to(a + d0 * 2.2, false, 3.0)
-			await _walk_to(a + d0 * 2.2 + r * 1.6, false, 2.0)
-			await _walk_to(a + d0 * 0.8 + r * 1.6, false, 2.0)
-			await _walk_to(a + d0 * 2.6 + r * 0.4, false, 2.2)
-			await _walk_to(dock_foot, true, 4.0)
-			await _walk_to(Vector3(0.2, 0, island.dock_end_z + 1.5), true, 4.0)
-			await _wait(0.4)
-			_enter_throw()
-			await _wait(1.0)
-			demo_track = [player.rotation.y + PI * 0.5 + 0.55, 0.16, 2.6, 0.6, true]
-			_begin_aim(Vector2.ZERO)
-			aim_pitch = 3.0
-			var t0 := gt
-			while gt - t0 < 1.4:
-				charge_t = minf((gt - t0) / 1.2, 1.0) * 0.9 * POWER_CYCLE * 0.5
-				await get_tree().process_frame
-			charge_t = 0.9 * POWER_CYCLE * 0.5
-			_throw()
-			fly_t = 0.0
-			while state != State.READY:
-				await get_tree().process_frame
-			if boy.anim != "react":
-				boy.react("cheer")
-			await _wait(2.6)
-			_leave_throw()
-			var hs := _hammock_spot()
-			var bed: Vector3 = hs[0]
-			var side: Vector3 = hs[2]
-			_place(bed + side * 2.2 + (island.hammock_b - island.hammock_a).normalized() * 0.8, atan2(side.x, side.z))
-			ex_yaw = face_yaw + PI + 0.5
-			_snap_cam_now()
-			_free_cam()
-			await _walk_to(bed + side * 1.2, false, 1.8)
-			_begin_rest("sleep")
-			var head: Vector3 = (boy.parts["head"] as Node3D).global_position
-			_fixed_cam(bed + Vector3(0, 0.25, 0), atan2(side.x, side.z) + 0.35, 0.32, 2.4)
-			while rest_phase < 4:
-				await get_tree().process_frame
-			await _wait(1.6)
-			_wake()
-			while mode != Mode.EXPLORE:
-				await get_tree().process_frame
-			await _wait(0.4)
-			_free_cam()
-			await _walk_to(head + side * 2.5, false, 2.0)
-			await _wait(0.5)
-
-		"boat14":
-			# the rowboat by the dock riding the swell: from the sea, from the dock, then at night
-			var bp := Vector3(2.3, 0.1, (island.dock_start_z + island.dock_end_z) * 0.5 - 1.0)
-			_place(Vector3(0, 0, island.dock_start_z - 1.0), PI)
-			demo_nocut = true
-			_fixed_cam(bp, PI * 0.5 + 0.3, 0.1, 4.4)
-			await _wait(6.0)
-			_fixed_cam(bp, -PI * 0.5 + 0.35, 0.6, 3.4)
-			await _wait(4.0)
-			_toggle_night()
-			await _wait(3.0)
-			_fixed_cam(bp, PI * 0.5 + 0.3, 0.1, 4.4)
-			await _wait(5.0)
-			_toggle_night()
-			demo_nocut = false
-
-		"shoulder16":
-			# close on the right shoulder in daylight: once round him at rest, the arms going up (cheer),
-			# a standing and a crouching throw in slow motion, then a walk and a run cycle
-			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-			await _wait(0.3)
-			demo_nocut = true
-			ui_root.visible = false
-			var y0 := player.rotation.y
-			var tc := float(boy.clips["throw_stand"]["t_charge"])
-			var tcc := float(boy.clips["throw_crouch"]["t_charge"])
-			var cl := float(boy.clips["cheer"]["length"])
-			var k := float(_opt("shdist", "0.6"))
-			# [pose, from, to, seconds, cam yaw from, cam yaw to, pitch, dist]
-			for s: Array in [["idle", 0.0, 2.0, 5.0, PI - 0.1, 0.15, 0.12, 0.8],
-					["cheer", 0.0, cl * 0.75, 3.0, PI * 0.8, PI * 0.65, 0.12, 0.9],
-					["cheer", 0.0, cl * 0.75, 3.0, PI * 0.25, PI * 0.35, 0.2, 0.9],
-					["charge", 0.0, 1.0 / tc * 1.15, 4.0, PI * 0.45, PI * 0.3, 0.15, 0.95],
-					["charge", 0.0, 1.0 / tc * 1.15, 4.0, PI * 0.8, PI * 0.7, 0.12, 0.95],
-					["charge_c", 0.0, 1.0 / tcc * 1.15, 4.0, PI * 0.45, PI * 0.6, 0.2, 0.95],
-					["walk", 0.0, 2.0, 2.5, PI * 0.55, PI * 0.45, 0.1, 0.85],
-					["run", 0.0, 2.0, 2.0, PI * 0.6, PI * 0.5, 0.1, 0.9]]:
-				var t0 := gt
-				var tgt := Vector3.ZERO
-				while gt - t0 < float(s[3]):
-					var u := (gt - t0) / float(s[3])
-					var v := lerpf(float(s[1]), float(s[2]), u)
-					player_ctrl.write_yaw(y0)
-					match String(s[0]):
-						"cheer":
-							boy.debug_pose("cheer", 1.0, v)
-						"charge", "charge_c":
-							boy.debug_pose(s[0], v)
-						"walk", "run":
-							boy.debug_pose(s[0], 1.0, fmod(v, 1.0))
-						_:
-							boy.debug_pose("idle", 1.0, v)
-					var sp := _shoulder_pos()
-					tgt = sp if gt - t0 < 0.01 else tgt.lerp(sp, 0.25)
-					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], float(s[7]) * k)
-					await get_tree().process_frame
-			boy.frozen = false
-			demo_nocut = false
-			ui_root.visible = true
-			_free_cam()
-
-		"polish19":
-			# v19 close-ups: the nape (hat on, then off and close enough to see single strands), the vest's
-			# underarm folding as the arms go up, the hair at night away from the torches, the mooring line
-			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-			await _wait(0.3)
-			demo_nocut = true
-			ui_root.visible = false
-			var y0 := player.rotation.y
-			var cl := float(boy.clips["cheer"]["length"])
-			# [pose, from, to, seconds, cam yaw from, cam yaw to, pitch, dist, bone, up, hat, night]
-			for s: Array in [["idle", 0.0, 3.0, 5.0, PI * 0.4, -PI * 0.3, 0.05, 0.38, "head", 0.0, true, false],
-					["idle", 0.0, 2.0, 4.5, PI * 0.55, -PI * 0.1, 0.1, 0.22, "head", 0.04, false, false],
-					["cheer", 0.0, cl * 0.75, 4.0, PI - 0.25, PI * 0.62, 0.05, 0.6, "spine_03", 0.06, true, false],
-					["cheer", 0.0, cl * 0.75, 3.5, 0.1, PI * 0.35, 0.05, 0.55, "spine_03", 0.06, true, false],
-					["idle", 0.0, 3.0, 5.0, PI * 0.8, PI * 0.2, 0.06, 0.42, "head", 0.03, true, true],
-					["idle", 0.0, 2.0, 3.5, PI * 0.6, PI * 0.9, 0.08, 0.42, "head", 0.05, false, true]]:
-				if bool(s[11]) != night_on:
-					_toggle_night()
-					await _wait(2.9)
-				boy.hat.visible = bool(s[10])
-				var t0 := gt
-				var tgt := Vector3.ZERO
-				while gt - t0 < float(s[3]):
-					var u := (gt - t0) / float(s[3])
-					var v := lerpf(float(s[1]), float(s[2]), u)
-					player_ctrl.write_yaw(y0)
-					if s[0] == "cheer":
-						boy.debug_pose("cheer", 1.0, v)
-					else:
-						boy.debug_pose("idle", 1.0, v)
-					var bp := _bone_pos(s[8], s[9])
-					tgt = bp if gt - t0 < 0.01 else tgt.lerp(bp, 0.25)
-					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], s[7])
-					await get_tree().process_frame
-			boy.hat.visible = true
-			_fixed_cam(island.boat_tie, 0.6, 0.3, 1.0)
-			if night_on:
-				_toggle_night()
-				await _wait(2.9)
-			await _wait(4.0)
-			boy.frozen = false
-			demo_nocut = false
-			ui_root.visible = true
-			_free_cam()
-
-		"polish18":
-			# v18 close-ups: the hair under the brim in daylight, the card edges up close (hat off), the vest's
-			# underarm with the arms going up, the hems swaying through a walk and a run, a crouching throw
-			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-			await _wait(0.3)
-			demo_nocut = true
-			ui_root.visible = false
-			var y0 := player.rotation.y
-			var tcc := float(boy.clips["throw_crouch"]["t_charge"])
-			var cl := float(boy.clips["cheer"]["length"])
-			# [pose, from, to, seconds, cam yaw from, cam yaw to, pitch, dist, bone, up, hat]
-			for s: Array in [["idle", 0.0, 3.0, 6.0, PI * 0.95, PI * 0.3, 0.04, 0.42, "head", 0.03, true],
-					["idle", 0.0, 2.0, 4.0, PI * 0.6, PI * 0.15, 0.08, 0.24, "head", 0.06, false],
-					["cheer", 0.0, cl * 0.75, 4.0, PI * 0.5, PI * 0.38, 0.05, 0.5, "spine_03", 0.08, true],
-					["walk", 0.0, 3.0, 4.0, PI * 0.6, PI * 0.4, 0.06, 1.1, "spine_01", 0.0, true],
-					["run", 0.0, 3.0, 3.0, PI * 0.4, PI * 0.6, 0.06, 1.2, "spine_01", 0.0, true],
-					["charge_c", 0.0, 1.0 / tcc * 1.15, 3.5, -PI * 0.3, -PI * 0.55, 0.12, 0.6, "upperarm_l", -0.05, true]]:
-				boy.hat.visible = bool(s[10])
-				var t0 := gt
-				var tgt := Vector3.ZERO
-				while gt - t0 < float(s[3]):
-					var u := (gt - t0) / float(s[3])
-					var v := lerpf(float(s[1]), float(s[2]), u)
-					player_ctrl.write_yaw(y0)
-					match String(s[0]):
-						"cheer":
-							boy.debug_pose("cheer", 1.0, v)
-						"charge_c":
-							boy.debug_pose(s[0], v)
-						"walk", "run":
-							boy.debug_pose(s[0], 1.0, fmod(v, 1.0))
-						_:
-							boy.debug_pose("idle", 1.0, v)
-					var bp := _bone_pos(s[8], s[9])
-					tgt = bp if gt - t0 < 0.01 else tgt.lerp(bp, 0.25)
-					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], s[7])
-					await get_tree().process_frame
-			boy.hat.visible = true
-			boy.frozen = false
-			demo_nocut = false
-			ui_root.visible = true
-			_free_cam()
-
-		"outfit17":
-			# close on the hair and the clothes: round his head and his body at rest, a walk, a run and a
-			# crouching throw (hair / hem sway), then the same orbits at night
-			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), PI * 0.5)
-			await _wait(0.3)
-			demo_nocut = true
-			ui_root.visible = false
-			var y0 := player.rotation.y
-			var tcc := float(boy.clips["throw_crouch"]["t_charge"])
-			# [pose, from, to, seconds, cam yaw from, cam yaw to, pitch, dist, bone, up, night]
-			for s: Array in [["idle", 0.0, 3.0, 6.0, PI - 0.1, -0.3, 0.1, 0.55, "head", 0.05, false],
-					["idle", 0.0, 3.0, 6.0, PI * 0.9, PI * 0.05, 0.08, 1.05, "spine_01", 0.0, false],
-					["walk", 0.0, 3.0, 3.0, PI * 0.65, PI * 0.4, 0.08, 1.2, "spine_01", 0.0, false],
-					["run", 0.0, 3.0, 2.5, PI * 0.4, PI * 0.6, 0.08, 1.3, "spine_01", 0.0, false],
-					["charge_c", 0.0, 1.0 / tcc * 1.15, 3.5, PI * 0.45, PI * 0.6, 0.15, 1.2, "spine_01", 0.0, false],
-					["idle", 0.0, 3.0, 5.0, PI - 0.1, PI * 0.2, 0.1, 0.55, "head", 0.05, true],
-					["idle", 0.0, 3.0, 5.0, PI * 0.9, PI * 0.3, 0.08, 1.05, "spine_01", 0.0, true]]:
-				if bool(s[10]) != night_on:
-					_toggle_night()
-					await _wait(2.9)
-				var t0 := gt
-				var tgt := Vector3.ZERO
-				while gt - t0 < float(s[3]):
-					var u := (gt - t0) / float(s[3])
-					var v := lerpf(float(s[1]), float(s[2]), u)
-					player_ctrl.write_yaw(y0)
-					match String(s[0]):
-						"charge_c":
-							boy.debug_pose(s[0], v)
-						"walk", "run":
-							boy.debug_pose(s[0], 1.0, fmod(v, 1.0))
-						_:
-							boy.debug_pose("idle", 1.0, v)
-					var bp := _bone_pos(s[8], s[9])
-					tgt = bp if gt - t0 < 0.01 else tgt.lerp(bp, 0.25)
-					_fixed_cam(tgt, y0 + lerpf(float(s[4]), float(s[5]), u), s[6], s[7])
-					await get_tree().process_frame
-			if night_on:
-				_toggle_night()
-			boy.frozen = false
-			demo_nocut = false
-			ui_root.visible = true
-			_free_cam()
-
-		"throw15":
-			# aiming by swipe on the dock: left with a flick, right with a slow release (no spin), the
-			# elevation slider pushed up to a too-steep launch, then a good one straight out
-			_place(Vector3(0.0, 0, island.dock_end_z + 1.6), 0.0)
-			await _wait(0.3)
-			_enter_throw()
-			await _wait(2.2)
-			var c := throw_pad.pad_c
-			await _demo_swipe(c, Vector2(-0.2, -0.38), 0.8, 1.0, true)
-			await _demo_wait_ready([])
-			await _demo_swipe(c, Vector2(0.24, -0.36), 0.8, 1.0, false)
-			await _demo_wait_ready([])
-			for k in 24:
-				_set_angles(lerpf(4.0, 28.0, (k + 1) / 24.0), 20.0)
-				await get_tree().process_frame
-			await _wait(0.5)
-			await _demo_swipe(c, Vector2(0.06, -0.45), 0.6, 0.8, true)
-			await _demo_wait_ready([])
-			for k in 24:
-				_set_angles(lerpf(28.0, 4.0, (k + 1) / 24.0), 20.0)
-				await get_tree().process_frame
-			await _wait(0.5)
-			await _demo_swipe(c, Vector2(-0.04, -0.46), 0.6, 0.8, true)
-			await _demo_wait_ready([])
-
-		"turn12":
-			# turning on the spot: stick flicks of 180 / 90 / 135 degrees from a stand, a reversal out of a
-			# walk, the 180 again in slow motion, then the same in the game camera
-			var push := func(dirv: Vector3, mag: float, dur: float) -> void:
-				var fwd := Vector3(-sin(ex_yaw), 0, -cos(ex_yaw))
-				var right := Vector3(cos(ex_yaw), 0, -sin(ex_yaw))
-				demo_input = Vector2(dirv.dot(right), -dirv.dot(fwd)) * mag
-				await _wait(dur)
-				demo_input = Vector2.ZERO
-			# mid-dock: open, flat, and the camera can stand off to the side over the water
-			var g0 := Vector3(0.0, 0.0, lerpf(island.dock_start_z, island.dock_end_z, 0.45))
-			var gd := Vector3(0, 0, signf(island.dock_end_z - island.dock_start_z))
-			var sd := gd.cross(Vector3.UP)
-			for view in ["side", "slow", "game"]:
-				_place(g0, atan2(-gd.x, -gd.z))
-				ex_yaw = face_yaw
-				_snap_cam_now()
-				if view == "game":
-					_free_cam()
-				else:
-					demo_cam = true
-					demo_track = [atan2(sd.x, sd.z) + (0.45 if view == "side" else -0.35), 0.16, 3.2, 0.55, true]
-				await _wait(0.8)
-				if view == "slow":
-					_toast("慢放 0.4×：原地转身 180°", 1.6)
-					Engine.time_scale = 0.4
-					await push.call(-gd, 0.45, 0.5)
-					await _wait(1.6)
-					Engine.time_scale = 1.0
-					await _wait(0.5)
-					continue
-				_toast("原地转身 180°", 1.2)
-				await push.call(-gd, 0.45, 0.4)
-				await _wait(1.8)
-				_toast("左转 90°", 1.0)
-				await push.call(sd, 0.45, 0.4)
-				await _wait(1.5)
-				_toast("右后方 135°", 1.0)
-				await push.call((-sd + gd).normalized(), 0.45, 0.4)
-				await _wait(1.8)
-				_toast("走着突然掉头", 1.2)
-				await push.call(gd, 0.6, 1.4)
-				await push.call(-gd, 0.6, 1.6)
-				await _wait(1.2)
-			_free_cam()
-
-		"gait10":
-			# walk -> run -> stop seen from the front, then side-on, then a zig-zag (turns) in the game camera
-			for view in ["front", "side", "game"]:
-				var g0 := island.shore_pt(-1.38, 2.4)
-				var gm := island.shore_pt(-1.15, 2.4)
-				var g1 := island.shore_pt(-0.86, 2.6)
-				var gd := (gm - g0).normalized()
-				_place(g0, atan2(-gd.x, -gd.z))
-				ex_yaw = face_yaw
-				_snap_cam_now()
-				_toast({"front": "正面：走 → 跑 → 停", "side": "侧面：走 → 跑 → 停", "game": "转弯：走、跑"}[view], 1.6)
-				if view == "game":
-					_free_cam()
-					await _wait(0.4)
-					var sd := gd.cross(Vector3.UP)
-					await _walk_to(g0 + gd * 2.5 + sd * 1.2, false, 4.0)
-					await _walk_to(g0 + gd * 4.5 - sd * 1.0, false, 4.0)
-					await _walk_to(g0 + gd * 8.0 + sd * 1.5, true, 4.0)
-					await _walk_to(g0 + gd * 11.0 - sd * 1.5, true, 4.0)
-					_stop_walk()
-					await _wait(1.2)
-				else:
-					demo_cam = true
-					demo_track = [PI + 0.25 if view == "front" else PI * 0.5, 0.06, 2.6, 0.62]
-					await _wait(0.6)
-					await _walk_to(gm, false, 5.0)
-					await _walk_to(g1, true, 4.0)
-					_stop_walk()
-					await _wait(1.4)
-			_free_cam()
-
-		"throw10":
-			# standing and half-kneeling throws, each from the front, side-on (throwing arm side) and from above
-			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.0)
-			await _wait(0.3)
-			_enter_throw()
-			for k in 6:
-				var crouch := k >= 3
-				if crouch != (boy.stance == "crouch"):
-					_toggle_stance()
-				await _wait(1.0)
-				var v := k % 3
-				demo_cam = true
-				var hgt := 0.62 if not crouch else 0.45
-				demo_track = [[aim_yaw + PI + 0.15, 0.05, 2.7, hgt, true], [aim_yaw - PI * 0.5, 0.05, 2.7, hgt, true],
-					[aim_yaw + PI * 0.8, 1.15, 2.6, hgt, true]][v]
-				_toast(("半蹲" if crouch else "站立") + ["投掷 · 正面", "投掷 · 侧面", "投掷 · 俯视"][v], 1.6)
-				_begin_aim(Vector2.ZERO)
-				aim_pitch = 3.0
-				var t0 := gt
-				while gt - t0 < 1.0:
-					charge_t = minf((gt - t0) / 0.9, 1.0) * 0.9 * POWER_CYCLE * 0.5
-					await get_tree().process_frame
-				charge_t = 0.9 * POWER_CYCLE * 0.5
-				_throw()
-				fly_t = 0.0
-				await _wait(2.6)
-				while state != State.READY:
-					await get_tree().process_frame
-				await _wait(0.4)
-			_free_cam()
-
-		"throw8":
-			# the reworked throw: standing in the game camera, standing side-on, crouching side-on, crouching in the game camera
-			_place(Vector3(0.0, 0, island.dock_end_z + 3.0), 0.0)
-			await _walk_to(Vector3(0.2, 0, island.dock_end_z + 1.5), false, 2.0)
-			await _wait(0.4)
-			_enter_throw()
-			for k in 4:
-				await _wait(0.5)
-				if (k >= 2) != (boy.stance == "crouch"):
-					_toggle_stance()
-					await _wait(0.9)
-				var side := k == 1 or k == 2
-				if side:
-					demo_cam = true
-					demo_track = [aim_yaw + PI * 0.5 + 0.1, 0.1, 2.6, 0.55 if k == 1 else 0.42, true]
-				else:
-					_free_cam()
-				_begin_aim(Vector2.ZERO)
-				aim_pitch = 3.0
-				var t0 := gt
-				while gt - t0 < 1.5:
-					charge_t = minf((gt - t0) / 1.2, 1.0) * 0.9 * POWER_CYCLE * 0.5
-					await get_tree().process_frame
-				charge_t = 0.9 * POWER_CYCLE * 0.5
-				_throw()
-				fly_t = 0.0
-				if side:
-					await _wait(2.6)
-				while state != State.READY:
-					await get_tree().process_frame
-				await _wait(0.8 if side else 2.0)
-			_free_cam()
-		"bump":
-			# walking into things: palm, log by the fire, the lounger, a rock, wading against the dock, the bench, the fire ring
-			var tests: Array = []
-			for nm: String in ["椰子树", "坐木", "躺椅", "礁石", "码头", "长椅", "篝火"]:
-				for w: Array in island.walls:
-					if w[6] != nm:
-						continue
-					var found := _bump_spot(w)
-					if not found.is_empty():
-						tests.append(found)
-						break
-			for tst: Array in tests:
-				var sp: Vector3 = tst[0]
-				var dir: Vector3 = tst[1]
-				_place(sp, atan2(-dir.x, -dir.z))
-				ex_yaw = face_yaw + 0.5
-				_snap_cam_now()
-				_toast(tst[2], 2.0)
-				await _wait(0.3)
-				await _drive_dir(dir, 1.6, false)
-				await _drive_dir(dir.rotated(Vector3.UP, 0.7), 1.8, false)
-				await _drive_dir(dir.rotated(Vector3.UP, -0.7), 2.0, true)
-				await _wait(0.3)
-		"sit":
-			# bench by the lighthouse, then a log at the campfire, then the lounger
-			for i: int in [0, 2, 4]:
-				var st: Dictionary = island.seats[i]
-				var face: Vector3 = st["face"]
-				var side := face.cross(Vector3.UP)
-				_place((st["approach"] as Vector3) + face * 2.2 + side * 0.8, 0.0)
-				var to := (st["approach"] as Vector3) - player.position
-				face_yaw = atan2(-to.x, -to.z)
-				player_ctrl.write_yaw(face_yaw)
-				ex_yaw = face_yaw + 0.35
-				_snap_cam_now()
-				await _walk_to((st["approach"] as Vector3) + face * 0.5, false, 3.0)
-				await _wait(0.5)
-				_on_action()
-				while rest_phase < 4:
-					await get_tree().process_frame
-				await _wait(3.0)
-				_wake()
-				while mode != Mode.EXPLORE:
-					await get_tree().process_frame
-				await _drive_dir(face, 1.0, false)
-				await _wait(0.3)
-		"fire":
-			# campfire close-up, slowly circling
-			var c := island.campfire_pos
-			_place(c + Vector3(4.0, 0, 4.0), 0.0)
-			var t1 := gt
-			while gt - t1 < 9.0:
-				var u := (gt - t1) / 9.0
-				_fixed_cam(c + Vector3(0, 0.4, 0), 0.4 + u * 1.2, 0.2 + 0.1 * sin(u * PI), 2.3 + u * 1.2)
-				await get_tree().process_frame
-			_free_cam()
-		"prints":
-			# footprints along the waterline: the swash wipes out the low ones, the dry ones stay (and fade slowly)
-			var a := island.shore_pt(-1.30, 2.0)
-			var b := island.shore_pt(-1.27, 0.95)
-			var c := island.shore_pt(-1.14, 0.95)
-			var e := island.shore_pt(-1.11, 2.0)
-			var f := island.shore_pt(-1.06, 2.1)
-			var mid := island.shore_pt(-1.19, 1.45)
-			var sea := Island.dir_at(-1.19)
-			_place(a, 0.0)
-			_fixed_cam(mid + Vector3(0, 0.1, 0), atan2(sea.x, sea.z), 1.08, 4.6)
-			await _wait(0.4)
-			for w in [b, c, e, f]:
-				await _walk_to(w, false, 6.0)
-			_stop_walk()
-			await _wait(22.0)
-
-		"recover":
-			# the arm after the release: stand and half-kneel, side-on from the throwing side, each once at
-			# full speed and once at half speed
-			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.0)
-			await _wait(0.3)
-			_enter_throw()
-			for k in 4:
-				var crouch := k >= 2
-				if crouch != (boy.stance == "crouch"):
-					_toggle_stance()
-				await _wait(1.0)
-				demo_cam = true
-				demo_track = [aim_yaw + PI - 0.7, 0.1, 2.6, 0.62 if not crouch else 0.45, true]
-				_toast(("半蹲" if crouch else "站立") + ("投掷 · 慢放 0.5×" if k % 2 == 1 else "投掷"), 1.6)
-				_begin_aim(Vector2.ZERO)
-				aim_pitch = 3.0
-				var t0 := gt
-				while gt - t0 < 1.0:
-					charge_t = minf((gt - t0) / 0.9, 1.0) * 0.9 * POWER_CYCLE * 0.5
-					await get_tree().process_frame
-				charge_t = 0.9 * POWER_CYCLE * 0.5
-				if k % 2 == 1:
-					Engine.time_scale = 0.5
-				_throw()
-				fly_t = 0.0
-				await _wait(2.6)
-				Engine.time_scale = 1.0
-				while state != State.READY:
-					await get_tree().process_frame
-				await _wait(0.4)
-			_free_cam()
-		"lie":
-			# the bench, then the three logs by the fire (front, back, front): sit, lie back with the hat on
-			# the face and a leg crossed, nap a moment, get up
-			for i: int in [0, 1, 2, 3]:
-				var st: Dictionary = island.seats[i]
-				var face: Vector3 = st["face"]
-				var from_back := i == 2
-				var spot: Vector3 = (st["back_approach"] as Vector3) - face * 1.6 if from_back else (st["approach"] as Vector3) + face * 1.6
-				_place(_blocked_by(spot), 0.0)
-				var to := (st["top"] as Vector3) - player.position
-				face_yaw = atan2(-to.x, -to.z)
-				player_ctrl.write_yaw(face_yaw)
-				ex_yaw = face_yaw + 0.5
-				_snap_cam_now()
-				_toast("%s · 坐下 → 躺下 → 起来" % ("长椅" if i == 0 else "篝火边的木头 %d%s" % [i, "（从背面坐）" if from_back else ""]), 2.0)
-				await _walk_to(_blocked_by((st["back_approach"] as Vector3) - face * 0.6 if from_back else (st["approach"] as Vector3) + face * 0.6), false, 2.5)
-				await _wait(0.3)
-				_on_action()
-				while rest_phase != 4:
-					await get_tree().process_frame
-				await _wait(1.2)
-				_lie_down()
-				await _wait(SEAT_LIE_DUR * 0.4)
-				_fixed_cam(rest_lie + Vector3(0, 0.15, 0), atan2(seat_face.x, seat_face.z) + 0.45, 0.32, 2.2)
-				while rest_phase != 4:
-					await get_tree().process_frame
-				await _wait(3.2 if i == 0 else 2.2)
-				_wake()
-				while mode != Mode.EXPLORE:
-					await get_tree().process_frame
-				_free_cam()
-				await _wait(0.6)
-		"shore":
-			# a full surf cycle from above, then low along the beach
-			var sea := Island.dir_at(-1.05)
-			var p := island.shore_pt(-1.05, 1.4)
-			var along := sea.cross(Vector3.UP)
-			_place(p, atan2(-sea.x, -sea.z) + 0.5)
-			_fixed_cam(p + sea * 1.6 + Vector3(0, 0.2, 0), atan2(sea.x, sea.z) + 0.55, 0.62, 5.0)
-			await _wait(10.5)
-			_fixed_cam(p + sea * 1.0 + Vector3(0, 0.3, 0), atan2(along.x, along.z) - 0.5, 0.16, 3.6)
-			await _wait(10.5)
-			var sea2 := Island.dir_at(2.2)
-			var p2 := island.shore_pt(2.2, 1.4)
-			_place(p2, atan2(-sea2.x, -sea2.z) + 0.5)
-			_fixed_cam(p2 + sea2 * 1.2 + Vector3(0, 0.2, 0), atan2(sea2.x, sea2.z) - 0.4, 0.35, 4.5)
-			await _wait(10.0)
-			_free_cam()
-		"wade":
-			# walk into the sea by the dock: legs go under, tinted and wobbling; foam collar + rings follow
-			var a := island.shore_pt(-1.2, 0.6)
-			var b := island.shore_pt(-1.24, -1.9)
-			var dv := (b - a).normalized()
-			_place(a, atan2(-dv.x, -dv.z))
-			demo_cam = true
-			demo_track = [atan2(dv.x, dv.z) + PI * 0.5 + 0.4, 0.14, 2.3, 0.35, true]
-			await _walk_to(b, false, 7.0)
-			await _wait(2.5)
-			await _walk_to(island.shore_pt(-1.34, -2.2), false, 4.0)
-			_free_cam()
-			await _wait(0.5)
-			await _walk_to(island.shore_pt(-1.2, -1.2), false, 4.0)
-			await _wait(2.0)
-		"night":
-			# dusk falls by the campfire, fireflies, sit by the fire, then the dock: the moon path on the sea
-			var c := island.campfire_pos
-			_place(c + Vector3(2.6, 0, 2.6), 0.0)
-			_fixed_cam(c + Vector3(0, 0.5, 0), 0.7, 0.28, 5.2)
-			await _wait(1.2)
-			_toggle_night()
-			await _wait(4.5)
-			var st: Dictionary = island.seats[1]
-			_free_cam()
-			await _walk_to(_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.6), false, 3.0)
-			_on_action()
-			while rest_phase != 4:
-				await get_tree().process_frame
-			await _wait(4.0)
-			_wake()
-			while mode != Mode.EXPLORE:
-				await get_tree().process_frame
-			_free_cam()
-			_place(Vector3(0.2, 0, island.dock_end_z + 1.5), 0.1)
-			await _wait(0.5)
-			_enter_throw()
-			await _wait(1.5)
-			_begin_aim(Vector2.ZERO)
-			aim_pitch = 3.0
-			var t0 := gt
-			while gt - t0 < 1.2:
-				charge_t = minf((gt - t0) / 1.1, 1.0) * 0.9 * POWER_CYCLE * 0.5
-				await get_tree().process_frame
-			_throw()
-			while state != State.READY:
-				await get_tree().process_frame
-			await _wait(1.0)
-			_leave_throw()
-			_fixed_cam(Vector3(0, 1.0, island.dock_start_z - 2.0), 2.6, 0.32, 26.0)
-			var t1 := gt
-			while gt - t1 < 5.0:
-				_fixed_cam(Vector3(0, 1.0, island.dock_start_z - 2.0), 2.6 + (gt - t1) * 0.08, 0.32, 26.0)
-				await get_tree().process_frame
-			_toggle_night()
-			await _wait(3.5)
-			_free_cam()
-
-## steer with the stick towards a world direction (camera-relative, like a player would)
 func _drive_dir(dir: Vector3, sec: float, run: bool) -> void:
-	demo_run = run
-	var t0 := gt
-	while gt - t0 < sec:
-		var fwd := Vector3(-sin(ex_yaw), 0, -cos(ex_yaw))
-		var right := Vector3(cos(ex_yaw), 0, -sin(ex_yaw))
-		demo_input = Vector2(dir.dot(right), -dir.dot(fwd)) * (1.0 if run else 0.75)
-		await get_tree().process_frame
-	demo_input = Vector2.ZERO
-	demo_run = false
+	await demo_seq._drive_dir(dir, sec, run)
 
-## a clear spot ~1.5 m from a wall with flat ground towards it (collision demo)
 func _bump_spot(w: Array) -> Array:
-	var a: Vector2 = w[1]
-	var c := a if w[0] != "s" else (a + (w[2] as Vector2)) * 0.5
-	var ext: float = float(w[3]) if w[0] == "c" else (0.3 if w[0] == "s" else (w[2] as Vector2).x)
-	for k in 12:
-		var d := Vector2(cos(k * TAU / 12.0 + 0.3), sin(k * TAU / 12.0 + 0.3))
-		var s := c + d * (ext + 1.6)
-		var h := _surface(s.x, s.y)
-		var sp := Vector3(s.x, h, s.y)
-		if not _can_stand(h, s.x, s.y) or penetration(sp) > 0.0 or not _wall_hits_y(w, h) or Island.wall_dist(w, s).x < 1.2:
-			continue
-		return [sp, Vector3(-d.x, 0, -d.y), "撞上%s：沿着它滑开" % w[6]]
-	return []
+	return demo_seq._bump_spot(w)
 
-## drive the on-screen joystick with real touch events (like a finger on the phone)
 func _stick_walk(dirs: Array, sec_each: float) -> void:
-	var vs := get_viewport().get_visible_rect().size
-	var c := Vector2(vs.x * 0.14, vs.y * 0.86)
-	var keep := demo_mode
-	demo_mode = false
-	var ev := InputEventScreenTouch.new()
-	ev.index = 0; ev.position = c; ev.pressed = true
-	get_viewport().push_input(ev, true)
-	var last := c
-	for dv: Vector2 in dirs:
-		var t0 := gt
-		while gt - t0 < sec_each:
-			var to := c + dv.normalized() * 50.0
-			var dr := InputEventScreenDrag.new()
-			dr.index = 0; dr.position = last.lerp(to, 0.3); dr.relative = dr.position - last
-			last = dr.position
-			get_viewport().push_input(dr, true)
-			await get_tree().process_frame
-	var up := InputEventScreenTouch.new()
-	up.index = 0; up.position = last; up.pressed = false
-	get_viewport().push_input(up, true)
-	demo_mode = keep
+	await demo_seq._stick_walk(dirs, sec_each)
+
 
 func _snap_cam_now() -> void:
-	var c := _explore_cam()
-	cam_target = c[0]; cam_yaw = c[1]; cam_pitch = c[2]; cam_dist = c[3]
+	return demo_seq._snap_cam_now()
+

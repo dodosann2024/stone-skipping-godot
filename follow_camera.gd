@@ -246,37 +246,26 @@ func _throw_cam() -> Array:
 
 func _explore_cam() -> Array:
 	var tall = m._tall()
-	# Aim mid/upper-chest. Slightly high look-at keeps the *head bone* below the
-	# top 18% band even when the hillside spring-arm lifts the lens.
-	var hy = 0.82 if m.boy.meta.get("tripo", false) else 0.74
+	# One frame for walk, run, turn and idle. A speed-scaled look-ahead used to
+	# collapse on stick release and the hat went through the top of the screen.
+	# Look at the neck so the face stays in frame and the feet stay in frame.
+	var hy = 1.18 if m.boy.meta.get("tripo", false) else 1.06
 	var base = m.player.global_position + Vector3(0, hy, 0)
-	# Look-ahead in the move / face direction so the boy never walks out of frame.
 	var ahead_dir = Vector3(-sin(m.face_yaw), 0.0, -cos(m.face_yaw))
-	if m.cur_speed > 0.15:
-		var mv = Vector3(m.move_vel.x, 0.0, m.move_vel.z)
-		if mv.length_squared() > 1e-4:
-			ahead_dir = mv.normalized()
-	# Modest look-ahead — too much put the boy near the bottom edge on full-stick run.
-	var ahead_m = clampf(m.cur_speed * 0.18, 0.0, 0.70)
+	var ahead_m = 0.10
 	var t = base + ahead_dir * ahead_m
-	# ex_dist is the *user zoom preference* (pinch / preset). Never multiply it by
-	# a constant and write cam_dist back into ex_dist — that compounded every
-	# frame into a bird's-eye of the whole island (cdp_dir contact sheet).
+	# ex_dist is the user zoom preference. The floor is the default whole-body
+	# frame; release eases back to this, it does not dolly in.
 	var zoom = clampf(m.ex_dist, 3.0, 14.0)
-	var dist = maxf(zoom, 4.60 if tall else 4.40)
-	# Mild pitch — steep look-down after hillside lift shoved the head into the top band.
-	var pitch = clampf(m.ex_pitch, 0.36, 0.46)
-	if m.mode == 0 and m.cur_speed > 0.25:
-		pitch = clampf(pitch + 0.02, 0.38, 0.48)
-	# Uphill grade: pull back; crest clearance owns height (see _apply_camera).
+	var dist = maxf(zoom, 6.70 if tall else 6.35)
+	var pitch = clampf(m.ex_pitch, 0.28, 0.36)
 	var gx = m.player.global_position.x
 	var gz = m.player.global_position.z
 	var ahead_p = m.player.global_position + ahead_dir * 1.2
 	var grade = m._surface(ahead_p.x, ahead_p.z) - m._surface(gx, gz)
 	if grade > 0.12:
-		dist = maxf(dist, 5.40)
-		pitch = clampf(pitch + 0.02, 0.38, 0.50)
-		t.y += clampf(grade * 0.28, 0.0, 0.38)
+		dist = maxf(dist, 6.30)
+		t.y += clampf(grade * 0.12, 0.0, 0.20)
 	return [t, m.ex_yaw, pitch, dist]
 
 
@@ -730,10 +719,11 @@ func _update_camera(delta: float) -> void:
 		# Critically damped chase. While stick/speed is live: hard-lock look-at + yaw
 		# so lag can never push him out of the central 60% (dir_e edge fails).
 		# Pitch/dist keep a fast spring. Idle/release: full spring on everything.
-		var move_k = clampf(m.cur_speed / maxf(1.15, 0.01), 0.0, 1.0)
 		var stick_lock = stick_mag > 0.08 or m.cur_speed > 0.08
 		m._cam_stick_lock = stick_lock
-		var st_t = 0.06 if stick_lock else lerpf(0.14, 0.08, move_k)
+		# Release eases back to the same default frame over ~0.45 s. The old
+		# 0.14 s spring plus a vanishing look-ahead read as a dolly into a crop.
+		var st_t = 0.08 if stick_lock else 0.45
 		if m.rest_exit_cam_t > 0.0:
 			m.rest_exit_cam_t = maxf(m.rest_exit_cam_t - delta, 0.0)
 			st_t = lerpf(0.22, st_t, 1.0 - m.rest_exit_cam_t / 0.8)
@@ -837,11 +827,8 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 				if not _cam_blocked(probe + right * s):
 					m._cam_slide_want = s
 					break
-			if m._cam_slide_want == 0.0:
-				for kk in [0.82, 0.68, 0.54, 0.42]:
-					if not _cam_blocked(m.cam_target + full_off * kk):
-						m._cam_arm_want = minf(m._cam_arm_want, kk)
-						break
+			# Never pull the arm in while idle. That crush (down to 0.42) is the
+			# head-crop after stick release. Slide sideways; the hill lift owns height.
 	var slide_rate = (1.6 if absf(m._cam_slide_want) > absf(m._cam_slide) else 2.4) if not moving else 4.0
 	if moving:
 		m._cam_slide_want = 0.0
@@ -894,7 +881,7 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 			pos.y = maxf(pos.y, m._surface(pos.x, pos.z) + 1.15)
 		# Keep a minimum plan-distance so the boy stays whole-body framed (not a face crop).
 		var flat = Vector2(pos.x - m.cam_target.x, pos.z - m.cam_target.z)
-		var min_flat: float = maxf(m.cam_dist * ARM_FLOOR, 2.85)
+		var min_flat: float = maxf(m.cam_dist * 0.94, 5.60)
 		if flat.length() > 0.05 and flat.length() < min_flat:
 			var sc: float = min_flat / flat.length()
 			pos.x = m.cam_target.x + (pos.x - m.cam_target.x) * sc
@@ -966,8 +953,9 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	# Look slightly higher while the arm is hillside-lifted (local only — do not
 	# accumulate into cam_target or the spring drifts skyward over frames).
 	var look = m.cam_target
-	if m.mode == 0 and m._cam_hill_lift > 0.08:
-		look.y += m._cam_hill_lift * 0.42
+	if m.mode == 0 and m._cam_hill_lift > 0.05:
+		# Keep the hat under the top of the frame when the slope lifts the lens.
+		look.y += m._cam_hill_lift * 0.72
 	# Step budget: follow + look-ahead need ~7 cm at run speed; yaw spring on a
 	# ~4.5 m arm needs more while turning. Cap straight follow tightly; allow
 	# turn-proportional motion; hard-stop true teleports without the flag.
