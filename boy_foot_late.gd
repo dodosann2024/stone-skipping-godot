@@ -45,18 +45,10 @@ func _on_process_frame() -> void:
 		return
 	last_hit_y = float(hit.position.y)
 	last_ankle_y = ank.y
-	last_gap_cm = (ank.y - b.sole_offset - last_hit_y) * 100.0
+	# Gap uses SOLE_CLEAR so a correctly planted foot doesn't look "off".
+	var clear: float = float(b.get("SOLE_CLEAR")) if b.get("SOLE_CLEAR") != null else 0.055
+	last_gap_cm = (ank.y - b.sole_offset - clear - last_hit_y) * 100.0
 	b.set_meta("late_ankle_xz", Vector2(ank.x, ank.z))
-	if absf(last_gap_cm) > 0.15:
-		var want := Vector3(ank.x, last_hit_y + b.sole_offset, ank.z)
-		b._plant_foot_override(0, bi, want, hit.get("normal", Vector3.UP), 1.0)
-		ank = b.skel.global_transform * b.skel.get_bone_global_pose(bi).origin
-		last_ankle_y = ank.y
-		last_gap_cm = (ank.y - b.sole_offset - last_hit_y) * 100.0
-		b.set_meta("late_ankle_xz", Vector2(ank.x, ank.z))
-		if b.has_method("_update_blob"):
-			b._update_blob()
-			_record_blob(b)
 
 
 func _record_blob(b: Node) -> void:

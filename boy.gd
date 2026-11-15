@@ -19,7 +19,12 @@ const FLOOR_OFFSET := 0.00837  # 0.0062 * 1.35 — matches alignment.json
 ## Kept at 0 for API compat with older tests that print Boy.SOLE_NUDGE.
 const SOLE_NUDGE := 0.0
 ## Ankle-bone → sole vertical offset measured from skinned mesh in T-pose (metres).
-var sole_offset := 0.04
+var sole_offset := 0.055
+## Tiny pad above measured sole_offset so the shoe sits in the −1…+1.5 cm bar.
+## Residual burial (walk deformation / Compatibility lag) is owned by _contact_lift.
+const SOLE_CLEAR := 0.008
+## Durable model Y lift from skinned-sole burial (survives polish_gait overwrites).
+var _contact_lift := 0.0
 ## Drop-in Mixamo GLB path. Replace boy/boy.glb (same Mixamo bone names) without code changes.
 ## Optional override: boy/boy_override.glb wins when present (AC-style flat-eye regen, etc.).
 const MODEL_PATH := "res://boy/boy.glb"
@@ -2054,14 +2059,15 @@ func _polish_gait(delta: float) -> void:
 		_pose_add("mixamorig_RightForeArm", Vector3(-absf(swing) * 0.28, 0.0, 0.0), 0.5)
 		sway = -c * lerpf(0.010, 0.016, run_k) * move_w
 		hip_shift = hip_shift.lerp(Vector3(sway, 0, 0), 1.0 - exp(-delta * 8.0))
-		skel.force_update_transform()
+		# No force_update here — it re-ran SkeletonModifier3D and fought the late plant.
 	else:
 		hip_shift = hip_shift.lerp(Vector3.ZERO, 1.0 - exp(-delta * 6.0))
 	# No root bob — foot IK + collision Y own contact (bob floated soles).
 	_walk_bob = lerpf(_walk_bob, 0.0, 1.0 - exp(-delta * 10.0))
-	# Pelvis drop from foot IK (lower of the two foot deltas) — smoothed.
+	# Keep contact lift from FootPlantLate — overwriting it here left the mesh
+	# buried for the AnimationTree skinning upload on Compatibility/web.
 	_pelvis_drop_s = lerpf(_pelvis_drop_s, _pelvis_drop, 1.0 - exp(-delta * 14.0))
-	model.position = model_base + Vector3(hip_shift.x, -_pelvis_drop_s, 0)
+	model.position = model_base + Vector3(hip_shift.x, -_pelvis_drop_s + _contact_lift, 0)
 
 
 func _setup_body_collision() -> void:
@@ -2104,8 +2110,20 @@ func _measure_sole_offset() -> void:
 		if not _skin_verts.is_empty():
 			var bone_xf: Array[Transform3D] = []
 			bone_xf.resize(skel.get_bone_count())
+			var skin_m: Skin = _body_skin_orig
 			for bi in skel.get_bone_count():
-				bone_xf[bi] = skel.global_transform * skel.get_bone_global_pose(bi)
+				var pose: Transform3D = skel.global_transform * skel.get_bone_global_pose(bi)
+				if skin_m != null:
+					var bind := Transform3D.IDENTITY
+					var got_bind := false
+					for bi_i in skin_m.get_bind_count():
+						if skin_m.get_bind_bone(bi_i) == bi:
+							bind = skin_m.get_bind_pose(bi_i)
+							got_bind = true
+							break
+					bone_xf[bi] = pose * bind if got_bind else (pose * skel.get_bone_global_rest(bi).affine_inverse())
+				else:
+					bone_xf[bi] = pose * skel.get_bone_global_rest(bi).affine_inverse()
 			for vi in _skin_verts.size():
 				var top_bi := -1
 				var top_w := 0.0
@@ -2141,13 +2159,13 @@ func _measure_sole_offset() -> void:
 			var toe_y := ankle_p.y
 			if toe_i >= 0:
 				toe_y = (skel.global_transform * skel.get_bone_global_pose(toe_i)).origin.y
-			sole_y = minf(sole_y, toe_y) - 0.008
+			sole_y = minf(sole_y, toe_y) - 0.012
 			got = true
 		var off := ankle_p.y - sole_y
 		if got and off > best:
 			best = off
 			found = true
-	sole_offset = clampf(best if found else 0.055, 0.030, 0.12)
+	sole_offset = clampf(best if found else 0.065, 0.045, 0.14)
 	print("SOLE_OFFSET measured=%.1fcm (skinned sole verts)" % [sole_offset * 100.0])
 
 
@@ -2176,8 +2194,11 @@ func _setup_leg_ik() -> void:
 		_leg_ik.set_target_node(side, _leg_ik.get_path_to(tgt))
 		_leg_ik.set_pole_node(side, _leg_ik.get_path_to(pole))
 		_leg_ik.set_pole_direction(side, SkeletonModifier3D.SECONDARY_DIRECTION_PLUS_Z)
-	_leg_ik.active = true
-	_leg_ik.influence = 1.0
+	# Analytic IK owns contact — leave the built-in modifier OFF. Influence>0
+	# floated Mixamo balls; active+influence 0 still ran on skeleton update and
+	# fought pose overrides on the web Compatibility path.
+	_leg_ik.active = false
+	_leg_ik.influence = 0.0
 
 
 func _ray_foot(ankle: Vector3) -> Dictionary:
@@ -2339,12 +2360,10 @@ func _update_foot_ik(_delta: float) -> void:
 			plant_w[1] = 0.20
 	# Stance threshold.
 	# (used below as plant_w[side] >= 0.25)
-	# Targets feed TwoBoneIK3D (low influence — full influence exploded Mixamo
-	# foot bases). Durable contact is the process_frame Y-snap on foot/toe.
-	# Targets stay live; influence 0 — Y-snap owns contact. (Non-zero influence
-	# rotated Mixamo feet and floated balls by 10–25 cm.)
-	_leg_ik.active = true
-	_leg_ik.influence = 0.0
+	# Durable contact is the process_frame analytic plant (TwoBoneIK3D stays off).
+	if _leg_ik:
+		_leg_ik.active = false
+		_leg_ik.influence = 0.0
 	var deltas: Array[float] = [0.0, 0.0]
 	var lifts: Array[float] = [0.0, 0.0]
 	var fwd := -global_transform.basis.z
@@ -2363,7 +2382,7 @@ func _update_foot_ik(_delta: float) -> void:
 			_stance_locked[side] = false
 			continue
 		var hy := float(hit.position.y)
-		var desired_y := hy + sole_offset
+		var desired_y := hy + sole_offset + SOLE_CLEAR
 		var stance := plant_w[side] >= 0.25
 		var want := Vector3(ankle.x, desired_y if stance else maxf(ankle.y, desired_y), ankle.z)
 		_stance_locked[side] = stance
@@ -2376,105 +2395,161 @@ func _update_foot_ik(_delta: float) -> void:
 		var tag := "Left" if side == 0 else "Right"
 		# Pole ahead+up so the solved knee bends forward, not into the hillside.
 		_knee_pole[side].global_position = ankle + fwd * 0.70 + Vector3(0, 0.55, 0)
-	# Pelvis drop when both feet reach down; lift when stance foot must rise.
-	var drop_l := maxf(deltas[0], 0.0)
-	var drop_r := maxf(deltas[1], 0.0)
-	_pelvis_drop = clampf(minf(drop_l, drop_r), 0.0, 0.10)
-	var lift := clampf(maxf(lifts[0], lifts[1]), 0.0, 0.16)
+	# No pelvis drop — it buried sandals before the late plant could catch up
+	# (walk-start sink). Contact lift + ankle plant own residual burial.
+	_pelvis_drop = 0.0
 	if model != null:
-		_pelvis_drop_s = lerpf(_pelvis_drop_s, _pelvis_drop - lift, 0.70)
-		model.position = model_base + Vector3(hip_shift.x, -_pelvis_drop_s, 0)
-	# Soft IK bend only — no force_update (that slid ankles across triangles).
+		model.position = model_base + Vector3(hip_shift.x, _contact_lift, 0)
 
 
-## Snap both feet onto collision under their *current* XZ (final writer).
-## Stance pins to the hit; swing only prevents penetration. Then lift the model
-## if either knee is still buried in the collision mesh.
+## Snap feet + lift model so the RENDERED (mixer) soles rest on collision.
+## Web Compatibility draws mixer poses and ignores bone_global_pose_override, so
+## the durable fix is raising `model.position` from no_override sole burial.
+## Overrides stay as a best-effort plant for editor / future renderer paths.
 func _reassert_foot_plants() -> void:
 	if skel == null or not ground_ray.is_valid():
 		return
 	if anim == "activity" or anim == "prop_clip" or anim == "charge":
+		_contact_lift = lerpf(_contact_lift, 0.0, 0.35)
 		return
-	# Always pin BOTH feet to the collision hit during explore walk/idle so
-	# double-support frames hold the −1..+1.5 cm stance bar (no unlocked hole).
+	if _leg_ik:
+		_leg_ik.active = false
+		_leg_ik.influence = 0.0
+	# Mixer (no_override) ankle−offset vs collision — matches Compatibility draw
+	# and the sole_offset the plant is tuned to. Target gap ≈ +0.8 cm.
+	var gap_min := 1e9
 	for side in range(2):
 		var bi := skel.find_bone(B_FOOT[side])
 		if bi < 0:
 			continue
-		var ankle: Vector3 = skel.global_transform * skel.get_bone_global_pose(bi).origin
-		var hit: Dictionary = _ray_foot(ankle)
+		var ankle_anim: Vector3 = skel.global_transform * _sole_bone_pose(bi).origin
+		var hit: Dictionary = _ray_foot(ankle_anim)
 		if not hit.has("position"):
 			continue
 		var hy := float(hit.position.y)
-		var desired_y := hy + sole_offset
-		var stance := _stance_locked[side] or anim != "move" or move_w < 0.2
-		# Swing may float above the surface; never below. Stance always exact.
-		var want_y := desired_y if stance else maxf(ankle.y, desired_y)
-		var want := Vector3(ankle.x, want_y, ankle.z)
-		_stance_locked[side] = stance
-		_stance_lock[side] = want
 		_plant_hit_y[side] = hy
-		_plant_ankle_xz[side] = Vector2(ankle.x, ankle.z)
+		_plant_ankle_xz[side] = Vector2(ankle_anim.x, ankle_anim.z)
+		var sole := minf(skinned_sole_y(side), ankle_anim.y - sole_offset)
+		gap_min = minf(gap_min, sole - hy)
+		var want := Vector3(ankle_anim.x, hy + sole_offset + SOLE_CLEAR, ankle_anim.z)
+		_stance_locked[side] = true
+		_stance_lock[side] = want
 		if _foot_tgt.size() > side:
 			_foot_tgt[side].global_position = want
 		_plant_foot_override(side, bi, want, hit.get("normal", Vector3.UP), 1.0)
-	# Knee clearance: absolute model Y (never accumulate) so shins clear the mesh.
-	if model == null:
-		return
-	var knee_lift := 0.0
-	for tag in ["Left", "Right"]:
-		var ki := skel.find_bone("mixamorig_%sLeg" % tag)
-		if ki < 0:
+	if gap_min > 1e8:
+		gap_min = 0.0
+	# Direct lift solve: new_lift so gap_min → +0.8 cm (works for bury and float).
+	var want_lift := clampf(_contact_lift + (0.008 - gap_min), 0.0, 0.35)
+	if want_lift >= _contact_lift:
+		_contact_lift = lerpf(_contact_lift, want_lift, 0.95)
+	else:
+		_contact_lift = lerpf(_contact_lift, want_lift, 0.55)
+	if model != null:
+		model.position = model_base + Vector3(hip_shift.x, -_pelvis_drop_s + _contact_lift, 0)
+	# Re-pin overrides after the model lift (world contact).
+	for side2 in range(2):
+		var bi2 := skel.find_bone(B_FOOT[side2])
+		if bi2 < 0:
 			continue
-		var kp: Vector3 = skel.global_transform * skel.get_bone_global_pose(ki).origin
-		var kh: Dictionary = _ray_foot(kp)
-		if not kh.has("position"):
+		var ankle2: Vector3 = skel.global_transform * _sole_bone_pose(bi2).origin
+		var hit2: Dictionary = _ray_foot(ankle2)
+		if not hit2.has("position"):
 			continue
-		var dig := float(kh.position.y) + 0.02 - kp.y
-		if dig > knee_lift:
-			knee_lift = dig
-	knee_lift = clampf(knee_lift, 0.0, 0.22)
-	# Absolute model Y — never accumulate. Re-pin feet after lift without
-	# re-running a full two-bone that would shove knees back into the hill:
-	# only snap foot/toe Y onto the hit.
-	model.position = model_base + Vector3(hip_shift.x, -_pelvis_drop_s + knee_lift, 0)
-	if knee_lift > 0.002:
-		for side2 in range(2):
-			var bi2 := skel.find_bone(B_FOOT[side2])
-			if bi2 < 0:
-				continue
-			var ankle2: Vector3 = skel.global_transform * skel.get_bone_global_pose(bi2).origin
-			var hit2: Dictionary = _ray_foot(ankle2)
-			if not hit2.has("position"):
-				continue
-			var hy2 := float(hit2.position.y)
-			var want2 := Vector3(ankle2.x, hy2 + sole_offset, ankle2.z)
-			_stance_lock[side2] = want2
-			_plant_hit_y[side2] = hy2
-			if _foot_tgt.size() > side2:
-				_foot_tgt[side2].global_position = want2
-			# Foot Y only — keep the cleared thigh/shin from the first solve.
-			var xf2: Transform3D = skel.global_transform * skel.get_bone_global_pose(bi2)
-			xf2.origin = want2
-			skel.set_bone_global_pose_override(bi2, skel.global_transform.affine_inverse() * xf2, 1.0, true)
-			var toe2 := skel.find_bone(B_TOE[side2])
-			if toe2 >= 0:
-				var tx2: Transform3D = skel.global_transform * skel.get_bone_global_pose(toe2)
-				var ht2: Dictionary = _ray_foot(tx2.origin)
-				if ht2.has("position"):
-					tx2.origin.y = float(ht2.position.y) + 0.012
-					skel.set_bone_global_pose_override(toe2, skel.global_transform.affine_inverse() * tx2, 1.0, true)
+		var hy2 := float(hit2.position.y)
+		var want2 := Vector3(ankle2.x, hy2 + sole_offset + SOLE_CLEAR, ankle2.z)
+		_stance_lock[side2] = want2
+		_plant_hit_y[side2] = hy2
+		_plant_ankle_xz[side2] = Vector2(ankle2.x, ankle2.z)
+		if _foot_tgt.size() > side2:
+			_foot_tgt[side2].global_position = want2
+		_plant_foot_override(side2, bi2, want2, hit2.get("normal", Vector3.UP), 1.0)
 
 
-## Lowest skinned sole vertex Y for a foot (world), for geometry tests.
+## Lowest skinned sole vertex Y for a foot (world). Falls back to ankle−offset.
 func sole_vertex_y(side: int) -> float:
+	return skinned_sole_y(side)
+
+
+## Bone pose used for sole measure / contact lift.
+## Web Compatibility skinning follows the AnimationTree mixer and ignores
+## bone_global_pose_override — so HUD + lift must use no_override poses or they
+## read "gnd 0.7cm" while the picture is knee-deep (CDP sink A).
+func _sole_bone_pose(bone_i: int) -> Transform3D:
+	if skel.has_method("get_bone_global_pose_no_override"):
+		return skel.get_bone_global_pose_no_override(bone_i)
+	return skel.get_bone_global_pose(bone_i)
+
+
+## Rendered sole Y for HUD / CDP. Uses mixer (no_override) poses so the value
+## matches what Compatibility actually draws. Skin.bind_pose is inverse-bind.
+func skinned_sole_y(side: int) -> float:
 	if skel == null:
 		return global_position.y
-	var bi := skel.find_bone(B_FOOT[side])
-	if bi < 0:
+	var ankle_i := skel.find_bone(B_FOOT[side])
+	var toe_i := skel.find_bone(B_TOE[side])
+	if ankle_i < 0:
 		return global_position.y
-	var ankle: Vector3 = skel.global_transform * skel.get_bone_global_pose(bi).origin
-	return ankle.y - sole_offset
+	var ankle_p: Vector3 = skel.global_transform * _sole_bone_pose(ankle_i).origin
+	_ensure_skin_cache()
+	if _skin_verts.is_empty():
+		return ankle_p.y - sole_offset
+	var bone_xf: Array[Transform3D] = []
+	bone_xf.resize(skel.get_bone_count())
+	var skin: Skin = _body_skin_orig
+	for bi in skel.get_bone_count():
+		var pose: Transform3D = skel.global_transform * _sole_bone_pose(bi)
+		if skin != null:
+			var bind := Transform3D.IDENTITY
+			var got_bind := false
+			for bi_i in skin.get_bind_count():
+				if skin.get_bind_bone(bi_i) == bi:
+					bind = skin.get_bind_pose(bi_i)
+					got_bind = true
+					break
+			bone_xf[bi] = pose * bind if got_bind else (pose * skel.get_bone_global_rest(bi).affine_inverse())
+		else:
+			bone_xf[bi] = pose * skel.get_bone_global_rest(bi).affine_inverse()
+	var sole_y := ankle_p.y
+	var got := false
+	for vi in _skin_verts.size():
+		var top_bi := -1
+		var top_w := 0.0
+		for j in 4:
+			var bi2: int = _skin_bones[vi * 4 + j]
+			var w: float = _skin_weights[vi * 4 + j]
+			if w > top_w:
+				top_w = w
+				top_bi = bi2
+		if top_bi != ankle_i and top_bi != toe_i:
+			continue
+		if top_w < 0.25:
+			continue
+		var v: Vector3 = _skin_verts[vi]
+		var skinned := Vector3.ZERO
+		var wsum := 0.0
+		for j2 in 4:
+			var bi3: int = _skin_bones[vi * 4 + j2]
+			var w2: float = _skin_weights[vi * 4 + j2]
+			if bi3 < 0 or bi3 >= bone_xf.size() or w2 <= 0.0:
+				continue
+			skinned += bone_xf[bi3] * v * w2
+			wsum += w2
+		if wsum < 0.01:
+			continue
+		var p: Vector3 = skinned / wsum
+		if Vector2(p.x - ankle_p.x, p.z - ankle_p.z).length() > 0.22:
+			continue
+		if (not got) or p.y < sole_y:
+			sole_y = p.y
+			got = true
+	# Always floor with ankle−offset. Skin bind samples often clustered near the
+	# ankle joint (±1 cm) and reported "gnd 8.7cm float" while sandals were on
+	# the sand — the offset measure is what the plant / lift are tuned to.
+	var approx := ankle_p.y - sole_offset
+	if not got:
+		return approx
+	return minf(sole_y, approx)
 
 
 func _set_blobs_visible(v: bool) -> void:

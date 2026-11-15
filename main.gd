@@ -378,9 +378,14 @@ func _interp_body_pose() -> void:
 	# chords under hills — boy looks buried while moving and pops up when stopped.
 	if mode == Mode.EXPLORE:
 		var hy := _surface(p.x, p.z)
-		# Cap display Y step so interp+resample never exceeds the 3 cm pelvis bar.
 		var y0 := _body_pos_prev.y
-		p.y = y0 + clampf(hy - y0, -0.029, 0.029)
+		# Never lag BELOW the collision surface — that buried the mesh while the
+		# physics HUD still read gnd 0 cm (display Y was capped at 3 cm/frame up).
+		# Snap up immediately; ease down only (descending slopes).
+		if hy >= y0:
+			p.y = hy
+		else:
+			p.y = y0 + clampf(hy - y0, -0.029, 0.0)
 	player.position = p
 	player.rotation.y = lerp_angle(_body_yaw_prev, _body_yaw, f)
 
@@ -1452,20 +1457,23 @@ func _explore_tick(delta: float) -> void:
 		# Frame-rate independent collision bleed (was constant 0.5 → jitter at 120Hz).
 		move_vel = move_vel.lerp(real, 1.0 - exp(-delta * 14.0))
 	cur_speed = real.length()
-	# Body Y = collision under the hips. Cap vertical step so pelvis never jumps
-	# more than 3 cm/frame (AAA walk feel); foot IK closes residual slope gap.
+	# Body Y = collision under the hips. Snap UP immediately when below the
+	# surface (capping rise buried shoes on walk-start / sand ripples while the
+	# display Y lagged). Ease DOWN only, under the 3.0 cm AAA bar.
 	var h := _surface(to.x, to.z)
 	ground_y = h
 	var dy := h - from.y
-	# Hard cap just under the 3.0 cm AAA bar (avoid fp equality flakes at 0.030).
-	if absf(dy) > 0.029:
-		to.y = from.y + clampf(dy, -0.029, 0.029)
+	if dy >= 0.0:
+		to.y = h
+	elif dy < -0.029:
+		to.y = from.y - 0.029
 	else:
 		to.y = h
 	# Physics-clock body; _process interpolates XZ and Y between physics states.
 	var step_xz := Vector2(to.x - from.x, to.z - from.z).length()
 	dbg_max_step = maxf(dbg_max_step, step_xz)
-	dbg_gnd_err = absf(to.y - h)
+	# Do NOT set dbg_gnd_err from body-vs-surface — that read 0 cm while shoes
+	# were buried. FootPlantLate refreshes HUD from skinned sole verts.
 	_body_pos = to
 	_body_yaw = face_yaw
 	# CharacterBody3D owns the body; Y is the collision ray (exact tris/boxes).
@@ -4131,9 +4139,54 @@ func _export_frame_probe() -> void:
 	JavaScriptBridge.eval("window.__frame = " + JSON.stringify(g), true)
 
 
+## HUD gnd = worst skinned-sole gap (burial preferred). Matches the picture.
+func _refresh_gnd_hud_from_soles(min_gap: float, max_gap: float) -> void:
+	# Negative gap = burial into terrain — that's what the player sees as sink.
+	if min_gap < 0.0:
+		dbg_gnd_err = absf(min_gap)
+	else:
+		dbg_gnd_err = absf(max_gap)
+	if dbg:
+		dbg.gnd_err = dbg_gnd_err
+		dbg.max_step = dbg_max_step
+
+
+## Measure both feet' skinned sole Y vs collision. Returns [min_gap, max_gap] metres.
+func _skinned_sole_gaps() -> Array:
+	var min_gap := 0.0
+	var max_gap := 0.0
+	var any := false
+	if boy == null:
+		return [0.0, 0.0]
+	for side in range(2):
+		var sy: float = boy.skinned_sole_y(side) if boy.has_method("skinned_sole_y") else boy.sole_vertex_y(side)
+		var ax := player.global_position.x
+		var az := player.global_position.z
+		if boy._plant_ankle_xz.size() > side and boy._plant_ankle_xz[side].length_squared() > 1e-8:
+			ax = boy._plant_ankle_xz[side].x
+			az = boy._plant_ankle_xz[side].y
+		var hy := _surface(ax, az)
+		var gap := sy - hy
+		if not any:
+			min_gap = gap
+			max_gap = gap
+			any = true
+		else:
+			min_gap = minf(min_gap, gap)
+			max_gap = maxf(max_gap, gap)
+	return [min_gap, max_gap]
+
+
 ## CDP reads window.__ground: blob↔sole XZ and rendered sole gaps (post-IK frame).
 func _export_ground_probe() -> void:
-	if not is_web or boy == null or boy.skel == null:
+	if boy == null or boy.skel == null:
+		return
+	# Always refresh HUD from skinned soles (editor + web).
+	var gaps: Array = _skinned_sole_gaps()
+	var min_gap: float = float(gaps[0])
+	var max_gap: float = float(gaps[1])
+	_refresh_gnd_hud_from_soles(min_gap, max_gap)
+	if not is_web:
 		return
 	# Disc centres vs each stance sole (max nearest-neighbour distance).
 	# Discs are hidden while locomoting — blob_d stays 0 then (sun shadow only).
@@ -4151,20 +4204,38 @@ func _export_ground_probe() -> void:
 			best = minf(best, Vector2(bp.x, bp.z).distance_to(Vector2(mid.x, mid.z)))
 		if best < 1e8:
 			blob_d = maxf(blob_d, best)
-	var max_gap := 0.0
-	for side in range(2):
-		if not boy._stance_locked[side] and boy.anim == "move" and boy.move_w > 0.2:
-			continue
-		var fp: Array = boy.foot_points(side)
-		var heel: Vector3 = fp[0]
-		var ball: Vector3 = fp[1]
-		var sy_h := _surface(heel.x, heel.z)
-		var sy_b := _surface(ball.x, ball.z)
-		max_gap = maxf(max_gap, absf((heel.y - boy.sole_offset) - sy_h))
-		max_gap = maxf(max_gap, absf((ball.y - 0.012) - sy_b))
+	var body_gnd := absf(player.global_position.y - _surface(player.global_position.x, player.global_position.z))
+	var lift_cm := 0.0
+	var ank_l := 0.0
+	var ank_r := 0.0
+	var hit_l := 0.0
+	var hit_r := 0.0
+	if boy.get("_contact_lift") != null:
+		lift_cm = float(boy._contact_lift) * 100.0
+	if boy._plant_hit_y.size() >= 2:
+		hit_l = boy._plant_hit_y[0]
+		hit_r = boy._plant_hit_y[1]
+	for side_i in range(2):
+		var fi2 := boy.skel.find_bone(boy.B_FOOT[side_i])
+		if fi2 >= 0:
+			var ap2: Vector3 = boy.skel.global_transform * boy.skel.get_bone_global_pose(fi2).origin
+			if side_i == 0:
+				ank_l = ap2.y
+			else:
+				ank_r = ap2.y
 	var g := {
 		"blob_d_cm": blob_d * 100.0,
-		"sole_gap_cm": max_gap * 100.0,
+		"sole_gap_cm": maxf(absf(min_gap), absf(max_gap)) * 100.0,
+		"sole_gap_min_cm": min_gap * 100.0,
+		"sole_gap_max_cm": max_gap * 100.0,
+		"skin_gap_cm": (min_gap if min_gap < 0.0 else max_gap) * 100.0,
+		"body_gnd_cm": body_gnd * 100.0,
+		"lift_cm": lift_cm,
+		"ank_l": ank_l,
+		"ank_r": ank_r,
+		"hit_l": hit_l,
+		"hit_r": hit_r,
+		"sole_off_cm": boy.sole_offset * 100.0,
 		"disc_on": any_disc,
 		"moving": boy.anim == "move" and boy.move_w > 0.2,
 		"speed": cur_speed,
@@ -4324,20 +4395,21 @@ func _process(delta: float) -> void:
 	if demo_nocut:
 		_cut_focus.y = -100.0
 	# Wide cone — leaf walls must dither open in the web build follow cam.
+	# Walk-into-bush (cdp_sink B) hid his legs; fatten the cone + near-fade while moving.
 	var move_cut := clampf(cur_speed / maxf(WALK_MAX, 0.01), 0.0, 1.0)
-	_cut_cr_f = lerpf(4.2, 5.8, move_cut) if mode == Mode.EXPLORE else 3.0
+	_cut_cr_f = lerpf(6.2, 9.0, move_cut) if mode == Mode.EXPLORE else 3.8
 	# Static props (barrels, posts, trunks) need a generous cone — close dock cams
 	# used to hide the boy completely behind a barrel.
-	_cut_cr_s = lerpf(3.8, 5.0, move_cut) if mode == Mode.EXPLORE else 2.6
+	_cut_cr_s = lerpf(5.2, 7.5, move_cut) if mode == Mode.EXPLORE else 3.0
 	if island.foliage_mat:
 		island.foliage_mat.set_shader_parameter("focus", _cut_focus)
 		island.foliage_mat.set_shader_parameter("cut_radius", _cut_cr_f)
 	if island.leaf_mat:
 		island.leaf_mat.set_shader_parameter("focus", _cut_focus)
 		island.leaf_mat.set_shader_parameter("cut_radius", _cut_cr_f)
-		# Near cards that fill the lens as flat green walls.
-		var base_nf: float = float(mq.leaf_near_fade) if mq else 1.35
-		var nf: float = base_nf * lerpf(1.15, 1.7, move_cut)
+		# Near cards that fill the lens as flat green walls (sink B swallowed legs).
+		var base_nf: float = float(mq.leaf_near_fade) if mq else 1.55
+		var nf: float = base_nf * lerpf(1.55, 2.6, move_cut)
 		island.leaf_mat.set_shader_parameter("near_fade", nf)
 	if island.static_mat:
 		island.static_mat.set_shader_parameter("focus", _cut_focus)
