@@ -1123,6 +1123,14 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 		pos = focus + Vector3(sin(yaw_s) * cos(pitch_s), sin(pitch_s), cos(yaw_s) * cos(pitch_s)) * dist_s
 		pos.y = maxf(pos.y, m._surface(pos.x, pos.z) + 0.55)
 		look = focus
+	if m.has_meta("feet_debug") and bool(m.get_meta("feet_debug")):
+		_frame_feet_ortho()
+		m._export_frame_probe()
+		if m.refl:
+			m.refl.update()
+		return
+	if m.camera.projection != Camera3D.PROJECTION_PERSPECTIVE:
+		m.camera.projection = Camera3D.PROJECTION_PERSPECTIVE
 	m.camera.global_position = pos
 	var up = Vector3.UP
 	var to_look = (look - pos).normalized()
@@ -1133,6 +1141,38 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	if m.refl:
 		m.refl.update()
 
+
+
+## Orthographic side view for the sole ruler. Feet fill about a third of the
+## frame. The game camera is not used. Only the dev capture sets feet_debug.
+func _frame_feet_ortho() -> void:
+	var focus: Vector3 = m.player.global_position + Vector3(0.0, 0.08, 0.0)
+	var ground_y: float = m._surface(focus.x, focus.z)
+	if m.boy != null and m.boy.skel != null and m.boy.foot_ik != null and m.boy.foot_ik.pose_ready:
+		var fk = m.boy.foot_ik
+		var low: int = 0 if fk.mesh_sole_y[0] <= fk.mesh_sole_y[1] else 1
+		var bone: String = "mixamorig_LeftFoot" if low == 0 else "mixamorig_RightFoot"
+		var bi: int = m.boy.skel.find_bone(bone)
+		if bi >= 0:
+			var ankle: Vector3 = m.boy.skel.global_transform * m.boy.skel.get_bone_global_pose(bi).origin
+			ground_y = m._surface(ankle.x, ankle.z)
+			focus = Vector3(ankle.x, ground_y + 0.07, ankle.z)
+			var ruler := m.get_node_or_null("FeetRuler")
+			if ruler is Node3D:
+				var yaw_r: float = float(m.face_yaw) + PI * 0.5
+				var to_cam: Vector3 = Vector3(sin(yaw_r), 0.0, cos(yaw_r))
+				(ruler as Node3D).global_position = Vector3(ankle.x, ground_y, ankle.z) + to_cam * 0.09
+				(ruler as Node3D).visible = true
+	var yaw: float = float(m.face_yaw) + PI * 0.5
+	var eye: Vector3 = focus + Vector3(sin(yaw), 0.0, cos(yaw)) * 1.6
+	m.camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	# 0.42 m vertical: a ~14 cm sandal is about a third of the frame.
+	m.camera.size = 0.42
+	m.camera.near = 0.02
+	m.camera.far = 40.0
+	m.camera.global_position = eye
+	if eye.distance_squared_to(focus) > 1e-6:
+		m.camera.look_at(focus, Vector3.UP)
 
 
 ## ?name=value in the page URL (web) or --name=value on the command line

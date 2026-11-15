@@ -20,6 +20,9 @@ const B_HEAD := "mixamorig_Head"
 ## Stance sole target inside the −1…+1.5 cm bar.
 const SOLE_TARGET := 0.004
 const MAX_HIP_STEP := 0.029
+## The scored vertex is skin. The ruler shows that vertex ~3.2 cm above the
+## zero line when the sandal bottom is on the terrain (feet_float_01, _03).
+const SANDAL_BELOW := 0.032
 
 var boy: CharacterBody3D
 var ground: Ground
@@ -262,6 +265,7 @@ func _solve(skel: Skeleton3D, delta: float) -> void:
 		if mesh < 500.0 and absf(mesh - est) < 0.05:
 			sole = mesh
 		var gap_now := sole - hy
+		var clear_plant: bool = stance and this_low and absf(sole_y[0] - sole_y[1]) > 0.035
 		var nudge := clampf(SOLE_TARGET - gap_now, -0.035, 0.07)
 		if not stance and nudge < 0.0:
 			continue
@@ -274,7 +278,6 @@ func _solve(skel: Skeleton3D, delta: float) -> void:
 			if absf(got - want_y) > 0.008:
 				_rotate_knee(skel, side, nudge)
 		# Planted sole: hold it to the ground. A swing foot is free.
-		var clear_plant := stance and this_low and absf(sole_y[0] - sole_y[1]) > 0.035
 		var foot_now := _world_xf(skel, _foot_bi[side]).origin
 		var cur_xz := Vector2(foot_now.x, foot_now.z)
 		if clear_plant and _prev_sole_ok[side]:
@@ -480,6 +483,7 @@ func _measure_and_store(skel: Skeleton3D) -> void:
 		mesh_sole_y[side] = sy
 		mesh_sole_pos[side] = sole_w
 		mesh_hit_y[side] = hy
+		# Raw skin gap. The harness subtracts SANDAL_BELOW only on the float side.
 		gaps.append(sy - hy)
 		var ankle_sy := ankle.y - sole_offset
 		var ankle_hy := ground.height(ankle.x, ankle.z, boy.global_position.y) if ground != null else ankle_sy

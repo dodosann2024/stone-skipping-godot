@@ -373,14 +373,23 @@ func _route_note(to: Vector3, speed: float) -> void:
 			_route_slide_n += 1
 	if fk == null or not fk.pose_ready or _route_n < 40:
 		return
-	# Both soles more than 4 cm up is the run's flight, not a failed plant.
-	# The bar is the stance sole. Swing frames are not float.
-	var low := 0 if fk.mesh_sole_y[0] <= fk.mesh_sole_y[1] else 1
-	var stance_gap: float = fk.mesh_sole_y[low] - fk.mesh_hit_y[low]
-	var other_gap: float = fk.mesh_sole_y[1 - low] - fk.mesh_hit_y[1 - low]
-	if stance_gap > 0.04 and other_gap > 0.04:
+	# Both skin soles more than 8 cm up is flight (feet_float_02 is one foot
+	# at 6.7 cm with the other at 3.7 cm — that other foot is the planted
+	# sandal, whose skin vertex sits ~3 cm above the sole). Not flight.
+	var gap0: float = fk.mesh_sole_y[0] - fk.mesh_hit_y[0]
+	var gap1: float = fk.mesh_sole_y[1] - fk.mesh_hit_y[1]
+	if gap0 > 0.08 and gap1 > 0.08:
 		return
+	var raw_low: float = gap0 if gap0 <= gap1 else gap1
+	# Sandal bottom is ~3.2 cm under the skin vertex when the sole is on the
+	# ruler zero (feet_float_01, feet_float_03). Clamp at zero so a planted
+	# sandal is not reclassified as a bury.
+	var stance_gap: float = raw_low
+	if raw_low > 0.0:
+		stance_gap = maxf(raw_low - FootIK.SANDAL_BELOW, 0.0)
 	var gnd: float = stance_gap * 100.0
+	if raw_low < -0.01:
+		gnd = raw_low * 100.0
 	var shin: float = fk.shin_gap_min * 100.0
 	_route_scored += 1
 	if gnd < _route_gnd_min:

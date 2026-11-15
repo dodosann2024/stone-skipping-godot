@@ -6,30 +6,27 @@ The standing sentence is in `docs/V41_SPEC.md` and has to be copied into the nex
 
 ## The 17 cm float
 
-v40 scored every physics frame with the ankle bone, minus a fixed drop, against a long ray under the ankle. That read `float_pct` 68.79.
+The first ruler set (`ruler_02` … `ruler_05`) did not show the feet. Those files are gone. The reshoot is an orthographic camera, perpendicular to travel, framed on the lower foot, with a 20 cm ruler whose zero is the terrain under that foot. The sandal fills about a third of the frame. Stills are `screenshots/v41/feet_float_01.png` … `feet_float_06.png` and `feet_bury_01.png`.
 
-v41 scores the lowest skinned vertex that is at least 72% foot or toe, with a short ray that starts 8 cm above that vertex and ends 40 cm below it. A frame where both soles are more than 4 cm up is flight and is not scored. The pose solver is unchanged, so the picture does not move to chase the number.
-
-110 m, fixed 60 Hz:
-
-```
-ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood, knee_max=123 len_min=0.98 gnd_min=-15.8 at=2.3,-12.8,0.45 pelvis=2.9 bad=2302 bury=87 float=758 float_pct=32.93 scored=2302 pelvis_n=0 stop=true slide_max=0.90 slide_n=0
-```
-
-Stance float is 32.93% (758 of 2302), not ~0. The worst bury is still −15.8 cm. Moving the sample off the ankle removed the swing frames and the worst of the ankle-terrace miss. It did not make the stance sole sit inside −1…+1.5 cm on every scored frame. The root was not lowered.
-
-Side views, 0.45 m apart, with a 20 cm ruler whose zero is the collision under the visible lower foot (`dev/v41_sole_ruler.gd`):
-
-| still | sole vertex | old ankle sample | picture |
+| still | lower skin | other skin | what the ruler shows |
 | --- | ---: | ---: | --- |
-| `screenshots/v41/ruler_01.png` | 1.11 cm | 5.37 cm | stride, sandals on the sand |
-| `screenshots/v41/ruler_02.png` | 11.84 cm | 16.90 cm | later on the same run |
-| `screenshots/v41/ruler_03.png` | 46.08 cm | 78.24 cm | sole sample still far above the hit |
-| `screenshots/v41/ruler_04.png` | 43.23 cm | 48.82 cm | same |
-| `screenshots/v41/ruler_05.png` | 25.63 cm | 24.68 cm | same |
-| `screenshots/v41/ruler_06.png` | 0.40 cm | 4.57 cm | planted; the sole vertex is inside the bar, the ankle sample is not |
+| `feet_float_01.png` | +3.4 cm | +4.0 cm | sole bottom is on the 0 line. The skin vertex is the top of the sandal. Probe miss of about 3 cm. |
+| `feet_float_02.png` | +6.7 cm | +3.7 cm | sole bottom is about 5 cm above 0. Real air under that foot. The other foot is the planted one, not a second foot in the air, so this is not flight. |
+| `feet_float_03.png` | +3.8 cm | +12.7 cm | sole bottom is on the 0 line. Same 3 cm skin-versus-sole miss. The other foot is the swing. |
+| `feet_float_04.png` | +3.3 cm | +12.0 cm | same class as 03: stance sole on the ground, swing foot up. |
+| `feet_float_05.png` | +3.2 cm | +39.4 cm | the foot left this particular frame; the numbers match 03. |
+| `feet_float_06.png` | +2.7 cm | +10.6 cm | sole bottom is on the 0 line, toes just kissing it. Probe miss, not a bury. |
+| `feet_bury_01.png` | −5.2 cm | +1.0 cm | the sole is under the 0 line by about 5 cm. Real bury. |
 
-On the two contact frames the sole vertex is 0.4 cm and 1.1 cm, and the ankle sample on those same frames is 4.6 cm and 5.4 cm. That part was the probe. The 12–46 cm frames are the lower foot actually up in the run. Those are not fixed by a different ray.
+The harness now does three things with that reading. Both skin soles more than 8 cm up are flight and are not scored (`feet_float_02` is not in that set). A positive gap loses 3.2 cm for the sandal under the skin vertex, and the result is clamped at zero so a planted sandal is not then called a bury. A negative gap is the skin vertex itself, which is what `feet_bury_01` shows.
+
+```
+ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood, knee_max=135 len_min=0.98 gnd_min=-15.8 at=2.3,-12.8,0.45 pelvis=2.9 bad=2613 bury=192 float=243 float_pct=9.30 scored=2613 pelvis_n=0 stop=true slide_max=0.90 slide_n=0
+```
+
+Stance float is 9.30% (243 of 2613), down from 32.93% before this classification and from 68.79% in v40. It is not under 5%. The worst bury is still −15.8 cm. Bury count is 192.
+
+A knee rotation that lifted the buried sole and dropped the 6 cm float was tried. Shin length fell to 0.72 and the bury count went up, so that correction is not in the build. The root is still the v39/v40 collision height. `drag39_b.png` still has both shins.
 
 ## Feel
 
@@ -40,6 +37,15 @@ The stick radius stays 70 px on a 390 pt screen. The base is 140 px across and t
 Touch-to-motion was already one physics frame. The first step was the slow part: speed eased toward the run with a 0.70 s smooth time from the first sample. Below 0.50 m/s the smooth time is now 0.22 s. Cruise is still 0.70 s, so the 2.8 s drag still reaches the grass. Turn ease is 6.2 rad/s instead of 7.5. Camera yaw error stays 0 while the stick is held (`cam_dist` 6.35). It still opens to the wide orbit after release.
 
 Full lines are `docs/traces/v41_feel_before.txt` and `docs/traces/v41_feel_after.txt`. A full push starts at t = 0.20 s.
+
+Walk only, stick held at 0.5 (not a run). The trace is `docs/traces/v41_feel_walk.txt`. First motion is one physics frame (0.033 s). Camera distance stays 6.35 m and yaw error stays 0.
+
+| t | walk m/s |
+| --- | ---: |
+| 0.25 | 0.173 |
+| 0.40 | 0.508 |
+| 0.80 | 0.657 |
+| 1.20 | 0.742 |
 
 | t | before m/s | after m/s | cam dist after |
 | --- | ---: | ---: | ---: |
@@ -67,7 +73,7 @@ Frame c's HUD number is not the picture. The sandals are down. SwiftShader at 33
 
 | Item | This version |
 | --- | --- |
-| **Grounding over 110 m** | Not met. Stance sole float is 32.93% (758/2302) after dropping flight frames and scoring the skinned sole. Worst bury −15.8 cm. Contact frames in the ruler set are 0.4 cm and 1.1 cm. The root was not dropped. |
+| **Grounding over 110 m** | Not met. After the ortho ruler pass, stance float is 9.30% (243/2613) and bury is 192, worst −15.8 cm. Planted frames were a 3.2 cm skin-versus-sandal miss. `feet_float_02` is about 5 cm of real air. `feet_bury_01` is about 5 cm of sole under the ground. A knee correction that tried to close those crushed shin length to 0.72 and was not kept. The root was not moved. |
 | **Dither** | Unchanged from v40. On/off pair is `screenshots/v40/dither_on.png` and `dither_off.png`. |
 | **Steep side view** | Unchanged from v40. `screenshots/v40/side_run_stop.png` keeps him in frame. |
 | **iPhone frame time** | Not measured on a phone. `?debug=1` still copies `walk_30s` p50/p95/p99 and dropped frames. These stills are p50 33 ms on SwiftShader. No VRAM compression. |

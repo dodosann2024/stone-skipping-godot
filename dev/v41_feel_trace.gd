@@ -29,10 +29,13 @@ func _go() -> void:
 		t += dt
 		var stick := 0.0
 		# Quiet, then a full push, hold, release, then a reverse.
+		var hold := 0.95
+		if OS.get_environment("FEEL_STICK") != "":
+			hold = float(OS.get_environment("FEEL_STICK"))
 		if t >= 0.20 and t < 1.40:
-			stick = 0.95
-		elif t >= 1.70 and t < 2.60:
-			stick = -0.95
+			stick = hold
+		elif t >= 1.70 and t < 2.60 and hold > 0.8:
+			stick = -hold
 		if stick_on < 0.0 and absf(stick) > 0.2:
 			stick_on = t
 		m.joy.value = Vector2(0.0, -stick)
