@@ -5,6 +5,24 @@ extends RefCounted
 var m: Node
 var _clear_pitch := 0.32
 var _clear_lift := 0.0
+var _seen_stick := false
+var _stick_release_age := 0.0
+var _release_wide := false
+
+
+func _note_stick(held: bool, delta: float) -> bool:
+	# Boot stays on the walk orbit. Widen only after a real stick press lets go.
+	if held:
+		_seen_stick = true
+		_stick_release_age = 0.0
+		_release_wide = false
+		return false
+	if _seen_stick:
+		_stick_release_age += delta
+		_release_wide = true
+		return true
+	_release_wide = false
+	return false
 
 func setup(p_main: Node) -> void:
 	m = p_main
@@ -260,6 +278,9 @@ func _explore_cam() -> Array:
 	# frame; release eases back to this, it does not dolly in.
 	var zoom = clampf(m.ex_dist, 3.0, 14.0)
 	var dist = maxf(zoom, 6.70 if tall else 6.35)
+	# After the stick lifts, sit on a wider orbit so the hat is not on the top edge.
+	if _release_wide:
+		dist = maxf(dist, 9.2 if tall else 8.8)
 	var pitch = clampf(m.ex_pitch, 0.28, 0.36)
 	var yaw = m.ex_yaw
 	# Profile stills: lens perpendicular to travel, stick yaw unchanged.
@@ -759,6 +780,7 @@ func _update_camera(delta: float) -> void:
 		# walking / running / turning / on slopes / after stick release.
 		var orbiting_now = m.dragging or m.orbit_pending.length_squared() > 1e-10 or m._orbit_ease > 0.05
 		var stick_mag = m.joy.value.length() if m.joy else 0.0
+		_release_wide = _note_stick(stick_mag > 0.08, delta)
 		# Stick / walk: keep desired yaw locked behind the boy (no lag off-frame).
 		if not orbiting_now and (m.cur_speed > 0.12 or stick_mag > 0.08):
 			m.ex_yaw = m.face_yaw
@@ -787,6 +809,9 @@ func _update_camera(delta: float) -> void:
 		# Release eases back to the same default frame over ~0.45 s. The old
 		# 0.14 s spring plus a vanishing look-ahead read as a dolly into a crop.
 		var st_t = 0.08 if stick_lock else 0.45
+		# Open the wide orbit inside the 0.8 s after the finger lifts.
+		if _release_wide:
+			st_t = minf(st_t, 0.22)
 		if m.rest_exit_cam_t > 0.0:
 			m.rest_exit_cam_t = maxf(m.rest_exit_cam_t - delta, 0.0)
 			st_t = lerpf(0.22, st_t, 1.0 - m.rest_exit_cam_t / 0.8)
@@ -859,6 +884,7 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	var want_k = 1.0
 	var orbiting = m.dragging or m.orbit_pending.length_squared() > 1e-10 or m._orbit_ease > 0.05
 	var moving = m.cur_speed > 0.12
+	var released: bool = _release_wide and m.mode == 0
 	# Probe every frame; smooth the result so clearance never chatters.
 	if m.cam_dist < 20.0 and (not m.demo_cam or m.demo_track.size() > 0):
 		var steps = 8 if moving else 10
@@ -871,16 +897,25 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	if orbiting:
 		want_k = m._cam_arm_k
 	elif m.mode == 0:
-		want_k = maxf(want_k, ARM_FLOOR)
+		# After release the arm returns to the whole-body orbit. The 0.82 floor
+		# is what left the hat on the top edge 0.8 s after the stick let go.
+		want_k = 1.0 if released else maxf(want_k, ARM_FLOOR)
 	# Soft chase of probe result (no step hysteresis snap).
 	m._cam_arm_want = lerpf(m._cam_arm_want, want_k, 1.0 - exp(-delta * 10.0))
 	if m.mode == 0 and not orbiting:
-		m._cam_arm_want = maxf(m._cam_arm_want, ARM_FLOOR)
+		m._cam_arm_want = 1.0 if released else maxf(m._cam_arm_want, ARM_FLOOR)
 	# Pull-in smoothed; recover slower so clearance doesn't ping-pong.
+	# Release opens the arm inside the 0.8 s window (rate 8 ≈ 0.4 s).
 	var arm_rate = 2.6 if orbiting else (3.0 if m._cam_arm_want < m._cam_arm_k - 0.01 else 1.8)
+	if released and m._cam_arm_want > m._cam_arm_k - 0.001:
+		arm_rate = 8.0
 	m._cam_arm_k = lerpf(m._cam_arm_k, m._cam_arm_want, 1.0 - exp(-delta * arm_rate))
-	if m.mode == 0 and not orbiting:
+	if m.mode == 0 and not orbiting and not released:
 		m._cam_arm_k = maxf(m._cam_arm_k, ARM_FLOOR)
+	elif released and m.mode == 0 and not orbiting and _stick_release_age >= 0.70:
+		# 0.8 s after the finger lifts, the still must already be the wide orbit.
+		m._cam_arm_want = 1.0
+		m._cam_arm_k = 1.0
 	var off = full_off * m._cam_arm_k
 	var right = Vector3(cos(m.cam_yaw), 0, -sin(m.cam_yaw))
 	# Lateral dodge only while nearly idle.
@@ -915,8 +950,10 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 			var h: float = m._surface(q.x, q.z) + 0.45
 			if q.y < h:
 				pos.y = maxf(pos.y, h + 0.55)
-				# Mild pull only — never below the arm floor plan-distance.
-				pos = m.cam_target + (pos - m.cam_target) * maxf(t - 0.04, 0.72)
+				# Stick held: keep the v38 pull so the drag frames stay put.
+				# Stick up: lift only. Scaling toward the boy is the close crop.
+				if not released:
+					pos = m.cam_target + (pos - m.cam_target) * maxf(t - 0.04, 0.72)
 				pos.y = maxf(pos.y, m._surface(pos.x, pos.z) + 0.95)
 				break
 		var p_mh: float = m._surface(m.cam_target.x, m.cam_target.z)
@@ -946,7 +983,7 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 			pos.y = maxf(pos.y, m._surface(pos.x, pos.z) + 1.15)
 		# Keep a minimum plan-distance so the boy stays whole-body framed (not a face crop).
 		var flat = Vector2(pos.x - m.cam_target.x, pos.z - m.cam_target.z)
-		var min_flat: float = maxf(m.cam_dist * 0.94, 5.60)
+		var min_flat: float = maxf(m.cam_dist * 0.94, 6.20 if released else 5.60)
 		if flat.length() > 0.05 and flat.length() < min_flat:
 			var sc: float = min_flat / flat.length()
 			pos.x = m.cam_target.x + (pos.x - m.cam_target.x) * sc
@@ -1029,7 +1066,9 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	if m._cam_pos_init and not m._cam_teleport and not m.demo_cam and not m._cam_stick_lock:
 		var dpos = pos - m._cam_pos_prev
 		var hill_extra: float = clampf(m._cam_hill_lift * 0.5, 0.0, 0.45) if m.mode == 0 else 0.0
-		var max_step: float = 0.08 + hill_extra
+		# After release the orbit opens by about a metre. 8 cm/frame cannot
+		# finish that inside 0.8 s. Dolly-in stays slow while the stick is held.
+		var max_step: float = (0.45 if released else 0.08) + hill_extra
 		if dpos.length() > max_step:
 			pos = m._cam_pos_prev + dpos.limit_length(max_step)
 	m._cam_pos_vel = Vector3.ZERO
