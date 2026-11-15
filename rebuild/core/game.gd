@@ -73,9 +73,9 @@ func _world() -> void:
 	sun.light_energy = 1.25
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	sun.shadow_enabled = true
-	sun.shadow_blur = 1.6
+	sun.shadow_blur = 0.8
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	sun.directional_shadow_max_distance = 10.0
+	sun.directional_shadow_max_distance = 14.0
 	add_child(sun)
 	ground = Ground.new()
 	add_child(ground)
@@ -614,15 +614,18 @@ func _pose_shot() -> void:
 		player.boy.arm.hold = true
 		player.boy.arm.crouch = name == "throw_crouch"
 		var phases := {
-			"throw_windup": 0.14, "throw_whip": 0.46, "throw_release": 0.55, "throw_follow": 0.85, "throw_crouch": 0.42,
-			"throw_s0": 0.08, "throw_s1": 0.18, "throw_s2": 0.30, "throw_s3": 0.42, "throw_s4": 0.54, "throw_s5": 0.68,
+			"throw_windup": 0.16, "throw_whip": 0.48, "throw_release": 0.62, "throw_follow": 0.92, "throw_crouch": 0.44,
+			"throw_s0": 0.18, "throw_s1": 0.30, "throw_s2": 0.40, "throw_s3": 0.50,
+			"throw_s4": 0.60, "throw_s5": 0.72, "throw_s6": 0.84, "throw_s7": 0.96,
 		}
-		player.boy.arm.phase = float(phases.get(name, 0.46))
-		for _i in 4:
+		player.boy.arm.phase = float(phases.get(name, 0.48))
+		for _i in 6:
 			await get_tree().process_frame
 		var p := player.global_position
-		# His right is -X. Stand on that side so the low sidearm reads across the frame.
-		_cam(cam, p + Vector3(-2.3, 1.45, 2.1), p + Vector3(0, 0.75, 0))
+		# Close 3/4 on his throwing side, low enough that the crouch and the stone read.
+		_cam(cam, p + Vector3(-1.85, 0.98, 2.15), p + Vector3(0.0, 0.5, -0.15))
+		if _query().contains("proxy=1"):
+			_show_proxy_only()
 		_show_throw_stone(name)
 		print("SHOT_READY ", name)
 		return
@@ -683,6 +686,28 @@ func _seat_named(node_name: String) -> Fadable:
 	return null
 
 
+func _show_proxy_only() -> void:
+	var skel: Skeleton3D = player.boy.skel
+	if skel == null:
+		return
+	var proxy := skel.get_node_or_null("ShadowProxy") as MeshInstance3D
+	if proxy == null:
+		return
+	proxy.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.75, 0.55, 0.35)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	proxy.material_override = mat
+	_hide_color_meshes(player.boy.model)
+
+
+func _hide_color_meshes(node: Node) -> void:
+	if node is MeshInstance3D:
+		(node as MeshInstance3D).visible = false
+	for c in node.get_children():
+		_hide_color_meshes(c)
+
+
 func _show_throw_stone(shot: String) -> void:
 	var skel: Skeleton3D = player.boy.skel
 	if skel == null:
@@ -693,40 +718,39 @@ func _show_throw_stone(shot: String) -> void:
 	var xf := skel.global_transform * skel.get_bone_global_pose(hand)
 	var elbow := skel.find_bone("mixamorig_RightForeArm")
 	var origin := xf.origin
+	var palm := Vector3.ZERO
 	if elbow >= 0:
 		var ep := (skel.global_transform * skel.get_bone_global_pose(elbow)).origin
-		var along := origin - ep
-		if along.length_squared() > 1e-6:
-			origin += along.normalized() * 0.07
+		palm = origin - ep
+		if palm.length_squared() > 1e-6:
+			origin += palm.normalized() * 0.12
+	# Pull the stone toward the camera so it sits outside the hand, not inside the mesh.
+	origin += Vector3(-0.62, 0.2, 0.72).normalized() * 0.09
 	var fwd := Vector3(-sin(player.face_yaw), 0.0, -cos(player.face_yaw))
-	var right := Vector3(fwd.z, 0.0, -fwd.x)
 	var phase := 0.0
-	if shot == "throw_release":
-		phase = 0.55
-	elif shot == "throw_follow":
-		phase = 0.85
-	elif shot.begins_with("throw_s"):
-		phase = float({"throw_s0": 0.08, "throw_s1": 0.18, "throw_s2": 0.30, "throw_s3": 0.42, "throw_s4": 0.54, "throw_s5": 0.68}.get(shot, 0.3))
-	if phase >= 0.5:
-		var shoulder := skel.find_bone("mixamorig_RightArm")
-		var throw_dir := right
-		if shoulder >= 0:
-			var sp := (skel.global_transform * skel.get_bone_global_pose(shoulder)).origin
-			var along := origin - sp
-			along.y = 0.0
-			if along.length_squared() > 0.01:
-				throw_dir = along.normalized()
-		var out := clampf((phase - 0.48) / 0.22, 0.0, 1.0)
-		origin += throw_dir * (0.12 + out * 0.85) + Vector3.UP * 0.03
+	var phase_map := {
+		"throw_release": 0.62, "throw_follow": 0.92, "throw_whip": 0.48,
+		"throw_s0": 0.18, "throw_s1": 0.30, "throw_s2": 0.40, "throw_s3": 0.50,
+		"throw_s4": 0.60, "throw_s5": 0.72, "throw_s6": 0.84, "throw_s7": 0.96,
+	}
+	if phase_map.has(shot):
+		phase = float(phase_map[shot])
+	if phase >= 0.48:
+		var out := clampf((phase - 0.46) / 0.36, 0.0, 1.0)
+		# Straight and flat toward the water, about knee height.
+		origin += fwd * (0.05 + out * 0.55)
+		origin.y = player.global_position.y + 0.40
 	var stone := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
-	mesh.radius = 0.045
-	mesh.height = 0.09
+	mesh.radius = 0.078
+	mesh.height = 0.156
 	stone.mesh = mesh
-	stone.scale = Vector3(1.15, 0.75, 0.95)
+	stone.scale = Vector3(1.25, 0.32, 1.0)
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.55, 0.52, 0.46)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(0.86, 0.88, 0.90)
 	stone.material_override = mat
+	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(stone)
 	stone.global_position = origin
 

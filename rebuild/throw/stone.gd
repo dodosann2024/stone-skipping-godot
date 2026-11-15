@@ -20,14 +20,16 @@ func launch(from: Vector3, velocity_in: Vector3, amb: Ambience = null) -> void:
 	velocity = velocity_in
 	global_position = from
 	var mesh := SphereMesh.new()
-	mesh.radius = 0.045
-	mesh.height = 0.09
+	mesh.radius = 0.055
+	mesh.height = 0.11
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
+	mi.scale = Vector3(1.35, 0.36, 1.05)
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.45, 0.44, 0.42)
-	mat.roughness = 0.55
+	mat.albedo_color = Color(0.84, 0.86, 0.88)
+	mat.roughness = 0.42
 	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
 
 

@@ -44,7 +44,7 @@ func note(delta: float, walking: bool) -> void:
 			walk_ms.pop_front()
 	var prims := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
 	var p95 := _pct(0.95)
-	label.text = "v42 debug\n帧 %.1f ms\nwalk p95 %.1f ms  n=%d\n图元 %d" % [ms, p95, walk_ms.size(), prims]
+	label.text = "v43 debug\n帧 %.1f ms\nwalk p95 %.1f ms  n=%d\n图元 %d" % [ms, p95, walk_ms.size(), prims]
 
 
 func _pct(q: float) -> float:
