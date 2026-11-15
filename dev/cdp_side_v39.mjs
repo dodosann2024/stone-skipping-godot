@@ -153,6 +153,25 @@ async function main() {
   // Key spots already in the export: slope grass and dock deck.
   await open("v=39&debug=1&side=1&at=slope", 25);
   await shot("side_slope.png");
+  // Eight headings on the grass rise, default camera, so the crest cannot hide the legs.
+  await open("v=39&debug=1&at=slope", 20);
+  const dirs = [
+    ["n", 0, -16],
+    ["ne", 12, -12],
+    ["e", 16, 0],
+    ["se", 12, 12],
+    ["s", 0, 16],
+    ["sw", -12, 12],
+    ["w", -16, 0],
+    ["nw", -12, -12],
+  ];
+  for (const [name, dx, dy] of dirs) {
+    await drag(90, 760, dx, dy, 8, 41);
+    await new Promise((r) => setTimeout(r, 700));
+    await shot(`slope_dir_${name}.png`);
+    await release();
+    await new Promise((r) => setTimeout(r, 250));
+  }
   await open("v=39&debug=1&side=1&at=dock", 25);
   await shot("side_dock.png");
 

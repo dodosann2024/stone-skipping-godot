@@ -3,6 +3,8 @@ extends RefCounted
 ## Explore / rest / throw / orbit camera. Runs after FootIK so framing
 ## uses the posed head and feet. State stays on main; this file owns the math.
 var m: Node
+var _clear_pitch := 0.32
+var _clear_lift := 0.0
 
 func setup(p_main: Node) -> void:
 	m = p_main
@@ -267,11 +269,67 @@ func _explore_cam() -> Array:
 	var gx = m.player.global_position.x
 	var gz = m.player.global_position.z
 	var ahead_p = m.player.global_position + ahead_dir * 1.2
-	var grade = m._surface(ahead_p.x, ahead_p.z) - m._surface(gx, gz)
-	if grade > 0.12:
-		dist = maxf(dist, 6.30)
-		t.y += clampf(grade * 0.12, 0.0, 0.20)
-	return [t, yaw, pitch, dist]
+	var grade: float = m._surface(ahead_p.x, ahead_p.z) - m._surface(gx, gz)
+	if grade > 0.06:
+		# The crest in front of a low lens covers the shorts. Pitch up with the
+		# slope before the ray test, or the ray can skim over the sandals.
+		dist = maxf(dist, 6.50)
+		t.y += clampf(grade * 0.55, 0.0, 0.55)
+		pitch = clampf(pitch + grade * 0.9, pitch, 0.72)
+	# Uphill: the crest between the lens and the sandals hides the legs.
+	# Raise pitch and the rig until the segment to the feet stays above the mesh.
+	var feet: Vector3 = m.player.global_position + Vector3(0.0, 0.06, 0.0)
+	if m.boy != null and m.boy.foot_ik != null and m.boy.foot_ik.pose_ready:
+		var pf: Vector3 = m.boy.foot_ik.posed_feet
+		if pf.y > -50.0:
+			feet = pf
+	var want_p: float = pitch
+	var want_lift := 0.0
+	for _step in 7:
+		var cam := _cam_pos(t + Vector3(0.0, want_lift, 0.0), yaw, want_p, dist)
+		var ground_y: float = m._surface(cam.x, cam.z)
+		if cam.y < ground_y + 0.45:
+			want_lift = minf(want_lift + (ground_y + 0.45) - cam.y, 1.2)
+			continue
+		if not _terrain_blocks(cam, feet) and not _crest_blocks(cam, feet):
+			break
+		want_p = minf(want_p + 0.07, 0.78)
+		want_lift = minf(want_lift + 0.10, 1.2)
+		dist = minf(dist + 0.15, 8.4)
+	var dt := maxf(m.get_process_delta_time(), 1.0 / 120.0)
+	_clear_pitch = lerpf(_clear_pitch, want_p, 1.0 - exp(-dt * 5.0))
+	_clear_lift = lerpf(_clear_lift, want_lift, 1.0 - exp(-dt * 5.0))
+	t.y += _clear_lift
+	return [t, yaw, _clear_pitch, dist]
+
+
+func _cam_pos(target: Vector3, yaw: float, pitch: float, dist: float) -> Vector3:
+	var off := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
+	return target + off
+
+
+## True when a sample along the lens→feet segment is inside the drawn ground.
+func _crest_blocks(cam: Vector3, feet: Vector3) -> bool:
+	if m.island == null or not m.island.has_method("drawn_h"):
+		return false
+	for i in range(1, 7):
+		var p := cam.lerp(feet, float(i) / 7.0)
+		var gh: float = m.island.drawn_h(p.x, p.z)
+		if gh > -900.0 and p.y < gh + 0.2:
+			return true
+	return false
+
+
+## True when the drawn ground sits between the lens and the feet.
+func _terrain_blocks(cam: Vector3, feet: Vector3) -> bool:
+	if m.island == null:
+		return false
+	var hit: Dictionary = m.island.ray_ground(cam, feet, [])
+	if not hit.has("position"):
+		return false
+	var p: Vector3 = hit.position
+	var span := cam.distance_to(feet)
+	return cam.distance_to(p) < span - 0.22
 
 
 ## Critically damped spring (Game Programming Gems / Ryan Juckett).

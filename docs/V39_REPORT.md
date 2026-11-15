@@ -8,7 +8,27 @@ Branch `cursor/v39-drawn-sole-route-d4ce`, cut from `cursor/v38-real-pipeline-d4
 
 That slide is gone. The hips rise by this frame's penetration of the 85% sandal shell, in world up, and the lift is dropped the same frame the penetration is gone. It is not added to last frame's lift. The rise is capped at 2.9 cm so a bad sample cannot pop the pelvis. The foot bone is not translated. Shin length is the animated knee-to-ankle length (ratio 1.00 on every sample below). Knee flex on the 110 m harness peaked at 116°, which is this clip's run swing. A crushed shin would also shorten that segment.
 
-The camera release fix is unchanged: one explore frame, arm floor 0.82, release eases over about 0.45 s. Rest, throw, HUD and demo stay in their modules. `main.gd` is 2739 lines.
+The camera release fix is unchanged on flat ground: one explore frame, arm floor 0.82, release eases over about 0.45 s. On an uphill the lens now pitches with the grade and lifts until the segment from the camera to the feet stays above the drawn triangles. Rest, throw, HUD and demo stay in their modules. `main.gd` is 2739 lines.
+
+## The rise cut him off at the waist
+
+The 2.8 s frame of the review drag showed only the hat and vest. The side view at that same gesture (`screenshots/v39/side_walk.png`) shows both shins, both sandals, and the shadow, with the HUD at gnd 0.6 cm. He is standing on the path. The follow camera was looking up the crest, so the mesh covered everything below the vest.
+
+Foot height for the plant and the probe is the highest drawn terrain triangle under that xz (`Island.drawn_h`), the same faces the mesh renders. A physics ray that missed the top face and a neighbour column 35 cm away were reporting the sole tens of centimetres off a triangle the shoe was not on. The root display no longer replaces that choice with a second uncapped ray.
+
+After the camera change, the same drag's front frame (`screenshots/v39/front_b.png`) shows the shorts, both legs, both sandals, and the shadow. HUD gnd 0.7 cm, max step 2.5 cm. `front_a.png` is gnd 1.6 cm with a leg and a sandal. `front_c.png` is gnd 4.2 cm with both sandals. Eight headings from the slope spot are `screenshots/v39/slope_dir_*.png`.
+
+The 110 m headless route still does not pass the sole bar:
+
+```
+ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood knee_max=125 len_min=1.00 gnd_min=-84.3 at=6.8,-9.8,0.91 pelvis=6.5 bad=2914 stop=true
+```
+
+Shin length stays 1.00. 2914 frames are outside −1.0…+1.5 cm. The worst gap is −84.3 cm, on a steep face the harness walked under. One displayed root step was 6.5 cm. That is not a pass.
+
+## Published builds
+
+`docs/` keeps `game_v35` (live), `game_v38`, and `game_v39`. Older exports (`game_v22`–`v24`, `v27`–`v34`, and `v36`/`v37`) are removed. `docs/index.html` still points at v35. Changelog notes that name the removed folders are history. No script still falls back to those folders.
 
 ## Export stills
 
@@ -47,7 +67,7 @@ ROUTE_DONE m=110.0 ok=false kinds=sand,grass,wood knee_max=116 len_min=1.00 gnd_
 
 ### Release blockers
 
-1. **Grounding.** Not met. The foot-bone slide that hid the shins is gone, and idle on the slope and the dock reads sole min +0.8 cm with the shin about 7 cm clear and the knee-to-ankle length unchanged. The review drag's pictures match that. The probe does not: the same frames report sole gaps of −8 to −30 cm, or a HUD of 35 cm, while the sandals are visibly on the path. The harness over 110 m recorded a worst gap of −39.9 cm and 548 frames outside the bar, and one pelvis step of 3.4 cm. A sample that sits well above the shoe, especially on the beach rise, is still being treated as the ground under the foot.
+1. **Grounding.** Not met. The foot-bone slide is gone, and the 2.8 s rise frame is no longer a waist cut-off: the side view shows full legs, and `front_b.png` shows shorts, both sandals, and the shadow with HUD gnd 0.7 cm. The foot sample is the drawn triangle. The 110 m harness is still outside the bar: 2914 bad frames, worst gap −84.3 cm at (6.8, −9.8), pelvis step 6.5 cm, knee max 125°, shin length 1.00.
 
 2. **Occluder dither.** Not re-proven. `shaders/cutout.gdshaderinc`, `foliage.gdshader`, `leaf.gdshader` and `static.gdshader` still dither foliage and props in the compatibility renderer. This version has no on/off pair from the export. The drag stills are not a proof: nothing thick was between the lens and the boy, and `side_run_stop.png` loses him for a different reason.
 

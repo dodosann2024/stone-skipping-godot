@@ -25,6 +25,13 @@ func height(x: float, z: float, hint_y: float = 10.0) -> float:
 	return island.collision_h_walk(x, z, hint_y, _exclude())
 
 
+## The triangle directly under (x,z). No neighbour stand-in.
+func height_exact(x: float, z: float, hint_y: float = 10.0) -> float:
+	if island == null:
+		return hint_y
+	return island.collision_h_exact(x, z, hint_y, _exclude())
+
+
 func normal(x: float, z: float, hint_y: float = 10.0) -> Vector3:
 	if island == null:
 		return Vector3.UP

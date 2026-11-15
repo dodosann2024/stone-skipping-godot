@@ -67,7 +67,7 @@ async function main() {
         break;
       }
     }
-    if (!dir) throw new Error("no docs/game_v36 or game_v34 export found");
+    if (!dir) throw new Error("docs/game_v36 was removed; pass a URL");
     server = await startStatic(dir, 18901);
     url = `http://127.0.0.1:18901/${html}?v=36&debug=1`;
   }

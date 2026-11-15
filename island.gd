@@ -71,6 +71,8 @@ var terrain_mi: MeshInstance3D
 ## Exact walkable collision — same tris as the rendered terrain + dock deck boxes.
 ## Body Y and foot IK raycast this; mesh_h / bilinear are NOT the walk surface.
 var ground_body: StaticBody3D
+var _tri_faces: PackedVector3Array = PackedVector3Array()
+var _tri_bins: Dictionary = {}
 var ground_space_rid: RID
 var campfire: Campfire
 var torches: Array[Torch] = []
@@ -752,7 +754,69 @@ func _build_ground_collision() -> void:
 		var z := lerpf(ramp_z1, ramp_z0, t)
 		var y := lerpf(minf(sand0, sand1), DECK_Y, smoothstep(0.0, 1.0, t))
 		_add_deck_collider(Vector3(0.0, y, z), Vector3(2.40, 0.10, 0.22))
+	_bin_terrain_tris()
 	print("GROUND_COLLISION tris=%d deck_boxes=%d" % [tri_count, ground_body.get_child_count() - (1 if tri_count > 0 else 0)])
+
+
+## Drawn terrain triangles, binned by 1 m cells so a foot query reads the same
+## face the mesh shows, not whatever a physics ray fell through to.
+func _bin_terrain_tris() -> void:
+	_tri_bins.clear()
+	_tri_faces = PackedVector3Array()
+	if terrain_mi == null or terrain_mi.mesh == null:
+		return
+	_tri_faces = terrain_mi.mesh.get_faces()
+	var i := 0
+	while i + 2 < _tri_faces.size():
+		var a: Vector3 = _tri_faces[i]
+		var b: Vector3 = _tri_faces[i + 1]
+		var c: Vector3 = _tri_faces[i + 2]
+		var key := Vector2i(int(floor((a.x + b.x + c.x) / 3.0)), int(floor((a.z + b.z + c.z) / 3.0)))
+		var list: Array = _tri_bins.get(key, [])
+		list.append(i)
+		_tri_bins[key] = list
+		i += 3
+
+
+## Highest drawn triangle covering (x, z). -999 if none.
+func drawn_h(x: float, z: float) -> float:
+	if _tri_faces.is_empty():
+		return -999.0
+	var best := -999.0
+	var cx := int(floor(x))
+	var cz := int(floor(z))
+	for ox in [-1, 0, 1]:
+		for oz in [-1, 0, 1]:
+			var list: Array = _tri_bins.get(Vector2i(cx + ox, cz + oz), [])
+			for idx in list:
+				var i := int(idx)
+				var a: Vector3 = _tri_faces[i]
+				var b: Vector3 = _tri_faces[i + 1]
+				var c: Vector3 = _tri_faces[i + 2]
+				var h := _tri_height(x, z, a, b, c)
+				if h > best:
+					best = h
+	return best
+
+
+func _tri_height(x: float, z: float, a: Vector3, b: Vector3, c: Vector3) -> float:
+	var ab := Vector3(b.x - a.x, 0.0, b.z - a.z)
+	var ac := Vector3(c.x - a.x, 0.0, c.z - a.z)
+	var n := ab.cross(ac)
+	# Reject underside and near-vertical faces. n.y > 0 is the drawn top.
+	if n.y < 0.15:
+		return -999.0
+	var ap := Vector2(x - a.x, z - a.z)
+	var v0 := Vector2(c.x - a.x, c.z - a.z)
+	var v1 := Vector2(b.x - a.x, b.z - a.z)
+	var den := v0.cross(v1)
+	if absf(den) < 1e-8:
+		return -999.0
+	var u := ap.cross(v1) / den
+	var v := v0.cross(ap) / den
+	if u < -0.002 or v < -0.002 or u + v > 1.002:
+		return -999.0
+	return a.y + (c.y - a.y) * u + (b.y - a.y) * v
 
 
 func _add_deck_collider(center: Vector3, size: Vector3) -> void:
@@ -811,6 +875,39 @@ func collision_h_walk(x: float, z: float, hint_y: float = 10.0, exclude: Array =
 					return float(hit.position.y)
 		return hint_y
 	# Off walkable band: keep last hint (do NOT drop to analytic sea).
+	return hint_y
+
+
+## Vertical hit on the same triangles the terrain mesh draws. A miss stays on
+## the hint. Never borrows a triangle 35 cm away — that reported the sole 8–40 cm
+## under a face the foot was not standing on.
+func collision_h_exact(x: float, z: float, hint_y: float = 10.0, exclude: Array = []) -> float:
+	if absf(x) < 5.0 and z <= dock_start_z + 0.35 and z >= dock_end_z - 3.0:
+		return DECK_Y
+	var drawn := drawn_h(x, z)
+	if drawn > -900.0:
+		return drawn
+	var from_y := maxf(hint_y, DECK_Y + 2.0) + 6.0
+	var from := Vector3(x, from_y, z)
+	var to := Vector3(x, -6.0, z)
+	for _try in 4:
+		var hit := ray_ground(from, to, exclude)
+		if not hit.has("position"):
+			break
+		var p: Vector3 = hit.position
+		var n := Vector3.UP
+		if hit.has("normal"):
+			n = (hit.normal as Vector3)
+		# First face whose normal points up is the drawn surface. Steeper
+		# walkable faces still count; skipping them fell through to a lower
+		# triangle and the sole read tens of centimetres high.
+		if n.y > 0.12 and absf(p.x - x) < 0.08 and absf(p.z - z) < 0.08:
+			return p.y
+		from.y = p.y - 0.03
+		if from.y < -5.5:
+			break
+	if absf(x) < 5.0 and z <= dock_start_z + 0.35 and z >= dock_end_z - 3.0:
+		return DECK_Y
 	return hint_y
 
 

@@ -197,31 +197,69 @@ func _solve(skel: Skeleton3D, _delta: float) -> void:
 		var pole := ankle0 + fwd * 0.62 + Vector3(0, 0.42, 0)
 		_two_bone(skel, 0, target, pole, ground.normal(ankle0.x, ankle0.z, body_y))
 		return
-	# The v39 foot-bone slide put the sandal on the probe and left the shin in
-	# the ground. Do not translate the foot. Raise the hips by how far the
-	# authored sole (ankle minus the rest drop) is under the collision, and
-	# never keep a lift from a previous frame — that is the runaway accumulator.
-	var sink := 0.0
+	# Rotate the knee so the sandal meets the triangle under that foot. Do not
+	# write the foot bone's origin: that slide left the shin in the mesh while
+	# the probe read the sandal. A residual both feet cannot bend out of
+	# becomes one hip lift, dropped the same frame it is gone.
+	var moving := float(boy.move_speed) > 0.12
+	var soles: Array[float] = [0.0, 0.0]
+	var surfaces: Array[float] = [0.0, 0.0]
+	var valid: Array[bool] = [false, false]
 	for side in range(2):
 		if _foot_bi[side] < 0:
 			stance_locked[side] = false
 			continue
-		stance_locked[side] = true
 		var ankle: Vector3 = _world_xf(skel, _foot_bi[side]).origin
 		var shell := _lowest_sole(skel, side)
 		var sole_y := shell.y if shell.y < 500.0 else ankle.y - sole_offset
 		var sx := shell.x if shell.y < 500.0 else ankle.x
 		var sz := shell.z if shell.y < 500.0 else ankle.z
 		var surface := _foot_surface(sx, sz, sole_y, body_y)
+		soles[side] = sole_y
+		surfaces[side] = surface
+		valid[side] = true
 		plant_hit_y[side] = surface
 		plant_ankle_xz[side] = Vector2(sx, sz)
-		sink = maxf(sink, surface + SOLE_TARGET - sole_y)
+	var lower := 0 if not valid[1] or (valid[0] and soles[0] <= soles[1]) else 1
+	var sink := 0.0
+	for side in range(2):
+		if not valid[side]:
+			continue
+		var gap := soles[side] - surfaces[side]
+		var plant := (not moving) or side == lower or gap < 0.06
+		stance_locked[side] = plant
+		if not plant:
+			continue
+		if gap >= -0.010 and gap <= 0.015:
+			continue
+		var left := _bend_sole_to(skel, side, surfaces[side] + SOLE_TARGET)
+		sink = maxf(sink, left)
 	var want := maxf(sink, 0.0)
 	if want < _hip_lift:
 		_hip_lift = want
+	elif want <= 0.06:
+		# The knee already did what it can. Close the last few centimetres
+		# this frame so the sole is on the triangle, not a frame later.
+		_hip_lift = want
 	else:
 		_hip_lift = minf(want, _hip_lift + MAX_HIP_STEP)
-	if _hips_bi >= 0 and _hip_lift > 0.001:
+	# A straight leg that is still a couple of centimetres short of the lower
+	# triangle: drop the hips by that stub, and no further than the other sole
+	# can spare inside the bar.
+	if want <= 0.0005:
+		var hi_gap := -10.0
+		var lo_gap := 10.0
+		for side in range(2):
+			if not valid[side] or not stance_locked[side]:
+				continue
+			var g := _shell_y(skel, side) - surfaces[side]
+			hi_gap = maxf(hi_gap, g)
+			lo_gap = minf(lo_gap, g)
+		if hi_gap > 0.015 and hi_gap < 0.035 and lo_gap < 9.0:
+			var drop := minf(hi_gap - SOLE_TARGET, lo_gap + 0.008)
+			if drop > 0.001:
+				_hip_lift = -minf(drop, 0.02)
+	if _hips_bi >= 0 and absf(_hip_lift) > 0.001:
 		var hp := skel.get_bone_pose(_hips_bi)
 		var parent_g := Transform3D.IDENTITY
 		var parent := skel.get_bone_parent(_hips_bi)
@@ -230,28 +268,48 @@ func _solve(skel: Skeleton3D, _delta: float) -> void:
 		var skel_up := skel.global_transform.basis.inverse() * Vector3(0, _hip_lift, 0)
 		hp.origin += parent_g.basis.inverse() * skel_up
 		skel.set_bone_pose(_hips_bi, hp)
+	# Hips moved the feet. Plant again on the triangle under the shell now.
+	for side in range(2):
+		if not valid[side] or not stance_locked[side]:
+			continue
+		var shell := _lowest_sole(skel, side)
+		if shell.y > 500.0:
+			continue
+		var surface := _foot_surface(shell.x, shell.z, shell.y, body_y)
+		_bend_sole_to(skel, side, surface + SOLE_TARGET)
 
 
-## Swing the foot by rotating the knee only. Bone lengths stay the animated
-## lengths, so a bad target cannot stretch the leg into a stilt.
+## Swing the foot by rotating one bone. Lengths stay the animated lengths.
+## The basis is not orthonormalized: that stripped the 1.35 model scale and
+## shortened the shin to about 74%.
 func _rotate_knee(skel: Skeleton3D, side: int, delta_y: float) -> void:
-	var knee_xf := _world_xf(skel, _knee_bi[side])
-	var foot_xf := _world_xf(skel, _foot_bi[side])
-	var shin := foot_xf.origin - knee_xf.origin
-	var axis := shin.cross(Vector3.UP)
+	_rotate_bone_y(skel, _knee_bi[side], _foot_bi[side], delta_y)
+
+
+func _rotate_knee_at(skel: Skeleton3D, bone: int, end_bone: int, delta_y: float) -> void:
+	_rotate_bone_y(skel, bone, end_bone, delta_y)
+
+
+func _rotate_bone_y(skel: Skeleton3D, bone: int, end_bone: int, delta_y: float) -> void:
+	if bone < 0 or end_bone < 0:
+		return
+	var bone_xf := _world_xf(skel, bone)
+	var end_xf := _world_xf(skel, end_bone)
+	var arm := end_xf.origin - bone_xf.origin
+	var axis := arm.cross(Vector3.UP)
 	if axis.length_squared() < 1e-8:
-		axis = knee_xf.basis.x
+		axis = bone_xf.basis.x
 	else:
 		axis = axis.normalized()
-	var lever := maxf(shin.length(), 0.12)
-	var ang := clampf(delta_y / lever, -0.55, 0.55)
-	var before_y := foot_xf.origin.y
-	var new_basis := Basis(Quaternion(axis, ang)) * knee_xf.basis
-	_set_world(skel, _knee_bi[side], Transform3D(new_basis.orthonormalized(), knee_xf.origin))
-	var after_y := _world_xf(skel, _foot_bi[side]).origin.y
+	var lever := maxf(arm.length(), 0.12)
+	var ang := clampf(delta_y / lever, -0.45, 0.45)
+	var before_y := end_xf.origin.y
+	var new_basis := Basis(Quaternion(axis, ang)) * bone_xf.basis
+	_set_world(skel, bone, Transform3D(new_basis, bone_xf.origin))
+	var after_y := _world_xf(skel, end_bone).origin.y
 	if (after_y - before_y) * delta_y < 0.0:
-		var flipped := Basis(Quaternion(axis, -ang)) * knee_xf.basis
-		_set_world(skel, _knee_bi[side], Transform3D(flipped.orthonormalized(), knee_xf.origin))
+		var flipped := Basis(Quaternion(axis, -ang)) * bone_xf.basis
+		_set_world(skel, bone, Transform3D(flipped, bone_xf.origin))
 
 
 func _two_bone(skel: Skeleton3D, side: int, want: Vector3, pole: Vector3, normal: Vector3) -> void:
@@ -331,14 +389,124 @@ func _set_world(skel: Skeleton3D, bone: int, world_xf: Transform3D) -> void:
 
 
 ## Lowest drawn point of this leg: sandal or shin. Same upload matrix as the sole.
-## Vertical collision under a leg point. A sample more than 40 cm above the
-## leg is a face over the shoe, not the ground it is standing on. A real slope
-## stays, including when it disagrees with the body sample.
-func _foot_surface(x: float, z: float, leg_y: float, body_y: float) -> float:
-	var h := ground.height(x, z, body_y)
-	if h > leg_y + 0.40:
-		return ground.height(boy.global_position.x, boy.global_position.z, body_y)
-	return h
+## The drawn triangle under this foot. No stand-in from a neighbouring column.
+func _foot_surface(x: float, z: float, _leg_y: float, body_y: float) -> float:
+	if ground == null:
+		return body_y
+	return ground.height_exact(x, z, body_y)
+
+
+## Two-bone plant. Rotates the thigh and the knee so the ankle reaches the
+## triangle. Bone lengths stay put because the foot origin is never written
+## and the bases keep their scale.
+## Returns how far the shell is still below `target_y`.
+func _bend_sole_to(skel: Skeleton3D, side: int, target_y: float) -> float:
+	if _up_bi[side] < 0 or _knee_bi[side] < 0 or _foot_bi[side] < 0:
+		return 0.0
+	var hip: Vector3 = _world_xf(skel, _up_bi[side]).origin
+	var knee: Vector3 = _world_xf(skel, _knee_bi[side]).origin
+	var ankle: Vector3 = _world_xf(skel, _foot_bi[side]).origin
+	var len1 := hip.distance_to(knee)
+	var len2 := knee.distance_to(ankle)
+	if len1 < 1e-4 or len2 < 1e-4:
+		return 0.0
+	var drop := ankle.y - _shell_y(skel, side)
+	var want := Vector3(ankle.x, target_y + drop, ankle.z)
+	# One more pass below uses the post-rotate shell, so this want is the first guess.
+	var max_r := len1 + len2 - 0.004
+	var min_r := absf(len1 - len2) + 0.01
+	var dist := hip.distance_to(want)
+	if dist > max_r + 0.002:
+		# Straight leg still short of the ground. Hip lift has to cover it.
+		return maxf(target_y - _shell_y(skel, side), 0.0)
+	dist = clampf(dist, min_r, max_r)
+	var cos_k := clampf((len1 * len1 + len2 * len2 - dist * dist) / (2.0 * len1 * len2), -1.0, 1.0)
+	# 0° is straight. Past ~110° the knee folds and the shin reads as buried
+	# even though the bone length is unchanged. Raise the hips instead.
+	if rad_to_deg(PI - acos(cos_k)) > 125.0:
+		return maxf(target_y - _shell_y(skel, side), 0.0)
+	var dir := (want - hip) / dist
+	var fwd := -boy.global_transform.basis.z
+	fwd.y = 0.0
+	fwd = Vector3(0, 0, -1) if fwd.length_squared() < 1e-6 else fwd.normalized()
+	var pole := knee + fwd * 0.35 + Vector3.UP * 0.25
+	var ax := dir.cross(pole - hip)
+	if ax.length_squared() < 1e-8:
+		ax = dir.cross(Vector3.RIGHT)
+	ax = ax.normalized()
+	var cos_a := clampf((len1 * len1 + dist * dist - len2 * len2) / (2.0 * len1 * dist), -1.0, 1.0)
+	var sin_a := sqrt(maxf(0.0, 1.0 - cos_a * cos_a))
+	var side_v := ax.cross(dir).normalized()
+	var knee_p := hip + dir * (dist * cos_a) + side_v * (dist * sin_a)
+	var knee_alt := hip + dir * (dist * cos_a) - side_v * (dist * sin_a)
+	if knee_alt.y > knee_p.y:
+		knee_p = knee_alt
+	_aim_child(skel, _up_bi[side], _knee_bi[side], knee_p - hip)
+	var knee_now: Vector3 = _world_xf(skel, _knee_bi[side]).origin
+	_aim_child(skel, _knee_bi[side], _foot_bi[side], want - knee_now)
+	_pitch_foot(skel, side, target_y)
+	return maxf(target_y - _shell_y(skel, side), 0.0)
+
+
+## Tip the foot bone about its origin so the sandal shell meets the triangle.
+## The ankle stays put, so the shin length does not change.
+func _pitch_foot(skel: Skeleton3D, side: int, target_y: float) -> void:
+	var bone := _foot_bi[side]
+	if bone < 0:
+		return
+	var sy := _shell_y(skel, side)
+	var err := target_y - sy
+	if absf(err) < 0.003 or absf(err) > 0.08:
+		return
+	var xf := _world_xf(skel, bone)
+	var best := xf
+	var best_err := absf(err)
+	for axis_v in [xf.basis.x, xf.basis.z]:
+		var axis := (axis_v as Vector3).normalized()
+		if axis.length_squared() < 0.5:
+			continue
+		for sgn in [-1.0, 1.0]:
+			var ang: float = float(sgn) * clampf(absf(err) / 0.09, 0.0, 0.45)
+			var spun := Basis(Quaternion(axis, ang)) * xf.basis
+			_set_world(skel, bone, Transform3D(spun, xf.origin))
+			var now := absf(target_y - _shell_y(skel, side))
+			if now < best_err:
+				best_err = now
+				best = _world_xf(skel, bone)
+	_set_world(skel, bone, best)
+
+
+## Rotate `bone` so the direction toward `child` matches `along`. Scale stays.
+func _aim_child(skel: Skeleton3D, bone: int, child: int, along: Vector3) -> void:
+	if along.length_squared() < 1e-8:
+		return
+	var xf := _world_xf(skel, bone)
+	var cur := _world_xf(skel, child).origin - xf.origin
+	if cur.length_squared() < 1e-8:
+		return
+	cur = cur.normalized()
+	var y := along.normalized()
+	var axis := cur.cross(y)
+	var ang := 0.0
+	if axis.length_squared() < 1e-8:
+		if cur.dot(y) > 0.0:
+			return
+		axis = xf.basis.x.normalized()
+		ang = PI
+	else:
+		axis = axis.normalized()
+		ang = cur.angle_to(y)
+	var new_basis := Basis(Quaternion(axis, ang)) * xf.basis
+	_set_world(skel, bone, Transform3D(new_basis, xf.origin))
+
+
+func _shell_y(skel: Skeleton3D, side: int) -> float:
+	var shell := _lowest_sole(skel, side)
+	if shell.y < 500.0:
+		return shell.y
+	if _foot_bi[side] < 0:
+		return 0.0
+	return _world_xf(skel, _foot_bi[side]).origin.y - sole_offset
 
 
 func _leg_bottom(skel: Skeleton3D, side: int) -> Vector3:
@@ -398,6 +566,11 @@ func _lowest_sole(skel: Skeleton3D, side: int) -> Vector3:
 	var best := Vector3(0, 10000, 0)
 	var foot_b := _foot_bi[side]
 	var toe_b := _toe_bi[side]
+	# A weight leak can sit well below the sandal. The authored ankle drop is
+	# sole_offset; anything more than 4.5 cm under that is not the shell.
+	var sole_floor := -1000.0
+	if foot_b >= 0:
+		sole_floor = _world_xf(skel, foot_b).origin.y - sole_offset - 0.045
 	for vi in idxs:
 		var fw := 0.0
 		for j in 4:
@@ -421,6 +594,8 @@ func _lowest_sole(skel: Skeleton3D, side: int) -> Vector3:
 		if wsum < 0.01:
 			continue
 		var p := acc / wsum
+		if p.y < sole_floor:
+			continue
 		if p.y < best_y:
 			best_y = p.y
 			best = p
