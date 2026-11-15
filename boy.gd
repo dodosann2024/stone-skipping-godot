@@ -233,13 +233,12 @@ func _ready() -> void:
 	_setup_body_collision()
 	foot_ik = FootIK.new()
 	foot_ik.name = "FootIK"
-	add_child(foot_ik)
+	skel.add_child(foot_ik)
+	skel.modifier_callback_mode_process = Skeleton3D.MODIFIER_CALLBACK_MODE_PROCESS_MANUAL
+	if not skel.skeleton_updated.is_connected(_on_skeleton_updated):
+		skel.skeleton_updated.connect(_on_skeleton_updated)
 	loco = LocomotionAnim.new()
 	loco.setup(self)
-	# FramePipelineTail: blob → camera/cutout → HUD (no second plant).
-	var late: Node = (load("res://boy_foot_late.gd") as GDScript).new()
-	late.name = "FootPlantLate"
-	add_child(late)
 	set_face_expr("idle")
 	release_stand = _probe_release("throw_stand")
 	# crouch: clearly lower release so water entry is flatter than standing
@@ -248,11 +247,17 @@ func _ready() -> void:
 
 
 ## Called from main after Ground is ready — wires FootIK + measures sole once.
+func _on_skeleton_updated() -> void:
+	var main := get_parent()
+	if main != null and main.has_method("_on_final_pose"):
+		main._on_final_pose()
+
+
 func bind_ground(g: Ground) -> void:
 	if foot_ik == null:
 		foot_ik = FootIK.new()
 		foot_ik.name = "FootIK"
-		add_child(foot_ik)
+		skel.add_child(foot_ik)
 	foot_ik.setup(self, g)
 	foot_ik.measure_sole_offset()
 	sole_offset = foot_ik.sole_offset
@@ -1336,7 +1341,7 @@ func _nap_forearm_over_eyes(w: float, kind: String = "sleep") -> void:
 		goal = xf.origin.lerp(goal, clampf(w, 0.0, 1.0))
 		var planted := Transform3D(xf.basis, goal)
 		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
-		skel.set_bone_global_pose_override(bi, local_xf, w, true)
+		FootIK.commit_global(skel, bi, local_xf, w)
 	skel.force_update_transform()
 
 
@@ -1369,7 +1374,7 @@ func _plant_hands_on_thighs(w: float) -> void:
 		var goal: Vector3 = xf.origin.lerp(thigh_mid, blend)
 		var planted := Transform3D(xf.basis, goal)
 		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
-		skel.set_bone_global_pose_override(hbi, local_xf, blend, true)
+		FootIK.commit_global(skel, hbi, local_xf, blend)
 	skel.force_update_transform()
 
 
@@ -1399,7 +1404,7 @@ func _rest_hands_on_belly(w: float) -> void:
 		var goal: Vector3 = xf.origin.lerp(targets[bone_name] as Vector3, clampf(w, 0.0, 1.0))
 		var planted := Transform3D(xf.basis, goal)
 		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
-		skel.set_bone_global_pose_override(bi, local_xf, w, true)
+		FootIK.commit_global(skel, bi, local_xf, w)
 	skel.force_update_transform()
 
 
@@ -1424,7 +1429,7 @@ func plant_feet_on_plane(plane_point: Vector3, plane_normal: Vector3, gap := 0.0
 			continue
 		var planted := Transform3D(xf.basis, xf.origin - plane_normal * (g - gap))
 		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
-		skel.set_bone_global_pose_override(bi, local_xf, 1.0, true)
+		FootIK.commit_global(skel, bi, local_xf, 1.0)
 	skel.force_update_transform()
 
 
@@ -1452,7 +1457,7 @@ func plant_feet_soft(plane_point: Vector3, plane_normal: Vector3 = Vector3.UP, g
 		var pull := clampf(g - gap, -max_pull, max_pull)
 		var planted := Transform3D(xf.basis, xf.origin - plane_normal * pull)
 		var local_xf: Transform3D = skel.global_transform.affine_inverse() * planted
-		skel.set_bone_global_pose_override(bi, local_xf, 1.0, true)
+		FootIK.commit_global(skel, bi, local_xf, 1.0)
 	skel.force_update_transform()
 
 
@@ -1802,73 +1807,19 @@ func throw_stance() -> Array:
 
 
 func _throw_clip() -> String:
-	# Meta key in boy_meta.json (has t_charge / t_release). Playback resolves to pitch_baseball.
-	return "throw_crouch" if stance == "crouch" else "throw_stand"
-
+	return loco._throw_clip()
 
 func _to_idle() -> void:
-	anim = "idle"
-	act_target = 0.0
-	act_rate = 6.0
-	stopping = false
-	react_kind = ""
-	act_kind = ""
-	act_lie_k = 0.0
-	model.rotation.x = 0.0
-	lie_settle = 0.0
-	model.position = model_base
-	if ap:
-		ap.active = true
-	if tree:
-		tree.active = true
-
+	loco._to_idle()
 
 func _resolve_clip(name: String) -> String:
-	if ap.has_animation(name):
-		return name
-	# aliases — dig/lift_heavy intentionally omitted (not sleep / stone-pick).
-	var map := {
-		"stroll": "walk",
-		"throw_stand": "pitch_baseball", "throw_crouch": "pitch_baseball",
-		"wave": "turn", "oops": "cheer", "standing_relax": "idle", "jump": "idle",
-		"sun_sit": "sit", "sun_lie": "sit", "sun_rest": "sit", "sun_up": "sit", "sun_stand": "idle",
-		# Authored hammock/bench/log clips — resolve only when present.
-		"hammock_sit": "hammock_enter", "hammock_lie": "hammock_sleep",
-		"hammock_sleep": "hammock_sleep", "hammock_up": "hammock_exit", "hammock_stand": "idle",
-		"seat_sit": "bench_sit_idle", "seat_rest": "bench_sit_idle",
-		"seat_lie": "bench_sit_idle", "seat_nap": "bench_sit_idle",
-		"seat_up": "bench_sit_exit", "seat_stand": "idle",
-	}
-	var a: String = map.get(name, "idle")
-	if ap.has_animation(a):
-		return a
-	# Fallbacks when a prop clip is missing.
-	if ap.has_animation("sit"):
-		return "sit"
-	return "idle" if ap.has_animation("idle") else name
-
+	return loco._resolve_clip(name)
 
 func _set_slot(i: int, clip: String, tseek: float) -> void:
-	var real := _resolve_clip(clip)
-	slot_clip[i] = clip
-	slot_t[i] = tseek
-	var node: AnimationNodeAnimation = bt.get_node("a" if i == 0 else "b")
-	node.animation = real
-
+	loco._set_slot(i, clip, tseek)
 
 func _play(clip: String, tseek: float, fade: float, force_slot := false) -> void:
-	var same := slot_clip[cur_slot] == clip and not force_slot
-	if same:
-		slot_t[cur_slot] = tseek
-		return
-	var other := 1 - cur_slot
-	_set_slot(other, clip, tseek)
-	cur_slot = other
-	if fade <= 0.0:
-		ab_w = float(cur_slot)
-	else:
-		ab_rate = 1.0 / maxf(fade, 0.01)
-
+	loco._play(clip, tseek, fade, force_slot)
 
 func _live_pelvis() -> Vector3:
 	if parts.has("pelvis") and is_instance_valid(parts["pelvis"]):
@@ -1902,173 +1853,10 @@ func _process(delta: float) -> void:
 
 
 func _tick(delta: float) -> void:
-	lead_dt = delta
-	act_frames += 1
-	t += delta
-	anim_t += delta
-	act_w = move_toward(act_w, act_target, delta * act_rate)
-	ab_w = move_toward(ab_w, float(cur_slot), delta * ab_rate)
+	loco._tick(delta)
 
-	# spot-turn footfalls: 2–3 alternating steps (open / turn / close), no steps_taken
-	if pivoting and not was_pivoting:
-		spot_clock = 0.0
-		spot_emitted = 0
-		if anim != "move":
-			anim = "move"
-			act_target = 0.0
-			move_w = maxf(move_w, 0.6)
-	if pivoting:
-		pivot_grace = 0.35
-		spot_clock += delta
-		# timed so a ~180° flick lands 2–3 spot steps before the heading settles
-		var marks := [0.10, 0.38, 0.66]
-		while spot_emitted < marks.size() and spot_clock >= float(marks[spot_emitted]):
-			spot_steps += 1
-			footstep.emit(spot_emitted % 2, false)
-			foot_flat.emit(spot_emitted % 2)
-			spot_emitted += 1
-	else:
-		pivot_grace = maxf(0.0, pivot_grace - delta)
-	was_pivoting = pivoting
-
-	# locomotion blends
-	if anim == "move":
-		# Frame-rate independent speed smoothing — avoids walk↔run blend pops on hitch/ProMotion.
-		speed_s = lerpf(speed_s, move_speed, 1.0 - exp(-delta * 12.0))
-		run_k = 0.0 if pivoting else smoothstep(RUN_FROM, RUN_TO, speed_s)
-		# Light stick → stroll (soft), then walk. Keep walk_k for mix amount.
-		walk_k = clampf(smoothstep(0.35, 1.05, speed_s), 0.0, 1.0)
-		move_w = move_toward(move_w, 1.0, delta * 4.0)
-		var dist := 0.0
-		if has_prev:
-			dist = Vector3(global_position.x - prev_pos.x, 0, global_position.z - prev_pos.z).length()
-		prev_pos = global_position
-		has_prev = true
-		# Blend stride with run_k so walk→run doesn't jump the phase rate at 0.5.
-		var stride := lerpf(float(clips["walk"]["stride"]), float(clips["run"]["stride"]), run_k)
-		# Drive phase from smoothed speed (matches anim to locomotion). Position delta
-		# only clamps hitch overshoot — never leads, so interp/display lag can't skate.
-		var dphase: float
-		if pivoting or speed_s < 0.04:
-			dphase = delta / maxf(float(clips["walk"]["length"]), 0.2)
-		else:
-			dphase = (speed_s * delta) / maxf(stride, 0.05)
-			if dist > 1e-5:
-				dphase = minf(dphase, dist / maxf(stride, 0.05) * 1.15)
-		dphase = minf(dphase, 0.18)
-		phase = fposmod(phase + dphase, 1.0)
-		# walking footfalls only when translating after the spot-turn grace window
-		if not pivoting and pivot_grace <= 0.0:
-			var side := 0 if phase < 0.5 else 1
-			if side != _prev_phase_side and move_w > 0.5 and dist > 0.001:
-				footstep.emit(side, run_k > 0.5)
-				foot_flat.emit(side)
-				steps_taken += 1
-			_prev_phase_side = side
-		elif pivoting or pivot_grace > 0.0:
-			_prev_phase_side = -1
-		t_idle = 0.0
-	else:
-		move_w = move_toward(move_w, 0.0, delta * 5.0)
-		t_idle = fposmod(t_idle + delta, float(clips["idle"]["length"]))
-		has_prev = false
-		_prev_phase_side = -1
-
-	# advance action slot times
-	for i in 2:
-		if slot_clip[i] != "":
-			var real := _resolve_clip(slot_clip[i])
-			var L := float(clips.get(slot_clip[i], clips.get(real, {"length": 1.0}))["length"])
-			if anim in ["charge"]:
-				# hold near start of throw (wind-up) based on power
-				slot_t[i] = clampf(power, 0.0, 1.0) * float(clips[_throw_clip()].get("t_charge", 0.35))
-			elif anim == "throw":
-				var tc := float(clips[_throw_clip()].get("t_charge", 0.35))
-				slot_t[i] = minf(tc + anim_t, L)
-				var tr := float(clips[_throw_clip()].get("t_release", T_RELEASE))
-				if not did_release and anim_t >= maxf(0.0, tr - tc):
-					did_release = true
-					show_stone(false)
-					released.emit()
-				if tc + anim_t >= L:
-					_to_idle()
-					show_stone(true)
-			elif anim == "react":
-				slot_t[i] = minf(anim_t, L)
-				if anim_t >= L:
-					_to_idle()
-			elif anim == "activity":
-				# keep seek set by _play
-				pass
-			else:
-				slot_t[i] = fposmod(slot_t[i] + delta, maxf(L, 0.01)) if clips.get(slot_clip[i], {}).get("loop", false) else minf(slot_t[i] + delta, L)
-
-	if anim == "prop_clip" or prop_clip != "":
-		# Authored bench/log/hammock clips: AnimationPlayer only, no tree/pose stack.
-		if tree:
-			tree.active = false
-		if ap and not ap.active:
-			ap.active = true
-		_update_blob()
-		_update_face(delta)
-		return
-	if anim == "activity" and act_lie_k > 0.45 and act_kind in ["sun", "sleep", "seatlie"]:
-		_seed_lie_from_sit()
-		_apply_lie_pose(act_kind, act_lie_k, act_tt)
-		# Idle seek clears global pose overrides — re-plant so thighs stay ON the cushion.
-		if lie_foot_plant and act_kind == "sun":
-			plant_feet_on_plane(lie_foot_plane_point, lie_foot_plane_normal, lie_foot_plant_gap, true)
-	elif anim == "activity" and act_lie_k < 0.45 and act_kind in ["seat", "sleep", "sun"] and act_w > 0.5:
-		# Re-seed every tick — pose_add is relative; stacking without reset bends sideways.
-		_seed_lie_from_sit()
-		_apply_ergonomic_sit(clampf(act_w, 0.0, 1.0) * (1.0 - act_lie_k))
-	else:
-		if ap and not ap.active:
-			ap.active = true
-		if tree and not tree.active:
-			tree.active = true
-		_apply_mixer()
-	if loco != null:
-		loco.polish(delta)
-	else:
-		_polish_gait(delta)
-	# Single plant: drawable local poses after mixer (Compatibility skins these).
-	_update_foot_ik(delta)
-	_update_face(delta)
-
-
-## Soft child gait on Mixamo: light limb boost, hip sway, bob, turn lean.
-## Keep amps small — v24 overdrive made a conveyor/skating read next to AC.
-## Legs are owned by FootIK — polish never writes UpLeg/Leg/Foot.
 func _polish_gait(delta: float) -> void:
-	if skel == null or model == null:
-		return
-	if _settle_left > 0.0:
-		_settle_left = maxf(0.0, _settle_left - delta)
-	var moving := anim == "move" and move_w > 0.25 and not pivoting
-	var sway := 0.0
-	if moving:
-		var amp := lerpf(0.35, 0.55, run_k) * move_w
-		var upright := 0.035 + 0.05 * run_k + absf(turn_lean) * 0.10
-		_pose_add("mixamorig_Spine", Vector3(-upright * 0.4, turn_lean * 0.14, turn_lean * 0.20), move_w * 0.55)
-		_pose_add("mixamorig_Spine1", Vector3(-upright * 0.28, turn_lean * 0.10, 0.0), move_w * 0.5)
-		var look_y := clampf(turn_ahead, -0.35, 0.35) * 0.4
-		_pose_add("mixamorig_Head", Vector3(upright * 0.15, look_y, 0.0), move_w * 0.4)
-		var s := sin(phase * TAU)
-		var c := cos(phase * TAU)
-		var swing := s * lerpf(0.30, 0.45, run_k) * amp
-		_pose_add("mixamorig_LeftArm", Vector3(swing * 0.55, -swing * 0.08, -swing * 0.18), 0.6)
-		_pose_add("mixamorig_RightArm", Vector3(-swing * 0.55, swing * 0.08, swing * 0.18), 0.6)
-		_pose_add("mixamorig_LeftForeArm", Vector3(-absf(swing) * 0.28, 0.0, 0.0), 0.5)
-		_pose_add("mixamorig_RightForeArm", Vector3(-absf(swing) * 0.28, 0.0, 0.0), 0.5)
-		sway = -c * lerpf(0.010, 0.016, run_k) * move_w
-		hip_shift = hip_shift.lerp(Vector3(sway, 0, 0), 1.0 - exp(-delta * 8.0))
-	else:
-		hip_shift = hip_shift.lerp(Vector3.ZERO, 1.0 - exp(-delta * 6.0))
-	_walk_bob = lerpf(_walk_bob, 0.0, 1.0 - exp(-delta * 10.0))
-	# Model Y: hip sway only — FootIK owns contact (no contact_lift / pelvis drop).
-	model.position = model_base + Vector3(hip_shift.x, 0.0, 0.0)
-
+	loco._polish_gait(delta)
 
 func _setup_body_collision() -> void:
 	floor_snap_length = 0.30
@@ -2174,30 +1962,8 @@ func _reset_to_rest_pose() -> void:
 
 
 func _apply_mixer() -> void:
-	if tree == null:
-		return
-	var walk: Dictionary = clips["walk"]
-	var run: Dictionary = clips["run"]
-	tree.set("parameters/idle_s/seek_request", t_idle)
-	tree.set("parameters/walk_s/seek_request", phase * float(walk["length"]))
-	tree.set("parameters/run_s/seek_request", phase * float(run["length"]))
-	tree.set("parameters/stroll_s/seek_request", phase * float(clips.get("stroll", walk)["length"]))
-	tree.set("parameters/a_s/seek_request", slot_t[0])
-	tree.set("parameters/b_s/seek_request", slot_t[1])
-	tree.set("parameters/wr/blend_amount", run_k)
-	tree.set("parameters/move/blend_amount", smoothstep(0.0, 1.0, move_w))
-	tree.set("parameters/ab/blend_amount", ab_w)
-	tree.set("parameters/act/blend_amount", act_w)
-	tree.advance(0.0)
-	if absf(aim_twist) > 1e-4:
-		twist_spine(skel, aim_twist)
+	loco._apply_mixer()
 
-
-## Per-foot contact discs under RENDERED stance soles (late-plant frame).
-## Hip blob stays OFF. While locomoting, discs are hidden — sun cast shadow +
-## footprints own the contact read (avoids any shoe-length trail during drag).
-## Idle / near-stop: discs sit under stance soles after IK, world-space on the
-## scene host so CharacterBody display-interp cannot drag them.
 func _update_blob() -> void:
 	if blob == null:
 		return
