@@ -8,6 +8,7 @@ var dist := Constants.CAM_DIST
 var pitch := Constants.CAM_PITCH
 var yaw := PI
 var _held := false
+var framing := ""
 var cam: Camera3D
 
 
@@ -23,6 +24,12 @@ func _process(delta: float) -> void:
 		return
 	var stick_down := player.stick.length() > Constants.DEADZONE or player.route
 	var want := Constants.CAM_DIST if stick_down else Constants.CAM_DIST_WIDE
+	if framing == "front":
+		want = 4.2
+		yaw = lerp_angle(yaw, player.face_yaw + PI, 1.0 - exp(-delta * 4.0))
+	elif framing == "side":
+		want = 5.0
+		yaw = lerp_angle(yaw, player.face_yaw + PI * 0.5, 1.0 - exp(-delta * 4.0))
 	if not stick_down and _held:
 		pass
 	_held = stick_down

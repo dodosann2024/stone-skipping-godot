@@ -26,6 +26,9 @@ var _shin_min := 1.0
 var contact_y := 0.0
 var _walk_skate := 0.0
 var _last_route_m := 0.0
+var locked := false
+var use_anchor := false
+var anchor := Vector3.ZERO
 
 
 func _ready() -> void:
@@ -51,6 +54,14 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	if ground == null:
+		return
+	if locked:
+		velocity = Vector3.ZERO
+		if use_anchor:
+			global_position = anchor
+		speed = 0.0
+		if boy != null:
+			boy.hold_speed()
 		return
 	var inp := stick
 	if route:

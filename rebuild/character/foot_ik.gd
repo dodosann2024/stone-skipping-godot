@@ -26,9 +26,12 @@ var _rest_shin: Array[float] = [0.0, 0.0]
 var _drop := 0.0
 var _drop_v := 0.0
 var _ready := false
+var paused := false
 
 
 func _process_modification_with_delta(delta: float) -> void:
+	if paused:
+		return
 	var skel := get_skeleton()
 	if skel == null or ground == null:
 		return

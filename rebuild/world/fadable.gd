@@ -25,12 +25,18 @@ func set_target(next: float) -> void:
 func tick(delta: float) -> void:
 	var tau := 0.20 if target < alpha else 0.35
 	alpha = lerpf(alpha, target, 1.0 - exp(-delta / tau))
-	if mesh == null or mesh.material_override == null:
+	if mesh != null:
+		_fade_one(mesh.material_override, alpha)
+	for c in get_children():
+		if c is MeshInstance3D and c != mesh:
+			_fade_one((c as MeshInstance3D).material_override, alpha)
+
+
+func _fade_one(mat: Material, a: float) -> void:
+	var std := mat as StandardMaterial3D
+	if std == null:
 		return
-	var mat := mesh.material_override as StandardMaterial3D
-	if mat == null:
-		return
-	var c := mat.albedo_color
-	c.a = alpha
-	mat.albedo_color = c
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if alpha < 0.99 else BaseMaterial3D.TRANSPARENCY_DISABLED
+	var col := std.albedo_color
+	col.a = a
+	std.albedo_color = col
+	std.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if a < 0.99 else BaseMaterial3D.TRANSPARENCY_DISABLED

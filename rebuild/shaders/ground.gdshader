@@ -46,25 +46,33 @@ void fragment() {
 	vec3 c;
 	float rough = 0.92;
 	if (wood) {
-		float along = p.y * 3.2;
-		float across = p.x * 6.5;
-		float board = floor(along);
-		float grain = hash12(vec2(board, floor(across)));
-		float seam = smoothstep(0.0, 0.08, fract(along)) * smoothstep(1.0, 0.92, fract(along));
-		c = mix(vec3(0.45, 0.30, 0.16), vec3(0.62, 0.44, 0.24), grain);
-		c *= 0.72 + 0.28 * seam;
-		c *= 1.0 + (hash12(floor(p * 18.0)) - 0.5) * 0.08;
-		rough = 0.78;
+		// Boards run across the pier. Tone changes per board, not per cell,
+		// so the deck reads as planks instead of a checkerboard.
+		float boards = p.y * 2.55;
+		float id = floor(boards);
+		float f = fract(boards);
+		float seam = smoothstep(0.0, 0.035, f) * smoothstep(1.0, 0.955, f);
+		float tone = hash12(vec2(id, 2.3));
+		c = mix(vec3(0.38, 0.24, 0.12), vec3(0.66, 0.45, 0.24), tone);
+		float grain = 0.90 + 0.10 * sin(p.x * 52.0 + tone * 18.0);
+		float streak = 0.93 + 0.07 * vnoise(vec2(p.x * 2.4, id * 0.37));
+		float nail = smoothstep(0.04, 0.0, length(fract(vec2(p.x * 1.15, boards)) - vec2(0.18, 0.5)));
+		c *= grain * streak * (0.86 + 0.14 * seam);
+		c = mix(c, c * 0.45, nail * 0.55);
+		rough = 0.72;
 	} else {
 		float d = shore_d(p);
-		float sand = smoothstep(0.35, 1.15, wpos.y) * smoothstep(-1.5, -7.0, d);
-		vec3 sand_c = vec3(0.86, 0.78, 0.58);
-		vec3 grass_c = vec3(0.42, 0.62, 0.32);
-		grass_c = mix(grass_c, vec3(0.55, 0.68, 0.34), vnoise(p * 0.35));
+		float sand = smoothstep(0.28, 1.05, wpos.y) * smoothstep(-0.8, -6.5, d);
+		vec3 sand_c = vec3(0.93, 0.80, 0.50);
+		sand_c = mix(sand_c, vec3(0.78, 0.64, 0.38), vnoise(p * 1.6));
+		sand_c = mix(sand_c, vec3(0.86, 0.74, 0.46), vnoise(p * 0.22));
+		vec3 grass_c = vec3(0.36, 0.58, 0.26);
+		grass_c = mix(grass_c, vec3(0.58, 0.72, 0.32), vnoise(p * 0.35));
+		grass_c = mix(grass_c, vec3(0.28, 0.48, 0.22), vnoise(p * 2.4));
 		c = mix(sand_c, grass_c, sand);
-		float fq = fwidth(p.x * 36.0);
-		float grain = (hash12(floor(p * 36.0)) - 0.5) * (1.0 - smoothstep(0.4, 1.2, fq));
-		c *= 1.0 + grain * 0.18 + (vnoise(p * 6.0) - 0.5) * 0.08;
+		float fq = fwidth(p.x * 48.0);
+		float grain = (hash12(floor(p * 48.0)) - 0.5) * (1.0 - smoothstep(0.35, 1.4, fq));
+		c *= 1.0 + grain * 0.22 + (vnoise(p * 8.0) - 0.5) * 0.10;
 		float sea = sea_y(p, t);
 		float hab = wpos.y - sea;
 		float wet = (1.0 - smoothstep(0.0, 0.18, hab)) * smoothstep(-2.0, 0.4, d + 1.0);
