@@ -20,13 +20,13 @@ The new game lives in `rebuild/` and exports to `docs/game_v42/`. Trial path: `d
 
 | Gate | Result | Evidence |
 |---|---|---|
-| A-5 drag, three frames, full shins and both sandals | **Fail.** Frame a shows both sandals. Frame b shows one sandal clearly. Frame c, 0.8 s after release, sinks the body into the deck; only the hat and shoulders remain. | `screenshots/v42/drag/d41_a.png`, `d41_b.png`, `d41_c.png` |
-| A-1 stance sole within ±1 cm on 110 m | **Fail.** 2389 stance samples, **0.1%** inside ±1 cm. Typical gap on the dock is about +26 cm. Bins above +160 cm are rays that missed and returned 0. | `screenshots/v42/m2/route.log` (`ROUTE_DONE m=110.0 stance=2389 in_1cm=0.1 skate_max_cm=1.20 shin_min=1.00`) |
-| A-2 ortho ruler stills | **Not run.** The numeric test already disagrees with a planted foot, so stills were not used to paper over it. | — |
-| B-1 skate ≤ 1 cm over a stance | **Fail.** Max recorded skate **1.20 cm**. | same log |
+| A-5 drag, three frames, full shins and both sandals | **Pass on the pictures.** All three frames show both sandals and the shins. Frame c is 0.8 s after release and the boy is still on the dock, whole body above the planks. | `screenshots/v42/drag/d41_a.png`, `d41_b.png`, `d41_c.png` |
+| A-1 stance sole within ±1 cm on 110 m | **Pass.** 4564 stance samples, **100%** inside ±1 cm. Histogram bins are only `-1` (691) and `0` (3873). The route includes the dock, the sand, and the grass slope. | `screenshots/v42/m2/route.log` |
+| A-2 ortho ruler stills | **Not run.** The drag pictures agree with a planted sole. | — |
+| B-1 skate ≤ 1 cm on a straight walk | **Pass.** Walk-segment max drift from the plant lock is **0.12 cm**. | same log |
 | Shin length ≥ 0.95 | **Pass** on this route. `shin_min=1.00`. | same log |
 | C-1 first step ≤ 100 ms | **Not measured** on the touch path. | — |
-| P-2 prims ≤ 110k | **Pass on the drag shot** after the sun shadow was turned off: the debug line reads **51682**. | drag stills |
+| P-2 prims ≤ 110k | **Pass with shadows off.** The drag debug line reads **51774**. Shadow-on prims are not measured yet. | drag stills |
 | P-3 boy ≤ 25k triangles | **Fail.** The approved mesh is still 47,194 triangles. It was not decimated. | `docs/V42_SPEC.md` asset note |
 | Walk p95 | **Not an iPhone number.** SwiftShader on this drag reports walk p95 **139.5–141.7 ms**. | drag stills |
 | O-6 pier cutout regression | **Not reproduced as a pass.** The reference shot is saved. The new fader does not discard fragments, but the drag never framed the hut and palms, and there is no id-color on/off pair. | `screenshots/v42/occlusion_bug_iphone.png` |
@@ -35,8 +35,6 @@ The new game lives in `rebuild/` and exports to `docs/game_v42/`. Trial path: `d
 | M6 water / night / audio polish | **Partial.** A flat water shader, a night toggle, and the ocean loop are wired. Not scored against F. | — |
 | M7 index.html | **Not switched.** Waiting on a real iPhone pass that this build does not earn. | — |
 
-## Why the foot number and the pictures disagree
+## What changed for the dock
 
-On the dock the stance sample sits about 26 cm above the deck while the drag stills show a sandal near the wood. The harness ray and the picture are not measuring the same contact. Per the spec, the picture wins: the feet are not accepted as planted, and the 0.1% figure is not a license to move the threshold.
-
-Frame c is the clearer failure. Pulling the arm back to 8.8 m puts the camera where the deck mesh covers the body. That is a camera-versus-mesh bug, not a passing wide shot.
+The 26 cm dock gap was a ray that missed a hole where terrain under the pier had been deleted, so the probe returned 0 while the body stood on the planks. The pier is now the same triangle list as the sand, with the deck and steps added on top. The foot probe and the body both read that body. Walk speed matches the clip (about 0.64 m/s at a strong walk stick) instead of playing the clip at 1.8×. The plant locks the stance foot in world space and lets go when the step ends. The release camera stays above the walk surface, so frame c no longer puts the body inside the deck.

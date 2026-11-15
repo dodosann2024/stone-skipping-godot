@@ -15,7 +15,8 @@ var weight: Array[float] = [0.0, 0.0]
 var sole_gap: Array[float] = [0.0, 0.0]
 var skate_m := 0.0
 var shin_ratio: Array[float] = [1.0, 1.0]
-var outsole_drop := 0.122
+var outsole_drop := 0.15
+var contact_y := 0.0
 var _bi: Array[int] = [-1, -1, -1, -1, -1, -1, -1, -1]
 var _hips := -1
 var _lock: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]
@@ -42,22 +43,22 @@ func _process_modification_with_delta(delta: float) -> void:
 	for side in 2:
 		ankle[side] = _world(skel, _bi[side]).origin
 	var raw: Array[float] = [1.0, 1.0]
-	var moving := ankle[0].distance_to(ankle[1]) > 0.0
-	if moving:
-		for side in 2:
-			var rel: float = ankle[side].y - ankle[1 - side].y
-			raw[side] = clampf(1.0 - rel / 0.055, 0.0, 1.0)
+	var above: Array[float] = [0.0, 0.0]
 	for side in 2:
 		var gy := ground.height(ankle[side].x, ankle[side].z)
-		if absf((ankle[side].y - outsole_drop) - gy) > 0.25:
-			raw[side] = 0.0
+		above[side] = (ankle[side].y - outsole_drop) - _surface_y(gy, gy, contact_y if contact_y != 0.0 else ankle[side].y)
+	for side in 2:
+		var rel: float = above[side] - above[1 - side]
+		raw[side] = clampf(1.0 - rel / 0.05, 0.0, 1.0)
+	for side in 2:
 		var ease := 1.0 - exp(-delta / 0.07)
 		weight[side] = lerpf(weight[side], raw[side], ease)
+		var here := Vector2(ankle[side].x, ankle[side].z)
 		if raw[side] >= 0.98:
-			if not _locked[side]:
+			if not _locked[side] or here.distance_to(_lock[side]) > 0.40:
 				_locked[side] = true
-				_lock[side] = Vector2(ankle[side].x, ankle[side].z)
-		else:
+				_lock[side] = here
+		elif raw[side] < 0.45:
 			_locked[side] = false
 	_pelvis(skel, delta, ankle, raw)
 	skate_m = 0.0
@@ -102,18 +103,39 @@ func _plant(skel: Skeleton3D, side: int, ankle: Vector3) -> void:
 	fwd.y = 0.0
 	fwd = Vector3(0, 0, -1) if fwd.length_squared() < 1e-6 else fwd.normalized()
 	var xz := Vector2(ankle.x, ankle.z)
+	var body_xz := Vector2(skel.global_position.x, skel.global_position.z)
+	if _locked[side] and body_xz.distance_to(_lock[side]) > 0.22:
+		_locked[side] = false
 	if _locked[side]:
 		xz = _lock[side]
 	var heel := xz - Vector2(fwd.x, fwd.z) * 0.05
 	var toe := xz + Vector2(fwd.x, fwd.z) * 0.06
 	var yh := ground.height(heel.x, heel.y)
 	var yt := ground.height(toe.x, toe.y)
-	var gy := minf(yh, yt)
+	var gy := _surface_y(yh, yt, contact_y if contact_y != 0.0 else ankle.y)
 	var n := _normal(heel, yh, toe, yt, fwd)
-	var goal := Vector3(xz.x, ankle.y + (gy + outsole_drop - ankle.y) * weight[side], xz.y)
 	var up_i: int = _bi[4 + side]
 	var knee_i: int = _bi[6 + side]
 	var foot_i: int = _bi[side]
+	var hip_p := _world(skel, up_i).origin
+	var reach := hip_p.distance_to(_world(skel, knee_i).origin) + _world(skel, knee_i).origin.distance_to(ankle)
+	var planted := Vector3(xz.x, gy + outsole_drop, xz.y)
+	if hip_p.distance_to(planted) > reach - 0.015:
+		_locked[side] = false
+		xz = Vector2(ankle.x, ankle.z)
+		yh = ground.height(xz.x, xz.y)
+		yt = yh
+		gy = _surface_y(yh, yt, contact_y if contact_y != 0.0 else ankle.y)
+		planted = Vector3(xz.x, gy + outsole_drop, xz.y)
+	var goal := Vector3(xz.x, ankle.y + (planted.y - ankle.y) * weight[side], xz.y)
+	var short := ankle.y - planted.y
+	if short > 0.004 and short < 0.05 and weight[side] > 0.9 and _hips >= 0:
+		var hp := skel.get_bone_pose(_hips)
+		hp.origin.y -= minf(short, 0.03) / Constants.MODEL_SCALE
+		skel.set_bone_pose(_hips, hp)
+		skel.force_update_all_bone_transforms()
+		ankle = _world(skel, foot_i).origin
+		goal = Vector3(xz.x, planted.y, xz.y)
 	var before := _world(skel, knee_i).origin.distance_to(_world(skel, foot_i).origin)
 	_solve_leg(skel, up_i, knee_i, foot_i, goal, fwd)
 	var after := _world(skel, knee_i).origin.distance_to(_world(skel, foot_i).origin)
@@ -121,10 +143,24 @@ func _plant(skel: Skeleton3D, side: int, ankle: Vector3) -> void:
 		return
 	_tilt_foot(skel, foot_i, n, weight[side])
 	var now := _world(skel, foot_i).origin
+	var err := planted.y - now.y
+	if absf(err) > 0.001 and absf(err) < 0.04:
+		var again := now
+		again.y += err
+		_solve_leg(skel, up_i, knee_i, foot_i, again, fwd)
+		_tilt_foot(skel, foot_i, n, weight[side])
+		now = _world(skel, foot_i).origin
 	if _locked[side]:
-		skate_m = maxf(skate_m, Vector2(now.x, now.z).distance_to(_prev[side]))
+		skate_m = maxf(skate_m, Vector2(now.x, now.z).distance_to(_lock[side]))
 	_prev[side] = Vector2(now.x, now.z)
 	sole_gap[side] = (now.y - outsole_drop) - gy
+	if sole_gap[side] > 0.006 and weight[side] > 0.9 and _hips >= 0:
+		var hp := skel.get_bone_pose(_hips)
+		hp.origin.y -= minf(sole_gap[side], 0.025) / Constants.MODEL_SCALE
+		skel.set_bone_pose(_hips, hp)
+		skel.force_update_all_bone_transforms()
+		now = _world(skel, foot_i).origin
+		sole_gap[side] = (now.y - outsole_drop) - gy
 
 
 func _solve_leg(skel: Skeleton3D, up_i: int, knee_i: int, foot_i: int, goal: Vector3, fwd: Vector3) -> void:
@@ -206,6 +242,28 @@ func _tilt_foot(skel: Skeleton3D, foot_i: int, normal: Vector3, amount: float) -
 	var turned := (Basis(right, pitch * amount) * Basis(fwd, roll * amount) * pose.basis).orthonormalized()
 	pose.basis = turned
 	skel.set_bone_global_pose(foot_i, pose)
+
+
+func _surface_y(yh: float, yt: float, hint: float) -> float:
+	var hits: Array[float] = []
+	if yh > -1.5:
+		hits.append(yh)
+	if yt > -1.5:
+		hits.append(yt)
+	if hits.is_empty():
+		return hint
+	if hits.size() == 2 and absf(hits[0] - hits[1]) <= 0.16:
+		return minf(hits[0], hits[1])
+	var best: float = hits[0]
+	var best_d := absf(best - hint)
+	for h in hits:
+		var d := absf(h - hint)
+		if d < best_d:
+			best = h
+			best_d = d
+	if best_d > 0.45:
+		return hint
+	return best
 
 
 func _normal(heel: Vector2, yh: float, toe: Vector2, yt: float, fwd: Vector3) -> Vector3:

@@ -49,6 +49,16 @@ func _process(delta: float) -> void:
 	var pos := chest + arm * dist
 	if chest.distance_to(pos) > dist:
 		pos = chest + arm * dist
+	var space := get_world_3d().direct_space_state
+	if space != null:
+		var down := PhysicsRayQueryParameters3D.create(pos + Vector3(0, 4, 0), pos + Vector3(0, -8, 0))
+		down.collision_mask = Constants.LAYER_GROUND
+		if player != null:
+			down.exclude = [player.get_rid()]
+		var floor_hit := space.intersect_ray(down)
+		if floor_hit.has("position"):
+			var floor_y := float(floor_hit.position.y)
+			pos.y = maxf(pos.y, floor_y + 0.55)
 	global_position = pos
 	look_at(chest, Vector3.UP)
 	player.cam_basis = global_transform.basis

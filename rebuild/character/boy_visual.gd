@@ -19,6 +19,8 @@ func _ready() -> void:
 	var model := packed.instantiate()
 	model.scale = Vector3.ONE * Constants.MODEL_SCALE
 	model.rotation.y = PI
+	# Capsule bottom is this far above the body origin. The mesh feet sit on that contact.
+	model.position.y = Constants.CAPSULE_BOTTOM
 	add_child(model)
 	anim = _find_player(model)
 	skel = _find_skel(model)
@@ -41,12 +43,12 @@ func set_speed(speed: float) -> void:
 		return
 	var clip := clip_idle
 	var scale := 1.0
-	if speed > 1.55:
+	if speed > 1.35:
 		clip = clip_run
-		scale = clampf(speed / 2.3, 0.85, 1.4)
-	elif speed > 0.12:
+		scale = clampf(speed / Constants.RUN_CLIP, 0.85, 1.15)
+	elif speed > 0.08:
 		clip = clip_walk
-		scale = clampf(speed / 0.64, 0.85, 2.0)
+		scale = clampf(speed / Constants.WALK_CLIP, 0.85, 1.15)
 	if clip != _clip:
 		anim.play(clip)
 		_clip = clip

@@ -30,7 +30,7 @@ func _ready() -> void:
 func height(x: float, z: float) -> float:
 	var space := get_world_3d().direct_space_state if is_inside_tree() else null
 	if space == null:
-		return 0.0
+		return -999.0
 	var q := PhysicsRayQueryParameters3D.create(Vector3(x, 12.0, z), Vector3(x, -6.0, z))
 	q.collision_mask = Constants.LAYER_GROUND
 	q.collide_with_areas = false
@@ -38,7 +38,7 @@ func height(x: float, z: float) -> float:
 	var hit := space.intersect_ray(q)
 	if hit.has("position"):
 		return float(hit.position.y)
-	return 0.0
+	return -999.0
 
 
 func normal_at(x: float, z: float) -> Vector3:
@@ -70,8 +70,6 @@ func _build_arrays() -> Dictionary:
 			var h01 := IslandData.height_at(x0, z1)
 			var h11 := IslandData.height_at(x1, z1)
 			if maxf(maxf(h00, h10), maxf(h01, h11)) < -0.55:
-				continue
-			if _on_pier((x0 + x1) * 0.5, (z0 + z1) * 0.5):
 				continue
 			var a := Vector3(x0, h00, z0)
 			var b := Vector3(x1, h10, z0)

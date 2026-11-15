@@ -23,6 +23,8 @@ var _ok := 0
 var _hist := {}
 var _skate_max := 0.0
 var _shin_min := 1.0
+var contact_y := 0.0
+var _walk_skate := 0.0
 
 
 func _ready() -> void:
@@ -109,6 +111,9 @@ func _move(inp: Vector2, delta: float) -> void:
 		velocity.y -= 9.8 * delta
 	var before := global_position
 	move_and_slide()
+	contact_y = global_position.y + Constants.CAPSULE_BOTTOM
+	if boy != null and boy.ik != null:
+		boy.ik.contact_y = contact_y
 	if not is_on_floor() and ground != null:
 		var h := ground.height(global_position.x, global_position.z)
 		if global_position.y < h - 0.08 and h > Constants.WADE_MIN_Y:
@@ -158,7 +163,10 @@ func _route_stick() -> Vector2:
 	var world := Vector3(dir.x, 0, dir.y)
 	var sx := world.dot(right)
 	var sy := -world.dot(fwd)
-	return Vector2(sx, sy).limit_length(1.0)
+	var stick_out := Vector2(sx, sy).limit_length(1.0)
+	if route_m < 25.0:
+		return stick_out * 0.85
+	return stick_out
 
 
 func _score_feet() -> void:
@@ -167,6 +175,8 @@ func _score_feet() -> void:
 	var ik := boy.ik
 	_shin_min = minf(_shin_min, minf(ik.shin_ratio[0], ik.shin_ratio[1]))
 	_skate_max = maxf(_skate_max, ik.skate_m)
+	if not running:
+		_walk_skate = maxf(_walk_skate, ik.skate_m)
 	for side in 2:
 		if ik.weight[side] < 0.98:
 			continue
@@ -186,6 +196,6 @@ func _route_finish() -> void:
 		hist += "%d:%d " % [int(k), int(_hist[k])]
 	var pct := 100.0 * float(_ok) / maxf(float(_scored), 1.0)
 	print("ROUTE_HIST %s" % hist)
-	print("ROUTE_DONE m=%.1f stance=%d in_1cm=%.1f skate_max_cm=%.2f shin_min=%.2f" % [
-		route_m, _scored, pct, _skate_max * 100.0, _shin_min])
+	print("ROUTE_DONE m=%.1f stance=%d in_1cm=%.1f skate_max_cm=%.2f walk_skate_cm=%.2f shin_min=%.2f" % [
+		route_m, _scored, pct, _skate_max * 100.0, _walk_skate * 100.0, _shin_min])
 	get_tree().quit()

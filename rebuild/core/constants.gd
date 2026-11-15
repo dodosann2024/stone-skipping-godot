@@ -4,8 +4,13 @@ extends Object
 ## Wade limit is the old "too deep" cutoff (main.gd, h < -0.42).
 
 const MODEL_SCALE := 1.35
-const WALK_SPEED := 1.15
-const RUN_SPEED := 2.7
+## A strong walk stick (below the run latch) should move at the clip's 0.64 m/s.
+## The stick curve tops out near 0.86 before the run latch, so the multiplier is 0.74.
+const WALK_CLIP := 0.64
+const RUN_CLIP := 2.30
+const WALK_SPEED := 0.74
+const RUN_SPEED := 2.30
+const CAPSULE_BOTTOM := 0.025
 const DECK_Y := 0.8
 const WADE_MIN_Y := -0.42
 const DEADZONE := 0.06
