@@ -30,26 +30,30 @@ That is why you see the same pattern over and over:
 
 ## (a) Per-frame data flow (actual)
 
-Engine: Godot **4.7.2**, renderer **`gl_compatibility`**, `physics_ticks_per_second=60`, **`physics_interpolation=false`** in `project.godot` (manual lerp instead). Web export is **single-threaded** (no SharedArrayBuffer). Boy `process_priority = 40` (runs after default `main`).
+Engine: Godot **4.7.2**, renderer **`gl_compatibility`**, `physics_ticks_per_second=60`, **`physics_interpolation=false`** in `project.godot` (manual lerp instead). Web export is **single-threaded** (no SharedArrayBuffer). Priorities: `main.process_priority = 20`, `boy.process_priority = 40` (higher runs later → boy anim/IK after main’s display interp start).
+
+**REST / THROW body motion is on the render clock**, not `_physics_process` (only EXPLORE walks in physics). That splits “who owns Y” by mode.
 
 ### Physics tick (`main._physics_process`)
 
 | Step | What | Transform used |
 |------|------|----------------|
-| Latch | On first physics step of a render frame: `_body_pos_prev ← _body_pos` | physics state |
+| Latch | On first physics step of a render frame: `_body_pos_prev ← _body_pos` (avoids hitch teleports when `phys/f ≥ 2`) | physics state |
 | Explore | `_explore_tick`: joystick → wish → accel → `_try_move` → `_surface` Y | writes **`_body_pos` / `player.global_position`** (physics) |
 | Stone | Flying/sinking substeps | stone only |
 
-Explore Y policy today: snap **up** to `_surface` immediately; ease **down** ≤ 2.9 cm/frame (AAA pelvis-step bar).
+Explore Y policy today: snap **up** to `_surface` immediately; ease **down** ≤ 2.9 cm/frame (AAA pelvis-step bar). Same snap-up/ease-down is **duplicated** in `_interp_body_pose` for display Y.
 
 ### Idle / render frame (`_process` + `process_frame`)
 
 | Order | Who | What | Transform |
 |------|-----|------|-----------|
-| 1 | `main._process` (priority 0) | `_interp_body_pose()` — lerp XZ between physics samples; **re-sample Y at display XZ** via `_surface`; snap-up / ease-down | **display** `player.position` |
-| 2 | `boy._process` (priority 40) | AnimationTree mixer → `_polish_gait` → `_update_foot_ik` (clears overrides, sets markers, pelvis/contact lift on **model**) | skeleton + **model.position** |
-| 3 | `main._process` continued | rest/throw ticks, `_update_camera`, foliage cutout uniforms | camera + shaders |
+| 1 | `main._process` (prio 20) | `_interp_body_pose()` first — lerp XZ; **re-sample Y at display XZ** via `_surface`; snap-up / ease-down | **display** `player.position` |
+| 2 | …still `main._process` | REST/THROW ticks, then **`_update_camera`** (crest LOS, stick hard-lock), foliage cutout | camera + shaders |
+| 3 | `boy._process` (prio 40) | AnimationTree mixer → `_polish_gait` → `_update_foot_ik` | skeleton + **model.position** |
 | 4 | `SceneTree.process_frame` | `FootPlantLate`: `_reassert_foot_plants` → blob → `_upload_foot_ao` → `_export_ground_probe` | late plant + HUD |
+
+**Important ordering bug for “final pose”:** camera (step 2) runs **before** boy plant (steps 3–4). Framing can be correct while soles are still mid-update; HUD/`__ground` refresh after plant, so camera and ground probes are not the same snapshot.
 
 **Intended story:** input → move → root on collision → animate → plant feet → camera looks at final pose → HUD.
 
@@ -99,8 +103,10 @@ Input (Joystick / touch)
 | `Island.ground_h` | Analytic heightfield; still used to **build** mesh, place props, and as **fallback** inside `collision_h` on miss |
 | `Island.ground_err` | Diagnostic vs `mesh_h` |
 | `boy.ground_fn` / `ground_ray` | Callables into main/island for feet |
+| `main._surface_n` | **Defined, never called** |
+| Rest LOS scoring | Still mostly **`Island.ground_h`** (analytic) — leftover vs walk’s `collision_h` |
 
-Collision build (`island._build_ground_collision`) copies **rendered terrain faces** into a concave shape—correct idea—then adds many deck boxes and analytic fallbacks that can still disagree at lips / misses.
+Collision build (`island._build_ground_collision`) copies **rendered terrain faces** into a concave shape—correct idea—then adds many deck boxes and analytic fallbacks that can still disagree at lips / misses. Terrain foot-AO upload still runs then **forces `foot_ao = 0`** (discs/shadow own the read)—dead work each late frame.
 
 ### Sole / height offsets (layered)
 
