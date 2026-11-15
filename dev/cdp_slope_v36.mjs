@@ -130,22 +130,36 @@ async function main() {
 
   const readGround = async () =>
     page.evaluate(() => (typeof window.__ground === "object" ? window.__ground : null));
+  const readFrame = async () =>
+    page.evaluate(() => (typeof window.__frame === "object" ? window.__frame : null));
 
   const assertGround = async (tag) => {
     const g = await readGround();
+    const f = await readFrame();
     if (!g) {
       console.log("GROUND_SKIP", tag, "(no __ground yet)");
-      return;
+    } else {
+      console.log("GROUND", tag, JSON.stringify(g));
+      if (g.blob_d_cm > 3.0) {
+        throw new Error(`${tag} blob↔sole ${g.blob_d_cm.toFixed(1)}cm > 3cm`);
+      }
+      if (g.moving && g.sole_gap_cm > 1.5) {
+        throw new Error(`${tag} sole gap ${g.sole_gap_cm.toFixed(1)}cm > 1.5cm`);
+      }
+      if (g.moving && g.disc_on) {
+        throw new Error(`${tag} contact disc visible while locomoting`);
+      }
     }
-    console.log("GROUND", tag, JSON.stringify(g));
-    if (g.blob_d_cm > 3.0) {
-      throw new Error(`${tag} blob↔sole ${g.blob_d_cm.toFixed(1)}cm > 3cm`);
-    }
-    if (g.moving && g.sole_gap_cm > 1.5) {
-      throw new Error(`${tag} sole gap ${g.sole_gap_cm.toFixed(1)}cm > 1.5cm`);
-    }
-    if (g.moving && g.disc_on) {
-      throw new Error(`${tag} contact disc visible while locomoting`);
+    if (f) {
+      console.log("FRAME", tag, JSON.stringify(f));
+      if (!f.ok) {
+        throw new Error(
+          `${tag} framing fail head=${JSON.stringify(f.head_uv)} feet=${JSON.stringify(f.feet_uv)} margin=${f.margin_min}`
+        );
+      }
+      if (f.fixed) {
+        throw new Error(`${tag} cam_fixed true — follow required`);
+      }
     }
   };
 

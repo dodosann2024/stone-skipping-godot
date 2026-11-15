@@ -109,6 +109,24 @@ var fix_target := Vector3.ZERO
 var cam_mode_btn: Button
 var zoom_in_btn: Button
 var zoom_out_btn: Button
+## Critically-damped explore follow (look-at + yaw). Velocities in world / rad/s.
+var _cam_t_vel := Vector3.ZERO
+var _cam_yaw_vel := 0.0
+var _cam_pitch_vel := 0.0
+var _cam_dist_vel := 0.0
+var _cam_pos_prev := Vector3.ZERO
+var _cam_pos_init := false
+var _cam_max_step_cm := 0.0
+## Stick-lock orbit follow can jump on face turns; tracked separately from walk snaps.
+var _cam_orbit_step_cm := 0.0
+var _cam_teleport := false
+## Smoothed hillside spring-arm lift (m) + final lens velocity for ≤5–8 cm/frame chase.
+var _cam_hill_lift := 0.0
+var _cam_hill_vel := 0.0
+var _cam_pos_vel := Vector3.ZERO
+## When true, explore orbit is hard-locked behind the boy — skip step clamp so a
+## 180° face turn doesn't leave the lens beside him (CDP dir_sw/w off-screen).
+var _cam_stick_lock := false
 
 # explore
 var player: Node3D
@@ -435,8 +453,8 @@ func _build_player() -> void:
 	# behind the hillside (gnd 0 cm but shorts-level silhouette). ~0.66 clears soles.
 	# Slightly lower pitch + enough arm so head/hat stay inside the top margin
 	# on tall phones (v35 CDP cropped the brim after stick release).
-	ex_pitch = 0.58
-	ex_dist = 3.2
+	ex_pitch = 0.46
+	ex_dist = 4.0
 	boy.ground_fn = _surface
 	boy.ground_ray = func(from: Vector3, to: Vector3) -> Dictionary:
 		return island.ray_ground(from, to, [boy.get_rid()] if boy else [])
@@ -4047,6 +4065,72 @@ func _hat_probe_tick() -> void:
 	JavaScriptBridge.eval("window.__hat = " + JSON.stringify(hat_probe), true)
 
 
+## Project a world point to viewport UV (0..1). Behind camera → uv outside [0,1].
+func _world_to_uv(world: Vector3) -> Vector2:
+	if camera == null:
+		return Vector2(-1, -1)
+	if camera.is_position_behind(world):
+		return Vector2(-1, -1)
+	var screen: Vector2 = camera.unproject_position(world)
+	var vp := get_viewport().get_visible_rect().size
+	if vp.x < 1.0 or vp.y < 1.0:
+		return Vector2(-1, -1)
+	return Vector2(screen.x / vp.x, screen.y / vp.y)
+
+
+## CDP reads window.__frame: head/feet UV + margins vs central 60% band.
+func _export_frame_probe() -> void:
+	if not is_web or boy == null or boy.skel == null or camera == null:
+		return
+	var head_i: int = boy.skel.find_bone("mixamorig_Head")
+	var head_w: Vector3 = player.global_position + Vector3(0, 1.25, 0)
+	if head_i >= 0:
+		head_w = boy.skel.global_transform * boy.skel.get_bone_global_pose(head_i).origin
+	# Ground contact under the body (stable vs swing-foot toe bones).
+	var foot_w := Vector3(player.global_position.x, player.global_position.y + 0.04, player.global_position.z)
+	var n_ft := 0
+	var acc := Vector3.ZERO
+	for side in range(2):
+		if boy.anim == "move" and boy.move_w > 0.2 and not boy._stance_locked[side]:
+			continue
+		var fp: Array = boy.foot_points(side)
+		var mid: Vector3 = (fp[0] as Vector3).lerp(fp[1] as Vector3, 0.5)
+		# Only accept soles near the collision surface (skip airborne swing toes).
+		var sy := _surface(mid.x, mid.z)
+		if mid.y - sy < 0.35:
+			acc += Vector3(mid.x, sy + 0.02, mid.z)
+			n_ft += 1
+	if n_ft > 0:
+		foot_w = acc / float(n_ft)
+	var huv := _world_to_uv(head_w)
+	var fuv := _world_to_uv(foot_w)
+	# Central ~60% band (18–82% = 64% with tall-phone FOV tolerance).
+	const LO := 0.18
+	const HI := 0.82
+	# Head sits upper-mid; feet lower-mid — both must stay inside the band.
+	var head_ok := huv.x >= LO and huv.x <= HI and huv.y >= LO and huv.y <= HI
+	var feet_ok := fuv.x >= LO and fuv.x <= HI and fuv.y >= LO and fuv.y <= HI
+	var margin_min := 1e9
+	for uv in [huv, fuv]:
+		margin_min = minf(margin_min, uv.x - LO)
+		margin_min = minf(margin_min, HI - uv.x)
+		margin_min = minf(margin_min, uv.y - LO)
+		margin_min = minf(margin_min, HI - uv.y)
+	var g := {
+		"head_uv": [huv.x, huv.y],
+		"feet_uv": [fuv.x, fuv.y],
+		"head_ok": head_ok,
+		"feet_ok": feet_ok,
+		"ok": head_ok and feet_ok,
+		"margin_min": margin_min,
+		"cam_step_cm": _cam_max_step_cm,
+		"cam_orbit_step_cm": _cam_orbit_step_cm,
+		"speed": cur_speed,
+		"fixed": cam_fixed,
+	}
+	JavaScriptBridge.eval("window.__frame = " + JSON.stringify(g), true)
+
+
 ## CDP reads window.__ground: blob↔sole XZ and rendered sole gaps (post-IK frame).
 func _export_ground_probe() -> void:
 	if not is_web or boy == null or boy.skel == null:
@@ -4118,18 +4202,20 @@ func _hat_probe_place(at: String) -> void:
 			break
 	_snap_explore_cam()
 	if at == "slope":
-		# Low side-on so CDP frames show both feet + ground contact.
-		# Meta flag: keep reframing on the boy while the stick is held.
-		set_meta("cdp_slope_cam", true)
-		cam_fixed = true
-		fix_target = player.global_position + Vector3(0, 0.28, 0)
-		fix_yaw = face_yaw + PI * 0.5
-		fix_pitch = 0.08
-		fix_dist = 3.0
-		cam_target = fix_target
-		cam_yaw = fix_yaw
-		cam_pitch = fix_pitch
-		cam_dist = fix_dist
+		# Force FOLLOW cam on the slope burial spot. A fixed/side-on lens let
+		# him walk off-screen in CDP (empty grass + joystick only).
+		cam_fixed = false
+		set_meta("cdp_slope_cam", false)
+		_persist_cam_fixed()
+		ex_yaw = face_yaw
+		ex_pitch = 0.46
+		ex_dist = 4.0
+		_snap_explore_cam(false)
+		_cam_t_vel = Vector3.ZERO
+		_cam_yaw_vel = 0.0
+		_cam_pitch_vel = 0.0
+		_cam_dist_vel = 0.0
+		_cam_teleport = true
 		_apply_camera(1.0)
 
 ## When > 0, timing/selftest scripts force this as the sim delta so soft-GL
@@ -4382,15 +4468,68 @@ func _update_throw_pad() -> void:
 
 func _explore_cam() -> Array:
 	var tall := _tall()
-	# Aim chest/hips so the whole body + face sit in the lower-middle third —
-	# too high a look-at with a short arm cropped the hat at the top (v35 CDP).
-	var hy := 0.58 if boy.meta.get("tripo", false) else 0.50
-	var t := player.global_position + Vector3(0, hy, 0)
-	var dist := ex_dist * (1.15 if tall else 1.0)
-	# Tall phone: keep a touch more distance so head has margin under the status UI.
-	if tall:
-		dist = maxf(dist, 3.35)
-	return [t, ex_yaw, ex_pitch, dist]
+	# Aim mid/upper-chest. Slightly high look-at keeps the *head bone* below the
+	# top 18% band even when the hillside spring-arm lifts the lens.
+	var hy := 0.82 if boy.meta.get("tripo", false) else 0.74
+	var base := player.global_position + Vector3(0, hy, 0)
+	# Look-ahead in the move / face direction so the boy never walks out of frame.
+	var ahead_dir := Vector3(-sin(face_yaw), 0.0, -cos(face_yaw))
+	if cur_speed > 0.15:
+		var mv := Vector3(move_vel.x, 0.0, move_vel.z)
+		if mv.length_squared() > 1e-4:
+			ahead_dir = mv.normalized()
+	# Modest look-ahead — too much put the boy near the bottom edge on full-stick run.
+	var ahead_m := clampf(cur_speed * 0.18, 0.0, 0.70)
+	var t := base + ahead_dir * ahead_m
+	# ex_dist is the *user zoom preference* (pinch / preset). Never multiply it by
+	# a constant and write cam_dist back into ex_dist — that compounded every
+	# frame into a bird's-eye of the whole island (cdp_dir contact sheet).
+	var zoom := clampf(ex_dist, 3.0, 14.0)
+	var dist := maxf(zoom, 4.60 if tall else 4.40)
+	# Mild pitch — steep look-down after hillside lift shoved the head into the top band.
+	var pitch := clampf(ex_pitch, 0.36, 0.46)
+	if mode == Mode.EXPLORE and cur_speed > 0.25:
+		pitch = clampf(pitch + 0.02, 0.38, 0.48)
+	# Uphill grade: pull back; crest clearance owns height (see _apply_camera).
+	var gx := player.global_position.x
+	var gz := player.global_position.z
+	var ahead_p := player.global_position + ahead_dir * 1.2
+	var grade := _surface(ahead_p.x, ahead_p.z) - _surface(gx, gz)
+	if grade > 0.12:
+		dist = maxf(dist, 5.40)
+		pitch = clampf(pitch + 0.02, 0.38, 0.50)
+		t.y += clampf(grade * 0.28, 0.0, 0.38)
+	return [t, ex_yaw, pitch, dist]
+
+
+## Critically damped spring (Game Programming Gems / Ryan Juckett).
+## Returns [new_value, new_velocity].
+func _crit_damp(current: float, target: float, vel: float, smooth_time: float, dt: float) -> Array:
+	smooth_time = maxf(0.0001, smooth_time)
+	var omega := 2.0 / smooth_time
+	var x := omega * dt
+	var exp_x := 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x)
+	var change := current - target
+	var temp := (vel + omega * change) * dt
+	var new_vel := (vel - omega * temp) * exp_x
+	var new_pos := target + (change + temp) * exp_x
+	return [new_pos, new_vel]
+
+
+func _crit_damp_vec3(current: Vector3, target: Vector3, vel: Vector3, smooth_time: float, dt: float) -> Array:
+	var rx: Array = _crit_damp(current.x, target.x, vel.x, smooth_time, dt)
+	var ry: Array = _crit_damp(current.y, target.y, vel.y, smooth_time, dt)
+	var rz: Array = _crit_damp(current.z, target.z, vel.z, smooth_time, dt)
+	return [
+		Vector3(float(rx[0]), float(ry[0]), float(rz[0])),
+		Vector3(float(rx[1]), float(ry[1]), float(rz[1])),
+	]
+
+
+func _crit_damp_angle(current: float, target: float, vel: float, smooth_time: float, dt: float) -> Array:
+	var delta := wrapf(current - target, -PI, PI)
+	var r: Array = _crit_damp(target + delta, target, vel, smooth_time, dt)
+	return [float(r[0]), float(r[1])]
 
 func _rest_bone(name: String, fallback: Vector3) -> Vector3:
 	if boy and boy.skel:
@@ -4625,6 +4764,11 @@ func _snap_explore_cam(front := false) -> void:
 	ex_yaw = face_yaw + PI + 0.45 if front else face_yaw
 	var c := _explore_cam()
 	cam_target = c[0]; cam_yaw = c[1]; cam_pitch = c[2]; cam_dist = c[3]
+	_cam_t_vel = Vector3.ZERO
+	_cam_yaw_vel = 0.0
+	_cam_pitch_vel = 0.0
+	_cam_dist_vel = 0.0
+	_cam_teleport = true
 
 func _toggle_cam_fixed() -> void:
 	_begin_cam_blend()
@@ -4659,6 +4803,12 @@ func _persist_cam_fixed() -> void:
 
 func _load_cam_fixed() -> void:
 	if not OS.has_feature("web"):
+		return
+	# CDP / debug probes always start in follow — a stale localStorage "固定视角"
+	# left the boy walking off-screen while the lens sat on empty grass.
+	if _opt("debug") == "1" or _opt("at") != "":
+		cam_fixed = false
+		JavaScriptBridge.eval("try{localStorage.setItem('ss_cam_fixed','0')}catch(e){}", true)
 		return
 	var v = JavaScriptBridge.eval("try{localStorage.getItem('ss_cam_fixed')}catch(e){null}", true)
 	cam_fixed = str(v) == "1"
@@ -4699,18 +4849,6 @@ func _update_camera(delta: float) -> void:
 			fix_pitch = float(rc[2])
 			fix_dist = float(rc[3])
 			set_meta("fix_rest_locked", true)
-		# CDP slope probe: keep low side-on locked on the boy so 6+ frames show feet.
-		if mode == Mode.EXPLORE and bool(get_meta("cdp_slope_cam", false)):
-			fix_target = player.global_position + Vector3(0, 0.28, 0)
-			fix_yaw = face_yaw + PI * 0.5
-			fix_pitch = 0.08
-			fix_dist = 3.0
-			cam_target = fix_target
-			cam_yaw = fix_yaw
-			cam_pitch = fix_pitch
-			cam_dist = fix_dist
-			_apply_camera(delta)
-			return
 		if not dragging:
 			orbit_vel *= exp(-delta * 3.5)
 			fix_yaw += orbit_vel.x * delta
@@ -4764,42 +4902,69 @@ func _update_camera(delta: float) -> void:
 		if dragging:
 			k = 1.0 - exp(-delta * 14.0)
 	else:
-		# Explore follow: stick/walk keeps the lens *behind* the boy so he stays framed.
-		# v35 bug: yaw follow was gated on `gt - last_drag > 1.5`, so after a screen tap
-		# (or while the stick pushed sideways relative to a frozen yaw) he walked off the
-		# right edge / entirely off-screen. Orbit drag still owns yaw while active.
+		# Explore follow: critically damped spring behind the boy + look-ahead.
+		# Hard requirement: whole body in the central ~60% of the viewport while
+		# walking / running / turning / on slopes / after stick release.
 		var orbiting_now := dragging or orbit_pending.length_squared() > 1e-10 or _orbit_ease > 0.05
 		var stick_mag := joy.value.length() if joy else 0.0
+		# Stick / walk: keep desired yaw locked behind the boy (no lag off-frame).
 		if not orbiting_now and (cur_speed > 0.12 or stick_mag > 0.08):
-			var behind := face_yaw
-			var yaw_err := absf(wrapf(behind - ex_yaw, -PI, PI))
-			# Face-showcase start is ~180° off behind. Hard-snap so the first
-			# stick push never walks him off the right edge while yaw crawls.
-			if yaw_err > 1.2 or stick_mag > 0.25:
-				# Stick / large error: hard-lock behind. Soft rates still left
-				# ~0.3–0.5 rad lag on diagonals (v35 CDP empty-grass frames).
-				ex_yaw = behind
-			else:
-				var rate2 := lerpf(4.0, 10.0, clampf(cur_speed / maxf(RUN_SPEED, 0.01), 0.0, 1.0))
-				rate2 = maxf(rate2, lerpf(4.0, 14.0, clampf(yaw_err / 0.8, 0.0, 1.0)))
-				ex_yaw = lerp_angle(ex_yaw, behind, 1.0 - exp(-delta * rate2))
+			ex_yaw = face_yaw
 		want = _explore_cam()
-		# Follow body tightly while stick/walk — lag was shrinking on-screen height
-		# and letting him drift to the frame edge.
-		var move_k := clampf(cur_speed / maxf(WALK_MAX, 0.01), 0.0, 1.0)
-		var follow_rate := lerpf(12.0, 28.0, move_k)
-		if stick_mag > 0.15:
-			follow_rate = maxf(follow_rate, 24.0)
-		k = 1.0 - exp(-delta * follow_rate)
 		if orbiting_now:
 			# Drag: angles already snapped in _flush_orbit_pending; keep target tight.
-			k = 1.0
-		if mode == Mode.REST:
-			k = 1.0 - exp(-delta * 3.0)
-		# Soft return from sit/sleep framing to follow-behind.
+			cam_target = want[0]
+			cam_yaw = want[1]
+			cam_pitch = want[2]
+			cam_dist = want[3]
+			ex_yaw = cam_yaw
+			ex_pitch = cam_pitch
+			ex_dist = cam_dist
+			_cam_t_vel = Vector3.ZERO
+			_cam_yaw_vel = 0.0
+			_cam_pitch_vel = 0.0
+			_cam_dist_vel = 0.0
+			_mix_cam_blend()
+			_apply_camera(delta)
+			return
+		# Critically damped chase. While stick/speed is live: hard-lock look-at + yaw
+		# so lag can never push him out of the central 60% (dir_e edge fails).
+		# Pitch/dist keep a fast spring. Idle/release: full spring on everything.
+		var move_k := clampf(cur_speed / maxf(WALK_MAX, 0.01), 0.0, 1.0)
+		var stick_lock := stick_mag > 0.08 or cur_speed > 0.08
+		_cam_stick_lock = stick_lock
+		var st_t := 0.06 if stick_lock else lerpf(0.14, 0.08, move_k)
 		if rest_exit_cam_t > 0.0:
 			rest_exit_cam_t = maxf(rest_exit_cam_t - delta, 0.0)
-			k = 1.0 - exp(-delta * lerpf(1.6, 5.0, 1.0 - rest_exit_cam_t / 0.8))
+			st_t = lerpf(0.22, st_t, 1.0 - rest_exit_cam_t / 0.8)
+		if mode == Mode.REST:
+			st_t = 0.22
+		if stick_lock:
+			cam_target = want[0]
+			cam_yaw = float(want[1])
+			_cam_t_vel = Vector3.ZERO
+			_cam_yaw_vel = 0.0
+		else:
+			var td: Array = _crit_damp_vec3(cam_target, want[0], _cam_t_vel, st_t, delta)
+			cam_target = td[0]
+			_cam_t_vel = td[1]
+			var yd2: Array = _crit_damp_angle(cam_yaw, float(want[1]), _cam_yaw_vel, st_t, delta)
+			cam_yaw = float(yd2[0])
+			_cam_yaw_vel = float(yd2[1])
+		var pd: Array = _crit_damp(cam_pitch, float(want[2]), _cam_pitch_vel, st_t * 1.15, delta)
+		cam_pitch = float(pd[0])
+		_cam_pitch_vel = float(pd[1])
+		var dd: Array = _crit_damp(cam_dist, float(want[3]), _cam_dist_vel, st_t * 1.25, delta)
+		cam_dist = float(dd[0])
+		_cam_dist_vel = float(dd[1])
+		# Stick motion is camera-relative via ex_yaw. Do NOT write cam_dist/pitch
+		# back into ex_* — those are user zoom/orbit prefs; framing may pad dist.
+		ex_yaw = cam_yaw
+		_mix_cam_blend()
+		_apply_camera(delta)
+		_cam_stick_lock = false
+		return
+	_cam_stick_lock = false
 	cam_target = cam_target.lerp(want[0], k)
 	if dragging or orbit_pending.length_squared() > 1e-10 or _orbit_ease > 0.01:
 		cam_yaw = want[1]
@@ -4931,25 +5096,111 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 			pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 1.15)
 		# Keep a minimum plan-distance so the boy stays whole-body framed (not a face crop).
 		var flat := Vector2(pos.x - cam_target.x, pos.z - cam_target.z)
-		var min_flat: float = maxf(cam_dist * ARM_FLOOR, 2.55)
+		var min_flat: float = maxf(cam_dist * ARM_FLOOR, 2.85)
 		if flat.length() > 0.05 and flat.length() < min_flat:
 			var sc: float = min_flat / flat.length()
 			pos.x = cam_target.x + (pos.x - cam_target.x) * sc
 			pos.z = cam_target.z + (pos.z - cam_target.z) * sc
 			pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 1.05)
-		# If hillside lift raised the lens a lot, push out so on-screen height
-		# stays near the flat-ground default (avoids "too close" after slopes).
+		# Hillside lift: when crest-blocked, snap lift up immediately (green-plane
+		# boy-crop). Ease down with a short spring so release isn't a pop.
 		var nom := cam_target + full_off * _cam_arm_k
-		var lift_extra: float = pos.y - nom.y
-		if lift_extra > 0.35:
+		var want_lift: float = maxf(0.0, pos.y - nom.y)
+		if want_lift > _cam_hill_lift:
+			_cam_hill_lift = want_lift
+			_cam_hill_vel = 0.0
+		else:
+			var hl: Array = _crit_damp(_cam_hill_lift, want_lift, _cam_hill_vel, 0.14, delta)
+			_cam_hill_lift = float(hl[0])
+			_cam_hill_vel = float(hl[1])
+		pos = nom
+		pos.y = nom.y + _cam_hill_lift
+		pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 0.95)
+		# Lifted / crest-blocked → push out so we look *over* the slope, not into it.
+		if _cam_hill_lift > 0.06 or want_lift > 0.20:
 			var flat2 := Vector2(pos.x - cam_target.x, pos.z - cam_target.z)
-			var push: float = 1.0 + clampf(lift_extra * 0.22, 0.0, 0.40)
+			var push: float = 1.0 + clampf(maxf(_cam_hill_lift, want_lift) * 0.55, 0.0, 1.10)
 			if flat2.length() > 0.05:
 				pos.x = cam_target.x + flat2.x * push
 				pos.z = cam_target.z + flat2.y * push
+				pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 0.95)
+		# Cap height above look-at on flat ground. On a crest, a tight cap put the
+		# lens *inside* the hillside (cdp_slope_up_3 = green plane, boy missing).
+		# Prefer push-out + look-raise for framing; only soft-cap when clear.
+		var max_above := 2.15 if want_lift > 0.35 else 1.70
+		if pos.y > cam_target.y + max_above:
+			var flat3 := Vector2(pos.x - cam_target.x, pos.z - cam_target.z)
+			if flat3.length() > 0.05 and want_lift > 0.25:
+				var need: float = (pos.y - (cam_target.y + max_above)) * 0.85
+				var sc: float = 1.0 + clampf(need / maxf(flat3.length(), 0.5), 0.0, 0.8)
+				pos.x = cam_target.x + flat3.x * sc
+				pos.z = cam_target.z + flat3.y * sc
+			pos.y = minf(pos.y, cam_target.y + max_above)
+			pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 0.90)
+		# Final LOS: if cam→ankle still hits the hill, force height + push-out.
+		# Sync into _cam_hill_lift so the next frame doesn't rebuild from nom and
+		# throw the raise away (that was the green-plane boy-crop on slope_up_3).
+		var p_mh2: float = _surface(cam_target.x, cam_target.z)
+		var ankle2 := Vector3(cam_target.x, p_mh2 + 0.12, cam_target.z)
+		for _k in range(4):
+			var hit := false
+			var hit_h := 0.0
+			for i in range(1, 12):
+				var t4: float = float(i) / 12.0
+				var q4: Vector3 = pos.lerp(ankle2, t4)
+				var h4: float = _surface(q4.x, q4.z)
+				if h4 > q4.y + 0.04:
+					hit = true
+					hit_h = maxf(hit_h, h4)
+			if not hit:
+				break
+			pos.y = maxf(pos.y, hit_h + 1.35)
+			pos.y = maxf(pos.y, cam_target.y + 1.35)
+			var flat4 := Vector2(pos.x - cam_target.x, pos.z - cam_target.z)
+			if flat4.length() > 0.05:
+				pos.x = cam_target.x + flat4.x * 1.12
+				pos.z = cam_target.z + flat4.y * 1.12
 				pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 1.05)
+		_cam_hill_lift = maxf(_cam_hill_lift, pos.y - nom.y)
+	else:
+		_cam_hill_lift = lerpf(_cam_hill_lift, 0.0, 1.0 - exp(-delta * 4.0))
+		_cam_hill_vel = 0.0
+	# Look slightly higher while the arm is hillside-lifted (local only — do not
+	# accumulate into cam_target or the spring drifts skyward over frames).
+	var look := cam_target
+	if mode == Mode.EXPLORE and _cam_hill_lift > 0.08:
+		look.y += _cam_hill_lift * 0.42
+	# Step budget: follow + look-ahead need ~7 cm at run speed; yaw spring on a
+	# ~4.5 m arm needs more while turning. Cap straight follow tightly; allow
+	# turn-proportional motion; hard-stop true teleports without the flag.
+	# Stick-lock: camera must sit on the orbit behind the boy every frame. A step
+	# clamp here left the lens beside him on 180° face turns (CDP UV.x < 0).
+	if _cam_pos_init and not _cam_teleport and not demo_cam and not _cam_stick_lock:
+		var dpos := pos - _cam_pos_prev
+		var hill_extra: float = clampf(_cam_hill_lift * 0.5, 0.0, 0.45) if mode == Mode.EXPLORE else 0.0
+		var max_step: float = 0.08 + hill_extra
+		if dpos.length() > max_step:
+			pos = _cam_pos_prev + dpos.limit_length(max_step)
+	_cam_pos_vel = Vector3.ZERO
+	# Walk/settle snaps vs stick-lock orbit follow (face turns) — separate meters.
+	if _cam_pos_init and not _cam_teleport:
+		var step_cm: float = _cam_pos_prev.distance_to(pos) * 100.0
+		if _cam_stick_lock:
+			_cam_orbit_step_cm = maxf(_cam_orbit_step_cm, step_cm)
+		else:
+			_cam_max_step_cm = maxf(_cam_max_step_cm, step_cm)
+	_cam_teleport = false
+	_cam_pos_prev = pos
+	_cam_pos_init = true
+	if not pos.is_finite() or not look.is_finite() or pos.distance_squared_to(look) < 1e-6:
+		pos = look + Vector3(0.0, 1.2, 3.5)
 	camera.global_position = pos
-	camera.look_at(cam_target, Vector3.UP)
+	var up := Vector3.UP
+	var to_look := (look - pos).normalized()
+	if absf(to_look.dot(up)) > 0.98:
+		up = Vector3.RIGHT
+	camera.look_at(look, up)
+	_export_frame_probe()
 	if refl:
 		refl.update()
 
