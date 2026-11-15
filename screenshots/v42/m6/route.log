@@ -1,19 +1,4 @@
 Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
-WARNING: Could not set V-Sync mode, as changing V-Sync mode is not supported by the graphics driver.
-     at: set_use_vsync (platform/linuxbsd/x11/gl_manager_x11.cpp:372)
-OpenGL API 4.5 (Core Profile) Mesa 25.2.8-0ubuntu0.24.04.4 - Compatibility - Using Device: Mesa - llvmpipe (LLVM 20.1.2, 256 bits)
-ALSA lib confmisc.c:855:(parse_card) cannot find card '0'
-ALSA lib conf.c:5208:(_snd_config_evaluate) function snd_func_card_inum returned error: No such file or directory
-ALSA lib confmisc.c:422:(snd_func_concat) error evaluating strings
-ALSA lib conf.c:5208:(_snd_config_evaluate) function snd_func_concat returned error: No such file or directory
-ALSA lib confmisc.c:1342:(snd_func_refer) error evaluating name
-ALSA lib conf.c:5208:(_snd_config_evaluate) function snd_func_refer returned error: No such file or directory
-ALSA lib conf.c:5731:(snd_config_expand) Evaluate error: No such file or directory
-ALSA lib pcm.c:2721:(snd_pcm_open_noupdate) Unknown PCM default
-ERROR: Condition "status < 0" is true. Returning: ERR_CANT_OPEN
-   at: init_output_device (drivers/alsa/audio_driver_alsa.cpp:97)
-WARNING: All audio drivers failed, falling back to the dummy driver.
-     at: initialize (servers/audio/audio_server.cpp:258)
 
 BOY_CLIPS idle=idle walk=walk run=run n=19
 CLIP_AUTHOR bench_lie lounger_lie throw_stand throw_crouch
@@ -28,16 +13,16 @@ ROUTE_POS f=2400 m=25.1 y=2.58 spd=0.86 w=1.00/0.33 gap=0.0/-0.0 scored=2336
 ROUTE_POS f=2700 m=35.2 y=4.85 spd=2.30 w=0.00/1.00 gap=21.2/0.0 scored=2572
 ROUTE_POS f=3000 m=46.4 y=2.48 spd=2.30 w=0.00/1.00 gap=5.2/0.0 scored=2872
 ROUTE_POS f=3300 m=53.1 y=1.37 spd=2.30 w=0.00/1.00 gap=5.2/0.0 scored=3172
-ROUTE_POS f=3600 m=57.1 y=2.01 spd=2.30 w=0.00/1.00 gap=5.2/-0.0 scored=3472
-ROUTE_POS f=3900 m=68.3 y=1.72 spd=2.30 w=0.00/1.00 gap=5.2/0.0 scored=3772
-ROUTE_POS f=4200 m=72.8 y=1.48 spd=2.30 w=0.00/1.00 gap=5.2/-0.0 scored=4072
-ROUTE_POS f=4500 m=79.7 y=2.71 spd=2.30 w=0.00/1.00 gap=5.2/0.0 scored=4372
-ROUTE_POS f=4800 m=90.9 y=1.46 spd=2.30 w=0.00/1.00 gap=5.2/0.0 scored=4672
-ROUTE_POS f=5100 m=92.6 y=1.59 spd=2.30 w=0.00/1.00 gap=5.2/-0.0 scored=4972
+ROUTE_POS f=3600 m=57.0 y=2.01 spd=2.30 w=0.00/1.00 gap=5.2/-0.0 scored=3472
+ROUTE_POS f=3900 m=68.2 y=1.72 spd=2.30 w=0.00/1.00 gap=5.2/0.0 scored=3772
+ROUTE_POS f=4200 m=72.8 y=1.46 spd=2.30 w=0.00/1.00 gap=5.2/-0.0 scored=4072
+ROUTE_POS f=4500 m=79.8 y=2.71 spd=2.30 w=0.00/1.00 gap=5.2/0.0 scored=4372
+ROUTE_POS f=4800 m=91.0 y=1.46 spd=2.30 w=0.00/1.00 gap=5.2/0.0 scored=4672
+ROUTE_POS f=5100 m=92.6 y=1.59 spd=2.30 w=0.00/1.00 gap=5.2/0.0 scored=4972
 ROUTE_POS f=5400 m=102.4 y=2.55 spd=2.30 w=0.00/1.00 gap=5.2/0.0 scored=5272
-ROUTE_HIST -1:1023 0:4452 
-ROUTE_DONE m=110.0 stance=5475 in_1cm=100.0 skate_max_cm=0.14 walk_skate_cm=0.14 shin_min=1.00
-WARNING: 8 ObjectDB instances were leaked at exit (run with `--verbose` for details).
+ROUTE_HIST -1:999 0:4477 
+ROUTE_DONE m=110.0 stance=5476 in_1cm=100.0 skate_max_cm=0.14 walk_skate_cm=0.14 shin_min=1.00
+WARNING: 36 ObjectDB instances were leaked at exit (run with `--verbose` for details).
    at: cleanup (core/object/object.cpp:2536)
 ERROR: 4 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:822)

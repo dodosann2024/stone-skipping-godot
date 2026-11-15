@@ -8,6 +8,7 @@ signal finished
 
 var playing := false
 var crouch := false
+var hold := false
 var phase := 0.0
 var _fired := false
 var _bi: Array[int] = []
@@ -32,39 +33,58 @@ func _process_modification_with_delta(delta: float) -> void:
 	if _bi[0] < 0:
 		playing = false
 		return
-	phase += delta
+	if not hold:
+		phase += delta
 	var dur := 1.05
 	var u := clampf(phase / dur, 0.0, 1.0)
-	var s := clampf((phase - 0.10) / 0.62, 0.0, 1.0)
+	var s := clampf((phase - 0.08) / 0.7, 0.0, 1.0)
 	var fwd := -skel.global_transform.basis.z
 	fwd.y = 0.0
 	fwd = Vector3(0, 0, -1) if fwd.length_squared() < 1e-6 else fwd.normalized()
 	var right := skel.global_transform.basis.x
 	right.y = 0.0
 	right = Vector3(1, 0, 0) if right.length_squared() < 1e-6 else right.normalized()
-	if crouch and _bi[6] >= 0:
+	var feet: Array[Vector3] = []
+	for side in 2:
+		var fi := _bone(skel, ["mixamorig_LeftFoot", "mixamorig:LeftFoot"] if side == 0 else ["mixamorig_RightFoot", "mixamorig:RightFoot"])
+		feet.append(_world(skel, fi) if fi >= 0 else Vector3.ZERO)
+	if _bi[6] >= 0:
 		var hp := skel.get_bone_pose(_bi[6])
-		hp.origin.y -= 0.18
+		var drop := 0.34 if crouch else 0.08
+		var twist := sin(s * PI) * (0.7 if crouch else 0.45)
+		hp.origin.y -= drop
+		hp.basis = hp.basis * Basis(Vector3.UP, twist)
 		skel.set_bone_pose(_bi[6], hp)
+		var spine := _bone(skel, ["mixamorig_Spine", "mixamorig:Spine"])
+		if spine >= 0:
+			var sp := skel.get_bone_pose(spine)
+			sp.basis = sp.basis * Basis(Vector3.UP, -twist * 0.65)
+			skel.set_bone_pose(spine, sp)
 		skel.force_update_all_bone_transforms()
+		for side in 2:
+			var up_n := ["mixamorig_LeftUpLeg", "mixamorig:LeftUpLeg"] if side == 0 else ["mixamorig_RightUpLeg", "mixamorig:RightUpLeg"]
+			var mid_n := ["mixamorig_LeftLeg", "mixamorig:LeftLeg"] if side == 0 else ["mixamorig_RightLeg", "mixamorig:RightLeg"]
+			var end_n := ["mixamorig_LeftFoot", "mixamorig:LeftFoot"] if side == 0 else ["mixamorig_RightFoot", "mixamorig:RightFoot"]
+			var goal := feet[side]
+			goal.y = minf(goal.y, _world(skel, _bi[6]).y - 0.05)
+			_solve(skel, _bone(skel, up_n), _bone(skel, mid_n), _bone(skel, end_n), goal, fwd * 0.8 + Vector3.UP * 0.2)
 	var shoulder := _world(skel, _bi[0])
-	var low := 0.02 if crouch else 0.10
-	var back := shoulder + (-fwd) * 0.08 + right * 0.46 + Vector3.UP * (low - 0.06)
-	var mid := shoulder + fwd * 0.42 + right * 0.02 + Vector3.UP * low
-	var follow := shoulder + fwd * 0.18 - right * 0.42 + Vector3.UP * (low + 0.22)
-	var hand := back
-	if s < 0.55:
-		hand = back.lerp(mid, clampf(s / 0.55, 0.0, 1.0))
-	else:
-		hand = mid.lerp(follow, clampf((s - 0.55) / 0.45, 0.0, 1.0))
-	var pole := right * 0.9 + Vector3.DOWN * 0.35 + fwd * 0.1
+	var low := -0.28 if crouch else -0.12
+	# Back, then fully out to the side at hip height, then across the body.
+	var cocked := shoulder - fwd * 0.42 + right * 0.2 + Vector3.UP * low
+	var side_low := shoulder + right * 0.78 + Vector3.UP * (low - 0.05)
+	var across := shoulder + fwd * 0.55 - right * 0.25 + Vector3.UP * 0.05
+	var hand := cocked.lerp(side_low, clampf(s / 0.55, 0.0, 1.0))
+	if s >= 0.55:
+		hand = side_low.lerp(across, clampf((s - 0.55) / 0.45, 0.0, 1.0))
+	var pole := right * 1.1 + Vector3.DOWN * 0.55
 	_solve(skel, _bi[0], _bi[1], _bi[2], hand, pole)
 	var lsh := _world(skel, _bi[3])
-	var aim := lsh + fwd * 0.55 + Vector3.UP * 0.08
+	var aim := lsh + fwd * 0.35 + Vector3.UP * 0.02
 	if s > 0.55:
-		aim = lsh - right * 0.05 + Vector3.DOWN * 0.28
-	_solve(skel, _bi[3], _bi[4], _bi[5], aim, -right * 0.4 + Vector3.DOWN * 0.2)
-	if not _fired and phase >= 0.46:
+		aim = lsh - right * 0.1 + Vector3.DOWN * 0.35
+	_solve(skel, _bi[3], _bi[4], _bi[5], aim, -right + Vector3.DOWN * 0.3)
+	if not hold and not _fired and phase >= 0.46:
 		_fired = true
 		var origin := _world(skel, _bi[2]) + fwd * 0.28
 		var speed := 10.4 if crouch else 11.2

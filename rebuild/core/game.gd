@@ -40,8 +40,10 @@ func _ready() -> void:
 		dbg.visible = true
 	if q.contains("occ=0"):
 		fader.enabled = false
-	if OS.get_environment("R42_ROUTE") == "1" or OS.get_environment("R42_SHOT") == "1" or DisplayServer.get_name() == "headless":
+	if q.contains("shot=") or OS.get_environment("R42_ROUTE") == "1" or OS.get_environment("R42_SHOT") == "1" or DisplayServer.get_name() == "headless":
 		_begin()
+		if q.contains("shot="):
+			_pose_shot()
 	else:
 		_start_gate()
 
@@ -415,11 +417,7 @@ func _throw() -> void:
 	var sea := Vector3(0, 0, -1)
 	player.face_yaw = atan2(-sea.x, -sea.z)
 	player.rotation.y = player.face_yaw
-	var clip := "throw_crouch" if _crouch else "throw_stand"
-	if player.boy.play_clip(clip, 0.05) == "":
-		player.boy.arm.start(_crouch)
-		return
-	_throw_release()
+	player.boy.arm.start(_crouch)
 
 
 func _throw_release() -> void:
@@ -522,6 +520,146 @@ func _ground_mat() -> ShaderMaterial:
 		if c is MeshInstance3D:
 			return (c as MeshInstance3D).material_override as ShaderMaterial
 	return null
+
+
+func _shot_name() -> String:
+	var q := _query()
+	var i := q.find("shot=")
+	if i < 0:
+		return ""
+	var rest := q.substr(i + 5)
+	var amp := rest.find("&")
+	if amp >= 0:
+		rest = rest.substr(0, amp)
+	return rest
+
+
+func _pose_shot() -> void:
+	for _i in 12:
+		await get_tree().process_frame
+	if player == null or player.boy == null:
+		return
+	var ends := IslandData.dock_ends()
+	var name := _shot_name()
+	player.locked = true
+	player.speed = 0.0
+	fader.enabled = false
+	rig.set_process(false)
+	var cam: Camera3D = rig.cam
+	var tee := Vector3(0.0, Constants.DECK_Y, ends.y + 1.3)
+	if name == "occ":
+		var occ := Vector3(0.35, 0.0, ends.x + 3.3)
+		var gy: float = ground.height(occ.x, occ.z)
+		if gy > -2.0:
+			occ.y = gy
+		_put(occ, 0.0)
+		_cam(cam, Vector3(-0.15, occ.y + 1.55, ends.x + 5.6), Vector3(1.1, occ.y + 0.85, ends.x + 0.4))
+		print("SHOT_READY occ")
+		return
+	if name == "walk":
+		_put(Vector3(0.15, Constants.DECK_Y, ends.y + 3.2), 0.0)
+		player.locked = false
+		player.boy.holding = false
+		if player.boy.ik != null:
+			player.boy.ik.paused = false
+		player.boy.set_speed(0.64)
+		rig.set_process(true)
+		print("SHOT_READY walk")
+		return
+	if name.begins_with("throw_"):
+		_put(tee, 0.0)
+		if player.boy.ik != null:
+			player.boy.ik.paused = true
+		player.boy.arm.playing = true
+		player.boy.arm.hold = true
+		player.boy.arm.crouch = name == "throw_crouch"
+		var phases := {"throw_windup": 0.14, "throw_whip": 0.46, "throw_release": 0.55, "throw_follow": 0.85, "throw_crouch": 0.42}
+		player.boy.arm.phase = float(phases.get(name, 0.46))
+		for _i in 4:
+			await get_tree().process_frame
+		var p := player.global_position
+		_cam(cam, p + Vector3(2.5, 2.15, 2.3), p + Vector3(0, 0.7, 0))
+		print("SHOT_READY ", name)
+		return
+	if name == "bench_lie" or name == "lounger" or name == "hammock_rest":
+		var seat_name: String = {"bench_lie": "Bench", "lounger": "Lounger", "hammock_rest": "Hammock"}[name]
+		var clip: String = {"bench_lie": "bench_lie", "lounger": "lounger_lie", "hammock_rest": "hammock_sleep"}[name]
+		_put_on_seat(seat_name)
+		if player.boy.ik != null:
+			player.boy.ik.paused = true
+		player.boy.play_clip(clip, 0.0)
+		if player.boy.anim != null:
+			player.boy.anim.seek(0.6, true)
+			player.boy.anim.pause()
+		for _i in 4:
+			await get_tree().process_frame
+		_frame_for_shot(cam)
+		print("SHOT_READY ", name)
+		return
+	var spot := tee
+	var look := Vector3(1.5, 1.2, 4.0)
+	var eye := Vector3(-5.5, 5.2, -7.5)
+	if name == "pier":
+		spot = Vector3(0.2, 0.0, ends.x + 0.6)
+	elif name == "hut":
+		var hut := _seat_named("Hut")
+		spot = hut.global_position + Vector3(-1.6, 0, 2.2) if hut != null else spot
+		eye = Vector3(-3.2, 2.6, 3.4)
+		look = Vector3(1.2, 1.3, -0.4)
+	elif name == "hammock":
+		var ham := _seat_named("Hammock")
+		spot = ham.global_position + Vector3(-1.8, 0, 1.6) if ham != null else spot
+		eye = Vector3(-3.2, 2.6, 3.4)
+		look = Vector3(1.2, 1.3, -0.4)
+	if name != "spawn":
+		var gy: float = ground.height(spot.x, spot.z)
+		if gy > -2.0:
+			spot.y = gy
+	_put(spot, PI)
+	_cam(cam, spot + eye, spot + look)
+	print("SHOT_READY ", name)
+
+
+func _seat_named(node_name: String) -> Fadable:
+	for item in props.items:
+		if item.name == node_name:
+			return item
+	return null
+
+
+func _put_on_seat(node_name: String) -> void:
+	var item := _seat_named(node_name)
+	if item == null:
+		return
+	var yaw := float(item.get_meta("yaw", 0.0))
+	var local: Vector3 = item.get_meta("seat_local", Vector3.ZERO)
+	var pos: Vector3 = item.global_transform * local
+	var gy: float = ground.height(pos.x, pos.z)
+	if gy > -2.0:
+		pos.y = gy
+	pos.y += float(item.get_meta("lift", 0.0))
+	_put(pos, yaw)
+
+
+func _put(spot: Vector3, yaw: float) -> void:
+	player.global_position = spot
+	player.anchor = spot
+	player.use_anchor = true
+	player.face_yaw = yaw
+	player.rotation.y = yaw
+
+
+func _cam(cam: Camera3D, eye: Vector3, at: Vector3) -> void:
+	cam.global_position = eye
+	cam.look_at(at, Vector3.UP)
+
+
+func _frame_for_shot(cam: Camera3D) -> void:
+	var p := player.global_position
+	var yaw := player.face_yaw
+	var face := Vector3(-sin(yaw), 0.0, -cos(yaw))
+	var side := Vector3(face.z, 0.0, -face.x)
+	_cam(cam, p + side * 3.4 + Vector3(0, 1.45, 0) + face * 1.1, p + Vector3(0, 0.55, 0))
 
 
 func _query() -> String:

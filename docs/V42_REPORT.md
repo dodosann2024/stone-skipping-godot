@@ -6,7 +6,7 @@ The spec is `docs/V42_SPEC.md` (the rebuild requirements, including the standing
 
 > 耐玩度要达到3A制作水准，操作细节和画面要细到离谱。新的版本做完要把这个要求放到下一个版本的要求中。直到达到这个水准。
 
-The new game lives in `rebuild/` and exports to `docs/game_v42/`. Trial path: `docs/game_v42/game_v42.html`. Old gameplay code was not patched.
+The new game lives in `rebuild/` and the playable build is `docs/game_v42/`. Trial path: `docs/game_v42/game_v42.html`. The stills in `screenshots/v42/web/` are screenshots of that page in Chrome at 390×844, after the export in this commit. Old gameplay code was not patched.
 
 ## What is in the tree
 
@@ -22,19 +22,19 @@ Numbers below are from the decimated boy (24,499 triangles), except the face pai
 
 | Gate | Result | Evidence |
 |---|---|---|
-| A-5 drag, three frames, full shins and both sandals | **Pass on the pictures.** Frame a shows both sandals on the dock planks. Frame c is the wide frame 0.8 s after the stick is released; the body is on the planks, not inside them. | `screenshots/v42/drag/d41_a.png`, `d41_b.png`, `d41_c.png` |
-| A-1 stance sole within ±1 cm on 110 m | **Pass, re-run after the visual and clip pass.** 5475 stance samples, **100%** inside ±1 cm. Walk skate **0.14 cm**. `shin_min=1.00`. | `screenshots/v42/m6/route.log` |
+| A-5 drag, three frames, full shins and both sandals | **Pass on the exported page.** The walk frame from `game_v42.html` shows both sandals on the plank texture. The earlier three-frame drag on the editor build still shows the body on the planks. | `screenshots/v42/web/walk.png`, `screenshots/v42/drag/d41_a.png` |
+| A-1 stance sole within ±1 cm on 110 m | **Pass, re-run after this export.** 5476 stance samples, **100%** inside ±1 cm. Walk skate **0.14 cm**. `shin_min=1.00`. | `screenshots/v42/m6/route.log` |
 | A-2 ortho ruler stills | **34 stills.** Banner gap is 0.00 cm on 31 of them. The worst three are **0.24 cm**, **-0.04 cm**, and **-0.05 cm**, all inside 0.5 cm. The red tick is the zero line under the sole. | `screenshots/v42/a2/foot_00.png` … `foot_33.png`, `ruler.log` |
 | B-1 skate ≤ 1 cm on a straight walk | **Pass.** Walk-segment max drift from the plant lock is **0.14 cm**. | same route log |
 | Shin length ≥ 0.95 | **Pass.** `shin_min=1.00`. | same route log |
 | C-1 first step ≤ 100 ms | **Pass on this machine.** A screen-touch at the stick, then a drag to full deflection, moved the body 2.81 cm in **67.5 ms** (2 frames). This is SwiftShader, not an iPhone. | log line `LATENCY_MS 67.5` |
-| P-2 prims ≤ 110k | **Pass with one shadow cascade.** Dock drag, shadows on: **55880**. The close behind-the-boy frame reads **57272**. The hut view reads **57108**. The earlier 149,994 was two shadow splits. | `screenshots/v42/drag/d41_a.png`, `screenshots/v42/m3/occ_match_on.png`, `screenshots/v42/m6/v42_hut.png` |
+| P-2 prims ≤ 110k | **Pass on the exported page, shadows on.** Wide pier view **33294**. Throw close-up **55442**. Hut view **58812**. Behind-the-boy view **58662**. | `screenshots/v42/web/spawn.png`, `throw_whip.png`, `hut.png`, `occ_on.png` |
 | P-3 boy ≤ 25k triangles | **Pass.** `rebuild/assets/boy.glb` is a real file (not the symlink) with **24,499** triangles and **14,162** vertices. The source `boy/boy.glb` is still 47,194. UVs and joints were copied from the surviving vertices; head-weighted vertices kept their old positions. | `rebuild/tools/decimate_boy.py` |
 | Face after the decimation | The two close-ups are the same boy. Straw hat, eyes, buttons, and the flower shorts are intact at this distance. | `screenshots/v42/m6/face_full.png`, `face_lod.png` |
-| M6 look vs v40 | **The listed pieces are in.** Planks are a mip-mapped texture (boards, gaps, grain, nails) with anisotropic filtering. The sea has the v40 depth colours, a rolling lace breaker, and sun glint. The scene has barrels, a rope coil, two mooring ropes, leaning palms of several heights, a distant palm MultiMesh, a hut with walls, a door, a roof and an interior, and a boat. v40 is still the denser picture (more foliage, a finished boat, rope rail). Pairs: `screenshots/v42/m6/v40_*.png` and `v42_*.png`. | `v42_spawn.png`, `v42_hut.png` |
-| M4 sit / lie / sun | **Recline reads.** `bench_lie` and `lounger_lie` are clips built from `bench_sit_idle` plus spine and leg keys. The bench still shows him leaned back, hat over the chest, one knee up. The lounger still shows him leaned back over the blue seat. The hammock was moved off the hut; `Hammock_idle.png` shows him in the cloth in the open, on the `hammock_sleep` clip. | `screenshots/v42/m4/Bench_lie.png`, `Lounger_idle.png`, `Hammock_idle.png` |
-| M5 side-arm throw | **Clip, not an IK arc.** `throw_stand` and `throw_crouch` are keyed on the hips, spine, both arms and both legs. The sequence shows the arm back, then low and out to the side, and the crouch shows bent knees with the torso forward. A standing throw settled at **12 skips and 35.3 m**. The crouch throw settled at **12 skips and 31.8 m**. | `screenshots/v42/m5/throw_stand_windup.png`, `throw_stand_whip.png`, `throw_stand_release.png`, `throw_stand_follow.png`, `throw_crouch_load.png` |
-| O-6 cutout regression | **No holes.** Fade on and fade off are the same frame: the boy, the planks, the bush and the trunk edge stay whole. The camera is behind him looking out to sea, dock on the left, trunk and bush on the right. It is not a pixel copy of the iPhone frame. | `screenshots/v42/m3/occ_match_on.png`, `occ_match_off.png`, reference `occlusion_bug_iphone.png` |
+| M6 look vs v40 | **In the export.** The pier is the mip-mapped board texture, the sea has depth colour and lace, the pier has a rope rail, and the hut has plank walls, a thatched roof, a sign reading 钓鱼小屋, a blue door, a porch and a lantern. v40 still has denser foliage and a more finished boat. | `screenshots/v42/web/spawn.png`, `hut.png`. v40 pairs stay in `screenshots/v42/m6/v40_*.png` |
+| M4 sit / lie / sun | **From the export.** The hammock is on the open beach and he lies in the cloth. Bench and lounger use the lie clips. | `screenshots/v42/web/hammock_rest.png`, `bench_lie.png`, `lounger.png` |
+| M5 side-arm throw | **From the export, 3/4 camera.** The whip frame has the throwing arm back and the knees bent. The release frame has the arm extended and the torso turned. The crouch frame is low, with the arm out to the side. The follow frame brings the arm across the chest. | `screenshots/v42/web/throw_whip.png`, `throw_release.png`, `throw_crouch.png`, `throw_follow.png` |
+| O-6 cutout regression | **No holes on the export.** Fade on and fade off are the same frame from behind the boy: planks, rope posts, and the bush stay whole. It is not a pixel copy of the iPhone hut-and-palm-row frame. | `screenshots/v42/web/occ_on.png`, `occ_off.png` |
 | Walk p95 | **Not an iPhone number.** The drag debug line reads walk p95 **33.3 ms** on SwiftShader. | drag stills |
 | M7 index.html | **Not switched.** `docs/index.html` still points at v35. | — |
 

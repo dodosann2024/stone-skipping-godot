@@ -40,6 +40,8 @@ func _ready() -> void:
 	_grass(Vector3(1.8, 0.0, shore_z + 3.2))
 	_shells(Vector3(-1.4, 0.0, shore_z + 2.4))
 	_distant_palms()
+	_pier_rail(ends)
+	_ground_cover(shore_z)
 
 
 func _palm(at: Vector3, height: float, lean: float = 0.0) -> void:
@@ -90,32 +92,50 @@ func _hut(at: Vector3) -> void:
 	root.name = "Hut"
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var floor_y := 1.15
-	var wood := Color(0.58, 0.40, 0.22)
-	var plank := Color(0.68, 0.50, 0.28)
-	var post := Color(0.36, 0.24, 0.14)
-	var straw := Color(0.86, 0.72, 0.36)
-	for px in [-1.15, 1.15]:
-		for pz in [-1.0, 1.0]:
-			_cylinder(st, Vector3(px, floor_y * 0.5, pz), 0.07, floor_y, post, 6)
-	_box(st, Vector3(0, floor_y, 0), Vector3(2.5, 0.08, 2.15), plank)
-	# Back wall and side walls. The sea-facing side is a door, not a solid sheet.
-	_box(st, Vector3(0, floor_y + 0.85, -1.02), Vector3(2.4, 1.55, 0.08), wood)
-	_box(st, Vector3(-1.2, floor_y + 0.85, 0), Vector3(0.08, 1.55, 2.0), wood)
-	_box(st, Vector3(1.2, floor_y + 0.85, 0), Vector3(0.08, 1.55, 2.0), wood)
-	_box(st, Vector3(-0.85, floor_y + 0.7, 1.02), Vector3(0.55, 1.25, 0.08), wood)
-	_box(st, Vector3(0.85, floor_y + 0.7, 1.02), Vector3(0.55, 1.25, 0.08), wood)
-	_box(st, Vector3(0, floor_y + 1.5, 1.02), Vector3(1.2, 0.28, 0.08), wood)
-	# Door leaf, swung open into the room.
-	_box(st, Vector3(0.42, floor_y + 0.7, 0.72), Vector3(0.06, 1.25, 0.48), Color(0.45, 0.30, 0.16))
-	# Interior: counter, stool, floor mat.
-	_box(st, Vector3(-0.55, floor_y + 0.42, -0.55), Vector3(0.9, 0.08, 0.42), Color(0.50, 0.34, 0.18))
-	_box(st, Vector3(0.55, floor_y + 0.22, -0.45), Vector3(0.28, 0.36, 0.28), Color(0.42, 0.28, 0.16))
-	_box(st, Vector3(0.1, floor_y + 0.05, 0.15), Vector3(0.7, 0.02, 0.9), Color(0.72, 0.28, 0.22))
-	for i in 5:
-		var x := -0.9 + float(i) * 0.45
-		_box(st, Vector3(x, floor_y + 2.05 + float(i % 2) * 0.08, 0), Vector3(0.55, 0.08, 2.5), straw)
-	_box(st, Vector3(0, floor_y + 2.35, 0), Vector3(0.28, 0.1, 2.7), Color(0.55, 0.40, 0.2))
+	var floor_y := 1.2
+	var wood := Color(0.55, 0.38, 0.2)
+	var plank := Color(0.70, 0.52, 0.3)
+	var trim := Color(0.36, 0.24, 0.14)
+	var straw := Color(0.93, 0.78, 0.42)
+	var straw2 := Color(0.74, 0.56, 0.28)
+	# Stilts and a plank floor that runs out into a porch.
+	for px in [-1.35, 0.0, 1.35]:
+		for pz in [-1.15, 1.15, 2.15]:
+			_cylinder(st, Vector3(px, floor_y * 0.5, pz), 0.07, floor_y, trim, 5)
+	for i in 8:
+		var z := -1.35 + float(i) * 0.48
+		_box(st, Vector3(0, floor_y, z), Vector3(3.1, 0.06, 0.42), plank if i % 2 == 0 else wood)
+	# Vertical plank walls. The sea side keeps a door and a window.
+	_wall_planks(st, Vector3(0, floor_y, -1.2), Vector3(1, 0, 0), 2.6, 1.7, wood, -99.0, -99.0)
+	_wall_planks(st, Vector3(-1.4, floor_y, 0.3), Vector3(0, 0, 1), 2.6, 1.7, wood, -99.0, -99.0)
+	_wall_planks(st, Vector3(1.4, floor_y, 0.3), Vector3(0, 0, 1), 2.6, 1.7, wood, -99.0, -99.0)
+	_wall_planks(st, Vector3(0, floor_y, 1.15), Vector3(1, 0, 0), 2.6, 1.7, wood, -0.35, 0.55)
+	_box(st, Vector3(0, floor_y + 1.55, 1.15), Vector3(2.7, 0.12, 0.08), trim)
+	_box(st, Vector3(-1.4, floor_y + 0.85, 0.3), Vector3(0.06, 1.7, 2.7), trim)
+	_box(st, Vector3(1.4, floor_y + 0.85, 0.3), Vector3(0.06, 1.7, 2.7), trim)
+	# Open blue door and a warm window.
+	_box(st, Vector3(0.55, floor_y + 0.75, 1.45), Vector3(0.05, 1.4, 0.55), Color(0.32, 0.58, 0.72))
+	_box(st, Vector3(-0.85, floor_y + 1.15, 1.2), Vector3(0.7, 0.55, 0.04), Color(1.0, 0.78, 0.42))
+	_box(st, Vector3(-0.85, floor_y + 0.82, 1.22), Vector3(0.78, 0.05, 0.06), trim)
+	# Interior so the doorway reads as a room.
+	_box(st, Vector3(0, floor_y + 0.9, -1.05), Vector3(2.4, 1.6, 0.05), Color(0.16, 0.11, 0.08))
+	_box(st, Vector3(-0.7, floor_y + 0.48, -0.45), Vector3(0.9, 0.08, 0.4), wood)
+	_box(st, Vector3(0.7, floor_y + 0.28, 0.2), Vector3(0.32, 0.4, 0.32), trim)
+	# Thatched roof with overhang, two slopes.
+	for side in [-1.0, 1.0]:
+		for layer in 4:
+			var t := float(layer) / 3.0
+			var y := floor_y + 2.55 - t * 0.85
+			var x := float(side) * (0.28 + t * 1.35)
+			_box(st, Vector3(x, y, 0.35), Vector3(1.15, 0.1, 3.5), straw if layer % 2 == 0 else straw2)
+	_box(st, Vector3(0, floor_y + 2.62, 0.35), Vector3(0.18, 0.16, 3.6), trim)
+	# Porch posts and a rope rail.
+	for px in [-1.45, 1.45]:
+		_cylinder(st, Vector3(px, floor_y + 0.4, 2.15), 0.05, 0.8, trim, 5)
+	_box(st, Vector3(0, floor_y + 0.78, 2.15), Vector3(2.8, 0.05, 0.05), wood)
+	# Sign board and a lantern.
+	_box(st, Vector3(0, floor_y + 1.85, 1.35), Vector3(1.15, 0.32, 0.06), Color(0.93, 0.88, 0.7))
+	_box(st, Vector3(1.15, floor_y + 1.55, 2.05), Vector3(0.16, 0.22, 0.16), Color(1.0, 0.72, 0.28))
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
@@ -138,6 +158,14 @@ func _hut(at: Vector3) -> void:
 	lamp.omni_range = 3.2
 	lamp.name = "Lamp"
 	root.add_child(lamp)
+	var sign := Label3D.new()
+	sign.text = "钓鱼小屋"
+	sign.font = load("res://assets/ui.otf")
+	sign.font_size = 42
+	sign.pixel_size = 0.006
+	sign.position = Vector3(0, floor_y + 1.85, 1.4)
+	sign.modulate = Color(0.35, 0.22, 0.1)
+	root.add_child(sign)
 	add_child(root)
 	items.append(root)
 
@@ -530,6 +558,86 @@ func _rope(a: Vector3, b: Vector3) -> void:
 	items.append(root)
 
 
+func _wall_planks(st: SurfaceTool, origin: Vector3, along: Vector3, length: float, height: float, col: Color, gap0: float, gap1: float) -> void:
+	var n := int(length / 0.22)
+	var dir := along.normalized()
+	for i in n:
+		var u := -length * 0.5 + 0.11 + float(i) * (length / float(n))
+		if u > gap0 and u < gap1:
+			_box(st, origin + dir * u + Vector3(0, height * 0.82, 0), Vector3(0.2, height * 0.32, 0.06) if absf(dir.x) > 0.5 else Vector3(0.06, height * 0.32, 0.2), col)
+			continue
+		var size := Vector3(0.2, height, 0.06) if absf(dir.x) > 0.5 else Vector3(0.06, height, 0.2)
+		var tone := col.lightened(0.05) if i % 2 == 0 else col.darkened(0.06)
+		_box(st, origin + dir * u + Vector3(0, height * 0.5, 0), size, tone)
+
+
+func _pier_rail(ends: Vector2) -> void:
+	var z := ends.y + 1.2
+	while z < ends.x - 0.4:
+		for side in [-1.0, 1.0]:
+			var p := Vector3(side * 1.05, Constants.DECK_Y, z)
+			_post(p)
+		z += 2.4
+	_rope(Vector3(1.05, Constants.DECK_Y + 0.72, ends.y + 1.2), Vector3(1.05, Constants.DECK_Y + 0.72, ends.x - 0.6))
+	_rope(Vector3(-1.05, Constants.DECK_Y + 0.72, ends.y + 1.2), Vector3(-1.05, Constants.DECK_Y + 0.72, ends.x - 0.6))
+
+
+func _post(at: Vector3) -> void:
+	var root := Fadable.new()
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_cylinder(st, Vector3(0, 0.4, 0), 0.045, 0.8, Color(0.4, 0.28, 0.16), 5)
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = _mat(Color(1, 1, 1))
+	var body := StaticBody3D.new()
+	body.collision_layer = Constants.LAYER_PROP
+	body.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	var cap := CapsuleShape3D.new()
+	cap.radius = 0.06
+	cap.height = 0.8
+	cs.shape = cap
+	cs.position = Vector3(0, 0.4, 0)
+	body.add_child(cs)
+	root.setup(mi, body)
+	root.position = at
+	add_child(root)
+	items.append(root)
+
+
+func _ground_cover(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_face(st, Vector3(-0.04, 0, 0), Vector3(0.04, 0, 0), Vector3(0.01, 0.32, 0.02), Vector3(-0.01, 0.28, -0.02), Color(0.28, 0.55, 0.22))
+	_face(st, Vector3(0, 0, -0.04), Vector3(0, 0, 0.04), Vector3(0.02, 0.26, 0.01), Vector3(-0.02, 0.22, -0.01), Color(0.4, 0.66, 0.28))
+	st.generate_normals()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = st.commit()
+	var spots: Array[Vector3] = []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	for i in 28:
+		var p := Vector3(rng.randf_range(-8.0, 8.0), 0, shore_z + rng.randf_range(0.8, 8.0))
+		if absf(p.x) < 1.4 and p.z < shore_z + 2.0:
+			continue
+		p.y = IslandData.height_at(p.x, p.z)
+		if p.y < 0.05:
+			continue
+		spots.append(p)
+	mm.instance_count = spots.size()
+	for i in spots.size():
+		var b := Basis(Vector3.UP, float(i) * 0.9).scaled(Vector3.ONE * rng.randf_range(0.7, 1.3))
+		mm.set_instance_transform(i, Transform3D(b, spots[i]))
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
 func _distant_palms() -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -588,7 +696,10 @@ func _boat(at: Vector3) -> void:
 		_face(st, keel_a, keel_b, a, b, hull)
 		_face(st, keel_a, al, keel_b, bl, hull)
 		_face(st, a, b, a + Vector3(0, 0.16, 0), b + Vector3(0, 0.16, 0), stripe if i == 3 else hull)
-		_face(st, al, al + Vector3(0, 0.16, 0), bl, bl + Vector3(0, 0.16, 0), stripe if i == 3 else hull)
+		_face(st, al, al + Vector3(0, 0.16, 0), bl, bl + Vector3(0, 0.16, 0), stripe if i == 3 else Color(0.93, 0.92, 0.88))
+	_box(st, Vector3(0, 0.16, -0.35), Vector3(0.55, 0.05, 0.28), Color(0.4, 0.26, 0.14))
+	_box(st, Vector3(0, 0.16, 0.4), Vector3(0.55, 0.05, 0.28), Color(0.4, 0.26, 0.14))
+	_box(st, Vector3(0.42, 0.2, 0.85), Vector3(0.9, 0.04, 0.08), Color(0.45, 0.3, 0.16))
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
