@@ -25,6 +25,7 @@ var _skate_max := 0.0
 var _shin_min := 1.0
 var contact_y := 0.0
 var _walk_skate := 0.0
+var _last_route_m := 0.0
 
 
 func _ready() -> void:
@@ -145,6 +146,10 @@ func _route_stick() -> Vector2:
 			Vector2(-6.0, ends.x + 5.0),
 			Vector2(0.3, ends.x + 5.0),
 		]
+	if _frames > 90 and _frames % 45 == 0 and route_m - _last_route_m < 0.15:
+		_route_i += 1
+	if _frames % 45 == 0:
+		_last_route_m = route_m
 	var goal: Vector2 = _route_pts[_route_i % _route_pts.size()]
 	var here := Vector2(global_position.x, global_position.z)
 	if here.distance_to(goal) < 1.2:

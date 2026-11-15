@@ -44,17 +44,30 @@ func _ready() -> void:
 func _world() -> void:
 	var envn := WorldEnvironment.new()
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.62, 0.82, 0.92)
+	var sky := Sky.new()
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.42, 0.68, 0.92)
+	sky_mat.sky_horizon_color = Color(0.78, 0.88, 0.92)
+	sky_mat.ground_horizon_color = Color(0.55, 0.72, 0.7)
+	sky_mat.ground_bottom_color = Color(0.16, 0.28, 0.32)
+	sky_mat.sun_angle_max = 14.0
+	sky.sky_material = sky_mat
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.78, 0.82, 0.8)
-	env.ambient_light_energy = 0.85
+	env.ambient_light_color = Color(0.72, 0.78, 0.74)
+	env.ambient_light_energy = 0.55
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	envn.environment = env
 	add_child(envn)
 	sun = DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-48, 32, 0)
-	sun.light_energy = 1.15
-	sun.shadow_enabled = false
+	sun.rotation_degrees = Vector3(-28, 48, 0)
+	sun.light_energy = 1.25
+	sun.light_color = Color(1.0, 0.96, 0.88)
+	sun.shadow_enabled = true
+	sun.shadow_blur = 1.6
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.directional_shadow_max_distance = 40.0
 	add_child(sun)
 	ground = Ground.new()
 	add_child(ground)
@@ -65,7 +78,7 @@ func _world() -> void:
 	plane.size = Vector2(80, 80)
 	water.mesh = plane
 	water_mat = ShaderMaterial.new()
-	water_mat.shader = load("res://shaders/water.gdshader")
+	water_mat.shader = load("res://shaders/sea.gdshader")
 	water.material_override = water_mat
 	water.position.y = 0.02
 	add_child(water)
@@ -140,8 +153,15 @@ func _begin() -> void:
 
 
 func _process(delta: float) -> void:
+	var t := Time.get_ticks_msec() / 1000.0
+	var nk := 1.0 if night else 0.0
 	if water_mat != null:
-		water_mat.set_shader_parameter("game_time", Time.get_ticks_msec() / 1000.0)
+		water_mat.set_shader_parameter("game_time", t)
+		water_mat.set_shader_parameter("night_k", nk)
+	var gmat := _ground_mat()
+	if gmat != null:
+		gmat.set_shader_parameter("game_time", t)
+		gmat.set_shader_parameter("night_k", nk)
 	if not live:
 		return
 	player.stick = joy.value
@@ -242,6 +262,15 @@ func _save() -> void:
 	var cf := ConfigFile.new()
 	cf.set_value("game", "night", night)
 	cf.save("user://settings.cfg")
+
+
+func _ground_mat() -> ShaderMaterial:
+	if ground == null:
+		return null
+	for c in ground.get_children():
+		if c is MeshInstance3D:
+			return (c as MeshInstance3D).material_override as ShaderMaterial
+	return null
 
 
 func _query() -> String:

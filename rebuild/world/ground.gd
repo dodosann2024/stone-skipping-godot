@@ -12,10 +12,8 @@ func _ready() -> void:
 	var mesh := _mesh_from(built)
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.roughness = 1.0
-	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/ground.gdshader")
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)

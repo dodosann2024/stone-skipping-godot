@@ -1,0 +1,52 @@
+shader_type spatial;
+render_mode blend_mix, depth_draw_opaque, cull_back, specular_schlick_ggx;
+// Shallow jade water and a lacy shore foam. No discard.
+
+uniform float game_time = 0.0;
+uniform float night_k = 0.0;
+varying vec3 wpos;
+
+float island_r(float th) {
+	return 19.0 + 2.2 * sin(2.0 * th + 0.6) + 1.6 * sin(3.0 * th + 1.9) + 0.9 * sin(5.0 * th + 0.3);
+}
+float hash12(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+float vnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash12(i), hash12(i + vec2(1.0, 0.0)), u.x),
+		mix(hash12(i + vec2(0.0, 1.0)), hash12(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float lace(vec2 q) {
+	float a = abs(vnoise(q) - 0.5);
+	return 1.0 - smoothstep(0.04, 0.12, a);
+}
+
+void vertex() {
+	vec3 v = VERTEX;
+	v.y += sin(VERTEX.x * 0.35 + game_time * 0.8) * 0.04 + sin(VERTEX.z * 0.28 - game_time) * 0.03;
+	wpos = (MODEL_MATRIX * vec4(v, 1.0)).xyz;
+	VERTEX = v;
+}
+
+void fragment() {
+	vec2 p = wpos.xz;
+	float d = length(p) - island_r(atan(p.y, p.x));
+	float deep = smoothstep(-1.0, 8.0, d);
+	vec3 c = mix(vec3(0.45, 0.82, 0.72), vec3(0.12, 0.45, 0.55), deep);
+	c = mix(c, vec3(0.08, 0.16, 0.28), night_k * 0.75);
+	float shore = smoothstep(1.2, -0.4, d);
+	float foam = lace(p * 2.4 + vec2(game_time * 0.15, 0.0)) * shore;
+	foam *= 0.65 + 0.35 * sin(d * 6.0 - game_time * 1.4);
+	c = mix(c, vec3(0.94, 0.97, 0.96), clamp(foam, 0.0, 1.0));
+	float alpha = mix(0.45, 0.82, deep);
+	alpha = mix(alpha, 0.92, clamp(foam, 0.0, 1.0) * 0.5);
+	ALBEDO = c;
+	ALPHA = alpha;
+	ROUGHNESS = mix(0.18, 0.55, night_k);
+	SPECULAR = 0.45;
+}

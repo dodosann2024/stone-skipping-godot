@@ -26,7 +26,8 @@ The new game lives in `rebuild/` and exports to `docs/game_v42/`. Trial path: `d
 | B-1 skate ≤ 1 cm on a straight walk | **Pass.** Walk-segment max drift from the plant lock is **0.12 cm**. | same log |
 | Shin length ≥ 0.95 | **Pass** on this route. `shin_min=1.00`. | same log |
 | C-1 first step ≤ 100 ms | **Not measured** on the touch path. | — |
-| P-2 prims ≤ 110k | **Pass with shadows off.** The drag debug line reads **51774**. Shadow-on prims are not measured yet. | drag stills |
+| P-2 prims ≤ 110k | **Pass with shadows on**, on the dock drag: the debug line reads **98972** and **100606**. | `screenshots/v42/m6/d41_a.png`, `d41_c.png` |
+| M6 look | Sand grain, wet shore, wood planks, water foam, palms, a stilt hut, a lighthouse, and a long sun shadow. Not yet the full v40 prop set, and the four spots were not shot from the old build in the same session. | `screenshots/v42/m6/v42_spawn.png`, `v42_pier.png`, `v42_hut.png`, `v42_hammock.png` |
 | P-3 boy ≤ 25k triangles | **Fail.** The approved mesh is still 47,194 triangles. It was not decimated. | `docs/V42_SPEC.md` asset note |
 | Walk p95 | **Not an iPhone number.** SwiftShader on this drag reports walk p95 **139.5–141.7 ms**. | drag stills |
 | O-6 pier cutout regression | **No cut in the new stills.** Fade on and `occ` off at the pier / hut are the same picture: hut, bush, sign, and steps stay whole. This is not a pixel match of the old iPhone frame. | `screenshots/v42/m3/occ_on.png`, `occ_off.png`, reference `screenshots/v42/occlusion_bug_iphone.png` |

@@ -1,0 +1,25 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+BOY_CLIPS idle=idle walk=walk run=run n=19
+ROUTE_POS f=300 m=3.0 y=0.78 spd=0.64 w=1.00/0.00 gap=0.0/-0.0 scored=235
+ROUTE_POS f=600 m=6.2 y=0.78 spd=0.64 w=1.00/0.00 gap=0.0/-0.0 scored=535
+ROUTE_POS f=900 m=9.4 y=0.78 spd=0.64 w=1.00/0.00 gap=0.0/-0.0 scored=835
+ROUTE_POS f=1200 m=12.6 y=0.78 spd=0.64 w=1.00/0.00 gap=0.0/-0.0 scored=1135
+ROUTE_POS f=1500 m=15.7 y=0.93 spd=0.64 w=1.00/0.00 gap=0.0/-0.0 scored=1435
+ROUTE_POS f=1800 m=18.9 y=1.36 spd=0.64 w=1.00/0.46 gap=0.0/-0.0 scored=1735
+ROUTE_POS f=2100 m=22.0 y=1.85 spd=0.64 w=1.00/0.21 gap=0.0/-0.0 scored=2035
+ROUTE_POS f=2400 m=25.1 y=2.58 spd=0.86 w=1.00/0.33 gap=0.0/-0.0 scored=2335
+ROUTE_POS f=2700 m=35.2 y=4.85 spd=2.30 w=0.00/1.00 gap=21.1/0.0 scored=2568
+ROUTE_POS f=3000 m=46.4 y=2.48 spd=2.30 w=0.00/1.00 gap=5.8/0.0 scored=2868
+ROUTE_POS f=3300 m=53.1 y=1.37 spd=2.30 w=0.00/1.00 gap=5.8/0.0 scored=3168
+ROUTE_POS f=3600 m=61.3 y=3.15 spd=2.30 w=0.00/1.00 gap=5.8/0.0 scored=3468
+ROUTE_POS f=3900 m=72.5 y=4.89 spd=2.30 w=0.00/1.00 gap=5.8/0.0 scored=3768
+ROUTE_POS f=4200 m=83.7 y=2.28 spd=2.30 w=0.00/1.00 gap=5.7/0.0 scored=4068
+ROUTE_POS f=4500 m=89.7 y=1.36 spd=2.30 w=0.00/1.00 gap=5.7/0.0 scored=4368
+ROUTE_POS f=4800 m=99.0 y=3.37 spd=2.30 w=0.00/1.00 gap=5.7/0.0 scored=4668
+ROUTE_HIST -1:679 0:4283 
+ROUTE_DONE m=110.0 stance=4962 in_1cm=100.0 skate_max_cm=0.56 walk_skate_cm=0.12 shin_min=1.00
+WARNING: 4 ObjectDB instances were leaked at exit (run with `--verbose` for details).
+   at: cleanup (core/object/object.cpp:2536)
+ERROR: 2 resources still in use at exit (run with --verbose for details).
+   at: clear (core/io/resource.cpp:822)
