@@ -1,0 +1,8 @@
+cdp_dir_n.png
+cdp_dir_ne.png
+cdp_dir_e.png
+cdp_dir_se.png
+cdp_dir_s.png
+cdp_dir_sw.png
+cdp_dir_w.png
+cdp_dir_nw.png

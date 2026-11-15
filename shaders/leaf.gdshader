@@ -27,6 +27,8 @@ void vertex() {
 		cos(t * 1.1 + ph * 1.3) * 0.028 + sin(t * 3.3 + ph * 2.1) * 0.01) * s;
 	mat3 m = mat3(MODEL_MATRIX);
 	// the instance basis is a rotation times a uniform scale: its inverse is the transpose over scale²
+	vec3 bend = foliage_bend(w + off, CAMERA_POSITION_WORLD);
+	off += bend;
 	VERTEX += transpose(m) * off / dot(m[0], m[0]);
 	wpos = w + off;
 	nrm = INSTANCE_CUSTOM.xyz;

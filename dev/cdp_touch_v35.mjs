@@ -5,7 +5,7 @@
  * Asserts the boy is not buried (screenshot + optional debug HUD scrape).
  *
  *   node dev/cdp_touch_v35.mjs [url]
- * Default URL: local static server of docs/game_v35/ or docs/game_v34/
+ * Default URL: local static server of docs/game_v35/
  */
 import http from "node:http";
 import fs from "node:fs";
@@ -54,7 +54,7 @@ async function main() {
   let url = argUrl;
   let server = null;
   if (!url) {
-    const candidates = ["docs/game_v35", "docs/game_v34"];
+    const candidates = ["docs/game_v35"];
     let dir = null;
     let html = null;
     for (const c of candidates) {
@@ -67,7 +67,7 @@ async function main() {
         break;
       }
     }
-    if (!dir) throw new Error("no docs/game_v35 or game_v34 export found");
+    if (!dir) throw new Error("no docs/game_v35 export found");
     server = await startStatic(dir, 18901);
     url = `http://127.0.0.1:18901/${html}?v=35&debug=1`;
   }

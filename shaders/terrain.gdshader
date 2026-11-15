@@ -162,14 +162,15 @@ void fragment() {
 	float pool = lamp_pool * exp(-(ld * ld) / (1.45 * 1.45));
 	pool *= smoothstep(2.4, 0.55, ld);
 	// Soft contact AO under each sole — grounds the kid when sun shadows are off.
+	// Per-sole AO only (no hip midpoint). Tight radius so a single stance oval
+	// reads under the sandal, not a shoe-length behind the lead foot.
 	if (foot_ao > 0.001) {
 		float da = length(p - foot_a_xz);
 		float db = length(p - foot_b_xz);
-		float ao_a = exp(-(da * da) / (0.16 * 0.16));
-		float ao_b = exp(-(db * db) / (0.16 * 0.16));
-		float hip = exp(-(length(p - 0.5 * (foot_a_xz + foot_b_xz)) * length(p - 0.5 * (foot_a_xz + foot_b_xz))) / (0.28 * 0.28));
-		float ao = max(max(ao_a, ao_b), hip * 0.65) * foot_ao;
-		c *= 1.0 - 0.55 * ao;
+		float ao_a = exp(-(da * da) / (0.10 * 0.10));
+		float ao_b = exp(-(db * db) / (0.10 * 0.10));
+		float ao = max(ao_a, ao_b) * foot_ao;
+		c *= 1.0 - 0.45 * ao;
 	}
 	ALBEDO = c;
 	ROUGHNESS = mix(rough, 0.92, nk);
