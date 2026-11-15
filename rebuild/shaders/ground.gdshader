@@ -51,7 +51,10 @@ void fragment() {
 		// the gaps from turning into a checker when the pier is far away.
 		vec2 uv = vec2(wpos.x * 0.42, wpos.z * 1.15);
 		c = texture(wood_tex, uv).rgb;
-		rough = 0.7;
+		float wear = vnoise(vec2(wpos.x * 1.8, wpos.z * 0.35));
+		c = mix(c, c * vec3(1.18, 1.08, 0.92), smoothstep(0.58, 0.86, wear) * 0.42);
+		c = mix(c, c * vec3(0.72, 0.66, 0.58), smoothstep(0.78, 0.95, vnoise(vec2(wpos.z * 0.9, wpos.x * 2.4))) * 0.35);
+		rough = mix(0.78, 0.55, wear);
 	} else {
 		float d = shore_d(p);
 		float sand = smoothstep(0.28, 1.05, wpos.y) * smoothstep(-0.8, -6.5, d);
@@ -62,6 +65,11 @@ void fragment() {
 		grass_c = mix(grass_c, vec3(0.58, 0.72, 0.32), vnoise(p * 0.35));
 		grass_c = mix(grass_c, vec3(0.28, 0.48, 0.22), vnoise(p * 2.4));
 		c = mix(sand_c, grass_c, sand);
+		float shore_line = -(island_r(-1.5707963) - 3.2);
+		float path = (1.0 - smoothstep(0.55, 1.9, abs(p.x))) * smoothstep(shore_line - 0.4, shore_line + 0.8, p.y) * (1.0 - smoothstep(shore_line + 8.0, shore_line + 14.0, p.y));
+		c = mix(c, sand_c * vec3(0.9, 0.86, 0.72), path * (1.0 - sand));
+		float clump = smoothstep(0.55, 0.82, vnoise(p * 0.55));
+		c = mix(c, c * vec3(0.72, 0.82, 0.62), clump * sand * 0.45);
 		float fq = fwidth(p.x * 48.0);
 		float grain = (hash12(floor(p * 48.0)) - 0.5) * (1.0 - smoothstep(0.35, 1.4, fq));
 		c *= 1.0 + grain * 0.22 + (vnoise(p * 8.0) - 0.5) * 0.10;

@@ -45,6 +45,15 @@ Read as one loop: stick value, root speed, clip, camera, then the seated and thr
 - Root cause: the sea mesh is 16×16 on a 90 m plane, and the shader adds a `pow(48)` glint on those facets. In the face view that facet is a small cyan disc by the hat.
 - The hut, boats, barrels, ropes, and palm cards are real meshes, but the barrels are bare cylinders, the boat has no oar or gunwale, and the palm line is thinner than the v40 shore. `_distant_palms` is not called. That multimesh was the old sky blob, and it stays uncalled.
 
+## Follow-up after the stills
+
+The first export's throw frames did not show a stone. The disc was light grey, nine centimetres toward a guessed camera, and it sat inside the fist or on the water highlights. The rail ropes also started at the throwing stance, so a rope crossed the body. The inland walk looked at empty grass because the palms and the hut sit off that camera's forward cone, and the sea beside the dock was one shallow colour plus lace, which reads as white squiggles.
+
+- The pose stone is a dark flat disc pushed 20 cm toward the throw camera, and the skip frames place that disc on the water with splash rings.
+- Rail ropes start inland of the tee. A garden of palms, bushes, barrels, a rope fence and flowers fills the walk off the dock and the spawn view. Planks pick up wear. The sea mixes a shore lip and broad wave bands, and the lace stays at the shoreline.
+
+「耐玩度要达到3A制作水准，操作细节和画面要细到离谱。新的版本做完要把这个要求放到下一个版本的要求中。直到达到这个水准。」
+
 ## Fixes
 
 - Continuous stick-to-speed curve, a softer stop, a slower target while turning, and a blend on clip changes.

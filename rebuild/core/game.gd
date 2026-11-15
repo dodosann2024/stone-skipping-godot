@@ -642,7 +642,7 @@ func _pose_shot() -> void:
 			frames = 24
 		elif step == 4:
 			mag = 1.0
-			frames = 64
+			frames = 36
 		elif step == 5:
 			joy.value = Vector2(0, -1)
 			player.stick = joy.value
@@ -698,6 +698,63 @@ func _pose_shot() -> void:
 		if _query().contains("proxy=1"):
 			_show_proxy_only()
 		_show_throw_stone(name)
+		print("SHOT_READY ", name)
+		return
+	if name.begins_with("skip_"):
+		var step := int(name.substr(5))
+		_put(tee, 0.0)
+		if player.boy.ik != null:
+			player.boy.ik.paused = false
+			player.boy.ik.both_down = true
+		player.boy.arm.playing = true
+		player.boy.arm.hold = true
+		player.boy.arm.phase = 0.7
+		for _i in 4:
+			await get_tree().process_frame
+		var p := player.global_position
+		var hops := [0.6, 2.2, 4.4, 6.6]
+		var hop := float(hops[mini(step, 3)])
+		var at := p + Vector3(0.15, 0.06, -hop)
+		if step == 0:
+			at.y = p.y + 0.42
+		_skip_marker(at, step)
+		_cam(cam, p + Vector3(-3.4, 1.7, 0.4), at + Vector3(0, 0.15, 0))
+		print("SHOT_READY ", name)
+		return
+	if name.begins_with("bench_s") or name.begins_with("ham_s"):
+		var bench := name.begins_with("bench_s")
+		var step := int(name.substr(7 if bench else 5))
+		var seat := "Bench" if bench else "Hammock"
+		var item := _seat_named(seat)
+		if item == null:
+			print("SHOT_READY ", name)
+			return
+		var clips: Array[String] = []
+		if bench:
+			clips = ["", "bench_sit_idle", "bench_lie", ""]
+		else:
+			clips = ["", "hammock_sleep", "hammock_sleep", ""]
+		if step == 0 or step == 3:
+			var beside := item.global_position + Vector3(-1.1, 0, 1.2)
+			var gy: float = ground.height(beside.x, beside.z)
+			if gy > -1.5:
+				beside.y = gy
+			_put(beside, float(item.get_meta("yaw", 0.0)))
+			if player.boy.ik != null:
+				player.boy.ik.paused = false
+			player.boy.clear_hold()
+		else:
+			_put_on_seat(seat)
+			if player.boy.ik != null:
+				player.boy.ik.paused = true
+			player.boy.play_clip(clips[step], 0.0)
+			if player.boy.anim != null:
+				player.boy.anim.seek(0.35 if step == 1 else 0.7, true)
+				player.boy.anim.pause()
+		for _i in 4:
+			await get_tree().process_frame
+		var c := item.global_position
+		_cam(cam, c + Vector3(-2.8, 1.7, 2.6), c + Vector3(0, 0.7, 0))
 		print("SHOT_READY ", name)
 		return
 	if name == "bench_lie" or name == "lounger" or name == "hammock_rest":
@@ -795,8 +852,8 @@ func _show_throw_stone(shot: String) -> void:
 		palm = origin - ep
 		if palm.length_squared() > 1e-6:
 			origin += palm.normalized() * 0.12
-	# Pull the stone toward the camera so it sits outside the hand, not inside the mesh.
-	origin += Vector3(-0.62, 0.2, 0.72).normalized() * 0.09
+	# The throw camera sits on -X/+Z. Push the stone out of the fist toward that camera.
+	origin += Vector3(-1.85, 0.35, 2.15).normalized() * 0.2
 	var fwd := Vector3(-sin(player.face_yaw), 0.0, -cos(player.face_yaw))
 	var phase := 0.0
 	var phase_map := {
@@ -813,17 +870,56 @@ func _show_throw_stone(shot: String) -> void:
 		origin.y = player.global_position.y + 0.40
 	var stone := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
-	mesh.radius = 0.085
-	mesh.height = 0.17
+	mesh.radius = 0.11
+	mesh.height = 0.22
 	stone.mesh = mesh
-	stone.scale = Vector3(1.15, 0.32, 0.95)
+	stone.scale = Vector3(1.25, 0.28, 1.05)
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(0.94, 0.95, 0.96)
+	mat.albedo_color = Color(0.16, 0.15, 0.14)
 	stone.material_override = mat
 	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(stone)
 	stone.global_position = origin
+
+
+func _skip_marker(at: Vector3, step: int) -> void:
+	var stone := MeshInstance3D.new()
+	var mesh := SphereMesh.new()
+	mesh.radius = 0.12
+	mesh.height = 0.24
+	stone.mesh = mesh
+	stone.scale = Vector3(1.3, 0.26, 1.05)
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(0.15, 0.14, 0.13)
+	stone.material_override = mat
+	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(stone)
+	stone.global_position = at
+	if step <= 0:
+		return
+	for i in step:
+		var back := float(step - 1 - i) * 1.7
+		_shot_ring(Vector3(at.x, 0.16, at.z + back), 0.55 + float(i) * 0.38)
+
+
+func _shot_ring(at: Vector3, radius: float) -> void:
+	var ring := MeshInstance3D.new()
+	var mesh := TorusMesh.new()
+	mesh.inner_radius = radius * 0.72
+	mesh.outer_radius = radius
+	mesh.rings = 10
+	mesh.ring_segments = 8
+	ring.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.97, 0.99, 1.0, 0.95)
+	ring.material_override = mat
+	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(ring)
+	ring.global_position = at
 
 
 func _seat_pos(item: Fadable) -> Vector3:

@@ -60,10 +60,11 @@ func _ready() -> void:
 	_palm(Vector3(-2.8, 0.0, 9.2), 4.8, 0.05)
 	_barrel(Vector3(3.4, 0.0, shore_z + 1.6))
 	_barrel(Vector3(4.8, 0.0, shore_z + 3.4))
-	_rope(Vector3(2.05, 0.42, ends.y + 0.55), Vector3(2.7, 0.28, ends.y + 0.2))
+	_barrel(Vector3(1.25, 0.0, shore_z - 0.35))
+	_barrel(Vector3(-1.35, 0.0, shore_z + 0.45))
+	_rope(Vector3(2.35, 0.32, ends.y + 0.4), Vector3(1.05, 0.55, ends.y + 5.4))
 	_reeds(shore_z)
-	_rope(Vector3(1.15, 0.95, ends.y + 1.15), Vector3(2.15, 0.42, ends.y + 0.7))
-	_rope(Vector3(-1.15, 0.95, ends.y + 1.15), Vector3(-1.9, 0.35, ends.y + 0.2))
+	_garden(ends)
 	_grass(Vector3(1.8, 0.0, shore_z + 3.2))
 	_shells(Vector3(-1.4, 0.0, shore_z + 2.4))
 	_pier_rail(ends)
@@ -656,6 +657,72 @@ func _wall_planks(st: SurfaceTool, origin: Vector3, along: Vector3, length: floa
 		_box(st, origin + dir * u + Vector3(0, height * 0.5, 0), size, tone)
 
 
+func _garden(ends: Vector2) -> void:
+	var shore := ends.x
+	var spots: Array[Vector3] = [
+		Vector3(2.3, 0, shore - 1.6), Vector3(-2.5, 0, shore - 2.2),
+		Vector3(2.8, 0, shore + 1.4), Vector3(-3.0, 0, shore + 2.6),
+		Vector3(3.6, 0, shore + 4.2), Vector3(-3.4, 0, shore + 5.4),
+		Vector3(2.4, 0, shore + 8.0), Vector3(-2.6, 0, shore + 9.5),
+		Vector3(3.2, 0, shore + 12.0), Vector3(-3.8, 0, shore + 11.0),
+		Vector3(-5.4, 0, ends.y + 5.5), Vector3(-6.6, 0, ends.y + 8.0),
+		Vector3(4.6, 0, shore + 0.6),
+	]
+	var heights: Array[float] = [5.2, 4.4, 4.8, 5.6, 4.1, 4.7, 4.6, 5.1, 4.3, 4.9, 5.3, 4.5, 3.9]
+	for i in spots.size():
+		_palm(spots[i], heights[i], 0.08 if i % 2 == 0 else -0.1)
+	var bushes: Array[Vector3] = [
+		Vector3(1.8, 0, shore + 0.8), Vector3(-1.9, 0, shore + 1.1),
+		Vector3(2.2, 0, shore + 3.2), Vector3(-2.1, 0, shore + 3.8),
+		Vector3(1.4, 0, shore + 5.6), Vector3(-1.6, 0, shore + 6.2),
+		Vector3(1.6, 0, shore + 8.8), Vector3(-1.5, 0, shore + 10.5),
+		Vector3(3.8, 0, shore - 0.6),
+	]
+	for b in bushes:
+		_bush(b)
+	var fence := [Vector3(1.7, 0, shore + 0.4), Vector3(1.85, 0, shore + 3.2), Vector3(1.7, 0, shore + 6.0), Vector3(-1.7, 0, shore + 0.5), Vector3(-1.8, 0, shore + 3.4)]
+	for i in fence.size():
+		var p: Vector3 = fence[i]
+		p.y = IslandData.height_at(p.x, p.z)
+		_post(p)
+		fence[i] = p
+	_rope(fence[0] + Vector3(0, 0.62, 0), fence[1] + Vector3(0, 0.55, 0))
+	_rope(fence[1] + Vector3(0, 0.55, 0), fence[2] + Vector3(0, 0.62, 0))
+	_rope(fence[3] + Vector3(0, 0.6, 0), fence[4] + Vector3(0, 0.55, 0))
+	_blooms(shore)
+
+
+func _blooms(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_sphere(st, Vector3(0, 0.16, 0), 0.05, Color(0.92, 0.45, 0.42))
+	_face(st, Vector3(-0.02, 0, 0), Vector3(0.02, 0, 0), Vector3(0, 0.16, 0), Vector3(0.01, 0.14, 0.02), Color(0.3, 0.55, 0.24))
+	st.generate_normals()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = st.commit()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 19
+	var spots: Array[Vector3] = []
+	for i in 36:
+		var p := Vector3(rng.randf_range(-4.5, 4.5), 0, shore_z + rng.randf_range(-0.4, 7.0))
+		if absf(p.x) < 1.15:
+			p.x += 1.4 if p.x >= 0.0 else -1.4
+		p.y = IslandData.height_at(p.x, p.z)
+		if p.y < 0.02:
+			continue
+		spots.append(p)
+	mm.instance_count = spots.size()
+	for i in spots.size():
+		var b := Basis(Vector3.UP, float(i)).scaled(Vector3.ONE * rng.randf_range(0.8, 1.4))
+		mm.set_instance_transform(i, Transform3D(b, spots[i]))
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
 func _pier_rail(ends: Vector2) -> void:
 	var z := ends.y + 1.2
 	while z < ends.x - 0.4:
@@ -663,8 +730,10 @@ func _pier_rail(ends: Vector2) -> void:
 			var p := Vector3(side * 1.05, Constants.DECK_Y, z)
 			_post(p)
 		z += 2.4
-	_rope(Vector3(1.05, Constants.DECK_Y + 0.72, ends.y + 1.2), Vector3(1.05, Constants.DECK_Y + 0.72, ends.x - 0.6))
-	_rope(Vector3(-1.05, Constants.DECK_Y + 0.72, ends.y + 1.2), Vector3(-1.05, Constants.DECK_Y + 0.72, ends.x - 0.6))
+	# The sea end is the throw. Ropes start inland of that stance.
+	var rope_z := ends.y + 5.2
+	_rope(Vector3(1.05, Constants.DECK_Y + 0.72, rope_z), Vector3(1.05, Constants.DECK_Y + 0.72, ends.x - 0.6))
+	_rope(Vector3(-1.05, Constants.DECK_Y + 0.72, rope_z), Vector3(-1.05, Constants.DECK_Y + 0.72, ends.x - 0.6))
 
 
 func _post(at: Vector3) -> void:
