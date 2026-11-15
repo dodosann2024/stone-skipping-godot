@@ -1,9 +1,12 @@
-# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v35
+# 海岛打水漂 Stone Skipping (Godot 4.7.2) — v36
 
 低多边形热带海岛小游戏。场景、道具由 GDScript 代码生成；小男孩为 Tripo Mixamo 网格；水面为自写着色器，所有声音均为代码合成。
 渲染器：Compatibility（gl_compatibility），Web 导出为单线程版本（无需 SharedArrayBuffer / 跨域隔离头）。
 
-**Standing bar (v35+):** AAA production quality — replayability, control detail, and visuals polished to an extreme degree until that bar is genuinely reached. No new gameplay modes; deepen what exists. See [`docs/AAA_BAR.md`](docs/AAA_BAR.md).
+**Standing bar (v35+):** AAA production quality — replayability, control detail, and visuals polished to an extreme degree until that bar is genuinely reached. No new gameplay modes; deepen what exists. Steam-level smoothness on a real iPhone: 60 fps, ~100k prims, no VRAM-compressed textures. See [`docs/AAA_BAR.md`](docs/AAA_BAR.md).
+
+## v36 改动（精确碰撞接地 + 双骨脚 IK）
+根因：`mesh_h` / 双线性采样 ≠ 渲染三角面；码头唇 `DOCK_LIP_RAMP` 插值是假表面；没有真实脚 IK（根高度 + Mixamo + 膝/髋 hack + `SOLE_NUDGE`）。v36：地形/码头 `StaticBody3D`+`ConcavePolygonShape3D`/甲板盒作唯一步行高度；删除 walk 路径上的 `mesh_h`/海床兜底；解析双骨脚 IK + `process_frame` 鞋底钉住；stance −1.0…+1.5 cm；骨盆步进 ≤3 cm/帧；路线 ≥100 m。测试：`ground_ik_v36`、`cdp_touch_v36.mjs`。导出：`docs/game_v36`（**未**切换 `docs/index.html`，仍指向 v35，待核实）。截图：`screenshots/v36/gik_*.png`。
 
 ## v35 改动（坡地沉脚 + 遮挡 dither + 全岛路线）
 根因：v34 `SOLE_NUDGE=+7.5 cm` 把整模压进 mesh，坡地跟随机位看起来像埋到短裤；另有低俯仰上坡机位被山体剪影挡住小腿。v35：`SOLE_NUDGE=-1.4 cm` + 更软的 per-foot plant（只拉浮空、可微抬埋脚）+ 上坡踝线清障抬机；foliage/leaf/static cutout 加粗；路线测试恢复 ≥70 m。测试：`route_walk_v32`、`slope_drag_v35`、`touch_cdp_v35`、`cdp_touch_v35.mjs`、`bush_cut_v35`、`sit_stand_v34`。在线：`?v=35`（`docs/game_v35`）。

@@ -1,6 +1,6 @@
 # Standing bar — AAA production quality (v35+)
 
-This is the **standing requirement for v35 and every later version**. It is not optional polish.
+This is the **standing requirement for v35 and every later version** (v36 included). It is not optional polish. Control and visual detail must stay **细到离谱** — Steam-level smoothness on a real iPhone: **60 fps**, ~**100k prims** budget, **no VRAM-compressed textures**.
 
 ## Scope
 
@@ -10,9 +10,9 @@ This is the **standing requirement for v35 and every later version**. It is not 
 
 ## Release blockers (must PASS before shipping)
 
-1. **Grounding on slopes** — stick/drag from idle on forest grass must not bury the boy to shorts. Bone/mesh checks + CDP touch against the exported web build.
+1. **Grounding (exact collision + foot IK)** — body Y and soles from rendered-mesh collision (terrain tris + dock deck boxes). No walk fallback to analytic `ground_h` / sea floor. Real two-bone foot IK; stance sole −1.0…+1.5 cm vs skinned verts; no leg verts below surface; pelvis step ≤ 3 cm/frame over ≥ **100 m**. Prove with geometry route + CDP touch on the exported web build. Do not weaken tests (e.g. skipping double-support frames).
 2. **Occluder dither** — foliage / leaf walls / barrels between camera and boy must open (screen-door dither) in the web Compatibility build; prove with on/off stills.
-3. **Full island route** — ≥ **70 m** travel covering dock, sand, and every major grass slope; no snaps, ground error ≤ 2 cm.
+3. **Full island route** — ≥ **100 m** travel covering dock lip, sand, and every major grass slope; no snaps; stance within the sole bar above.
 
 ## AAA self-audit checklist (every release)
 
@@ -22,7 +22,7 @@ Run after blockers pass. Fix the biggest gaps in-release when cheap; otherwise l
 |------|-----|
 | **Feel** | Stick deadzone, breakout, spot-turn, run ramp — would a player feel lag, sink, or skate? |
 | **Camera** | Follow on slopes/dock — legs readable? No hillside “burial” silhouette? Orbit smooth? |
-| **Grounding** | Sandals on mesh_h; no mid-calf burial; dock lip continuous |
+| **Grounding** | Sandals on collision tris/deck; stance −1…+1.5 cm; dock lip continuous; no analytic sea fallback |
 | **Character** | Idle/walk/run/sit/sleep silhouettes; face readable under hat; no mesh spikes |
 | **World** | Foliage/props don’t swallow the boy; night lamps readable; water/shore clean |
 | **UI / touch** | Joy + orbit dual-finger; buttons hit targets; banners don’t block play forever |

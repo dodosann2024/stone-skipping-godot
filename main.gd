@@ -358,7 +358,7 @@ func _interp_body_pose() -> void:
 	# Critical: sample height at the *display* XZ. Lerping Y between physics samples
 	# chords under hills — boy looks buried while moving and pops up when stopped.
 	if mode == Mode.EXPLORE:
-		# Continuous `_surface` (incl. dock-lip ramp) — no chord under hills, no lip pop.
+		# Resample collision at display XZ — lerp of physics Y chords under hills.
 		p.y = _surface(p.x, p.z)
 	player.position = p
 	player.rotation.y = lerp_angle(_body_yaw_prev, _body_yaw, f)
@@ -430,9 +430,13 @@ func _build_player() -> void:
 	ex_yaw = face_yaw + PI + 0.45
 	# Higher default pitch: low follow looking *up* a grass slope hid the legs
 	# behind the hillside (gnd 0 cm but shorts-level silhouette). ~0.66 clears soles.
-	ex_pitch = 0.66
-	ex_dist = 3.0
+	# Slightly lower pitch + enough arm so head/hat stay inside the top margin
+	# on tall phones (v35 CDP cropped the brim after stick release).
+	ex_pitch = 0.58
+	ex_dist = 3.2
 	boy.ground_fn = _surface
+	boy.ground_ray = func(from: Vector3, to: Vector3) -> Dictionary:
+		return island.ray_ground(from, to, [boy.get_rid()] if boy else [])
 	boy.released.connect(_launch)
 	boy.footstep.connect(_on_footstep)
 	boy.foot_flat.connect(_stamp_footprint)
@@ -1192,50 +1196,23 @@ func _leave_throw() -> void:
 func _on_dock(x: float, z: float) -> bool:
 	return (absf(x) < 1.15 and z < island.dock_start_z + 0.1 and z > island.dock_end_z + 3.6) or (absf(x) < 3.1 and z <= island.dock_end_z + 3.95 and z > island.dock_end_z - 0.12)
 
-## 0 = sand mesh, 1 = full deck. Soft envelope around the pier + platform so Y never pops.
-const DOCK_LIP_RAMP := 1.45
-
-func _dock_weight(x: float, z: float) -> float:
-	if _on_dock(x, z):
-		return 1.0
-	# Soft band outside the pier/platform AABB (distance-to-rect → smoothstep).
-	# Pier strip.
-	var pier_hw: float = 1.15
-	var pier_z0: float = island.dock_end_z + 3.6
-	var pier_z1: float = island.dock_start_z + 0.1
-	var dx_p: float = maxf(absf(x) - pier_hw, 0.0)
-	var dz_p: float = 0.0
-	if z > pier_z1:
-		dz_p = z - pier_z1
-	elif z < pier_z0:
-		dz_p = pier_z0 - z
-	var dist_p: float = sqrt(dx_p * dx_p + dz_p * dz_p)
-	# Wide platform at the sea end.
-	var plat_hw: float = 3.1
-	var plat_z0: float = island.dock_end_z - 0.12
-	var plat_z1: float = island.dock_end_z + 3.95
-	var dx_t: float = maxf(absf(x) - plat_hw, 0.0)
-	var dz_t: float = 0.0
-	if z > plat_z1:
-		dz_t = z - plat_z1
-	elif z < plat_z0:
-		dz_t = plat_z0 - z
-	var dist_t: float = sqrt(dx_t * dx_t + dz_t * dz_t)
-	var dist: float = minf(dist_p, dist_t)
-	if dist >= DOCK_LIP_RAMP:
-		return 0.0
-	return 1.0 - smoothstep(0.0, DOCK_LIP_RAMP, dist)
-
-## walkable surface height (dock deck or terrain mesh — matches what you see)
+## Walkable surface height from the EXACT ground collision (terrain tris + dock boxes).
+## v36: deleted mesh_h bilinear + DOCK_LIP_RAMP lerp — those disagreed with the drawn mesh.
 func _surface(x: float, z: float) -> float:
-	var land: float = Island.mesh_h(x, z)
-	var deck: float = Island.DECK_Y + 0.04
-	var w: float = _dock_weight(x, z)
-	if w <= 0.001:
-		return land
-	if w >= 0.999:
-		return deck
-	return lerpf(land, deck, w)
+	var hint: float = player.position.y if player else 5.0
+	var ex: Array = []
+	if player:
+		ex.append(player.get_rid())
+	return island.collision_h(x, z, hint, ex)
+
+
+## Collision normal under (x,z) for foot IK / lean.
+func _surface_n(x: float, z: float) -> Vector3:
+	var hint: float = player.position.y if player else 5.0
+	var ex: Array = []
+	if player:
+		ex.append(player.get_rid())
+	return island.collision_n(x, z, hint, ex)
 
 func _surface_kind(x: float, z: float) -> String:
 	if _on_dock(x, z):
@@ -1255,6 +1232,9 @@ func _can_stand(from_h: float, x: float, z: float) -> bool:
 	var h := _surface(x, z)
 	if not dock and h < -0.42:
 		return false   # too deep: the kid only wades in the shallows
+	# Never step past the pier tip into open water (ray would miss deck boxes).
+	if absf(x) < 5.0 and z < island.dock_end_z - 0.15:
+		return false
 	# Lip ramp is continuous — only reject real cliffs / reef jumps.
 	if absf(h - from_h) > 0.55:
 		return false
@@ -1451,43 +1431,48 @@ func _explore_tick(delta: float) -> void:
 		# Frame-rate independent collision bleed (was constant 0.5 → jitter at 120Hz).
 		move_vel = move_vel.lerp(real, 1.0 - exp(-delta * 14.0))
 	cur_speed = real.length()
+	# Body Y = collision under the hips. Cap vertical step so pelvis never jumps
+	# more than 3 cm/frame (AAA walk feel); foot IK closes residual slope gap.
 	var h := _surface(to.x, to.z)
-	# `_surface` is continuous (mesh_h + soft dock-lip ramp) — stick every tick.
-	# Tiny vertical rate limit only as a belt for hitch frames.
-	var max_dy := 3.2 * delta
-	if absf(h - ground_y) <= max_dy or absf(h - ground_y) < 0.04:
-		ground_y = h
+	ground_y = h
+	var dy := h - from.y
+	# Hard cap just under the 3.0 cm AAA bar (avoid fp equality flakes at 0.030).
+	if absf(dy) > 0.029:
+		to.y = from.y + clampf(dy, -0.029, 0.029)
 	else:
-		ground_y += clampf(h - ground_y, -max_dy, max_dy)
-	to.y = ground_y
-	# Physics-clock body; _process interpolates player for display + camera.
+		to.y = h
+	# Physics-clock body; _process interpolates XZ and Y between physics states.
 	var step_xz := Vector2(to.x - from.x, to.z - from.z).length()
 	dbg_max_step = maxf(dbg_max_step, step_xz)
-	# Error vs the walkable surface (not raw mesh_h — that disagrees on the lip ramp).
 	dbg_gnd_err = absf(to.y - h)
 	_body_pos = to
 	_body_yaw = face_yaw
-	player.position = to
-	player.rotation.y = face_yaw
+	# CharacterBody3D owns the body; Y is the collision ray (exact tris/boxes).
+	# Skip move_and_slide vertical resolve — capsule must not fight the ray.
+	if player is CharacterBody3D:
+		var cb := player as CharacterBody3D
+		cb.velocity = Vector3(real.x, 0.0, real.z)
+		cb.global_position = to
+		cb.rotation.y = face_yaw
+		cb.rotation.x = 0.0
+		cb.floor_snap_length = 0.30
+		cb.floor_max_angle = deg_to_rad(40.0)
+		_body_pos = to
+		ground_y = to.y
+	else:
+		player.position = to
+		player.rotation.y = face_yaw
+		player.rotation.x = 0.0
 	wading = not _on_dock(to.x, to.z) and h < -0.03
 	boy.wading = wading
 	boy.pivoting = spot_turning
 	boy.turn_ahead = wrapf(spot_goal - face_yaw, -PI, PI) if spot_turning else (wrapf(wish_yaw - face_yaw, -PI, PI) if mag > 0.05 else 0.0)
-	# Spot-turn already wrote a weight-shift lean above; don't flatten it here.
 	if not spot_turning:
 		boy.turn_lean = lerpf(boy.turn_lean, clampf(boy.turn_ahead, -0.7, 0.7), 1.0 - exp(-delta * 5.0))
 	boy.set_move(cur_speed)
 	if cur_speed < 0.05:
 		boy.set_idle()
-	# Light slope lean so ankles read planted on hills (no full IK budget).
-	if not spot_turning and cur_speed > 0.08:
-		var ahead := Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * 0.45
-		var h0 := _surface(to.x, to.z)
-		var h1 := _surface(to.x + ahead.x, to.z + ahead.z)
-		var pitch_want := clampf((h0 - h1) * 0.55, -0.12, 0.12)
-		player.rotation.x = lerpf(player.rotation.x, pitch_want, 1.0 - exp(-delta * 6.0))
-	else:
-		player.rotation.x = lerpf(player.rotation.x, 0.0, 1.0 - exp(-delta * 8.0))
+	# Foot IK owns slope contact — no fake root pitch.
 	_update_action_kind()
 
 func _on_footstep(side: int, running: bool) -> void:
@@ -4323,10 +4308,15 @@ func _update_throw_pad() -> void:
 
 func _explore_cam() -> Array:
 	var tall := _tall()
-	# Tripo: aim a little higher so the baked face stays readable under the brim
-	var hy := 0.68 if boy.meta.get("tripo", false) else 0.55
+	# Aim chest/hips so the whole body + face sit in the lower-middle third —
+	# too high a look-at with a short arm cropped the hat at the top (v35 CDP).
+	var hy := 0.58 if boy.meta.get("tripo", false) else 0.50
 	var t := player.global_position + Vector3(0, hy, 0)
-	return [t, ex_yaw, ex_pitch, ex_dist * (1.1 if tall else 1.0)]
+	var dist := ex_dist * (1.15 if tall else 1.0)
+	# Tall phone: keep a touch more distance so head has margin under the status UI.
+	if tall:
+		dist = maxf(dist, 3.35)
+	return [t, ex_yaw, ex_pitch, dist]
 
 func _rest_bone(name: String, fallback: Vector3) -> Vector3:
 	if boy and boy.skel:
@@ -4688,15 +4678,34 @@ func _update_camera(delta: float) -> void:
 		if dragging:
 			k = 1.0 - exp(-delta * 14.0)
 	else:
-		# explore follow camera: drags turn it, otherwise it slowly swings in behind the walking kid
-		if cur_speed > 0.3 and gt - last_drag > 1.5:
-			var rate := 0.6 + 0.5 * clampf(cur_speed / RUN_SPEED, 0.0, 1.0)
-			ex_yaw = lerp_angle(ex_yaw, face_yaw, 1.0 - exp(-delta * rate))
+		# Explore follow: stick/walk keeps the lens *behind* the boy so he stays framed.
+		# v35 bug: yaw follow was gated on `gt - last_drag > 1.5`, so after a screen tap
+		# (or while the stick pushed sideways relative to a frozen yaw) he walked off the
+		# right edge / entirely off-screen. Orbit drag still owns yaw while active.
+		var orbiting_now := dragging or orbit_pending.length_squared() > 1e-10 or _orbit_ease > 0.05
+		var stick_mag := joy.value.length() if joy else 0.0
+		if not orbiting_now and (cur_speed > 0.12 or stick_mag > 0.08):
+			var behind := face_yaw
+			var yaw_err := absf(wrapf(behind - ex_yaw, -PI, PI))
+			# Face-showcase start is ~180° off behind. Hard-snap so the first
+			# stick push never walks him off the right edge while yaw crawls.
+			if yaw_err > 1.2 or stick_mag > 0.25:
+				# Stick / large error: hard-lock behind. Soft rates still left
+				# ~0.3–0.5 rad lag on diagonals (v35 CDP empty-grass frames).
+				ex_yaw = behind
+			else:
+				var rate2 := lerpf(4.0, 10.0, clampf(cur_speed / maxf(RUN_SPEED, 0.01), 0.0, 1.0))
+				rate2 = maxf(rate2, lerpf(4.0, 14.0, clampf(yaw_err / 0.8, 0.0, 1.0)))
+				ex_yaw = lerp_angle(ex_yaw, behind, 1.0 - exp(-delta * rate2))
 		want = _explore_cam()
-		# Follow with a little body lag so the camera feels attached, not locked-on.
+		# Follow body tightly while stick/walk — lag was shrinking on-screen height
+		# and letting him drift to the frame edge.
 		var move_k := clampf(cur_speed / maxf(WALK_MAX, 0.01), 0.0, 1.0)
-		k = 1.0 - exp(-delta * lerpf(8.0, 16.0, move_k))
-		if dragging or orbit_pending.length_squared() > 1e-10:
+		var follow_rate := lerpf(12.0, 28.0, move_k)
+		if stick_mag > 0.15:
+			follow_rate = maxf(follow_rate, 24.0)
+		k = 1.0 - exp(-delta * follow_rate)
+		if orbiting_now:
 			# Drag: angles already snapped in _flush_orbit_pending; keep target tight.
 			k = 1.0
 		if mode == Mode.REST:
@@ -4740,6 +4749,9 @@ var _cam_slide_want := 0.0
 func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	var full_off := Vector3(sin(cam_yaw) * cos(cam_pitch), sin(cam_pitch), cos(cam_yaw) * cos(cam_pitch)) * cam_dist
 	# Soft spring arm: frame-rate independent pull-in (no constant-α snap at 120Hz).
+	# Floor: never crush below ~82% in explore — v35 slope probe + ankle pull
+	# shrank the arm to ~0.4 and framed a head crop after stick release.
+	const ARM_FLOOR := 0.82
 	var want_k := 1.0
 	var orbiting := dragging or orbit_pending.length_squared() > 1e-10 or _orbit_ease > 0.05
 	var moving := cur_speed > 0.12
@@ -4754,11 +4766,17 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	# During orbit, hold arm length — probe flicker was the cam_ds spike source.
 	if orbiting:
 		want_k = _cam_arm_k
+	elif mode == Mode.EXPLORE:
+		want_k = maxf(want_k, ARM_FLOOR)
 	# Soft chase of probe result (no step hysteresis snap).
 	_cam_arm_want = lerpf(_cam_arm_want, want_k, 1.0 - exp(-delta * 10.0))
+	if mode == Mode.EXPLORE and not orbiting:
+		_cam_arm_want = maxf(_cam_arm_want, ARM_FLOOR)
 	# Pull-in smoothed; recover slower so clearance doesn't ping-pong.
 	var arm_rate := 2.6 if orbiting else (3.0 if _cam_arm_want < _cam_arm_k - 0.01 else 1.8)
 	_cam_arm_k = lerpf(_cam_arm_k, _cam_arm_want, 1.0 - exp(-delta * arm_rate))
+	if mode == Mode.EXPLORE and not orbiting:
+		_cam_arm_k = maxf(_cam_arm_k, ARM_FLOOR)
 	var off := full_off * _cam_arm_k
 	var right := Vector3(cos(cam_yaw), 0, -sin(cam_yaw))
 	# Lateral dodge only while nearly idle.
@@ -4782,56 +4800,68 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	var pos := cam_target + off + right * _cam_slide
 	# Keep the lens above the *drawn* mesh (not analytic ground_h) so slope follow
 	# never sits under a triangle and makes the boy look buried to the shorts.
-	var floor_y: float = Island.mesh_h(pos.x, pos.z) + 0.65
+	var floor_y: float = _surface(pos.x, pos.z) + 0.65
 	if _on_dock(pos.x, pos.z):
 		floor_y = maxf(floor_y, Island.DECK_Y + 0.45)
 	if pos.y < floor_y:
 		pos.y = floor_y
 	# Soft terrain probe along the arm so we don't look through a hillside.
+	# Prefer lift over pull-in so framing height stays stable on slopes.
 	if mode == Mode.EXPLORE and cam_dist < 12.0:
 		for i in range(3, 9):
 			var t: float = float(i) / 9.0
 			var q: Vector3 = cam_target.lerp(pos, t)
-			var h: float = Island.mesh_h(q.x, q.z) + 0.45
+			var h: float = _surface(q.x, q.z) + 0.45
 			if q.y < h:
-				# Pull in so the segment clears the hill.
-				pos = cam_target + (pos - cam_target) * maxf(t - 0.08, 0.35)
-				pos.y = maxf(pos.y, Island.mesh_h(pos.x, pos.z) + 0.85)
+				pos.y = maxf(pos.y, h + 0.55)
+				# Mild pull only — never below the arm floor plan-distance.
+				pos = cam_target + (pos - cam_target) * maxf(t - 0.04, 0.72)
+				pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 0.95)
 				break
-		# Looking *up* a slope from downhill: the hillside silhouette covers
-		# ankles→shorts even when bones sit on mesh_h (v34 CDP burial look).
-		# Lift + pull in so the lens reads over the crest, not through it.
-		var p_mh: float = Island.mesh_h(cam_target.x, cam_target.z)
-		var c_mh: float = Island.mesh_h(pos.x, pos.z)
+		var p_mh: float = _surface(cam_target.x, cam_target.z)
+		var c_mh: float = _surface(pos.x, pos.z)
 		var uphill: float = p_mh - c_mh
 		if uphill > 0.08:
-			var lift: float = clampf(uphill * 1.15, 0.55, 3.2)
-			pos.y = maxf(pos.y, cam_target.y + 1.15 + lift * 0.85)
-			var to_t: Vector3 = pos - cam_target
-			var pull: float = clampf(uphill * 0.22, 0.12, 0.52)
-			pos = cam_target + to_t * (1.0 - pull)
-			pos.y = maxf(pos.y, Island.mesh_h(pos.x, pos.z) + 1.25)
-			pos.y = maxf(pos.y, cam_target.y + 1.35)
-		# Ankle-line clearance: raise until the segment cam→ankles clears the mesh.
-		# This is what made gnd 0 cm still read as "buried to shorts" on CDP.
+			var lift: float = clampf(uphill * 0.85, 0.35, 2.2)
+			pos.y = maxf(pos.y, cam_target.y + 0.95 + lift * 0.65)
+			pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 1.05)
+			pos.y = maxf(pos.y, cam_target.y + 1.05)
+		# Ankle-line clearance: raise until cam→ankles clears the crest (lift only).
 		var ankle := Vector3(cam_target.x, p_mh + 0.10, cam_target.z)
-		for _iter in range(6):
+		for _iter in range(4):
 			var blocked := false
 			var block_h := 0.0
 			for i in range(2, 10):
 				var t3: float = float(i) / 10.0
 				var q3: Vector3 = pos.lerp(ankle, t3)
-				var hill3: float = Island.mesh_h(q3.x, q3.z)
+				var hill3: float = _surface(q3.x, q3.z)
 				if hill3 > q3.y + 0.04:
 					blocked = true
 					block_h = maxf(block_h, hill3)
 			if not blocked:
 				break
-			pos.y = maxf(pos.y, block_h + 1.35)
-			pos.y = maxf(pos.y, cam_target.y + 1.45)
-			# Pull slightly closer each iteration so we look more down than through.
-			pos = cam_target + (pos - cam_target) * 0.90
-			pos.y = maxf(pos.y, Island.mesh_h(pos.x, pos.z) + 1.20)
+			pos.y = maxf(pos.y, block_h + 1.25)
+			pos.y = maxf(pos.y, cam_target.y + 1.25)
+			pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 1.15)
+		# Keep a minimum plan-distance so the boy stays whole-body framed (not a face crop).
+		var flat := Vector2(pos.x - cam_target.x, pos.z - cam_target.z)
+		var min_flat: float = maxf(cam_dist * ARM_FLOOR, 2.55)
+		if flat.length() > 0.05 and flat.length() < min_flat:
+			var sc: float = min_flat / flat.length()
+			pos.x = cam_target.x + (pos.x - cam_target.x) * sc
+			pos.z = cam_target.z + (pos.z - cam_target.z) * sc
+			pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 1.05)
+		# If hillside lift raised the lens a lot, push out so on-screen height
+		# stays near the flat-ground default (avoids "too close" after slopes).
+		var nom := cam_target + full_off * _cam_arm_k
+		var lift_extra: float = pos.y - nom.y
+		if lift_extra > 0.35:
+			var flat2 := Vector2(pos.x - cam_target.x, pos.z - cam_target.z)
+			var push: float = 1.0 + clampf(lift_extra * 0.22, 0.0, 0.40)
+			if flat2.length() > 0.05:
+				pos.x = cam_target.x + flat2.x * push
+				pos.z = cam_target.z + flat2.y * push
+				pos.y = maxf(pos.y, _surface(pos.x, pos.z) + 1.05)
 	camera.global_position = pos
 	camera.look_at(cam_target, Vector3.UP)
 	if refl:

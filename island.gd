@@ -68,6 +68,10 @@ var bush_spots: Array = []
 var leaves: Array = []    # [Transform3D, Color tint (a = sway), Color(outward normal, ao)] per leaf spray
 var leaf_mat: ShaderMaterial
 var terrain_mi: MeshInstance3D
+## Exact walkable collision — same tris as the rendered terrain + dock deck boxes.
+## Body Y and foot IK raycast this; mesh_h / bilinear are NOT the walk surface.
+var ground_body: StaticBody3D
+var ground_space_rid: RID
 var campfire: Campfire
 var torches: Array[Torch] = []
 var torch_mat: ShaderMaterial
@@ -158,6 +162,9 @@ static func ground_h(x: float, z: float) -> float:
 static func terrain_dense_at(x: float, z: float) -> bool:
 	return shore_d(x, z) < TERRAIN_DENSE_SHORE
 
+## REMOVED from the walk path in v36. Bilinear ≠ the two planar tris per quad
+## (measured max |bi−tri| ≈ 1.4 cm on dense land). Kept only as a diagnostic
+## helper for comparing the old sampler to collision; gameplay uses collision_h.
 static func _bilinear_h(x: float, z: float, step: float) -> float:
 	var half := TERRAIN_HALF
 	var gx0 := floorf((x + half) / step) * step - half
@@ -169,13 +176,13 @@ static func _bilinear_h(x: float, z: float, step: float) -> float:
 		lerpf(ground_h(gx0, gz0 + step), ground_h(gx0 + step, gz0 + step), tx),
 		tz)
 
-## Height of the drawn terrain at (x,z). Dense land uses TERRAIN_STEP; far sea uses coarse.
+## Deprecated sampler — do not use for body/feet. Prefer Island.collision_h via instance.
 static func mesh_h(x: float, z: float) -> float:
 	if terrain_dense_at(x, z):
 		return _bilinear_h(x, z, TERRAIN_STEP)
 	return _bilinear_h(x, z, TERRAIN_COARSE)
 
-## Signed gap: positive = feet above the mesh (floating), negative = into the mesh (sinking).
+## Signed gap vs deprecated bilinear sampler (diagnostic only).
 static func ground_err(x: float, z: float, body_y: float) -> float:
 	return body_y - mesh_h(x, z)
 
@@ -270,6 +277,7 @@ func build(font: Font) -> void:
 	_make_paths()
 	_build_terrain()
 	_build_dock()
+	_build_ground_collision()
 	_build_hut(hth)
 	_build_lighthouse()
 	_build_campfire()
@@ -675,6 +683,142 @@ func _build_terrain() -> void:
 	var bmi = _mi(bed, bm)
 	bmi.position.y = -5.8
 	bmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## Build StaticBody3D from the EXACT rendered terrain triangles (walkable only) plus
+## real dock deck / step colliders. This is the single source of truth for feet/body Y.
+func _build_ground_collision() -> void:
+	if ground_body and is_instance_valid(ground_body):
+		ground_body.queue_free()
+	ground_body = StaticBody3D.new()
+	ground_body.name = "GroundCollision"
+	ground_body.collision_layer = 1
+	ground_body.collision_mask = 0
+	add_child(ground_body)
+	var tri_count := 0
+	# --- terrain: same faces as terrain_mi.mesh ---
+	if terrain_mi and terrain_mi.mesh:
+		var faces: PackedVector3Array = terrain_mi.mesh.get_faces()
+		var walk: PackedVector3Array = PackedVector3Array()
+		var i := 0
+		while i + 2 < faces.size():
+			var a: Vector3 = faces[i]
+			var b: Vector3 = faces[i + 1]
+			var c: Vector3 = faces[i + 2]
+			i += 3
+			var cx := (a.x + b.x + c.x) * (1.0 / 3.0)
+			var cy := (a.y + b.y + c.y) * (1.0 / 3.0)
+			var cz := (a.z + b.z + c.z) * (1.0 / 3.0)
+			# Walkable band only — keeps iPhone cost down (deep sea / far reef skipped).
+			# Never keep underwater faces under the pier corridor: a ray past the
+			# last deck box would hit those and report a 2–3 m false FLOAT.
+			if cy < -0.45:
+				continue
+			if shore_d(cx, cz) > TERRAIN_DENSE_SHORE + 2.5 and absf(cx) > 5.0:
+				continue
+			walk.append(a)
+			walk.append(b)
+			walk.append(c)
+		if walk.size() >= 3:
+			var shape := ConcavePolygonShape3D.new()
+			shape.set_faces(walk)
+			var cs := CollisionShape3D.new()
+			cs.name = "TerrainTris"
+			cs.shape = shape
+			ground_body.add_child(cs)
+			tri_count += walk.size() / 3
+	# --- dock deck: real plank-top boxes (no fake lip lerp) ---
+	# Main pier run (shore → tip), plus a tip cap so toes past the last plank
+	# still hit collision instead of falling through to analytic sea ground_h.
+	# Pier run stays ON the dock (z ≤ dock_start). Do not overhang onto the
+	# beach — a DECK_Y box over sand made the body float at the lip.
+	var pier_len := absf(dock_start_z - dock_end_z)
+	_add_deck_collider(Vector3(0.0, DECK_Y, (dock_start_z + dock_end_z) * 0.5),
+		Vector3(2.50, 0.14, pier_len + 0.2))
+	_add_deck_collider(Vector3(0.0, DECK_Y, dock_end_z + 1.9),
+		Vector3(6.60, 0.14, 4.0))
+	# Tip + overhang past dock_end so toes never ray into open water.
+	_add_deck_collider(Vector3(0.0, DECK_Y, dock_end_z - 0.8),
+		Vector3(6.60, 0.16, 2.8))
+	_add_deck_collider(Vector3(0.0, DECK_Y, dock_end_z - 2.2),
+		Vector3(4.0, 0.16, 1.6))
+	# Beach→pier lip: stepped boxes from sand up to DECK_Y (no flat DECK over sand).
+	var ramp_z0 := dock_start_z + 0.05
+	var ramp_z1 := dock_start_z + 1.5
+	var sand0 := ground_h(0.0, ramp_z1)
+	var sand1 := ground_h(0.0, ramp_z0)
+	for s in 10:
+		var t := float(s) / 9.0
+		var z := lerpf(ramp_z1, ramp_z0, t)
+		var y := lerpf(minf(sand0, sand1), DECK_Y, smoothstep(0.0, 1.0, t))
+		_add_deck_collider(Vector3(0.0, y, z), Vector3(2.40, 0.10, 0.22))
+	print("GROUND_COLLISION tris=%d deck_boxes=%d" % [tri_count, ground_body.get_child_count() - (1 if tri_count > 0 else 0)])
+
+
+func _add_deck_collider(center: Vector3, size: Vector3) -> void:
+	if ground_body == null:
+		return
+	var box := BoxShape3D.new()
+	box.size = size
+	var cs := CollisionShape3D.new()
+	cs.shape = box
+	cs.position = center
+	ground_body.add_child(cs)
+
+
+## Downward ray against the exact ground collision. Returns {} on miss.
+## hit: {position: Vector3, normal: Vector3, collider: Object}
+func ray_ground(from: Vector3, to: Vector3, exclude: Array = []) -> Dictionary:
+	var space := get_world_3d().direct_space_state if is_inside_tree() else null
+	if space == null:
+		return {}
+	var q := PhysicsRayQueryParameters3D.create(from, to)
+	q.collision_mask = 1
+	q.collide_with_areas = false
+	q.collide_with_bodies = true
+	if exclude.size() > 0:
+		q.exclude = exclude
+	return space.intersect_ray(q)
+
+
+## Height of the real collision surface under (x,z).
+## Always pass the walker RID in `exclude` so the body capsule is not the hit.
+## Pier miss → DECK_Y (deck boxes cover the tip). Never drop walkable rays to
+## analytic sea ground_h (that produced 2–3 m false FLOATs at the dock tip).
+func collision_h(x: float, z: float, hint_y: float = 10.0, exclude: Array = []) -> float:
+	var top := maxf(hint_y, DECK_Y + 2.0) + 4.0
+	var hit := ray_ground(Vector3(x, top, z), Vector3(x, -6.0, z), exclude)
+	if hit.has("position"):
+		return float(hit.position.y)
+	# Second cast from higher — catches thin gaps at deck / sand seams.
+	hit = ray_ground(Vector3(x, top + 8.0, z), Vector3(x, -8.0, z), exclude)
+	if hit.has("position"):
+		return float(hit.position.y)
+	# Pier band miss: deck boxes cover the tip — never fall through to sea.
+	# Stay on the dock footprint (not beachside of dock_start) so lip sand uses tris.
+	if absf(x) < 5.0 and z <= dock_start_z + 0.35 and z >= dock_end_z - 3.0:
+		return DECK_Y
+	var sd := shore_d(x, z)
+	if sd < TERRAIN_DENSE_SHORE + 4.0:
+		for ox in [-0.35, 0.0, 0.35]:
+			for oz in [-0.35, 0.0, 0.35]:
+				if ox == 0.0 and oz == 0.0:
+					continue
+				hit = ray_ground(Vector3(x + ox, top + 4.0, z + oz), Vector3(x + ox, -6.0, z + oz), exclude)
+				if hit.has("position") and float(hit.position.y) > -0.4:
+					return float(hit.position.y)
+		return hint_y
+	return ground_h(x, z)
+
+
+## Normal of the collision surface under (x,z), or UP if miss.
+func collision_n(x: float, z: float, hint_y: float = 10.0, exclude: Array = []) -> Vector3:
+	var top := maxf(hint_y, DECK_Y + 2.0) + 4.0
+	var hit := ray_ground(Vector3(x, top, z), Vector3(x, -6.0, z), exclude)
+	if hit.has("normal"):
+		return (hit.normal as Vector3).normalized()
+	return Vector3.UP
+
 
 func _build_water() -> void:
 	var pm = PlaneMesh.new()
