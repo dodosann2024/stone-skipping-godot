@@ -322,9 +322,10 @@ func _ready() -> void:
 	# First paint: face the Tripo boy (3/4-front). Later _place()/walk snaps back to follow-behind.
 	_snap_explore_cam(true)
 	_sync_body_pose(true)
+	if is_web and _opt("at") != "":
+		_hat_probe_place.call_deferred(_opt("at"))
 	if is_web and _opt("hatprobe") == "1":
 		RenderingServer.frame_pre_draw.connect(_hat_probe_tick)
-		_hat_probe_place.call_deferred(_opt("at"))
 	if demo_mode:
 		_start_audio()
 		if "--selftest" in args:
@@ -358,8 +359,10 @@ func _interp_body_pose() -> void:
 	# Critical: sample height at the *display* XZ. Lerping Y between physics samples
 	# chords under hills — boy looks buried while moving and pops up when stopped.
 	if mode == Mode.EXPLORE:
-		# Resample collision at display XZ — lerp of physics Y chords under hills.
-		p.y = _surface(p.x, p.z)
+		var hy := _surface(p.x, p.z)
+		# Cap display Y step so interp+resample never exceeds the 3 cm pelvis bar.
+		var y0 := _body_pos_prev.y
+		p.y = y0 + clampf(hy - y0, -0.029, 0.029)
 	player.position = p
 	player.rotation.y = lerp_angle(_body_yaw_prev, _body_yaw, f)
 
@@ -3592,23 +3595,33 @@ func _add_ripple(p: Vector3, strength: float, delay := 0.0) -> void:
 	island.water_mat.set_shader_parameter("ripples", ripple_buf)
 
 ## Soft ground AO under each sole — pairs with the mul-blend blob discs.
+## Call AFTER late foot plant so XZ matches the rendered skinned soles.
+## Only plant stance / near-contact feet — a swing-foot XZ painted a dark oval
+## a shoe-length behind the lead foot (read as floating).
 func _upload_foot_ao() -> void:
 	if island == null or island.terrain_mat == null or boy == null or boy.skel == null:
 		return
 	if mode == Mode.REST:
 		island.terrain_mat.set_shader_parameter("foot_ao", 0.0)
 		return
-	var a := Vector2(player.global_position.x, player.global_position.z)
-	var b := a
-	var fp0: Array = boy.foot_points(0)
-	var fp1: Array = boy.foot_points(1)
-	var m0: Vector3 = (fp0[0] as Vector3).lerp(fp0[1] as Vector3, 0.55)
-	var m1: Vector3 = (fp1[0] as Vector3).lerp(fp1[1] as Vector3, 0.55)
-	a = Vector2(m0.x, m0.z)
-	b = Vector2(m1.x, m1.z)
-	island.terrain_mat.set_shader_parameter("foot_a_xz", a)
-	island.terrain_mat.set_shader_parameter("foot_b_xz", b)
-	island.terrain_mat.set_shader_parameter("foot_ao", 1.0)
+	var pts: Array[Vector2] = []
+	for side in range(2):
+		var fp: Array = boy.foot_points(side)
+		var heel: Vector3 = fp[0]
+		var ball: Vector3 = fp[1]
+		var mid: Vector3 = heel.lerp(ball, 0.55)
+		var fgy := _surface(mid.x, mid.z)
+		var sole_y := minf(heel.y - boy.sole_offset, ball.y - 0.012)
+		var planted := boy._stance_locked[side] or (sole_y - fgy) < 0.03
+		if planted:
+			pts.append(Vector2(mid.x, mid.z))
+	# Terrain foot-AO off: pier sand ghost ovals + rear-stance trail. Contact
+	# discs (MeshInstance3D under each stance sole) own the grounding read.
+	island.terrain_mat.set_shader_parameter("foot_ao", 0.0)
+	if pts.is_empty():
+		return
+	island.terrain_mat.set_shader_parameter("foot_a_xz", pts[0])
+	island.terrain_mat.set_shader_parameter("foot_b_xz", pts[1] if pts.size() > 1 else pts[0])
 
 
 ## Tiny sand / dust puff on footfall (CPUParticles — cheap, one-shot, auto-free).
@@ -4033,7 +4046,50 @@ func _hat_probe_tick() -> void:
 	hat_probe["rest_phase"] = rest_phase
 	JavaScriptBridge.eval("window.__hat = " + JSON.stringify(hat_probe), true)
 
-## &at=dock|hammock|towel|bench: start next to it, so the browser check can rest there with the real buttons
+
+## CDP reads window.__ground: blob↔sole XZ and rendered sole gaps (post-IK frame).
+func _export_ground_probe() -> void:
+	if not is_web or boy == null or boy.skel == null:
+		return
+	# Disc centres vs each stance sole (max nearest-neighbour distance).
+	# Discs are hidden while locomoting — blob_d stays 0 then (sun shadow only).
+	var blob_d := 0.0
+	var any_disc := false
+	var mids: Array = boy.stance_sole_midpoints()
+	for mid_v in mids:
+		var mid: Vector3 = mid_v
+		var best := 1e9
+		for dnode in [boy.blob_l, boy.blob_r]:
+			if dnode == null or not dnode.visible:
+				continue
+			any_disc = true
+			var bp: Vector3 = dnode.global_position
+			best = minf(best, Vector2(bp.x, bp.z).distance_to(Vector2(mid.x, mid.z)))
+		if best < 1e8:
+			blob_d = maxf(blob_d, best)
+	var max_gap := 0.0
+	for side in range(2):
+		if not boy._stance_locked[side] and boy.anim == "move" and boy.move_w > 0.2:
+			continue
+		var fp: Array = boy.foot_points(side)
+		var heel: Vector3 = fp[0]
+		var ball: Vector3 = fp[1]
+		var sy_h := _surface(heel.x, heel.z)
+		var sy_b := _surface(ball.x, ball.z)
+		max_gap = maxf(max_gap, absf((heel.y - boy.sole_offset) - sy_h))
+		max_gap = maxf(max_gap, absf((ball.y - 0.012) - sy_b))
+	var g := {
+		"blob_d_cm": blob_d * 100.0,
+		"sole_gap_cm": max_gap * 100.0,
+		"disc_on": any_disc,
+		"moving": boy.anim == "move" and boy.move_w > 0.2,
+		"speed": cur_speed,
+		"pos": [player.global_position.x, player.global_position.y, player.global_position.z],
+	}
+	JavaScriptBridge.eval("window.__ground = " + JSON.stringify(g), true)
+
+
+## &at=dock|hammock|towel|bench|slope: start next to it, so the browser check can rest there with the real buttons
 func _hat_probe_place(at: String) -> void:
 	var td := island.towel_dir
 	var sd := td.cross(Vector3.UP).normalized()
@@ -4051,12 +4107,30 @@ func _hat_probe_place(at: String) -> void:
 		"bench":
 			var st: Dictionary = island.seats[0]
 			spots = [_blocked_by((st["approach"] as Vector3) + (st["face"] as Vector3) * 0.4), st["approach"]]
+		"slope":
+			# Forest-grass burial spot used by CDP grounding checks.
+			spots = [Vector3(2.6, 0, island.dock_start_z + 6.5)]
+			want = ""
 	for p: Vector3 in spots:
-		_place(p, 0.0)
+		_place(p, -0.4 if at == "slope" else 0.0)
 		_update_action_kind()
-		if action_kind == want:
+		if want == "" or action_kind == want:
 			break
 	_snap_explore_cam()
+	if at == "slope":
+		# Low side-on so CDP frames show both feet + ground contact.
+		# Meta flag: keep reframing on the boy while the stick is held.
+		set_meta("cdp_slope_cam", true)
+		cam_fixed = true
+		fix_target = player.global_position + Vector3(0, 0.28, 0)
+		fix_yaw = face_yaw + PI * 0.5
+		fix_pitch = 0.08
+		fix_dist = 3.0
+		cam_target = fix_target
+		cam_yaw = fix_yaw
+		cam_pitch = fix_pitch
+		cam_dist = fix_dist
+		_apply_camera(1.0)
 
 ## When > 0, timing/selftest scripts force this as the sim delta so soft-GL
 ## (slow frames) still advances at the requested fps instead of walking 10× farther.
@@ -4185,7 +4259,7 @@ func _process(delta: float) -> void:
 	if island.torch_mat:
 		island.torch_mat.set_shader_parameter("focus", _cut_focus)
 		island.torch_mat.set_shader_parameter("cut_radius", _cut_cr_s)
-	_upload_foot_ao()
+	# Foot AO + __ground probe uploaded from FootPlantLate (after plant + blob).
 	_update_audio(delta)
 	_audio_tick(delta)
 	if mq:
@@ -4625,6 +4699,18 @@ func _update_camera(delta: float) -> void:
 			fix_pitch = float(rc[2])
 			fix_dist = float(rc[3])
 			set_meta("fix_rest_locked", true)
+		# CDP slope probe: keep low side-on locked on the boy so 6+ frames show feet.
+		if mode == Mode.EXPLORE and bool(get_meta("cdp_slope_cam", false)):
+			fix_target = player.global_position + Vector3(0, 0.28, 0)
+			fix_yaw = face_yaw + PI * 0.5
+			fix_pitch = 0.08
+			fix_dist = 3.0
+			cam_target = fix_target
+			cam_yaw = fix_yaw
+			cam_pitch = fix_pitch
+			cam_dist = fix_dist
+			_apply_camera(delta)
+			return
 		if not dragging:
 			orbit_vel *= exp(-delta * 3.5)
 			fix_yaw += orbit_vel.x * delta

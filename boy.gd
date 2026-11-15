@@ -487,12 +487,18 @@ func _setup_tree() -> void:
 
 func _build_blob() -> void:
 	# Soft mul-blend discs — always on, every quality tier (sun shadows may be off on phones).
-	# Softer contact stain — a hard black disc under the shorts read as slope burial.
+	# Foot discs are reparented to the scene root in _update_blob so CharacterBody
+	# interpolation cannot drag them a shoe-length behind the rendered soles.
 	blob = _make_blob_disc("Blob", Vector2(0.46, 0.34), 0.62)
 	add_child(blob)
-	blob_l = _make_blob_disc("BlobL", Vector2(0.22, 0.13), 0.78)
+	# Hip contact disc permanently disabled (was the shoe-length lag oval).
+	blob.visible = false
+	blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if blob.mesh:
+		blob.mesh = null
+	blob_l = _make_blob_disc("BlobL", Vector2(0.20, 0.12), 0.72)
 	add_child(blob_l)
-	blob_r = _make_blob_disc("BlobR", Vector2(0.22, 0.13), 0.78)
+	blob_r = _make_blob_disc("BlobR", Vector2(0.20, 0.12), 0.72)
 	add_child(blob_r)
 
 
@@ -2012,9 +2018,10 @@ func _tick(delta: float) -> void:
 	# Do NOT force_update_transform after plant — it re-runs TwoBoneIK3D and
 	# pulls ankles off the collision hit we just wrote.
 	_update_foot_ik(delta)
-	_update_blob()
+	# Blob / foot AO are written in FootPlantLate AFTER body interp + plant so
+	# contact discs sit under the rendered soles (not a physics-tick lag).
 	_update_face(delta)
-	# Final plant is FootPlantLate (process_priority 128).
+	# Final plant + blob: FootPlantLate (process_frame).
 
 
 ## Soft child gait on Mixamo: light limb boost, hip sway, bob, turn lean.
@@ -2312,23 +2319,26 @@ func _update_foot_ik(_delta: float) -> void:
 		var bi0 := skel.find_bone(bn)
 		if bi0 >= 0:
 			skel.set_bone_global_pose_override(bi0, Transform3D.IDENTITY, 0.0, false)
-	# plant_w: overlap so double-support never leaves both feet unlocked.
+	# plant_w: clear stance/swing so contact AO sits under ONE planted sole
+	# (locking both painted a rear oval that read as lag behind the lead foot).
+	# Double-support overlap keeps ≥1 locked — never both unlocked.
 	var plant_w: Array[float] = [1.0, 1.0]
 	if anim == "move" and move_w > 0.2 and not pivoting:
 		if phase < 0.5:
 			var u := fposmod(phase, 0.5) / 0.5
-			plant_w[0] = lerpf(1.0, 0.25, smoothstep(0.50, 1.0, u))
-			plant_w[1] = lerpf(0.25, 1.0, smoothstep(0.55, 1.0, u))
+			plant_w[0] = lerpf(1.0, 0.0, smoothstep(0.45, 0.95, u))
+			plant_w[1] = lerpf(0.0, 1.0, smoothstep(0.55, 1.0, u))
 		else:
 			var u2 := fposmod(phase - 0.5, 0.5) / 0.5
-			plant_w[1] = lerpf(1.0, 0.25, smoothstep(0.50, 1.0, u2))
-			plant_w[0] = lerpf(0.25, 1.0, smoothstep(0.55, 1.0, u2))
-	# Floor: never both unlocked while moving.
-	if plant_w[0] < 0.25 and plant_w[1] < 0.25:
+			plant_w[1] = lerpf(1.0, 0.0, smoothstep(0.45, 0.95, u2))
+			plant_w[0] = lerpf(0.0, 1.0, smoothstep(0.55, 1.0, u2))
+	if plant_w[0] < 0.20 and plant_w[1] < 0.20:
 		if phase < 0.5:
-			plant_w[0] = 0.25
+			plant_w[0] = 0.20
 		else:
-			plant_w[1] = 0.25
+			plant_w[1] = 0.20
+	# Stance threshold.
+	# (used below as plant_w[side] >= 0.25)
 	# Targets feed TwoBoneIK3D (low influence — full influence exploded Mixamo
 	# foot bases). Durable contact is the process_frame Y-snap on foot/toe.
 	# Targets stay live; influence 0 — Y-snap owns contact. (Non-zero influence
@@ -2468,8 +2478,10 @@ func sole_vertex_y(side: int) -> float:
 
 
 func _set_blobs_visible(v: bool) -> void:
+	# Hip disc stays permanently off — it lagged a shoe-length behind the
+	# rendered mesh whenever CharacterBody display-interp ran ahead of physics.
 	if blob:
-		blob.visible = v
+		blob.visible = false
 	if blob_l:
 		blob_l.visible = v
 	if blob_r:
@@ -2503,46 +2515,74 @@ func _apply_mixer() -> void:
 		twist_spine(skel, aim_twist)
 
 
+## Per-foot contact discs under RENDERED stance soles (late-plant frame).
+## Hip blob stays OFF. While locomoting, discs are hidden — sun cast shadow +
+## footprints own the contact read (avoids any shoe-length trail during drag).
+## Idle / near-stop: discs sit under stance soles after IK, world-space on the
+## scene host so CharacterBody display-interp cannot drag them.
 func _update_blob() -> void:
 	if blob == null:
 		return
-	# Hide under sit / lie / hammock — contact discs are for standing contact only.
+	blob.visible = false
 	var show := anim != "activity" and anim != "prop_clip" and act_w < 0.45
-	_set_blobs_visible(show)
-	if not show:
+	# Hide contact discs during locomotion — real sun shadow suffices, and any
+	# residual stance-only oval under the rear foot read as "floating".
+	var locomoting := anim == "move" and move_w > 0.25 and move_speed > 0.35 and not pivoting
+	if not show or skel == null or locomoting:
+		if blob_l:
+			blob_l.visible = false
+		if blob_r:
+			blob_r.visible = false
 		return
-	var gy: float = global_position.y
-	if ground_fn.is_valid():
-		gy = float(ground_fn.call(global_position.x, global_position.z))
-	# Hip blob follows pelvis in XZ, glued just above the surface.
-	var pel := global_position
-	if skel:
-		var hi := skel.find_bone(B_HIPS)
-		if hi >= 0:
-			pel = skel.global_transform * skel.get_bone_global_pose(hi).origin
-	var lp := to_local(Vector3(pel.x, gy, pel.z))
-	blob.position = Vector3(lp.x * 0.55, lp.y + 0.014, lp.z * 0.55)
-	blob.rotation = Vector3.ZERO
-	# Per-foot discs sit under each sole for a stronger contact read on slopes.
 	for pair in [[blob_l, 0], [blob_r, 1]]:
 		var disc: MeshInstance3D = pair[0]
 		var side: int = pair[1]
-		if disc == null or skel == null:
+		if disc == null:
 			continue
 		var fp: Array = foot_points(side)
 		var heel: Vector3 = fp[0]
 		var ball: Vector3 = fp[1]
 		var mid := heel.lerp(ball, 0.55)
-		var fgy := gy
-		if ground_fn.is_valid():
+		var sole_y := minf(heel.y - sole_offset, ball.y - 0.012)
+		var fgy := sole_y
+		var hit: Dictionary = _ray_foot(mid)
+		if hit.has("position"):
+			fgy = float(hit.position.y)
+		elif ground_fn.is_valid():
 			fgy = float(ground_fn.call(mid.x, mid.z))
-		# Fade swing foot (high above ground).
-		var gap := minf(heel.y, ball.y) - fgy
-		# Hide swing foot disc when clearly airborne.
-		disc.visible = gap < 0.10
-		var dl := to_local(Vector3(mid.x, fgy, mid.z))
-		disc.position = Vector3(dl.x, dl.y + 0.008, dl.z)
-		disc.rotation = Vector3.ZERO
+		# Pier / deck: reject hits far below the sole (sand under planks).
+		if fgy < sole_y - 0.08:
+			fgy = sole_y
+		var gap := sole_y - fgy
+		# Stance only — swing foot has no disc (avoids rear trail).
+		var planted := _stance_locked[side]
+		disc.visible = planted and gap < 0.06 and gap > -0.02
+		if not disc.visible:
+			continue
+		# Detach from CharacterBody so body interp cannot drag the disc.
+		var host: Node = get_parent()
+		if host != null and disc.get_parent() != host:
+			var gxf: Transform3D = disc.global_transform
+			disc.get_parent().remove_child(disc)
+			host.add_child(disc)
+			disc.global_transform = gxf
+		disc.global_position = Vector3(mid.x, fgy + 0.005, mid.z)
+		disc.global_rotation = Vector3.ZERO
+
+
+## World-space midpoint of stance soles (for tests / AO). Empty if none planted.
+func stance_sole_midpoints() -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	if skel == null:
+		return out
+	for side in range(2):
+		if not _stance_locked[side] and anim == "move" and move_w > 0.2:
+			continue
+		var fp: Array = foot_points(side)
+		var heel: Vector3 = fp[0]
+		var ball: Vector3 = fp[1]
+		out.append(heel.lerp(ball, 0.55))
+	return out
 
 
 static func twist_spine(sk: Skeleton3D, tw: float) -> void:

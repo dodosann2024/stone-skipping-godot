@@ -177,16 +177,41 @@ async function main() {
   const shot1 = path.join(OUT, "cdp_drag_0p6.png");
   await page.screenshot({ path: shot1, type: "png" });
   console.log("SHOT", shot1);
+  let g = await page.evaluate(() => window.__ground || null);
+  console.log("GROUND drag_0p6", JSON.stringify(g));
+  if (g && g.blob_d_cm > 3.0) {
+    throw new Error(`blob↔sole ${g.blob_d_cm.toFixed(1)}cm during drag_0p6`);
+  }
+  if (g && g.sole_gap_cm > 1.5) {
+    throw new Error(`sole gap ${g.sole_gap_cm.toFixed(1)}cm during drag_0p6`);
+  }
+  if (g && g.moving && g.disc_on) {
+    throw new Error("contact disc visible while locomoting (drag_0p6)");
+  }
 
   await new Promise((r) => setTimeout(r, 800));
   const shot2 = path.join(OUT, "cdp_drag_hold.png");
   await page.screenshot({ path: shot2, type: "png" });
   console.log("SHOT", shot2);
+  g = await page.evaluate(() => window.__ground || null);
+  console.log("GROUND drag_hold", JSON.stringify(g));
+  if (g && g.blob_d_cm > 3.0) {
+    throw new Error(`blob↔sole ${g.blob_d_cm.toFixed(1)}cm during drag_hold`);
+  }
+  if (g && g.sole_gap_cm > 1.5) {
+    throw new Error(`sole gap ${g.sole_gap_cm.toFixed(1)}cm during drag_hold`);
+  }
+  if (g && g.moving && g.disc_on) {
+    throw new Error("contact disc visible while locomoting (drag_hold)");
+  }
 
   await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await new Promise((r) => setTimeout(r, 500));
   const shot3 = path.join(OUT, "cdp_after_release.png");
   await page.screenshot({ path: shot3, type: "png" });
+  console.log("SHOT", shot3);
+  g = await page.evaluate(() => window.__ground || null);
+  console.log("GROUND after_release", JSON.stringify(g));
 
   // Pixel heuristic via PNG decode: below yellow shorts there must be skin/brown
   // (legs/sandals), not an immediate grass cut at the hem (v34 burial signature).

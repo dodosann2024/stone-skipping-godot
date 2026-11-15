@@ -1,11 +1,16 @@
 extends Node
-## Plants on SceneTree.process_frame — after every node's _process — so nothing
-## else can slide the ankles before the frame is observed / drawn.
+## Plants on SceneTree.process_frame — after every node's _process (including
+## main's body interpolation) — then writes contact blobs / AO from the same
+## rendered sole positions so the dark disc never trails a shoe-length behind.
 
 var frames := 0
 var last_gap_cm := 0.0
 var last_ankle_y := 0.0
 var last_hit_y := 0.0
+## World XZ of hip blob after the late write (for CDP blob↔sole asserts).
+var last_blob_xz := Vector2.ZERO
+## Midpoint of stance soles after plant (world).
+var last_stance_mid := Vector3.ZERO
 
 
 func _ready() -> void:
@@ -19,6 +24,16 @@ func _on_process_frame() -> void:
 	if b == null or not b.has_method("_reassert_foot_plants"):
 		return
 	b._reassert_foot_plants()
+	# Contact shadow from the same post-IK soles the mesh just drew.
+	if b.has_method("_update_blob"):
+		b._update_blob()
+	_record_blob(b)
+	# Terrain foot-AO + CDP __ground from the same rendered soles.
+	var main := b.get_parent()
+	if main != null and main.has_method("_upload_foot_ao"):
+		main._upload_foot_ao()
+	if main != null and main.has_method("_export_ground_probe"):
+		main._export_ground_probe()
 	if b.skel == null:
 		return
 	var bi: int = b.skel.find_bone("mixamorig_LeftFoot")
@@ -39,3 +54,30 @@ func _on_process_frame() -> void:
 		last_ankle_y = ank.y
 		last_gap_cm = (ank.y - b.sole_offset - last_hit_y) * 100.0
 		b.set_meta("late_ankle_xz", Vector2(ank.x, ank.z))
+		if b.has_method("_update_blob"):
+			b._update_blob()
+			_record_blob(b)
+
+
+func _record_blob(b: Node) -> void:
+	if b.blob != null and b.blob.visible:
+		var wp: Vector3 = b.blob.global_position
+		last_blob_xz = Vector2(wp.x, wp.z)
+	else:
+		# Prefer average of visible foot discs.
+		var acc := Vector2.ZERO
+		var n := 0
+		for d in [b.blob_l, b.blob_r]:
+			if d != null and d.visible:
+				var p: Vector3 = d.global_position
+				acc += Vector2(p.x, p.z)
+				n += 1
+		last_blob_xz = acc / float(n) if n > 0 else Vector2.ZERO
+	var mids: Array = b.stance_sole_midpoints() if b.has_method("stance_sole_midpoints") else []
+	if mids.size() > 0:
+		var s: Vector3 = mids[0]
+		if mids.size() > 1:
+			s = (mids[0] as Vector3).lerp(mids[1] as Vector3, 0.5)
+		last_stance_mid = s
+	b.set_meta("late_blob_xz", last_blob_xz)
+	b.set_meta("late_stance_mid", last_stance_mid)

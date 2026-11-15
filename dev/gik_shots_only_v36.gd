@@ -1,5 +1,5 @@
 extends SceneTree
-## Low side-on close-ups via the game's fixed-cam pipeline (so explore follow can't yank).
+## Low side-on close-ups — BOTH feet + ground contact must be in frame.
 ##   DISPLAY=:1 godot --path . --fixed-fps 60 -s res://dev/gik_shots_only_v36.gd
 
 const OUT := "screenshots/v36"
@@ -11,49 +11,35 @@ func _initialize() -> void:
 
 
 func _hide_hud() -> void:
-	for n in ["HUD", "TitleLabel", "HintLabel", "Banner", "RecordLabel"]:
-		var node = m.find_child(n, true, false)
-		if node and node is CanvasItem:
-			(node as CanvasItem).visible = false
-	if m.joy:
-		m.joy.visible = false
-		if m.joy.get_parent() and m.joy.get_parent() is CanvasItem:
-			(m.joy.get_parent() as CanvasItem).visible = false
-	# Walk common UI roots.
 	for c in m.get_children():
 		if c is CanvasLayer:
-			for ch in c.get_children():
-				if ch is Control and ch != m.joy:
-					var t := str(ch.name).to_lower()
-					if "btn" in t or "title" in t or "hint" in t or "record" in t or "banner" in t:
-						ch.visible = false
+			c.visible = false
 
 
-func _shot(name: String, side_sign: float) -> void:
+func _shot(name: String, yaw_off: float, pitch: float, dist: float) -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://" + OUT))
 	_hide_hud()
 	m.cam_fixed = true
 	m.demo_mode = false
-	# Side-on: yaw = face ± 90°, nearly horizontal pitch, close dolly.
-	m.fix_target = m.player.global_position + Vector3(0, 0.48, 0)
-	m.fix_yaw = m.face_yaw + PI * 0.5 * side_sign
-	m.fix_pitch = 0.10
-	m.fix_dist = 2.6
+	m.boy._reassert_foot_plants()
+	m.boy._update_blob()
+	# Aim just above the soles — both feet + ground contact must stay in frame.
+	m.fix_target = m.player.global_position + Vector3(0, 0.22, 0)
+	m.fix_yaw = m.face_yaw + yaw_off
+	m.fix_pitch = pitch
+	m.fix_dist = dist
 	m.cam_target = m.fix_target
 	m.cam_yaw = m.fix_yaw
 	m.cam_pitch = m.fix_pitch
 	m.cam_dist = m.fix_dist
-	m._apply_camera(1.0)
-	for _i in 3:
+	for _i in 6:
+		m._apply_camera(1.0)
 		await process_frame
-		# Re-assert framing each frame (orbit decay shouldn't drift).
-		m.fix_target = m.player.global_position + Vector3(0, 0.48, 0)
+		m.fix_target = m.player.global_position + Vector3(0, 0.22, 0)
 		m.cam_target = m.fix_target
-		m.cam_yaw = m.fix_yaw
-		m.cam_pitch = m.fix_pitch
-		m.cam_dist = m.fix_dist
 		m._apply_camera(1.0)
 	m.boy._reassert_foot_plants()
+	m.boy._update_blob()
 	await process_frame
 	m._apply_camera(1.0)
 	var path := "%s/%s.png" % [OUT, name]
@@ -75,10 +61,11 @@ func _place(xz: Vector2, yaw: float) -> void:
 	if m.boy.model:
 		m.boy.model.position = m.boy.model_base
 	m.boy._reassert_foot_plants()
+	m.boy._update_blob()
 
 
 func _go() -> void:
-	DisplayServer.window_set_size(Vector2i(780, 844))
+	DisplayServer.window_set_size(Vector2i(900, 844))
 	var ps := load("res://main.tscn") as PackedScene
 	m = ps.instantiate()
 	root.add_child(m)
@@ -95,46 +82,62 @@ func _go() -> void:
 		await process_frame
 	var ds: float = m.island.dock_start_z
 
+	# Uphill — idle double-support so both feet plant, then low side-on.
 	_place(Vector2(2.6, ds + 6.5), -0.4)
 	for _i in 8:
 		await process_frame
 	if m.joy:
 		m.joy.value = Vector2(0.0, -0.9)
-	for _i in 50:
+	for _i in 40:
+		await process_frame
+	if m.joy:
+		m.joy.value = Vector2.ZERO
+	for _i in 30:
 		await process_frame
 	m.boy._reassert_foot_plants()
-	await _shot("gik_uphill", 1.0)
+	await _shot("gik_uphill", PI * 0.5, 0.06, 3.2)
 
+	# Downhill
 	if m.joy:
 		m.joy.value = Vector2(0.0, 0.9)
-	for _i in 55:
+	for _i in 50:
+		await process_frame
+	if m.joy:
+		m.joy.value = Vector2.ZERO
+	for _i in 30:
 		await process_frame
 	m.boy._reassert_foot_plants()
-	await _shot("gik_downhill", 1.0)
+	await _shot("gik_downhill", PI * 0.5, 0.06, 3.2)
 
-	_place(Vector2(2.8, ds + 6.0), 0.0)
+	# Cross-slope — face along contour, camera from downhill side; full body + feet.
+	_place(Vector2(3.0, ds + 5.8), 0.0)
 	for _i in 8:
 		await process_frame
 	if m.joy:
-		m.joy.value = Vector2(0.9, 0.0)
-	for _i in 45:
-		await process_frame
-	m.boy._reassert_foot_plants()
-	await _shot("gik_cross", 1.0)
-
-	_place(Vector2(0.25, ds - 0.5), PI)
-	for _i in 12:
-		await process_frame
-	if m.joy:
-		m.joy.value = Vector2(0.0, -0.4)
+		m.joy.value = Vector2(0.85, 0.1)
 	for _i in 35:
 		await process_frame
 	if m.joy:
 		m.joy.value = Vector2.ZERO
-	for _i in 10:
+	for _i in 30:
 		await process_frame
 	m.boy._reassert_foot_plants()
-	await _shot("gik_dock_lip", 1.0)
+	await _shot("gik_cross", PI * 0.52, 0.05, 3.6)
+
+	# Dock lip — centered on planks, both feet + deck contact, low side-on.
+	_place(Vector2(0.0, ds - 0.6), PI)
+	for _i in 20:
+		await process_frame
+	if m.joy:
+		m.joy.value = Vector2(0.0, -0.25)
+	for _i in 20:
+		await process_frame
+	if m.joy:
+		m.joy.value = Vector2.ZERO
+	for _i in 35:
+		await process_frame
+	m.boy._reassert_foot_plants()
+	await _shot("gik_dock_lip", PI * 0.55, 0.08, 3.4)
 
 	print("GIK_SHOTS_DONE")
 	quit(0)
