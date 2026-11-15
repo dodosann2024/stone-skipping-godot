@@ -8,6 +8,10 @@ var _clear_lift := 0.0
 var _seen_stick := false
 var _stick_release_age := 0.0
 var _release_wide := false
+var _manual_orbit := false
+var _since_orbit := 10.0
+var _coast := 0.0
+var _ahead := 0.10
 
 
 func _note_stick(held: bool, delta: float) -> bool:
@@ -87,7 +91,10 @@ func _explore_orbit(rel: Vector2) -> void:
 	var k: float = 5.0 / max(min(vs.x, vs.y), 200.0)
 	# Accumulate; applied once in _update_camera so multi-event ProMotion frames don't stutter.
 	m.orbit_pending += Vector2(-rel.x * k, rel.y * k * 0.6)
-	m.orbit_vel = Vector2(-rel.x * k * 12.0, rel.y * k * 8.0)
+	m.orbit_vel = Vector2(-rel.x * k * 8.0, rel.y * k * 5.0)
+	_manual_orbit = true
+	_since_orbit = 0.0
+	_coast = 0.40
 	if m.mode == 3:
 		m.rest_touch_dragged = true
 	m.last_drag = m.gt
@@ -272,7 +279,15 @@ func _explore_cam() -> Array:
 	var hy = 1.18 if m.boy.meta.get("tripo", false) else 1.06
 	var base = m.player.global_position + Vector3(0, hy, 0)
 	var ahead_dir = Vector3(-sin(m.face_yaw), 0.0, -cos(m.face_yaw))
-	var ahead_m = 0.10
+	# A short look-ahead while actually running. It eases back as soon as the
+	# stick lifts, so the 0.8 s release frame is not a crop.
+	var dt_a := maxf(m.get_process_delta_time(), 1.0 / 120.0)
+	var want_ahead := 0.10
+	var stick_live: bool = m.joy != null and m.joy.value.length() > 0.20
+	if m.cur_speed > 1.35 and stick_live:
+		want_ahead = 0.18
+	_ahead = lerpf(_ahead, want_ahead, 1.0 - exp(-dt_a * 5.0))
+	var ahead_m := _ahead
 	var t = base + ahead_dir * ahead_m
 	# ex_dist is the user zoom preference. The floor is the default whole-body
 	# frame; release eases back to this, it does not dolly in.
@@ -781,8 +796,21 @@ func _update_camera(delta: float) -> void:
 		var orbiting_now = m.dragging or m.orbit_pending.length_squared() > 1e-10 or m._orbit_ease > 0.05
 		var stick_mag = m.joy.value.length() if m.joy else 0.0
 		_release_wide = _note_stick(stick_mag > 0.08, delta)
-		# Stick / walk: keep desired yaw locked behind the boy (no lag off-frame).
-		if not orbiting_now and (m.cur_speed > 0.12 or stick_mag > 0.08):
+		if orbiting_now:
+			_since_orbit = 0.0
+			_manual_orbit = true
+		else:
+			_since_orbit += delta
+		# After a finger orbit, coast, then ease back behind travel. No orbit
+		# (the review drag) still locks behind the boy immediately.
+		if _manual_orbit and _coast > 0.0 and not orbiting_now:
+			_coast = maxf(_coast - delta, 0.0)
+			m.ex_yaw += m.orbit_vel.x * delta
+			m.orbit_vel *= exp(-delta * 5.0)
+		elif _manual_orbit and _since_orbit > 1.5 and not orbiting_now:
+			m.ex_yaw = lerp_angle(m.ex_yaw, m.face_yaw, 1.0 - exp(-delta * 2.0))
+			m.orbit_vel = Vector2.ZERO
+		elif not _manual_orbit and not orbiting_now and (m.cur_speed > 0.12 or stick_mag > 0.08):
 			m.ex_yaw = m.face_yaw
 		want = _explore_cam()
 		if orbiting_now:
@@ -906,7 +934,8 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 		m._cam_arm_want = 1.0 if released else maxf(m._cam_arm_want, ARM_FLOOR)
 	# Pull-in smoothed; recover slower so clearance doesn't ping-pong.
 	# Release opens the arm inside the 0.8 s window (rate 8 ≈ 0.4 s).
-	var arm_rate = 2.6 if orbiting else (3.0 if m._cam_arm_want < m._cam_arm_k - 0.01 else 1.8)
+	# Pull-in against a tree eases. A fast shrink was the pop.
+	var arm_rate = 2.6 if orbiting else (1.35 if m._cam_arm_want < m._cam_arm_k - 0.01 else 1.8)
 	if released and m._cam_arm_want > m._cam_arm_k - 0.001:
 		arm_rate = 8.0
 	m._cam_arm_k = lerpf(m._cam_arm_k, m._cam_arm_want, 1.0 - exp(-delta * arm_rate))
@@ -1084,6 +1113,16 @@ func _apply_camera(delta: float = 1.0 / 60.0) -> void:
 	m._cam_pos_init = true
 	if not pos.is_finite() or not look.is_finite() or pos.distance_squared_to(look) < 1e-6:
 		pos = look + Vector3(0.0, 1.2, 3.5)
+	# Side stills (?side=1). The slope lift looks down past the boy and he
+	# leaves the bottom of the frame on a run-stop. Pin the lens to his chest.
+	if m._shot_side and m.mode == 0 and m.player != null:
+		var focus: Vector3 = m.player.global_position + Vector3(0.0, 0.82, 0.0)
+		var yaw_s: float = float(m.face_yaw) + PI * 0.5
+		var pitch_s: float = 0.18
+		var dist_s: float = 6.6
+		pos = focus + Vector3(sin(yaw_s) * cos(pitch_s), sin(pitch_s), cos(yaw_s) * cos(pitch_s)) * dist_s
+		pos.y = maxf(pos.y, m._surface(pos.x, pos.z) + 0.55)
+		look = focus
 	m.camera.global_position = pos
 	var up = Vector3.UP
 	var to_look = (look - pos).normalized()

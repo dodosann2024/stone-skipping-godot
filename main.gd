@@ -102,6 +102,8 @@ var demo_nocut := false   # showcase stills of a prop: no see-through cut-out to
 var ex_yaw := 0.0
 ## Debug stills only (?side=1). View yaw, not the stick yaw.
 var _shot_side := false
+## ?dither=0 turns the screen-door cutout off for an on/off proof still.
+var _dither_off := false
 # slightly telephoto follow camera, pitched down enough to see eyes + smile under the hat brim
 var ex_pitch := 0.26
 var ex_dist := 4.5
@@ -488,6 +490,7 @@ func _build_player() -> void:
 	# Default view: 3/4-front so the Tripo face is readable (drag still orbits 360°)
 	ex_yaw = face_yaw + PI + 0.45
 	_shot_side = _opt("side") == "1"
+	_dither_off = _opt("dither") == "0"
 	# Higher default pitch: low follow looking *up* a grass slope hid the legs
 	# behind the hillside (gnd 0 cm but shorts-level silhouette). ~0.66 clears soles.
 	# Slightly lower pitch + enough arm so head/hat stay inside the top margin
@@ -957,7 +960,10 @@ func _on_footstep(side: int, running: bool) -> void:
 	var p := player.position
 	var kind := _surface_kind(p.x, p.z)
 	var i := rng.randi() % 2
-	var vol := -9.0 if running else -14.0
+	# Sit just under the wave bed so a step reads, and a run is closer to it.
+	var wave := amb.volume_db if amb != null and audio_started else -8.0
+	var vol := (wave - 1.5) if running else (wave - 4.5)
+	vol = clampf(vol, -16.0, -6.0)
 	match kind:
 		"wood":
 			vol += 1.5
@@ -2231,7 +2237,7 @@ func _process(delta: float) -> void:
 		dbg.gnd_err = dbg_gnd_err
 		dbg.max_step = dbg_max_step
 		dbg.end_process()
-		dbg.note_frame(delta, mq.scale_3d if mq else 1.0, mq.tier_name() if mq else "?")
+		dbg.note_frame(delta, mq.scale_3d if mq else 1.0, mq.tier_name() if mq else "?", cur_speed > 0.12)
 
 func _physics_process(delta: float) -> void:
 	if dbg:
@@ -2400,7 +2406,7 @@ func _mix_cam_blend() -> void:
 func _apply_foliage_cutout() -> void:
 	if foliage == null or island == null:
 		return
-	if demo_nocut:
+	if demo_nocut or _dither_off:
 		foliage.apply(island, camera.global_position if camera else Vector3.ZERO, Vector3(0, -100, 0), Vector3(0, -100, 0), 0.0, false)
 		return
 	var head := player.global_position + Vector3(0, 1.25, 0)

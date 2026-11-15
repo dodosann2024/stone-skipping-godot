@@ -127,8 +127,12 @@ func _polish_gait(delta: float) -> void:
 	if moving:
 		var amp = lerpf(0.35, 0.55, b.run_k) * b.move_w
 		var upright = 0.035 + 0.05 * b.run_k + absf(b.turn_lean) * 0.10
-		b._pose_add("mixamorig_Spine", Vector3(-upright * 0.4, b.turn_lean * 0.14, b.turn_lean * 0.20), b.move_w * 0.55)
-		b._pose_add("mixamorig_Spine1", Vector3(-upright * 0.28, b.turn_lean * 0.10, 0.0), b.move_w * 0.5)
+		# Start leans the chest into the first steps. Slope lean pitches with the grade.
+		var pitch = upright * 0.4 + b.start_lean + maxf(b.slope_lean, 0.0) * 0.85
+		if b._settle_left > 0.0:
+			pitch += 0.06 * clampf(b._settle_left / 0.28, 0.0, 1.0)
+		b._pose_add("mixamorig_Spine", Vector3(-pitch, b.turn_lean * 0.14, b.turn_lean * 0.20), b.move_w * 0.55)
+		b._pose_add("mixamorig_Spine1", Vector3(-pitch * 0.65, b.turn_lean * 0.10, 0.0), b.move_w * 0.5)
 		var look_y = clampf(b.turn_ahead, -0.35, 0.35) * 0.4
 		b._pose_add("mixamorig_Head", Vector3(upright * 0.15, look_y, 0.0), b.move_w * 0.4)
 		var s = sin(b.phase * TAU)
@@ -207,8 +211,13 @@ func _tick(delta: float) -> void:
 		# walking footfalls only when translating after the spot-turn grace window
 		if not b.pivoting and b.pivot_grace <= 0.0:
 			var side = 0 if b.phase < 0.5 else 1
-			if side != b._prev_phase_side and b.move_w > 0.5 and dist > 0.001:
+			# Planted-sole events own the sound once FootIK is measuring.
+			var ik_owns: bool = b.foot_ik != null and b.foot_ik.pose_ready
+			if not ik_owns and side != b._prev_phase_side and b.move_w > 0.5 and dist > 0.001:
 				b.footstep.emit(side, b.run_k > 0.5)
+				b.foot_flat.emit(side)
+				b.steps_taken += 1
+			elif ik_owns and side != b._prev_phase_side and b.move_w > 0.5:
 				b.foot_flat.emit(side)
 				b.steps_taken += 1
 			b._prev_phase_side = side

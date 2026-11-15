@@ -35,6 +35,8 @@ var _route_float := 0
 var _route_pelvis_n := 0
 var _route_scored := 0
 var _route_seen_stop := false
+var _route_slide_max := 0.0
+var _route_slide_n := 0
 var _present_phys := 0
 
 
@@ -134,6 +136,11 @@ func physics_step(delta: float) -> void:
 	var wish_yaw = atan2(-wish.x, -wish.z)
 	var need = wrapf(wish_yaw - m.face_yaw, -PI, PI) if mag > 0.05 else 0.0
 	var spd_now = m.move_vel.length()
+	# A reversed stick pivots in place instead of snapping the facing around.
+	if mag > 0.28 and absf(need) > 2.05 and spd_now > 0.40 and not m.spot_turning:
+		m.spot_turning = true
+		m.spot_goal = wish_yaw
+		m.spot_rate = 0.0
 	# Spot-turn only from a near stop. A real stick push walks immediately.
 	if mag > 0.05 and mag < 0.38 and Boy.wants_spot_turn(need, spd_now):
 		m.spot_turning = true
@@ -148,19 +155,35 @@ func physics_step(delta: float) -> void:
 			m.spot_turning = false
 			m.spot_rate = 0.0
 	if mag > 0.05 and not m.spot_turning:
-		var walk_u = clampf((mag - 0.06) / 0.78, 0.0, 1.0)
-		walk_u = walk_u * walk_u * (3.0 - 2.0 * walk_u)
-		var spd = RUN_SPEED if running else lerpf(0.42, WALK_MAX, walk_u)
+		# Full deflection stays a full run (the review drag lives there).
+		# The middle of the stick is a walk, not a step up to cruise.
+		var shaped: float = 0.0
+		if mag > 0.06:
+			shaped = pow(clampf((mag - 0.06) / 0.94, 0.0, 1.0), 0.85)
+		var walk_u: float = shaped * shaped * (3.0 - 2.0 * shaped)
+		var spd: float = RUN_SPEED if running else lerpf(0.48, WALK_MAX, walk_u)
 		if m.wading:
 			spd *= 0.6
+		# Uphill eases off. The review drag is a mild rise, so the cut is small.
+		var ahead := Vector3(
+			m._body_pos.x - sin(m.face_yaw) * 0.75,
+			m._body_pos.y,
+			m._body_pos.z - cos(m.face_yaw) * 0.75)
+		var grade: float = height(ahead.x, ahead.z, m._body_pos.y) - height(m._body_pos.x, m._body_pos.z, m._body_pos.y)
+		if grade > 0.10:
+			spd *= clampf(1.0 - (grade - 0.10) * 0.28, 0.90, 1.0)
+		elif grade < -0.10:
+			spd *= clampf(1.0 + (-grade - 0.10) * 0.10, 1.0, 1.05)
+		if m.boy != null:
+			m.boy.slope_lean = lerpf(m.boy.slope_lean, clampf(grade * 0.45, -0.12, 0.16), 1.0 - exp(-delta * 4.0))
 		target_v = wish.normalized() * spd
 		m.settle_t = 0.0
-	elif m.settle_t < 0.6 and not m.spot_turning:
+	elif m.settle_t < 0.28 and not m.spot_turning:
 		if not m.boy.settling() and m.settle_t <= 0.0:
-			m.boy.begin_settle(0.42)
+			m.boy.begin_settle(0.28)
 		if m.boy.settling():
 			m.settle_t += delta
-			target_v = Vector3(-sin(m.face_yaw), 0, -cos(m.face_yaw)) * 0.40
+			target_v = Vector3(-sin(m.face_yaw), 0, -cos(m.face_yaw)) * 0.22
 		else:
 			m.settle_t = 1.0
 	var s = m.move_vel.length()
@@ -175,17 +198,14 @@ func physics_step(delta: float) -> void:
 		var mt: Array = Boy.move_turn(m.face_yaw, atan2(-target_v.x, -target_v.z), s, delta)
 		m.face_yaw = mt[0]
 		spd_t *= float(mt[1])
-	var acc: float
-	if spd_t > s:
-		if s < 0.35:
-			acc = 3.6
-		elif s < WALK_MAX * 0.9:
-			acc = 2.6
-		else:
-			acc = 1.25
-	else:
-		acc = 5.2 if s > WALK_MAX else 6.0
-	s = move_toward(s, spd_t, acc * delta)
+	# One smooth ramp. 0.70 s to speed matches the old stepped accel over the
+	# review drag, without the kink at a walk and a run. Braking is shorter
+	# so a lifted stick does not skate.
+	var smooth: float = 0.70 if spd_t > s else 0.16
+	s = lerpf(s, spd_t, 1.0 - exp(-delta / smooth))
+	if m.boy != null:
+		var launch: float = clampf((spd_t - s) / 1.1, 0.0, 1.0) if spd_t > s + 0.12 else 0.0
+		m.boy.start_lean = lerpf(m.boy.start_lean, launch * 0.14, 1.0 - exp(-delta * 6.0))
 	m.move_vel = Vector3(-sin(m.face_yaw), 0, -cos(m.face_yaw)) * s
 	var from: Vector3 = m._body_pos if m._body_sync else m.player.position
 	var wish_step = m.move_vel * delta
@@ -343,6 +363,10 @@ func _route_note(to: Vector3, speed: float) -> void:
 	if _route_n > 60:
 		_route_pelvis_max = maxf(_route_pelvis_max, pelvis_step_m)
 	var fk = m.boy.foot_ik if m.boy != null else null
+	if fk != null and fk.pose_ready and _route_n > 40 and fk.sole_slide_m > 0.0:
+		_route_slide_max = maxf(_route_slide_max, fk.sole_slide_m)
+		if fk.sole_slide_m > 0.01:
+			_route_slide_n += 1
 	if fk == null or not fk.pose_ready or _route_n < 40:
 		return
 	var gnd: float = fk.mesh_gap_min * 100.0
@@ -382,10 +406,11 @@ func _route_finish(ok_dist: bool) -> void:
 	for k in _route_kinds.keys():
 		kinds += str(k) + ","
 	var float_pct := 100.0 * float(_route_float) / maxf(float(_route_scored), 1.0)
-	print("ROUTE_DONE m=%.1f ok=%s kinds=%s knee_max=%.0f len_min=%.2f gnd_min=%.1f at=%.1f,%.1f,%.2f pelvis=%.1f bad=%d bury=%d float=%d float_pct=%.2f scored=%d pelvis_n=%d stop=%s" % [
+	print("ROUTE_DONE m=%.1f ok=%s kinds=%s knee_max=%.0f len_min=%.2f gnd_min=%.1f at=%.1f,%.1f,%.2f pelvis=%.1f bad=%d bury=%d float=%d float_pct=%.2f scored=%d pelvis_n=%d stop=%s slide_max=%.2f slide_n=%d" % [
 		_route_m, ok_dist and _route_bury == 0 and float_pct <= 1.0, kinds, _route_knee_max, _route_len_min, _route_gnd_min,
 		_route_worst.x, _route_worst.z, _route_worst.y,
-		_route_pelvis_max * 100.0, _route_bad, _route_bury, _route_float, float_pct, _route_scored, _route_pelvis_n, _route_seen_stop])
+		_route_pelvis_max * 100.0, _route_bad, _route_bury, _route_float, float_pct, _route_scored, _route_pelvis_n, _route_seen_stop,
+		_route_slide_max * 100.0, _route_slide_n])
 	host.get_tree().quit()
 
 

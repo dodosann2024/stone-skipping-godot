@@ -5,6 +5,9 @@ extends CanvasLayer
 
 const HIST := 120
 const WINDOW_S := 5.0
+const WALK_CAP := 1800
+const WALK_WINDOW := 30.0
+const FRAME_BUDGET := 16.7
 ## Logical px: clear title + 最高纪录 on tall phones (safe inset + two lines).
 const PANEL_Y := 156.0
 const PANEL_W := 220.0
@@ -19,6 +22,10 @@ var frame_ms := PackedFloat32Array()
 var frame_t := PackedFloat32Array()
 var hist_i := 0
 var hist_n := 0
+var walk_ms := PackedFloat32Array()
+var walk_t := PackedFloat32Array()
+var walk_i := 0
+var walk_n := 0
 var phys_ticks_frame := 0
 var process_ms := 0.0
 var physics_ms := 0.0
@@ -41,6 +48,8 @@ func setup(font: Font = null) -> void:
 	ui_font = font if font else load("res://fonts/ui.otf")
 	frame_ms.resize(HIST)
 	frame_t.resize(HIST)
+	walk_ms.resize(WALK_CAP)
+	walk_t.resize(WALK_CAP)
 	root = Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -134,7 +143,7 @@ func end_physics() -> void:
 	phys_ticks_frame += 1
 
 
-func note_frame(delta: float, scale_3d: float, tier: String) -> void:
+func note_frame(delta: float, scale_3d: float, tier: String, walking: bool = false) -> void:
 	render_scale = scale_3d
 	quality_tier = tier
 	var ms := delta * 1000.0
@@ -143,11 +152,55 @@ func note_frame(delta: float, scale_3d: float, tier: String) -> void:
 	frame_t[hist_i] = now
 	hist_i = (hist_i + 1) % HIST
 	hist_n = mini(hist_n + 1, HIST)
+	if walking:
+		walk_ms[walk_i] = ms
+		walk_t[walk_i] = now
+		walk_i = (walk_i + 1) % WALK_CAP
+		walk_n = mini(walk_n + 1, WALK_CAP)
 	var vp := get_viewport().get_visible_rect().size
 	screen_px = Vector2i(int(vp.x), int(vp.y))
 	_refresh_label()
 	graph.queue_redraw()
 	phys_ticks_frame = 0
+
+
+func _window_samples(ms_buf: PackedFloat32Array, t_buf: PackedFloat32Array, n: int, head: int, cap: int, window: float) -> Array[float]:
+	var samples: Array[float] = []
+	var now := Time.get_ticks_msec() * 0.001
+	for k in n:
+		var i := (head - 1 - k + cap * 4) % cap
+		if now - t_buf[i] > window:
+			break
+		samples.append(ms_buf[i])
+	return samples
+
+
+func _percentile(samples: Array[float], q: float) -> float:
+	if samples.is_empty():
+		return 0.0
+	var i := int(clampf(float(samples.size() - 1) * q, 0.0, float(samples.size() - 1)))
+	return samples[i]
+
+
+func walk_stats() -> Dictionary:
+	var samples := _window_samples(walk_ms, walk_t, walk_n, walk_i, WALK_CAP, WALK_WINDOW)
+	samples.sort()
+	var dropped := 0
+	var missed := 0
+	for ms in samples:
+		if ms > 20.0:
+			dropped += 1
+		var slots := int(floor(ms / FRAME_BUDGET))
+		if slots > 1:
+			missed += slots - 1
+	return {
+		"n": samples.size(),
+		"p50": _percentile(samples, 0.50),
+		"p95": _percentile(samples, 0.95),
+		"p99": _percentile(samples, 0.99),
+		"dropped": dropped,
+		"missed": missed,
+	}
 
 
 func p_stats() -> Vector3:
@@ -179,16 +232,22 @@ func _refresh_label() -> void:
 	var gpu := gpu_renderer
 	if gpu.length() > 42:
 		gpu = gpu.substr(0, 40) + "…"
+	var w := walk_stats()
 	lbl.text = (
 		"FPS %.0f  %.1f ms\n"
 		+ "p50 %.1f  p95 %.1f  max %.1f\n"
+		+ "walk30 p50 %.1f p95 %.1f p99 %.1f\n"
+		+ "walk30 n %d drop %d miss %d\n"
 		+ "phys/f %d  proc %.1f  phys %.1f\n"
 		+ "gnd %.1fcm  maxΔ %.1fcm\n"
 		+ "scale %.2f  tier %s\n"
 		+ "draws %d  prim %d\n"
 		+ "px %dx%d  dpr %.2f\n"
 		+ "%s"
-	) % [fps, last_ms, st.x, st.y, st.z, phys_ticks_frame, process_ms, physics_ms,
+	) % [fps, last_ms, st.x, st.y, st.z,
+		float(w["p50"]), float(w["p95"]), float(w["p99"]),
+		int(w["n"]), int(w["dropped"]), int(w["missed"]),
+		phys_ticks_frame, process_ms, physics_ms,
 		gnd_err * 100.0, max_step * 100.0,
 		render_scale, quality_tier, dc, prim, screen_px.x, screen_px.y, dpr, gpu]
 
@@ -198,17 +257,22 @@ func compact_text() -> String:
 	var vp := get_viewport()
 	var dc := vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
 	var prim := vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_PRIMITIVES_IN_FRAME)
+	var w := walk_stats()
 	return (
-		"v32 debug\n"
+		"v40 debug\n"
 		+ "fps=%.0f p50=%.1f p95=%.1f max=%.1f\n"
+		+ "walk_30s n=%d p50=%.2f p95=%.2f p99=%.2f dropped=%d missed_slots=%d\n"
 		+ "phys/f=%d proc_ms=%.1f phys_ms=%.1f\n"
 		+ "gnd_err_cm=%.2f max_step_cm=%.2f\n"
 		+ "scale=%.2f tier=%s\n"
 		+ "draws=%d prim=%d px=%dx%d dpr=%.2f\n"
-		+ "gpu=%s"
-	) % [Engine.get_frames_per_second(), st.x, st.y, st.z, phys_ticks_frame, process_ms, physics_ms,
+		+ "gpu=%s\n"
+		+ "budget_ms=%.1f note=walk_30s counts frames with speed>0.12 over the last 30s; dropped=frames>20ms; missed_slots=floor(ms/16.7)-1"
+	) % [Engine.get_frames_per_second(), st.x, st.y, st.z,
+		int(w["n"]), float(w["p50"]), float(w["p95"]), float(w["p99"]), int(w["dropped"]), int(w["missed"]),
+		phys_ticks_frame, process_ms, physics_ms,
 		gnd_err * 100.0, max_step * 100.0,
-		render_scale, quality_tier, dc, prim, screen_px.x, screen_px.y, dpr, gpu_renderer]
+		render_scale, quality_tier, dc, prim, screen_px.x, screen_px.y, dpr, gpu_renderer, FRAME_BUDGET]
 
 
 func _on_copy() -> void:

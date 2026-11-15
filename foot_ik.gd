@@ -43,6 +43,12 @@ var _shin_rest: Array[float] = [0.0, 0.0]
 var plant_hit_y: Array[float] = [0.0, 0.0]
 var plant_ankle_xz: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]
 var stance_locked: Array[bool] = [false, false]
+## Horizontal travel of a planted sole since the previous frame. The harness
+## keeps this under 1 cm. Swing feet are not counted.
+var sole_slide_m := 0.0
+var _prev_sole_xz: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]
+var _prev_sole_ok: Array[bool] = [false, false]
+var _was_plant: Array[bool] = [false, false]
 var pose_path := "skeleton_modifier_set_bone_pose"
 var _hip_lift := 0.0
 var _ready_mesh := false
@@ -184,6 +190,7 @@ func _clear_leg_overrides(skel: Skeleton3D) -> void:
 
 func _solve(skel: Skeleton3D, delta: float) -> void:
 	var body_y := boy.global_position.y
+	sole_slide_m = 0.0
 	# How far the animated soles already sit under the collision. Lift the hips
 	# (this modifier only) so the legs can reach, ≤2.9 cm this frame.
 	# Hip lift only when the whole body is sunk (legs cannot reach). A centimetre
@@ -260,6 +267,34 @@ func _solve(skel: Skeleton3D, delta: float) -> void:
 			var got := _world_xf(skel, _foot_bi[side]).origin.y
 			if absf(got - want_y) > 0.008:
 				_rotate_knee(skel, side, nudge)
+		# Planted sole: hold it to the ground. A swing foot is free.
+		var clear_plant := stance and this_low and absf(sole_y[0] - sole_y[1]) > 0.035
+		var foot_now := _world_xf(skel, _foot_bi[side]).origin
+		var cur_xz := Vector2(foot_now.x, foot_now.z)
+		if clear_plant and _prev_sole_ok[side]:
+			var step := cur_xz - _prev_sole_xz[side]
+			var slid := step.length()
+			if slid > 0.009:
+				var held := _prev_sole_xz[side] + step.normalized() * 0.009
+				foot_now.x = held.x
+				foot_now.z = held.y
+				var held_xf := _world_xf(skel, _foot_bi[side])
+				held_xf.origin.x = held.x
+				held_xf.origin.z = held.y
+				_set_world(skel, _foot_bi[side], held_xf)
+				cur_xz = held
+				slid = 0.009
+			sole_slide_m = maxf(sole_slide_m, slid)
+		elif not clear_plant:
+			_prev_sole_ok[side] = false
+		if clear_plant:
+			_prev_sole_xz[side] = cur_xz
+			_prev_sole_ok[side] = true
+		var planted := clear_plant and gap_now < 0.025 and gap_now > -0.02
+		if planted and not _was_plant[side] and boy != null and boy.has_signal("footstep"):
+			var running: bool = float(boy.get("move_speed")) > 1.35
+			boy.emit_signal("footstep", side, running)
+		_was_plant[side] = planted
 
 
 ## Swing the foot by rotating the knee only. Bone lengths stay the animated
