@@ -783,19 +783,21 @@ func ray_ground(from: Vector3, to: Vector3, exclude: Array = []) -> Dictionary:
 
 ## Height of the real collision surface under (x,z).
 ## Always pass the walker RID in `exclude` so the body capsule is not the hit.
-## Pier miss → DECK_Y (deck boxes cover the tip). Never drop walkable rays to
-## analytic sea ground_h (that produced 2–3 m false FLOATs at the dock tip).
+## Pier miss → DECK_Y. Walk gameplay must use collision_h_walk (no analytic).
 func collision_h(x: float, z: float, hint_y: float = 10.0, exclude: Array = []) -> float:
+	return collision_h_walk(x, z, hint_y, exclude)
+
+
+## Walk / foot / body Y — render-mesh collision only. Never analytic ground_h
+## (that produced 2–3 m false FLOATs at the dock tip and lied vs the picture).
+func collision_h_walk(x: float, z: float, hint_y: float = 10.0, exclude: Array = []) -> float:
 	var top := maxf(hint_y, DECK_Y + 2.0) + 4.0
 	var hit := ray_ground(Vector3(x, top, z), Vector3(x, -6.0, z), exclude)
 	if hit.has("position"):
 		return float(hit.position.y)
-	# Second cast from higher — catches thin gaps at deck / sand seams.
 	hit = ray_ground(Vector3(x, top + 8.0, z), Vector3(x, -8.0, z), exclude)
 	if hit.has("position"):
 		return float(hit.position.y)
-	# Pier band miss: deck boxes cover the tip — never fall through to sea.
-	# Stay on the dock footprint (not beachside of dock_start) so lip sand uses tris.
 	if absf(x) < 5.0 and z <= dock_start_z + 0.35 and z >= dock_end_z - 3.0:
 		return DECK_Y
 	var sd := shore_d(x, z)
@@ -808,7 +810,8 @@ func collision_h(x: float, z: float, hint_y: float = 10.0, exclude: Array = []) 
 				if hit.has("position") and float(hit.position.y) > -0.4:
 					return float(hit.position.y)
 		return hint_y
-	return ground_h(x, z)
+	# Off walkable band: keep last hint (do NOT drop to analytic sea).
+	return hint_y
 
 
 ## Normal of the collision surface under (x,z), or UP if miss.

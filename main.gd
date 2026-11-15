@@ -24,6 +24,10 @@ enum Mode { EXPLORE, THROW, VIEW, REST }
 enum State { READY, AIMING, THROWING, FLYING, SINKING }
 
 var island: Island
+## v37 pipeline owners (one concern each).
+var ground_sys: Ground
+var player_ctrl: PlayerController
+var follow_cam: FollowCamera
 var mode: int = Mode.EXPLORE
 var state: int = State.READY
 var rng := RandomNumberGenerator.new()
@@ -230,7 +234,7 @@ var sound_btn: Button
 var stance_btn: Button
 var leave_btn: Button
 var action_btn: Button
-var joy: Joystick
+var joy: InputJoystick
 var tip_box: Control
 var tip_timer := 0.0
 var toast_timer := 0.0
@@ -296,10 +300,18 @@ func _ready() -> void:
 	island = Island.new()
 	add_child(island)
 	island.build(ui_font)
+	ground_sys = Ground.new()
+	player_ctrl = PlayerController.new()
+	player_ctrl.setup(ground_sys)
+	follow_cam = FollowCamera.new()
+	follow_cam.setup(self)
 	night_fx = NightFx.new()
 	add_child(night_fx)
 	night_fx.build(island)
 	_build_player()
+	ground_sys.setup(island, boy)
+	if boy.has_method("bind_ground"):
+		boy.bind_ground(ground_sys)
 	_build_wade_ring()
 	_build_stone()
 	_build_birds()
@@ -377,15 +389,13 @@ func _interp_body_pose() -> void:
 	# Critical: sample height at the *display* XZ. Lerping Y between physics samples
 	# chords under hills — boy looks buried while moving and pops up when stopped.
 	if mode == Mode.EXPLORE:
-		var hy := _surface(p.x, p.z)
 		var y0 := _body_pos_prev.y
-		# Never lag BELOW the collision surface — that buried the mesh while the
-		# physics HUD still read gnd 0 cm (display Y was capped at 3 cm/frame up).
-		# Snap up immediately; ease down only (descending slopes).
-		if hy >= y0:
-			p.y = hy
+		# Snap up / ease down via PlayerController (one ground sample at display XZ).
+		if player_ctrl != null:
+			p.y = player_ctrl.display_y(y0, p.x, p.z)
 		else:
-			p.y = y0 + clampf(hy - y0, -0.029, 0.0)
+			var hy := _surface(p.x, p.z)
+			p.y = hy if hy >= y0 else y0 + clampf(hy - y0, -0.029, 0.0)
 	player.position = p
 	player.rotation.y = lerp_angle(_body_yaw_prev, _body_yaw, f)
 
@@ -674,7 +684,7 @@ func _build_ui() -> void:
 	ui_root = root
 
 	# joystick: the bottom-left part of the screen (explore mode)
-	joy = Joystick.new()
+	joy = InputJoystick.new()
 	joy.anchor_left = 0.0; joy.anchor_right = 0.5; joy.anchor_top = 0.55; joy.anchor_bottom = 1.0
 	root.add_child(joy)
 
@@ -1222,23 +1232,17 @@ func _leave_throw() -> void:
 func _on_dock(x: float, z: float) -> bool:
 	return (absf(x) < 1.15 and z < island.dock_start_z + 0.1 and z > island.dock_end_z + 3.6) or (absf(x) < 3.1 and z <= island.dock_end_z + 3.95 and z > island.dock_end_z - 0.12)
 
-## Walkable surface height from the EXACT ground collision (terrain tris + dock boxes).
-## v36: deleted mesh_h bilinear + DOCK_LIP_RAMP lerp — those disagreed with the drawn mesh.
+## Walkable surface height — single owner: Ground (render-mesh collision only).
 func _surface(x: float, z: float) -> float:
 	var hint: float = player.position.y if player else 5.0
+	if player_ctrl != null:
+		return player_ctrl.height(x, z, hint)
+	if ground_sys != null:
+		return ground_sys.height(x, z, hint)
 	var ex: Array = []
 	if player:
 		ex.append(player.get_rid())
-	return island.collision_h(x, z, hint, ex)
-
-
-## Collision normal under (x,z) for foot IK / lean.
-func _surface_n(x: float, z: float) -> Vector3:
-	var hint: float = player.position.y if player else 5.0
-	var ex: Array = []
-	if player:
-		ex.append(player.get_rid())
-	return island.collision_n(x, z, hint, ex)
+	return island.collision_h_walk(x, z, hint, ex)
 
 func _surface_kind(x: float, z: float) -> String:
 	if _on_dock(x, z):
@@ -1457,23 +1461,24 @@ func _explore_tick(delta: float) -> void:
 		# Frame-rate independent collision bleed (was constant 0.5 → jitter at 120Hz).
 		move_vel = move_vel.lerp(real, 1.0 - exp(-delta * 14.0))
 	cur_speed = real.length()
-	# Body Y = collision under the hips. Snap UP immediately when below the
-	# surface (capping rise buried shoes on walk-start / sand ripples while the
-	# display Y lagged). Ease DOWN only, under the 3.0 cm AAA bar.
+	# Body Y once via PlayerController (Ground collision). Snap up / ease down.
 	var h := _surface(to.x, to.z)
 	ground_y = h
-	var dy := h - from.y
-	if dy >= 0.0:
-		to.y = h
-	elif dy < -0.029:
-		to.y = from.y - 0.029
+	if player_ctrl != null:
+		to.y = player_ctrl.apply_walk_y(from.y, to.x, to.z)
+		h = to.y
+		ground_y = h
 	else:
-		to.y = h
-	# Physics-clock body; _process interpolates XZ and Y between physics states.
+		var dy := h - from.y
+		if dy >= 0.0:
+			to.y = h
+		elif dy < -0.029:
+			to.y = from.y - 0.029
+		else:
+			to.y = h
 	var step_xz := Vector2(to.x - from.x, to.z - from.z).length()
 	dbg_max_step = maxf(dbg_max_step, step_xz)
-	# Do NOT set dbg_gnd_err from body-vs-surface — that read 0 cm while shoes
-	# were buried. FootPlantLate refreshes HUD from skinned sole verts.
+	# HUD gnd refreshed post-plant from drawable soles (FramePipelineTail).
 	_body_pos = to
 	_body_yaw = face_yaw
 	# CharacterBody3D owns the body; Y is the collision ray (exact tris/boxes).
@@ -1722,7 +1727,7 @@ func _hammock_stand_clear(bed: Vector3, side: Vector3, min_clear := 0.6) -> Vect
 	for sgn in [1.0, -1.0]:
 		for dist in [0.95, 1.15, 1.40, 1.70]:
 			var p: Vector3 = bed + side * sgn * (island.hammock_half_w + dist)
-			p.y = Island.ground_h(p.x, p.z)
+			p.y = _surface(p.x, p.z)
 			candidates.append(p)
 	var best := candidates[0]
 	var best_d := -1.0
@@ -1740,7 +1745,7 @@ func _hammock_stand_clear(bed: Vector3, side: Vector3, min_clear := 0.6) -> Vect
 				break
 			var away := _nearest_trunk_away(best)
 			best += away * (min_clear - d2 + 0.08)
-			best.y = Island.ground_h(best.x, best.z)
+			best.y = _surface(best.x, best.z)
 		rest_side = (best - bed).normalized()
 		rest_side.y = 0.0
 		if rest_side.length_squared() < 1e-6:
@@ -4151,15 +4156,17 @@ func _refresh_gnd_hud_from_soles(min_gap: float, max_gap: float) -> void:
 		dbg.max_step = dbg_max_step
 
 
-## Measure both feet' skinned sole Y vs collision. Returns [min_gap, max_gap] metres.
+## Measure both feet' drawable sole Y vs collision. Returns [min_gap, max_gap] metres.
 func _skinned_sole_gaps() -> Array:
+	if boy != null and boy.foot_ik != null:
+		return boy.foot_ik.sole_gaps()
 	var min_gap := 0.0
 	var max_gap := 0.0
 	var any := false
 	if boy == null:
 		return [0.0, 0.0]
 	for side in range(2):
-		var sy: float = boy.skinned_sole_y(side) if boy.has_method("skinned_sole_y") else boy.sole_vertex_y(side)
+		var sy: float = boy.skinned_sole_y(side)
 		var ax := player.global_position.x
 		var az := player.global_position.z
 		if boy._plant_ankle_xz.size() > side and boy._plant_ankle_xz[side].length_squared() > 1e-8:
@@ -4210,8 +4217,7 @@ func _export_ground_probe() -> void:
 	var ank_r := 0.0
 	var hit_l := 0.0
 	var hit_r := 0.0
-	if boy.get("_contact_lift") != null:
-		lift_cm = float(boy._contact_lift) * 100.0
+	# lift_cm retired with _contact_lift (v37 drawable FootIK owns contact).
 	if boy._plant_hit_y.size() >= 2:
 		hit_l = boy._plant_hit_y[0]
 		hit_r = boy._plant_hit_y[1]
@@ -4389,35 +4395,13 @@ func _process(delta: float) -> void:
 	else:
 		boy.aim_twist = lerpf(boy.aim_twist, 0.0, 1.0 - exp(-delta * 8.0))
 	_update_throw_pad()
-	_update_camera(delta)
-	# Foliage cutout every frame while exploring — bushes must not swallow the boy mid-stride.
-	_cut_focus = player.global_position + Vector3(0, 0.72, 0)
-	if demo_nocut:
-		_cut_focus.y = -100.0
-	# Wide cone — leaf walls must dither open in the web build follow cam.
-	# Walk-into-bush (cdp_sink B) hid his legs; fatten the cone + near-fade while moving.
-	var move_cut := clampf(cur_speed / maxf(WALK_MAX, 0.01), 0.0, 1.0)
-	_cut_cr_f = lerpf(6.2, 9.0, move_cut) if mode == Mode.EXPLORE else 3.8
-	# Static props (barrels, posts, trunks) need a generous cone — close dock cams
-	# used to hide the boy completely behind a barrel.
-	_cut_cr_s = lerpf(5.2, 7.5, move_cut) if mode == Mode.EXPLORE else 3.0
-	if island.foliage_mat:
-		island.foliage_mat.set_shader_parameter("focus", _cut_focus)
-		island.foliage_mat.set_shader_parameter("cut_radius", _cut_cr_f)
-	if island.leaf_mat:
-		island.leaf_mat.set_shader_parameter("focus", _cut_focus)
-		island.leaf_mat.set_shader_parameter("cut_radius", _cut_cr_f)
-		# Near cards that fill the lens as flat green walls (sink B swallowed legs).
-		var base_nf: float = float(mq.leaf_near_fade) if mq else 1.55
-		var nf: float = base_nf * lerpf(1.55, 2.6, move_cut)
-		island.leaf_mat.set_shader_parameter("near_fade", nf)
-	if island.static_mat:
-		island.static_mat.set_shader_parameter("focus", _cut_focus)
-		island.static_mat.set_shader_parameter("cut_radius", _cut_cr_s)
-	if island.torch_mat:
-		island.torch_mat.set_shader_parameter("focus", _cut_focus)
-		island.torch_mat.set_shader_parameter("cut_radius", _cut_cr_s)
-	# Foot AO + __ground probe uploaded from FootPlantLate (after plant + blob).
+	# v37: defer camera + foliage cutout until AFTER boy FootIK (prio 40) via
+	# FollowCamera.finalize() on process_frame — framing matches final soles.
+	if follow_cam != null:
+		follow_cam.defer_view(delta)
+	else:
+		_update_camera(delta)
+		_apply_foliage_cutout()
 	_update_audio(delta)
 	_audio_tick(delta)
 	if mq:
@@ -4730,7 +4714,7 @@ func _score_rest_view(t: Vector3, head: Vector3, cam: Vector3, yaw: float, pitch
 	if toward.length_squared() > 1e-6:
 		toward = toward.normalized()
 		var beyond := t + toward * 10.0
-		var gh := Island.ground_h(beyond.x, beyond.z)
+		var gh := _surface(beyond.x, beyond.z)
 		if gh < 0.12:
 			score += 8.0
 		score += clampf(0.6 - gh * 0.25, -2.0, 3.0)
@@ -4743,7 +4727,7 @@ func _score_rest_view(t: Vector3, head: Vector3, cam: Vector3, yaw: float, pitch
 		if Vector2(closest.x - c2.x, closest.z - c2.y).length() < float(ob[1]) + 0.35:
 			score -= 12.0
 	# Prefer camera not buried in terrain.
-	var floor_y := maxf(Island.ground_h(cam.x, cam.z), 0.0) + 0.35
+	var floor_y := maxf(_surface(cam.x, cam.z), 0.0) + 0.35
 	if cam.y < floor_y:
 		score -= 20.0
 	score -= absf(dist - 2.8) * 0.15
@@ -4771,7 +4755,7 @@ func _rest_los_blocked(cam: Vector3, head: Vector3) -> bool:
 	for i in range(1, n):
 		var u := float(i) / float(n)
 		var p: Vector3 = cam.lerp(head, u)
-		var gh := Island.ground_h(p.x, p.z)
+		var gh := _surface(p.x, p.z)
 		if p.y < gh + 0.28:
 			return true
 	return false
@@ -4784,7 +4768,7 @@ func _rest_los_adjust(t: Vector3, head: Vector3, yaw: float, pitch: float, dist:
 	var d := dist
 	for n in 10:
 		var cam := t + Vector3(sin(y) * cos(p), sin(p), cos(y) * cos(p)) * d
-		var floor_y := maxf(Island.ground_h(cam.x, cam.z), 0.0) + 0.35
+		var floor_y := maxf(_surface(cam.x, cam.z), 0.0) + 0.35
 		if cam.y < floor_y:
 			p = clampf(p + 0.05, 0.08, 0.55)
 			cam.y = floor_y
@@ -4895,6 +4879,40 @@ func _mix_cam_blend() -> void:
 	cam_yaw = lerp_angle(_cam_blend_from_yaw, cam_yaw, e)
 	cam_pitch = lerpf(_cam_blend_from_pitch, cam_pitch, e)
 	cam_dist = lerpf(_cam_blend_from_dist, cam_dist, e)
+
+
+## Foliage / leaf / static cutout from the post-plant boy focus.
+func _apply_foliage_cutout() -> void:
+	_cut_focus = player.global_position + Vector3(0, 0.72, 0)
+	if demo_nocut:
+		_cut_focus.y = -100.0
+	var move_cut := clampf(cur_speed / maxf(WALK_MAX, 0.01), 0.0, 1.0)
+	_cut_cr_f = lerpf(6.2, 9.0, move_cut) if mode == Mode.EXPLORE else 3.8
+	_cut_cr_s = lerpf(5.2, 7.5, move_cut) if mode == Mode.EXPLORE else 3.0
+	if island.foliage_mat:
+		island.foliage_mat.set_shader_parameter("focus", _cut_focus)
+		island.foliage_mat.set_shader_parameter("cut_radius", _cut_cr_f)
+	if island.leaf_mat:
+		island.leaf_mat.set_shader_parameter("focus", _cut_focus)
+		island.leaf_mat.set_shader_parameter("cut_radius", _cut_cr_f)
+		var base_nf: float = float(mq.leaf_near_fade) if mq else 1.55
+		var nf: float = base_nf * lerpf(1.55, 2.6, move_cut)
+		island.leaf_mat.set_shader_parameter("near_fade", nf)
+	if island.static_mat:
+		island.static_mat.set_shader_parameter("focus", _cut_focus)
+		island.static_mat.set_shader_parameter("cut_radius", _cut_cr_s)
+	if island.torch_mat:
+		island.torch_mat.set_shader_parameter("focus", _cut_focus)
+		island.torch_mat.set_shader_parameter("cut_radius", _cut_cr_s)
+
+
+## Fallback if FollowCamera is missing — camera then cutout.
+func _finalize_view() -> void:
+	var d := 0.016
+	if follow_cam != null:
+		d = follow_cam.pending_delta
+	_update_camera(d)
+	_apply_foliage_cutout()
 
 
 func _update_camera(delta: float) -> void:
