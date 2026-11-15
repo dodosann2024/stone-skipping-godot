@@ -783,10 +783,15 @@ const WALK_NY := 0.766
 ## Nearest walkable triangle at or below `probe_y` whose XZ footprint contains
 ## the point. Not the highest face in the column: that picked cliff and
 ## overhang planes and threw a sandal up beside the hat.
-func drawn_h(x: float, z: float, probe_y: float = 1000.0) -> float:
+## `near_hint` >= 0: the highest upright face within 40 cm of the body.
+## A face further away is a shelf or a buried terrace, not the sand he is on.
+## Without it, the highest face at or below `probe_y` (camera occlusion).
+func drawn_h(x: float, z: float, probe_y: float = 1000.0, near_hint: float = -999.0) -> float:
 	if _tri_faces.is_empty():
 		return -999.0
 	var best := -999.0
+	var closest := -999.0
+	var closest_d := 999.0
 	var cx := int(floor(x))
 	var cz := int(floor(z))
 	for ox in [-1, 0, 1]:
@@ -800,8 +805,23 @@ func drawn_h(x: float, z: float, probe_y: float = 1000.0) -> float:
 				var h := _tri_height(x, z, a, b, c)
 				if h < -900.0 or h > probe_y:
 					continue
-				if h > best:
+				if near_hint > -900.0:
+					var d := absf(h - near_hint)
+					if d <= 0.40 and h > best:
+						best = h
+					if d < closest_d:
+						closest = h
+						closest_d = d
+				elif h > best:
 					best = h
+	if near_hint > -900.0:
+		# A face more than 40 cm away is not the sand under him. Callers keep
+		# the current height instead of climbing onto a shelf or a buried terrace.
+		if best > -900.0:
+			return best
+		if closest_d <= 0.40:
+			return closest
+		return -999.0
 	return best
 
 
@@ -888,15 +908,13 @@ func collision_h_walk(x: float, z: float, hint_y: float = 10.0, exclude: Array =
 	return hint_y
 
 
-## Vertical hit on the same triangles the terrain mesh draws. A miss stays on
-## the hint. Never borrows a triangle 35 cm away — that reported the sole 8–40 cm
-## under a face the foot was not standing on.
-func collision_h_exact(x: float, z: float, hint_y: float = 10.0, exclude: Array = []) -> float:
+## Highest upright triangle of the drawn terrain in this column. A probe that
+## started at a sunk root only saw a lower terrace, and the shorts sat in the
+## sand while the HUD read a few centimetres. Steep faces stay rejected.
+func collision_h_exact(x: float, z: float, _hint_y: float = 10.0, _exclude: Array = []) -> float:
 	if absf(x) < 5.0 and z <= dock_start_z + 0.35 and z >= dock_end_z - 3.0:
 		return DECK_Y
-	# Probe starts just above the foot or the body. Faces above that are not
-	# the ground it is standing on.
-	var drawn := drawn_h(x, z, hint_y)
+	var drawn := drawn_h(x, z, 64.0, _hint_y)
 	if drawn > -900.0:
 		return drawn
 	return -999.0

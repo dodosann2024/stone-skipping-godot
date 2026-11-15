@@ -43,9 +43,14 @@ var plant_ankle_xz: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]
 var stance_locked: Array[bool] = [false, false]
 var pose_path := "skeleton_modifier_set_bone_pose"
 var _hip_lift := 0.0
+## How far the lower animated sole hangs below the origin, metres.
+## The root adds this so the sole meets the drawn surface.
+var support_hang := 0.0
 ## Smoothed vertical correction per foot, metres. Never a horizontal slide.
 var _foot_corr: Array[float] = [0.0, 0.0]
-const MAX_FOOT_CORR := 0.12
+## Slope trim only. The root already stands on the drawn triangle, so a 12 cm
+## hip rescue was burying the shorts in the sand instead of planting the sole.
+const MAX_FOOT_CORR := 0.08
 const MAX_KNEE_DEG := 115.0
 var _ready_mesh := false
 var _skin: Skin
@@ -205,11 +210,10 @@ func _solve(skel: Skeleton3D, _delta: float) -> void:
 	# crawl and parked a sandal beside the hat, so the foot never moves in XZ
 	# and a miss keeps the animated leg.
 	var moving := float(boy.move_speed) > 0.12
-	# 12 cm in one frame at 60 Hz, so a footstrike is planted before the next
-	# step instead of riding buried through the blend.
-	var step := maxf(_delta, 0.016) * 8.0
+	var step := maxf(_delta, 0.016) * 3.0
 	var gaps: Array[float] = [0.0, 0.0]
 	var known: Array[bool] = [false, false]
+	var sole_y: Array[float] = [body_y, body_y]
 	for side in range(2):
 		if _foot_bi[side] < 0:
 			stance_locked[side] = false
@@ -218,6 +222,7 @@ func _solve(skel: Skeleton3D, _delta: float) -> void:
 		var ankle: Vector3 = _world_xf(skel, _foot_bi[side]).origin
 		var shell := _lowest_sole(skel, side)
 		var sy := shell.y if shell.y < 500.0 else ankle.y - sole_offset
+		sole_y[side] = sy
 		var sx := ankle.x
 		var sz := ankle.z
 		if shell.y < 500.0:
@@ -233,6 +238,17 @@ func _solve(skel: Skeleton3D, _delta: float) -> void:
 		plant_hit_y[side] = surface
 		gaps[side] = surface + SOLE_TARGET - sy
 		known[side] = true
+	# Lowest sole relative to the origin. The root stands that far above the
+	# drawn surface so this sole meets it. A swinging foot is above the origin
+	# and does not pull the root down.
+	var hang := 0.0
+	for side in range(2):
+		if known[side]:
+			hang = maxf(hang, body_y - sole_y[side])
+	hang = clampf(hang, 0.0, 0.10)
+	# Hold the deepest plant. Tracking every swing would bob the root.
+	var hang_step := 0.02 if hang > support_hang else 0.0015
+	support_hang = move_toward(support_hang, hang, hang_step)
 	# The lower sole is always the plant. The other foot keeps the animation
 	# while it is a real swing, more than 6 cm clear of its own triangle.
 	var lower := 0 if not known[1] or (known[0] and gaps[0] >= gaps[1]) else 1
@@ -243,13 +259,14 @@ func _solve(skel: Skeleton3D, _delta: float) -> void:
 		var plant := side == lower or (not moving) or gap > -0.06
 		stance_locked[side] = plant
 		var want := 0.0
-		if plant and absf(gap) < 0.30:
+		# Bigger than a slope trim means the root is not on this triangle yet.
+		if plant and absf(gap) < 0.12:
 			want = clampf(gap, -MAX_FOOT_CORR, MAX_FOOT_CORR)
-		_foot_corr[side] = move_toward(_foot_corr[side], want, step)
-	# Move the hips by the lower sole's correction only. Up plants a buried
-	# sandal; down plants a straight leg that the knee can no longer extend.
-	# It is vertical, capped, and smoothed, so a bad face cannot kick the foot
-	# out or throw it up beside the hat.
+		# Applied this frame. A smoothed chase left the plant sole 2 cm under
+		# for the whole footstrike, which is the bury the bar counts.
+		_foot_corr[side] = want
+	# A few centimetres of vertical trim once the root is on the drawn surface.
+	# Not a 12 cm rescue, and not a knee aim.
 	var lift := 0.0
 	if known[lower]:
 		lift = _foot_corr[lower]
@@ -722,19 +739,18 @@ func _measure_and_store(skel: Skeleton3D) -> void:
 			xz = Vector2(ankle.x, ankle.z)
 		var shin_p := _lowest_on_bone(skel, _knee_bi[side], 0.45)
 		# Same probe the plant uses, so the score is the triangle the foot aimed at.
-		var hy := _query_surface(xz.x, xz.y, sy + 0.25) if ground != null else sy
+		var hy := _query_surface(xz.x, xz.y, body_y) if ground != null else sy
 		if hy < -900.0:
-			hy = body_y
+			hy = body_y - support_hang
 		mesh_sole_y[side] = sy
 		mesh_hit_y[side] = hy
 		plant_hit_y[side] = hy
 		plant_ankle_xz[side] = xz
 		sole_gaps.append(sy - hy)
 		if shin_p.y < 500.0:
-			var shy := _query_surface(shin_p.x, shin_p.z, shin_p.y + 0.25) if ground != null else shin_p.y
+			var shy := _query_surface(shin_p.x, shin_p.z, body_y) if ground != null else shin_p.y
 			if shy < -900.0:
-				shy = body_y
-			# A shin over a different terrace is not a buried shin.
+				shy = body_y - support_hang
 			if absf(shy - hy) < 0.08:
 				shin_gaps.append(shin_p.y - shy)
 		var shin_len := knee.distance_to(ankle)

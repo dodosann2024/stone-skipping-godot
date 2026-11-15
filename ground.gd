@@ -18,11 +18,16 @@ func _exclude() -> Array:
 	return []
 
 
-## Walkable height under (x,z). Never falls through to analytic sea ground_h.
+## One walkable ground: the drawn terrain triangle (dock deck on the pier).
+## The physics ray is not a second height — it hits steep faces and comes back
+## tens of centimetres off the sand the mesh shows.
 func height(x: float, z: float, hint_y: float = 10.0) -> float:
 	if island == null:
 		return hint_y
-	return island.collision_h_walk(x, z, hint_y, _exclude())
+	var h := island.collision_h_exact(x, z, hint_y, _exclude())
+	if h < -900.0:
+		return hint_y
+	return h
 
 
 ## The triangle directly under (x,z). No neighbour stand-in.

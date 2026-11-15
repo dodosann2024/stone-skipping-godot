@@ -33,6 +33,7 @@ var _route_bad := 0
 var _route_bury := 0
 var _route_float := 0
 var _route_pelvis_n := 0
+var _route_scored := 0
 var _route_seen_stop := false
 
 
@@ -57,27 +58,37 @@ func height_exact(x: float, z: float, hint_y: float = 10.0) -> float:
 	return ground.height_exact(x, z, hint_y)
 
 
-## Walkable triangle under the body. Also the lower foot, when that face is
-## within 20 cm and the foot is still beside him — a slope, not a ledge.
-## The displayed move is capped at 3 cm.
+## Root sits on the lower of the two foot contacts, or the walkable surface
+## under the body when a foot is over a ledge. Smoothed to 3 cm per frame.
 func _support_y(x: float, z: float, hint_y: float, _yaw: float) -> float:
-	var h := height_exact(x, z, hint_y + 0.35)
-	if h < -900.0:
-		h = hint_y
+	var top := height_exact(x, z, hint_y)
+	if top < -900.0:
+		top = hint_y
+	var target := top
 	var fk = host.boy.foot_ik if host != null and host.boy != null else null
 	if fk != null:
+		var sum := 0.0
+		var n := 0
 		for side in 2:
 			var xz: Vector2 = fk.plant_ankle_xz[side]
 			if xz.length_squared() < 1.0:
 				continue
-			if Vector2(xz.x - x, xz.y - z).length() > 0.75:
+			if Vector2(xz.x - x, xz.y - z).length() > 1.20:
 				continue
-			var hx := height_exact(xz.x, xz.y, hint_y + 0.35)
+			var hx := height_exact(xz.x, xz.y, hint_y)
 			if hx < -900.0:
 				continue
-			if hx < h and hint_y - hx < 0.20:
-				h = hx
-	return hint_y + clampf(h - hint_y, -0.03, 0.03)
+			# Ignore a foot that has stepped off a real ledge.
+			if hx < top - 0.45 or hx > top + 0.45:
+				continue
+			sum += hx
+			n += 1
+		if n > 0:
+			target = sum / float(n)
+		# The origin is not the sole. Rise by the animated hang so the sandal
+		# meets the triangle.
+		target += fk.support_hang
+	return hint_y + clampf(target - hint_y, -0.03, 0.03)
 
 
 func write_position(pos: Vector3) -> void:
@@ -374,6 +385,7 @@ func _route_note(to: Vector3, speed: float) -> void:
 		return
 	var gnd: float = fk.mesh_gap_min * 100.0
 	var shin: float = fk.shin_gap_min * 100.0
+	_route_scored += 1
 	if gnd < _route_gnd_min:
 		_route_gnd_min = gnd
 		_route_worst = to
@@ -414,10 +426,11 @@ func _route_finish(ok_dist: bool) -> void:
 	for k in _route_kinds.keys():
 		kinds += str(k) + ","
 	var ok := ok_dist and _route_bad == 0 and _route_len_min > 0.97 and _route_gnd_min >= -1.0 and _route_pelvis_max <= 0.030
-	print("ROUTE_DONE m=%.1f ok=%s kinds=%s knee_max=%.0f len_min=%.2f gnd_min=%.1f at=%.1f,%.1f,%.2f pelvis=%.1f bad=%d bury=%d float=%d pelvis_n=%d stop=%s" % [
+	var float_pct := 100.0 * float(_route_float) / maxf(float(_route_scored), 1.0)
+	print("ROUTE_DONE m=%.1f ok=%s kinds=%s knee_max=%.0f len_min=%.2f gnd_min=%.1f at=%.1f,%.1f,%.2f pelvis=%.1f bad=%d bury=%d float=%d float_pct=%.2f scored=%d pelvis_n=%d stop=%s" % [
 		_route_m, ok, kinds, _route_knee_max, _route_len_min, _route_gnd_min,
 		_route_worst.x, _route_worst.z, _route_worst.y,
-		_route_pelvis_max * 100.0, _route_bad, _route_bury, _route_float, _route_pelvis_n, _route_seen_stop])
+		_route_pelvis_max * 100.0, _route_bad, _route_bury, _route_float, float_pct, _route_scored, _route_pelvis_n, _route_seen_stop])
 	host.get_tree().quit()
 
 
