@@ -549,6 +549,17 @@ func _pose_shot() -> void:
 	rig.cam.fov = 48.0
 	var cam: Camera3D = rig.cam
 	var tee := Vector3(0.0, Constants.DECK_Y, ends.y + 1.3)
+	if name == "near":
+		_put(tee, 0.0)
+		fader.enabled = true
+		rig.yaw = 0.55
+		rig.pitch = Constants.CAM_PITCH
+		rig.dist = Constants.CAM_DIST
+		rig.set_process(true)
+		for _k in 24:
+			await get_tree().process_frame
+		print("SHOT_READY near")
+		return
 	if name == "face":
 		_put(tee, PI)
 		if player.boy.ik != null:
@@ -557,21 +568,31 @@ func _pose_shot() -> void:
 		_cam(cam, tee + Vector3(0.15, 1.15, 1.15), tee + Vector3(0, 0.95, 0))
 		print("SHOT_READY face")
 		return
-	if name == "occ":
-		var occ := Vector3(0.15, 0.0, ends.x + 1.4)
+	if name == "occ" or name.begins_with("occ_f"):
+		var shore := ends.x
+		var step := 0
+		if name.begins_with("occ_f"):
+			step = int(name.substr(5))
+		var start := Vector3(0.7, 0.0, shore + 2.5)
+		var goal := Vector3(1.5, 0.0, shore + 1.3)
+		var occ := start.lerp(goal, clampf(float(step) / 7.0, 0.0, 1.0))
 		var gy: float = ground.height(occ.x, occ.z)
 		if gy > -2.0:
 			occ.y = gy
 		_put(occ, 0.0)
 		player.boy.play_clip("walk", 0.0)
 		if player.boy.anim != null:
-			player.boy.anim.seek(0.28, true)
+			player.boy.anim.seek(0.12 + float(step) * 0.08, true)
 			player.boy.anim.pause()
 		if not _query().contains("occ=0"):
 			fader.enabled = true
-		cam.fov = 74.0
-		_cam(cam, Vector3(-1.6, occ.y + 1.65, ends.x + 6.6), Vector3(1.2, occ.y + 1.1, ends.x + 1.2))
-		print("SHOT_READY occ")
+		# 35° down, tall-phone field, so the hut fits on the right and the palm row on the left.
+		cam.fov = 80.0
+		_cam(cam, Vector3(-0.2, 4.7, shore + 7.0), Vector3(2.0, 1.4, shore + 1.5))
+		var settle := 0 if name == "occ" else 2 + step * 6
+		for _k in settle:
+			await get_tree().process_frame
+		print("SHOT_READY ", name)
 		return
 	if name == "walk":
 		_put(Vector3(0.15, Constants.DECK_Y, ends.y + 3.2), 0.0)
@@ -592,7 +613,10 @@ func _pose_shot() -> void:
 		player.boy.arm.playing = true
 		player.boy.arm.hold = true
 		player.boy.arm.crouch = name == "throw_crouch"
-		var phases := {"throw_windup": 0.14, "throw_whip": 0.46, "throw_release": 0.55, "throw_follow": 0.85, "throw_crouch": 0.42}
+		var phases := {
+			"throw_windup": 0.14, "throw_whip": 0.46, "throw_release": 0.55, "throw_follow": 0.85, "throw_crouch": 0.42,
+			"throw_s0": 0.08, "throw_s1": 0.18, "throw_s2": 0.30, "throw_s3": 0.42, "throw_s4": 0.54, "throw_s5": 0.68,
+		}
 		player.boy.arm.phase = float(phases.get(name, 0.46))
 		for _i in 4:
 			await get_tree().process_frame
@@ -675,11 +699,25 @@ func _show_throw_stone(shot: String) -> void:
 		if along.length_squared() > 1e-6:
 			origin += along.normalized() * 0.07
 	var fwd := Vector3(-sin(player.face_yaw), 0.0, -cos(player.face_yaw))
+	var right := Vector3(fwd.z, 0.0, -fwd.x)
+	var phase := 0.0
 	if shot == "throw_release":
-		origin += fwd * 0.42 + Vector3.UP * 0.2
+		phase = 0.55
 	elif shot == "throw_follow":
-		origin += fwd * 0.85 + Vector3.UP * 0.28
-	origin.y = maxf(origin.y, player.global_position.y + 0.55)
+		phase = 0.85
+	elif shot.begins_with("throw_s"):
+		phase = float({"throw_s0": 0.08, "throw_s1": 0.18, "throw_s2": 0.30, "throw_s3": 0.42, "throw_s4": 0.54, "throw_s5": 0.68}.get(shot, 0.3))
+	if phase >= 0.5:
+		var shoulder := skel.find_bone("mixamorig_RightArm")
+		var throw_dir := right
+		if shoulder >= 0:
+			var sp := (skel.global_transform * skel.get_bone_global_pose(shoulder)).origin
+			var along := origin - sp
+			along.y = 0.0
+			if along.length_squared() > 0.01:
+				throw_dir = along.normalized()
+		var out := clampf((phase - 0.48) / 0.22, 0.0, 1.0)
+		origin += throw_dir * (0.12 + out * 0.85) + Vector3.UP * 0.03
 	var stone := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
 	mesh.radius = 0.045

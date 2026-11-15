@@ -3,6 +3,9 @@ extends Node3D
 ## Each blocker is its own mesh. Nothing here is clipped or discarded.
 
 var items: Array[Fadable] = []
+var _lod_full: Array[MeshInstance3D] = []
+var _lod_far: Array[MeshInstance3D] = []
+var _lod_distance: Array[float] = []
 
 
 func _ready() -> void:
@@ -36,7 +39,7 @@ func _ready() -> void:
 	_lounger(Vector3(-4.2, 0.0, shore_z + 5.2))
 	_boat(Vector3(2.4, 0.05, ends.y + 0.35), 0.35)
 	_boat(Vector3(-3.6, 0.02, shore_z - 1.1), 2.4)
-	_lantern(Vector3(0.72, 0.0, ends.y + 3.4))
+	_lantern(Vector3(1.18, 0.0, ends.y + 4.6))
 	_crate(Vector3(-0.82, 0.0, ends.x + 1.6))
 	_umbrella(Vector3(-3.4, 0.0, shore_z + 3.6))
 	_bush(Vector3(-2.4, 0.0, shore_z + 5.6))
@@ -44,6 +47,10 @@ func _ready() -> void:
 	_bush(Vector3(1.1, 0.0, shore_z + 7.2))
 	_palm(Vector3(3.6, 0.0, shore_z + 7.8), 4.5, 0.08)
 	_palm(Vector3(-5.6, 0.0, shore_z + 2.8), 4.2, -0.1)
+	# A row that frames the dock approach the way the phone shot does.
+	_palm(Vector3(-1.15, 0.0, shore_z + 4.7), 5.5, 0.06)
+	_palm(Vector3(-1.65, 0.0, shore_z + 3.3), 4.7, -0.1)
+	_palm(Vector3(-2.05, 0.0, shore_z + 2.0), 4.1, 0.12)
 	_reeds(shore_z)
 	_rope(Vector3(1.15, 0.95, ends.y + 1.15), Vector3(2.15, 0.42, ends.y + 0.7))
 	_rope(Vector3(-1.15, 0.95, ends.y + 1.15), Vector3(-1.9, 0.35, ends.y + 0.2))
@@ -79,6 +86,12 @@ func _palm(at: Vector3, height: float, lean: float = 0.0) -> void:
 	mi.mesh = st.commit()
 	mi.material_override = _mat(Color(1, 1, 1))
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var card := _palm_card(height)
+	card.visible = false
+	root.add_child(card)
+	_lod_full.append(mi)
+	_lod_far.append(card)
+	_lod_distance.append(16.0)
 	var body := StaticBody3D.new()
 	body.collision_layer = Constants.LAYER_BLOCK
 	body.collision_mask = 0
@@ -192,6 +205,13 @@ func _bush(at: Vector3) -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
 	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var card := _bush_card()
+	card.visible = false
+	root.add_child(card)
+	_lod_full.append(mi)
+	_lod_far.append(card)
+	_lod_distance.append(12.0)
 	var body := StaticBody3D.new()
 	body.collision_layer = Constants.LAYER_PROP
 	body.collision_mask = 0
@@ -752,7 +772,17 @@ func _lantern(at: Vector3) -> void:
 	mi.mesh = st.commit()
 	mi.material_override = _mat(Color(1, 1, 1))
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	root.setup(mi, null)
+	var body := StaticBody3D.new()
+	body.collision_layer = Constants.LAYER_PROP
+	body.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	var cap := CapsuleShape3D.new()
+	cap.radius = 0.48
+	cap.height = 1.5
+	cs.shape = cap
+	cs.position = Vector3(0, 0.7, 0)
+	body.add_child(cs)
+	root.setup(mi, body)
 	root.position = at
 	add_child(root)
 	items.append(root)
@@ -942,7 +972,47 @@ func apply_night(on: bool) -> void:
 			fire.light_energy = 1.3 if on else 0.5
 
 
+func _palm_card(height: float) -> MeshInstance3D:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var trunk := Color(0.48, 0.36, 0.24)
+	var leaf := Color(0.22, 0.5, 0.18)
+	_box(st, Vector3(0, height * 0.45, 0), Vector3(0.18, height * 0.9, 0.08), trunk)
+	_box(st, Vector3(0, height * 0.45, 0), Vector3(0.08, height * 0.9, 0.18), trunk)
+	var angs: Array[float] = [0.3, 1.2, 2.2, 3.4]
+	for ang in angs:
+		var dir := Vector3(cos(ang), 0.25, sin(ang))
+		_frond(st, Vector3(0, height * 0.92, 0), dir, 1.5, leaf)
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
+func _bush_card() -> MeshInstance3D:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var col := Color(0.28, 0.55, 0.22)
+	_face(st, Vector3(-0.4, 0.05, 0), Vector3(0.4, 0.05, 0), Vector3(-0.15, 0.7, 0), Vector3(0.15, 0.7, 0), col)
+	_face(st, Vector3(0, 0.05, -0.4), Vector3(0, 0.05, 0.4), Vector3(0, 0.7, -0.15), Vector3(0, 0.7, 0.15), col)
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
 func _process(_delta: float) -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam != null:
+		var eye := cam.global_position
+		for i in _lod_full.size():
+			var far := eye.distance_to(_lod_full[i].global_position) > _lod_distance[i]
+			_lod_full[i].visible = not far
+			_lod_far[i].visible = far
 	var t := Time.get_ticks_msec() / 1000.0
 	for item in items:
 		var flame := item.get_node_or_null("Flame") as MeshInstance3D

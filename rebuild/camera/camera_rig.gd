@@ -88,7 +88,7 @@ func _clear(chest: Vector3, desired: Vector3) -> Vector3:
 	if space == null:
 		return desired
 	var q := PhysicsRayQueryParameters3D.create(chest, desired)
-	q.collision_mask = Constants.LAYER_GROUND | Constants.LAYER_BLOCK
+	q.collision_mask = Constants.LAYER_GROUND | Constants.LAYER_BLOCK | Constants.LAYER_PROP
 	if player != null:
 		q.exclude = [player.get_rid()]
 	var hit := space.intersect_ray(q)

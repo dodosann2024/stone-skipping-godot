@@ -31,6 +31,7 @@ func _ready() -> void:
 	model.position.y = Constants.CAPSULE_BOTTOM
 	_keep_full_lod(model)
 	add_child(model)
+	_blob()
 	anim = _find_player(model)
 	skel = _find_skel(model)
 	if skel != null:
@@ -140,9 +141,32 @@ func lay_flat(kind: String) -> void:
 
 func _keep_full_lod(node: Node) -> void:
 	if node is GeometryInstance3D:
-		(node as GeometryInstance3D).lod_bias = 16.0
+		var geo := node as GeometryInstance3D
+		geo.lod_bias = 16.0
+		# The skinned shadow pass redraws all 47k triangles. A flat contact
+		# blob replaces it so close frames stay under the prim cap.
+		geo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	for c in node.get_children():
 		_keep_full_lod(c)
+
+
+func _blob() -> void:
+	var blob := MeshInstance3D.new()
+	var disc := CylinderMesh.new()
+	disc.top_radius = 0.26
+	disc.bottom_radius = 0.26
+	disc.height = 0.015
+	disc.radial_segments = 12
+	blob.mesh = disc
+	blob.position = Vector3(0.0, 0.02, 0.02)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.05, 0.04, 0.03, 0.42)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	blob.material_override = mat
+	blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(blob)
 
 
 func _pick_names() -> void:
