@@ -33,8 +33,14 @@ var posed_feet := Vector3(0, -100, 0)
 var posed_chest := Vector3(0, -100, 0)
 var mesh_gap_min := 0.0
 var mesh_gap_max := 0.0
+## Old probe: ankle bone minus sole_offset, collision under the ankle. Logged
+## so a still can show it beside the sole-vertex gap. Not the harness score.
+var ankle_gap_min := 0.0
 var mesh_sole_y: Array[float] = [0.0, 0.0]
 var mesh_hit_y: Array[float] = [0.0, 0.0]
+## World position of the lowest skinned sole vertex. The harness gap is this
+## point against the collision under it, not the ankle bone.
+var mesh_sole_pos: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
 ## Read by the debug HUD and the route harness. Never written back into the pose.
 var shin_gap_min := 0.0
 var knee_flex_deg: Array[float] = [0.0, 0.0]
@@ -395,15 +401,43 @@ func _set_world(skel: Skeleton3D, bone: int, world_xf: Transform3D) -> void:
 	skel.set_bone_global_pose(bone, skel.global_transform.affine_inverse() * world_xf)
 
 
+## Collision within a few centimetres of the sole vertex. The long ray from
+## above the ankle can strike a lower terrace and report a false float.
+func _surface_near_sole(sole: Vector3) -> float:
+	if ground == null:
+		return sole.y
+	var hit: Dictionary = ground.ray(sole + Vector3(0.0, 0.08, 0.0), sole + Vector3(0.0, -0.40, 0.0))
+	if hit.has("position"):
+		return float(hit.position.y)
+	return ground.height(sole.x, sole.z, sole.y)
+
+
 func _min_sole_y(skel: Skeleton3D, side: int) -> float:
+	return _sole_point(skel, side, 0.22).y
+
+
+## Lowest skinned vertex that is actually the foot. A 22% blend pulls neighbour
+## verts tens of centimetres off the sandal; those are not the sole.
+func _lowest_sole(skel: Skeleton3D, side: int) -> Vector3:
+	return _sole_point(skel, side, 0.72)
+
+
+func _sole_point(skel: Skeleton3D, side: int, min_w: float) -> Vector3:
 	var idxs: Array = _foot_idx[side]
 	if idxs.is_empty() or _verts.is_empty():
-		return 10000.0
+		return Vector3(0.0, 10000.0, 0.0)
 	var xfs: Array[Transform3D] = []
 	xfs.resize(skel.get_bone_count())
 	var seen := {}
-	var best := 10000.0
+	var best := Vector3(0.0, 10000.0, 0.0)
 	for vi in idxs:
+		var foot_w := 0.0
+		for j in 4:
+			var b: int = _bones[vi * 4 + j]
+			if b == _foot_bi[side] or b == _toe_bi[side]:
+				foot_w += _weights[vi * 4 + j]
+		if foot_w < min_w:
+			continue
 		var acc := Vector3.ZERO
 		var wsum := 0.0
 		for j in 4:
@@ -419,31 +453,37 @@ func _min_sole_y(skel: Skeleton3D, side: int) -> float:
 			wsum += w
 		if wsum < 0.01:
 			continue
-		best = minf(best, (acc / wsum).y)
+		var p: Vector3 = acc / wsum
+		if p.y < best.y:
+			best = p
 	return best
 
 
 func _measure_and_store(skel: Skeleton3D) -> void:
 	var gaps: Array[float] = []
+	var ankle_gaps: Array[float] = []
 	for side in range(2):
 		var ankle := Vector3.ZERO
 		if _foot_bi[side] >= 0:
 			ankle = _world_xf(skel, _foot_bi[side]).origin
-		# Bone the renderer uploaded, minus the rest-pose ankle→sole drop.
+		# Harness and HUD read the lowest skinned sole vertex, and the collision
+		# directly under that vertex. The ankle bone sits back from the sandal
+		# on a slope, and a ray there was the ~17 cm "float".
+		var sole_p := _lowest_sole(skel, side)
 		var sy := ankle.y - sole_offset
-		var mesh := _min_sole_y(skel, side)
-		# Skinned sole, when it agrees with the foot bone the renderer uploaded.
-		if mesh < 500.0 and absf(mesh - sy) < 0.06:
-			sy = mesh
-		var xz := plant_ankle_xz[side]
-		if xz.length_squared() < 1e-8:
-			xz = Vector2(ankle.x, ankle.z)
-		var hy := ground.height(xz.x, xz.y, boy.global_position.y) if ground != null else sy
+		var xz := Vector2(ankle.x, ankle.z)
+		if sole_p.y < 500.0:
+			sy = sole_p.y
+			xz = Vector2(sole_p.x, sole_p.z)
+		var sole_w := Vector3(xz.x, sy, xz.y)
+		var hy := _surface_near_sole(sole_w)
 		mesh_sole_y[side] = sy
+		mesh_sole_pos[side] = sole_w
 		mesh_hit_y[side] = hy
-		plant_hit_y[side] = hy
-		plant_ankle_xz[side] = xz
 		gaps.append(sy - hy)
+		var ankle_sy := ankle.y - sole_offset
+		var ankle_hy := ground.height(ankle.x, ankle.z, boy.global_position.y) if ground != null else ankle_sy
+		ankle_gaps.append(ankle_sy - ankle_hy)
 		if _knee_bi[side] >= 0 and _up_bi[side] >= 0 and _foot_bi[side] >= 0:
 			var hip_p: Vector3 = _world_xf(skel, _up_bi[side]).origin
 			var knee_p: Vector3 = _world_xf(skel, _knee_bi[side]).origin
@@ -456,6 +496,7 @@ func _measure_and_store(skel: Skeleton3D) -> void:
 			shin_len_ratio[side] = slen / maxf(_shin_rest[side], 0.05)
 	mesh_gap_min = minf(gaps[0], gaps[1])
 	mesh_gap_max = maxf(gaps[0], gaps[1])
+	ankle_gap_min = minf(ankle_gaps[0], ankle_gaps[1]) if ankle_gaps.size() == 2 else 0.0
 	var feet := Vector3.ZERO
 	var n := 0
 	for side in range(2):

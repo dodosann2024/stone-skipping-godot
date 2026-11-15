@@ -201,7 +201,11 @@ func physics_step(delta: float) -> void:
 	# One smooth ramp. 0.70 s to speed matches the old stepped accel over the
 	# review drag, without the kink at a walk and a run. Braking is shorter
 	# so a lifted stick does not skate.
-	var smooth: float = 0.70 if spd_t > s else 0.16
+	# First step is the short smooth time. Cruise stays 0.70 s so the review
+	# drag still covers the same grass. Brake stays short.
+	var smooth: float = 0.16
+	if spd_t > s:
+		smooth = 0.22 if s < 0.50 else 0.70
 	s = lerpf(s, spd_t, 1.0 - exp(-delta / smooth))
 	if m.boy != null:
 		var launch: float = clampf((spd_t - s) / 1.1, 0.0, 1.0) if spd_t > s + 0.12 else 0.0
@@ -369,7 +373,14 @@ func _route_note(to: Vector3, speed: float) -> void:
 			_route_slide_n += 1
 	if fk == null or not fk.pose_ready or _route_n < 40:
 		return
-	var gnd: float = fk.mesh_gap_min * 100.0
+	# Both soles more than 4 cm up is the run's flight, not a failed plant.
+	# The bar is the stance sole. Swing frames are not float.
+	var low := 0 if fk.mesh_sole_y[0] <= fk.mesh_sole_y[1] else 1
+	var stance_gap: float = fk.mesh_sole_y[low] - fk.mesh_hit_y[low]
+	var other_gap: float = fk.mesh_sole_y[1 - low] - fk.mesh_hit_y[1 - low]
+	if stance_gap > 0.04 and other_gap > 0.04:
+		return
+	var gnd: float = stance_gap * 100.0
 	var shin: float = fk.shin_gap_min * 100.0
 	_route_scored += 1
 	if gnd < _route_gnd_min:
