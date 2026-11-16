@@ -48,6 +48,7 @@ func _ready() -> void:
 	add_child(cs)
 	boy = BoyVisual.new()
 	add_child(boy)
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	rotation.y = face_yaw
 	route = OS.get_environment("R42_ROUTE") == "1"
 

@@ -6,6 +6,7 @@ var items: Array[Fadable] = []
 var _lod_full: Array[MeshInstance3D] = []
 var _lod_far: Array[MeshInstance3D] = []
 var _lod_distance: Array[float] = []
+var _flames: Array[MeshInstance3D] = []
 
 
 func _ready() -> void:
@@ -69,6 +70,11 @@ func _ready() -> void:
 	_shells(Vector3(-1.4, 0.0, shore_z + 2.4))
 	_pier_rail(ends)
 	_ground_cover(shore_z)
+	_beach(shore_z)
+	for item in items:
+		var flame := item.get_node_or_null("Flame") as MeshInstance3D
+		if flame != null:
+			_flames.append(flame)
 
 
 func _palm(at: Vector3, height: float, lean: float = 0.0, frond_len: float = 1.7) -> void:
@@ -663,11 +669,13 @@ func _garden(ends: Vector2) -> void:
 	var shore := ends.x
 	# Trunks just off the dirt path, leaned so the crowns cross overhead.
 	# z stays off the route's shore+5 line, and x stays outside the walk capsule.
+	# Far enough off the path that the trunks sit at the sides of the portrait,
+	# not across the top of the frame. The route's shore+5 line stays clear.
 	var spots: Array[Vector3] = [
-		Vector3(-1.15, 0, shore + 3.4), Vector3(1.2, 0, shore + 3.8),
-		Vector3(-1.2, 0, shore + 6.8), Vector3(1.15, 0, shore + 7.2),
-		Vector3(-1.1, 0, shore + 9.4), Vector3(1.25, 0, shore + 9.8),
-		Vector3(-1.25, 0, shore + 11.6), Vector3(1.18, 0, shore + 12.0),
+		Vector3(-2.25, 0, shore + 2.2), Vector3(2.35, 0, shore + 2.8),
+		Vector3(-2.15, 0, shore + 6.6), Vector3(2.3, 0, shore + 7.4),
+		Vector3(-2.4, 0, shore + 9.6), Vector3(2.2, 0, shore + 10.2),
+		Vector3(-2.3, 0, shore + 12.2), Vector3(2.45, 0, shore + 12.6),
 		Vector3(2.3, 0, shore - 1.6), Vector3(-2.5, 0, shore - 2.2),
 		Vector3(2.8, 0, shore + 1.4), Vector3(-3.0, 0, shore + 2.6),
 		Vector3(3.6, 0, shore + 4.2), Vector3(-3.4, 0, shore + 5.4),
@@ -678,10 +686,10 @@ func _garden(ends: Vector2) -> void:
 	]
 	var heights: Array[float] = [6.2, 5.8, 6.0, 5.6, 6.4, 5.9, 5.7, 6.1, 5.2, 4.4, 4.8, 5.6, 4.1, 4.7, 4.6, 5.1, 4.3, 4.9, 5.3, 4.5, 3.9]
 	# Negative z-rotation sends a left trunk's crown toward +X, over the path.
-	var leans: Array[float] = [-0.42, 0.4, -0.4, 0.42, -0.38, 0.4, -0.36, 0.38]
+	var leans: Array[float] = [-0.12, 0.1, -0.1, 0.12, -0.08, 0.1, -0.1, 0.08]
 	for i in spots.size():
 		var lean := leans[i] if i < leans.size() else (0.08 if i % 2 == 0 else -0.1)
-		var frond := 2.6 if i < leans.size() else 1.7
+		var frond := 1.8 if i < leans.size() else 1.7
 		_palm(spots[i], heights[i], lean, frond)
 	var bushes: Array[Vector3] = [
 		Vector3(1.8, 0, shore + 0.8), Vector3(-1.9, 0, shore + 1.1),
@@ -1138,6 +1146,85 @@ func _bush_card() -> MeshInstance3D:
 	return mi
 
 
+func _beach(shore_z: float) -> void:
+	_scatter_rocks(shore_z)
+	_scatter_wood(shore_z)
+	_scatter_shells(shore_z)
+	_scatter_grass(shore_z)
+
+
+func _beach_points(shore_z: float, count: int, seed_n: int, x0: float, x1: float, z0: float, z1: float) -> Array[Vector3]:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_n
+	var spots: Array[Vector3] = []
+	var guard := 0
+	while spots.size() < count and guard < count * 8:
+		guard += 1
+		var p := Vector3(rng.randf_range(x0, x1), 0, shore_z + rng.randf_range(z0, z1))
+		if absf(p.x) < 1.7:
+			continue
+		p.y = maxf(IslandData.height_at(p.x, p.z), 0.05)
+		spots.append(p)
+	return spots
+
+
+func _scatter_rocks(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_sphere(st, Vector3(0, 0.08, 0), 0.16, Color(0.55, 0.52, 0.48))
+	_sphere(st, Vector3(0.1, 0.05, 0.06), 0.1, Color(0.42, 0.4, 0.38))
+	st.generate_normals()
+	_place_multi(st.commit(), _beach_points(shore_z, 26, 31, -9.0, 9.0, -1.6, 2.4), 0.8, 1.6)
+
+
+func _scatter_wood(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_box(st, Vector3(0, 0.06, 0), Vector3(0.9, 0.08, 0.1), Color(0.45, 0.32, 0.18))
+	_box(st, Vector3(0.15, 0.08, 0.08), Vector3(0.4, 0.06, 0.08), Color(0.36, 0.24, 0.14))
+	st.generate_normals()
+	_place_multi(st.commit(), _beach_points(shore_z, 8, 37, -7.0, 7.0, -0.6, 1.6), 0.8, 1.3)
+
+
+func _scatter_shells(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_sphere(st, Vector3(0, 0.03, 0), 0.05, Color(0.93, 0.86, 0.72))
+	_sphere(st, Vector3(0.06, 0.02, 0.02), 0.03, Color(0.95, 0.55, 0.48))
+	st.generate_normals()
+	_place_multi(st.commit(), _beach_points(shore_z, 28, 41, -7.5, 7.5, -0.8, 1.8), 0.6, 1.2)
+
+
+func _scatter_grass(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var blade := Color(0.22, 0.42, 0.16)
+	_face(st, Vector3(-0.02, 0, 0), Vector3(0.02, 0, 0), Vector3(-0.01, 0.28, 0.02), Vector3(0.015, 0.26, -0.01), blade)
+	_face(st, Vector3(0, 0, -0.02), Vector3(0, 0, 0.02), Vector3(0.02, 0.22, 0), Vector3(-0.01, 0.2, 0.01), blade.lightened(0.1))
+	st.generate_normals()
+	_place_multi(st.commit(), _beach_points(shore_z, 70, 43, -8.0, 8.0, -0.4, 2.8), 0.6, 1.5)
+
+
+func _place_multi(mesh: Mesh, spots: Array[Vector3], s0: float, s1: float) -> void:
+	if spots.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = spots.size()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = spots.size() * 17 + 3
+	for i in spots.size():
+		var s := rng.randf_range(s0, s1)
+		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s)
+		mm.set_instance_transform(i, Transform3D(b, spots[i]))
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
 func _process(_delta: float) -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam != null:
@@ -1147,9 +1234,6 @@ func _process(_delta: float) -> void:
 			_lod_full[i].visible = not far
 			_lod_far[i].visible = far
 	var t := Time.get_ticks_msec() / 1000.0
-	for item in items:
-		var flame := item.get_node_or_null("Flame") as MeshInstance3D
-		if flame == null:
-			continue
+	for flame in _flames:
 		var s := 0.85 + 0.2 * sin(t * 11.0) + 0.08 * sin(t * 23.0)
 		flame.scale = Vector3(s, 0.75 + 0.35 * sin(t * 9.0 + 1.0), s)

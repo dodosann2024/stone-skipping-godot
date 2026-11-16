@@ -13,6 +13,7 @@ var _splashes: Array[MeshInstance3D] = []
 var _crumbs: Array[MeshInstance3D] = []
 var _next_crumb := 0.0
 var _amb: Ambience
+var _view: MeshInstance3D
 const WATER_Y := 0.04
 
 
@@ -21,17 +22,11 @@ func launch(from: Vector3, velocity_in: Vector3, amb: Ambience = null) -> void:
 	_amb = amb
 	velocity = velocity_in
 	global_position = from
-	var mesh := SphereMesh.new()
-	mesh.radius = 0.028
-	mesh.height = 0.056
-	mesh.radial_segments = 12
-	mesh.rings = 6
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.scale = Vector3(1.1, 0.36, 0.9)
-	mi.material_override = BoyVisual.pebble_mat()
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(mi)
+	_view = MeshInstance3D.new()
+	_view.mesh = PebbleMesh.mesh()
+	_view.material_override = BoyVisual.pebble_mat(false)
+	_view.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_view)
 
 
 func _process(delta: float) -> void:
@@ -49,6 +44,8 @@ func _process(delta: float) -> void:
 			velocity.y = absf(velocity.y) * 0.38 + 0.45
 			velocity.x *= 0.90
 			velocity.z *= 0.90
+			if skips >= 1 and _view != null:
+				_view.material_override = BoyVisual.pebble_mat(true)
 			_skip_fx(Vector3(next.x, WATER_Y, next.z), false)
 		else:
 			_sinking = true
@@ -161,8 +158,31 @@ func _skip_fx(at: Vector3, plunk: bool) -> void:
 		drop.global_position = at + Vector3(cos(ang) * ring, 0.12, sin(ang) * ring)
 		_splashes.append(drop)
 	_pin_disc(parent, at, 0.08, 0.008, Color(0.02, 0.04, 0.06, 0.7), 0.45)
-	if not plunk:
+	if plunk:
+		_column(parent, at)
+	else:
 		_pin_disc(parent, at, 0.26, 0.01, Color(0.97, 0.99, 1.0, 0.62), 1.05)
+
+
+func _column(parent: Node, at: Vector3) -> void:
+	var col := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.015
+	mesh.bottom_radius = 0.07
+	mesh.height = 0.72
+	mesh.radial_segments = 7
+	col.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.97, 0.99, 1.0, 0.85)
+	col.material_override = mat
+	col.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	col.set_meta("life", 0.55)
+	col.set_meta("vel", Vector3(0, 0.35, 0))
+	parent.add_child(col)
+	col.global_position = at + Vector3(0, 0.36, 0)
+	_splashes.append(col)
 
 
 func _pin_disc(parent: Node, at: Vector3, radius: float, height: float, col: Color, life: float) -> void:

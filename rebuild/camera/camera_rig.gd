@@ -12,6 +12,8 @@ var follow := true
 var looking := false
 var hold_pitch := false
 var cam: Camera3D
+var _eye := Vector3.ZERO
+var _eye_ok := false
 
 
 func _ready() -> void:
@@ -59,7 +61,12 @@ func _process(delta: float) -> void:
 		if floor_hit.has("position"):
 			var floor_y := float(floor_hit.position.y)
 			pos.y = maxf(pos.y, floor_y + 0.55)
-	global_position = pos
+	if not _eye_ok:
+		_eye = pos
+		_eye_ok = true
+	else:
+		_eye = _eye.lerp(pos, 1.0 - exp(-delta / 0.05))
+	global_position = _eye
 	look_at(chest, Vector3.UP)
 	player.cam_basis = global_transform.basis
 
