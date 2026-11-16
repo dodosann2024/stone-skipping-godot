@@ -73,30 +73,29 @@ func _world() -> void:
 	sun.light_energy = 1.25
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	sun.shadow_enabled = true
-	sun.shadow_blur = 0.2
+	sun.shadow_blur = 0.8
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	sun.directional_shadow_max_distance = 9.0
-	sun.directional_shadow_fade_start = 0.75
+	sun.directional_shadow_max_distance = 14.0
 	add_child(sun)
 	ground = Ground.new()
 	add_child(ground)
 	var gmat := _ground_mat()
 	if gmat != null:
-		gmat.set_shader_parameter("cheap", 1.0)
+		gmat.set_shader_parameter("cheap", 0.0)
 	props = Props.new()
 	add_child(props)
 	var water := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(90, 90)
-	plane.subdivide_width = 16
-	plane.subdivide_depth = 16
+	plane.subdivide_width = 32
+	plane.subdivide_depth = 32
 	water.mesh = plane
 	water_mat = ShaderMaterial.new()
 	water_mat.shader = load("res://shaders/sea.gdshader")
 	water.material_override = water_mat
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	# The web build is what the phone runs. The lace path stays in the shader behind cheap=0.
-	water_mat.set_shader_parameter("cheap", 1.0)
+	water_mat.set_shader_parameter("cheap", 0.0)
 	water.position.y = 0.02
 	add_child(water)
 
@@ -171,6 +170,8 @@ func _start_gate() -> void:
 func _begin() -> void:
 	live = true
 	amb.start()
+	if OS.has_feature("web") and hud != null and hud.sound_tip != null:
+		hud.sound_tip.visible = true
 
 
 func _process(delta: float) -> void:
@@ -187,6 +188,8 @@ func _process(delta: float) -> void:
 	if not live:
 		return
 	player.stick = joy.value
+	if hud != null and hud.sound_tip != null and hud.sound_tip.visible and joy.value.length() > 0.2:
+		hud.sound_tip.visible = false
 	_prompts()
 	if dbg != null:
 		dbg.note(delta, player.speed > 0.12)

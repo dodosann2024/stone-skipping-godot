@@ -56,7 +56,7 @@ func note(delta: float, walking: bool) -> void:
 	var proc := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
 	var phys := Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
 	var p95 := _pct(0.95)
-	label.text = "v45\n帧 %.1f ms\nwalk p95 %.1f ms  n=%d\n图元 %d  绘制 %d+%d" % [ms, p95, walk_ms.size(), vis_pr, vis_dc, sh_dc]
+	label.text = "v46\n帧 %.1f ms\nwalk p95 %.1f ms  n=%d\n图元 %d  绘制 %d+%d" % [ms, p95, walk_ms.size(), vis_pr, vis_dc, sh_dc]
 	_log_n += 1
 	if _log_n == 8 or _log_n == 40:
 		print("PROFILE frame_ms=%.2f proc_ms=%.2f phys_ms=%.2f vis_dc=%d vis_prim=%d sh_dc=%d sh_prim=%d" % [ms, proc, phys, vis_dc, vis_pr, sh_dc, sh_pr])

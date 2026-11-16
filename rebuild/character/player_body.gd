@@ -29,6 +29,8 @@ var _last_route_m := 0.0
 var locked := false
 var use_anchor := false
 var anchor := Vector3.ZERO
+var _safe := Vector3.ZERO
+var _safe_ok := false
 
 
 func _ready() -> void:
@@ -132,11 +134,23 @@ func _move(inp: Vector2, delta: float) -> void:
 	contact_y = global_position.y + Constants.CAPSULE_BOTTOM
 	if boy != null and boy.ik != null:
 		boy.ik.contact_y = contact_y
-	if not is_on_floor() and ground != null:
+	if is_on_floor() and global_position.y > -0.15:
+		_safe = global_position
+		_safe_ok = true
+	elif not is_on_floor() and ground != null:
 		var h := ground.height(global_position.x, global_position.z)
 		if global_position.y < h - 0.08 and h > Constants.WADE_MIN_Y:
 			global_position.y = h
 			velocity.y = 0.0
+			_safe = global_position
+			_safe_ok = true
+		elif global_position.y < -0.55 and _safe_ok:
+			# Off the walk mesh the sea has no floor. Put the body back
+			# on the last boards instead of following it under the plane.
+			global_position = _safe
+			velocity = Vector3.ZERO
+			speed = 0.0
+			reset_physics_interpolation()
 	rotation.y = face_yaw
 	var stepped_m := Vector2(global_position.x - before.x, global_position.z - before.z).length()
 	if route:

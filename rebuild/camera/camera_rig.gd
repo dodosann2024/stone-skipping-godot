@@ -12,8 +12,6 @@ var follow := true
 var looking := false
 var hold_pitch := false
 var cam: Camera3D
-var _eye := Vector3.ZERO
-var _eye_ok := false
 
 
 func _ready() -> void:
@@ -37,8 +35,11 @@ func _process(delta: float) -> void:
 		var err := absf(angle_difference(yaw, player.face_yaw))
 		var rate := lerpf(2.4, 7.0, clampf(err / 1.1, 0.0, 1.0))
 		yaw = lerp_angle(yaw, player.face_yaw, 1.0 - exp(-delta * rate))
-	var pitch_goal := deg_to_rad(40.0) if hold_pitch else Constants.CAM_PITCH
-	pitch = lerpf(pitch, pitch_goal, 1.0 - exp(-delta * 2.2))
+	# While a finger is orbiting, the drag owns the pitch. Easing back to 35
+	# in the same frame eats the drag.
+	if not looking:
+		var pitch_goal := deg_to_rad(40.0) if hold_pitch else Constants.CAM_PITCH
+		pitch = lerpf(pitch, pitch_goal, 1.0 - exp(-delta * 2.2))
 	pitch = clampf(pitch, deg_to_rad(30.0), deg_to_rad(40.0))
 	var chest := _chest()
 	var arm := _arm_dir()
@@ -61,12 +62,7 @@ func _process(delta: float) -> void:
 		if floor_hit.has("position"):
 			var floor_y := float(floor_hit.position.y)
 			pos.y = maxf(pos.y, floor_y + 0.55)
-	if not _eye_ok:
-		_eye = pos
-		_eye_ok = true
-	else:
-		_eye = _eye.lerp(pos, 1.0 - exp(-delta / 0.05))
-	global_position = _eye
+	global_position = pos
 	look_at(chest, Vector3.UP)
 	player.cam_basis = global_transform.basis
 

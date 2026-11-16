@@ -14,6 +14,7 @@ var lie_btn: Button
 var pose_btn: Button
 var up_btn: Button
 var banner: Label
+var sound_tip: Label
 var _font: Font
 
 
@@ -22,8 +23,8 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_font = load("res://assets/ui.otf") as Font
 	title = _label("海岛打水漂", Vector2(16, 12), 22)
-	var frame_btn := _button("帧时间", Vector2(16, 68))
-	frame_btn.custom_minimum_size = Vector2(88, 32)
+	var frame_btn := _button("帧时间", Vector2(250, 620))
+	frame_btn.custom_minimum_size = Vector2(124, 36)
 	frame_btn.pressed.connect(_on_btn.bind("帧时间"))
 	record = _label("最高纪录：弹跳 0 次 · 最远 0.0 米", Vector2(16, 40), 14)
 	hint = _label("左下摇杆走路，推到底就跑 · 拖屏幕转视角\n打水漂要去码头尽头", Vector2(16, 760), 15)
@@ -57,6 +58,8 @@ func _ready() -> void:
 	up_btn.visible = false
 	up_btn.pressed.connect(_on_btn.bind("起来"))
 	banner = _label("", Vector2(16, 120), 18)
+	sound_tip = _label("若无声，请关闭侧面静音开关", Vector2(16, 92), 13)
+	sound_tip.visible = false
 	banner.size = Vector2(360, 28)
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 

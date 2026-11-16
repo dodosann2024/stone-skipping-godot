@@ -1,0 +1,27 @@
+751	goto
+1155	CON Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+1271	CON OpenGL API OpenGL ES 3.0 (WebGL 2.0 (OpenGL ES 3.0 Chromium)) - Compatibility - Using Device: WebKit - WebKit WebGL
+1430	CON Build configuration: Emscripten 4.0.20, single-threaded, no GDExtension support.
+1842	CON BOY_CLIPS idle=idle walk=walk run=run n=19
+1849	CON CLIP_AUTHOR bench_lie lounger_lie throw_stand throw_crouch
+3340	loaded
+14958	after_start_tap
+21118	mem {"heap":43887121,"audio":true}
+24117	idle_done
+29274	walk_fwd
+40100	run_fwd
+53138	run_right
+63990	run_back
+73272	run_left
+81730	circle
+105633	orbit
+111310	seek_bench
+125801	after_sit
+142127	after_lie
+150992	seek_pier
+164429	throw_0
+172840	throw_1
+182172	throw_2
+188945	rapid
+210381	RAF n=309 avg=342.6 p95=483.3 max=499.9
+210537	heap_end 37073415
