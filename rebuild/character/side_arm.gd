@@ -52,7 +52,7 @@ func _process_modification_with_delta(delta: float) -> void:
 		var hp := skel.get_bone_pose(_bi[6])
 		# Deep crouch in the load, easing back up on the follow-through.
 		# Pose units are pre-scale. FootIK plants both soles after this.
-		var drop_m := lerpf(0.12, 0.26, load) * (1.0 - recover * 0.55)
+		var drop_m := lerpf(0.18, 0.42, load) * (1.0 - recover * 0.4)
 		if crouch:
 			drop_m += 0.04
 		hp.origin.y -= drop_m / Constants.MODEL_SCALE

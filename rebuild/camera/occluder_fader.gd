@@ -17,9 +17,11 @@ func _process(delta: float) -> void:
 	_tick += 1
 	if enabled and camera != null and player != null and _tick % 2 == 0:
 		for item in props.items:
-			item.set_target(1.0)
+			if item.keep_solid:
+				item.hold_solid(true)
+			else:
+				item.set_target(1.0)
 		_mark()
-		_near_camera()
 	for item in props.items:
 		item.tick(delta)
 
@@ -52,25 +54,6 @@ func _mark() -> void:
 		counts[id] = int(counts.get(id, 0)) + 1
 		if int(counts[id]) >= 2:
 			var fad: Fadable = body.get_meta("fadable")
-			fad.set_target(Constants.OCCLUSION_MIN)
-
-
-func _near_camera() -> void:
-	var origin := camera.global_position
-	var size := camera.get_viewport().get_visible_rect().size
-	for item in props.items:
-		var fade := false
-		for h in [0.15, 0.7, 1.25]:
-			var p := item.global_position + Vector3(0, h, 0)
-			var dist := origin.distance_to(p)
-			if dist < 3.2:
-				fade = true
-				break
-			if dist > 6.5 or camera.is_position_behind(p):
+			if fad.keep_solid:
 				continue
-			var screen := camera.unproject_position(p)
-			if screen.y > size.y * 0.5:
-				fade = true
-				break
-		if fade:
-			item.set_target(Constants.OCCLUSION_MIN)
+			fad.set_target(Constants.OCCLUSION_MIN)

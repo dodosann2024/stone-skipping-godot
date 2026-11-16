@@ -22,7 +22,12 @@ var _orbit := -1
 var _best_skips := 0
 var _best_dist := 0.0
 var _sitting := false
+var _pose_ready := false
+var _lying := false
+var _sit_align := false
+var _pose_msec := 0
 var _audit_still := 0.0
+var _audit_spot := Vector2.ZERO
 var _crouch := false
 var _throwing := false
 var rest_kind := ""
@@ -197,14 +202,16 @@ func _process(delta: float) -> void:
 	player.stick = joy.value
 	var auto := _audit_stick()
 	if auto.length() > 0.02:
-		if player.speed < 0.08:
+		var spot := Vector2(player.global_position.x, player.global_position.z)
+		if spot.distance_to(_audit_spot) < 0.1:
 			_audit_still += delta
 		else:
+			_audit_spot = spot
 			_audit_still = 0.0
 		# A trunk in the wish direction stalls the walk. Step sideways until it clears.
 		# Sidestep only on the island. On the pier a sideways shove walks off the
 		# planks and the lip snap puts him back, so he never reaches the tee.
-		if _audit_still > 0.45 and player.global_position.z > IslandData.dock_ends().x - 1.2:
+		if _audit_still > 0.45 and player.global_position.z > IslandData.dock_ends().x + 2.0:
 			var side := 1.0 if int(_audit_still / 0.55) % 2 == 0 else -1.0
 			auto = Vector2(side, -0.35).limit_length(1.0)
 		player.stick = auto
@@ -222,7 +229,11 @@ func _process(delta: float) -> void:
 				fwd = Vector3(0, 0, 1)
 			else:
 				fwd = fwd.normalized()
-			print("NAV %.2f %.2f %.3f %.3f" % [player.global_position.x, player.global_position.z, fwd.x, fwd.z])
+			print("NAV %.2f %.2f %.3f %.3f stick %.2f %.2f" % [player.global_position.x, player.global_position.z, fwd.x, fwd.z, player.stick.x, player.stick.y])
+	if _sit_align and not _lying:
+		_plant_on_seat(_sit_weight())
+	if dbg != null and dbg.on and Engine.get_process_frames() % 45 == 0:
+		_fade_audit()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -310,8 +321,9 @@ func _prompts() -> void:
 	else:
 		hud.sit_btn.text = "坐下"
 	var seated := rest_kind == "bench" or rest_kind == "log"
-	hud.lie_btn.visible = _sitting and seated and player.boy != null and player.boy.rest != null and player.boy.rest.mode != "lie"
-	hud.up_btn.visible = _sitting and not _throwing
+	# 躺下 and 起来 wait until the hips are actually on the seat.
+	hud.lie_btn.visible = _pose_ready and seated and not _lying
+	hud.up_btn.visible = (_pose_ready or _lying) and _sitting and not _throwing
 
 
 func _on_action(name: String) -> void:
@@ -367,22 +379,34 @@ func _begin_rest(item: Fadable) -> void:
 	if _sitting or player.boy == null:
 		return
 	_sitting = true
+	_pose_ready = false
+	_lying = false
+	_sit_align = false
 	_rest_item = item
 	rest_kind = str(item.get_meta("kind", ""))
+	item.hold_solid(true)
 	joy.value = Vector2.ZERO
 	player.stick = Vector2.ZERO
 	player.locked = true
 	var yaw := float(item.get_meta("yaw", 0.0))
 	var pos := _seat_pos(item)
-	rig.framing = "front"
-	rig.yaw = yaw + PI
-	rig.pivot_y = 0.45 if rest_kind == "towel" or rest_kind == "lounger" or rest_kind == "hammock" else 0.7
+	if rest_kind == "bench":
+		# Stand just in front of the seat, back toward the backrest, then sit down onto it.
+		yaw = PI
+		pos = item.global_transform * Vector3(0.0, 0.0, 0.78)
+		pos.y = item.global_position.y + 0.02
+		rig.framing = "seat"
+		rig.pivot_y = 0.48
+	else:
+		rig.framing = "front"
+		rig.pivot_y = 0.45 if rest_kind == "towel" or rest_kind == "lounger" or rest_kind == "hammock" else 0.7
 	await _glide(pos, yaw, true)
 	if rest_kind == "lounger" or rest_kind == "towel":
 		player.boy.play_clip("lounger_lie", 0.2)
 		return
 	var enter := _clip_for(rest_kind, "enter")
 	var idle := _clip_for(rest_kind, "idle")
+	_sit_align = rest_kind == "bench"
 	if enter != "":
 		player.boy.play_clip(enter, 0.15)
 		await _wait_clip(8.0 if rest_kind != "hammock" else 12.0)
@@ -390,6 +414,7 @@ func _begin_rest(item: Fadable) -> void:
 		player.boy.play_clip(idle, 0.2)
 	else:
 		player.boy.play_clip("sit", 0.2)
+	_plant_on_seat(1.0)
 
 
 func _begin_lie() -> void:
@@ -398,10 +423,13 @@ func _begin_lie() -> void:
 	if player.boy.rest != null:
 		player.boy.rest.mode = ""
 	if rest_kind == "bench" and _rest_item != null:
+		_lying = true
+		_sit_align = false
 		_apply_bench_lie(_rest_item)
 		await get_tree().process_frame
 		_snap_bench(_rest_item.global_position)
-		rig.pivot_y = 0.4
+		rig.framing = "lie"
+		rig.pivot_y = 0.35
 		return
 	var clip := "lounger_lie" if rest_kind == "lounger" else "bench_lie"
 	player.boy.play_clip(clip, 0.2)
@@ -425,13 +453,120 @@ func _end_rest() -> void:
 	await _glide(back + step, yaw, true)
 	if player.boy != null:
 		player.boy.clear_hold()
+	if _rest_item != null:
+		_rest_item.hold_solid(false)
 	_sitting = false
+	_pose_ready = false
+	_lying = false
+	_sit_align = false
 	rest_kind = ""
 	_rest_item = null
 	player.locked = false
 	player.use_anchor = false
 	rig.framing = ""
+	rig.tight = false
 	rig.pivot_y = 0.62
+
+
+func _sit_weight() -> float:
+	if player.boy == null or player.boy.anim == null:
+		return 1.0
+	var anim := player.boy.anim
+	var cur := str(anim.current_animation)
+	if cur.ends_with("bench_sit_idle") or cur.ends_with("/sit") or cur == "sit":
+		return 1.0
+	if not cur.contains("enter"):
+		return 0.85
+	var clip := anim.get_animation(anim.current_animation)
+	if clip == null or clip.length < 0.1:
+		return 1.0
+	return clampf((anim.current_animation_position / clip.length - 0.4) / 0.6, 0.0, 1.0)
+
+
+func _plant_on_seat(weight: float) -> void:
+	if weight < 0.02 or _rest_item == null or player.boy == null or player.boy.skel == null:
+		return
+	var skel: Skeleton3D = player.boy.skel
+	var hi := skel.find_bone("mixamorig_Hips")
+	if hi < 0:
+		return
+	skel.force_update_all_bone_transforms()
+	var hip: Vector3 = (skel.global_transform * skel.get_bone_global_pose(hi)).origin
+	# Slats are about 0.44 m above the bench origin, just in from the front edge.
+	var seat: Vector3 = _rest_item.global_transform * Vector3(0.0, 0.46, 0.06)
+	var delta := (seat - hip) * weight
+	if delta.length() > 0.28:
+		delta = delta.normalized() * 0.28
+	player.global_position += delta
+	player.anchor = player.global_position
+	player.use_anchor = true
+	player.face_yaw = PI
+	player.rotation.y = PI
+	var hip2: Vector3 = hip + delta
+	var cur := ""
+	if player.boy.anim != null:
+		cur = str(player.boy.anim.current_animation)
+	if cur.ends_with("bench_sit_idle") and not _pose_ready:
+		_pose_ready = true
+		_pose_msec = Time.get_ticks_msec()
+		print("SIT_READY")
+	if _pose_ready and rig != null:
+		rig.tight = Time.get_ticks_msec() - _pose_msec > 1500
+
+
+func _fade_audit() -> void:
+	var bad: Array[String] = []
+	if player.boy != null:
+		_scan_fade(player.boy, "boy", bad, true)
+	if _rest_item != null:
+		_scan_fade(_rest_item, "seat", bad, true)
+	if props != null:
+		for i in props.lod_count():
+			if props.lod_both_visible(i):
+				bad.append("lod doubled")
+		for item in props.items:
+			_scan_prop_fade(item, bad)
+	if bad.is_empty():
+		return
+	print("FADE_FAIL %s" % " ".join(bad))
+
+
+func _scan_prop_fade(node: Node, bad: Array[String]) -> void:
+	if str(node.name) == "Flame":
+		return
+	if node is MeshInstance3D:
+		var mat := (node as MeshInstance3D).material_override as StandardMaterial3D
+		if mat != null and mat.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA and mat.albedo_color.a < 0.99:
+			bad.append("%s alpha-blend" % node.name)
+	for c in node.get_children():
+		_scan_prop_fade(c, bad)
+
+
+func _scan_fade(node: Node, tag: String, bad: Array[String], must_solid: bool) -> void:
+	if must_solid and node is GeometryInstance3D:
+		var gi := node as GeometryInstance3D
+		if gi.transparency > 0.01:
+			bad.append("%s instance-fade %.2f" % [tag, gi.transparency])
+			gi.transparency = 0.0
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		var mats: Array[Material] = []
+		if mi.material_override != null:
+			mats.append(mi.material_override)
+		for s in mi.get_surface_override_material_count():
+			var sm := mi.get_surface_override_material(s)
+			if sm != null:
+				mats.append(sm)
+		for mat in mats:
+			var std := mat as StandardMaterial3D
+			if std == null:
+				continue
+			if must_solid and (std.albedo_color.a < 0.99 or std.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED):
+				bad.append("%s alpha %.2f" % [tag, std.albedo_color.a])
+				std.albedo_color.a = 1.0
+				std.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	for c in node.get_children():
+		_scan_fade(c, tag, bad, must_solid)
 
 
 func _clip_for(kind: String, phase: String) -> String:
@@ -480,10 +615,11 @@ func _wait_clip(limit: float) -> void:
 	var cb := func(_n: StringName) -> void:
 		done = true
 	player.boy.anim.animation_finished.connect(cb, CONNECT_ONE_SHOT)
-	var t := 0.0
-	while not done and t < limit:
-		var dt := get_process_delta_time()
-		t += 0.05 if dt <= 0.0 else dt
+	var start := Time.get_ticks_msec()
+	while not done and Time.get_ticks_msec() - start < int(limit * 1000.0):
+		var clip := player.boy.anim.get_animation(player.boy.anim.current_animation)
+		if clip != null and player.boy.anim.current_animation_position >= clip.length - 0.08:
+			break
 		await get_tree().process_frame
 
 

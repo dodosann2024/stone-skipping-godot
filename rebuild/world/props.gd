@@ -1225,6 +1225,16 @@ func _place_multi(mesh: Mesh, spots: Array[Vector3], s0: float, s1: float) -> vo
 	add_child(mi)
 
 
+func lod_count() -> int:
+	return _lod_full.size()
+
+
+func lod_both_visible(i: int) -> bool:
+	if i < 0 or i >= _lod_full.size():
+		return false
+	return _lod_full[i].visible and _lod_far[i].visible
+
+
 func _process(_delta: float) -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam != null:

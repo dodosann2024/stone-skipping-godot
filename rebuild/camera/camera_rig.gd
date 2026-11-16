@@ -15,6 +15,7 @@ var cam: Camera3D
 var _was_looking := false
 var _drag_ms := 0
 var _ahead_for := 0.0
+var tight := false
 
 
 func _ready() -> void:
@@ -61,10 +62,17 @@ func _process(delta: float) -> void:
 		want = 5.2
 		yaw = lerp_angle(yaw, player.face_yaw + PI * 0.5, 1.0 - exp(-delta * 5.0))
 	elif framing == "throw":
-		# Just behind him, looking along the throw. The portrait field is narrow,
-		# so a bigger side angle puts the stone out of the frame.
-		want = 5.4
-		yaw = lerp_angle(yaw, player.face_yaw + 0.12, 1.0 - exp(-delta * 8.0))
+		# Far enough around to see the right hand, still looking out over the water.
+		want = 4.8
+		yaw = lerp_angle(yaw, player.face_yaw + 0.55, 1.0 - exp(-delta * 8.0))
+	elif framing == "seat":
+		# In front of the seated boy, so the lap, the slats and the feet share the frame.
+		want = 3.3 if tight else 4.6
+		yaw = lerp_angle(yaw, player.face_yaw + PI, 1.0 - exp(-delta * 5.0))
+	elif framing == "lie":
+		# Portrait is narrow. A long body needs the camera far enough that the head stays in frame.
+		want = 8.4
+		yaw = lerp_angle(yaw, _lie_yaw(), 1.0 - exp(-delta * 5.0))
 	elif ahead:
 		yaw = lerp_angle(yaw, _ahead_yaw(), 1.0 - exp(-delta * 5.5))
 	elif follow and not looking and player.speed > 0.25:
@@ -101,6 +109,11 @@ func _process(delta: float) -> void:
 	var look := chest
 	if ahead:
 		look = _path_look(chest)
+	elif framing == "lie":
+		look = _lie_look(chest)
+	elif framing == "seat":
+		look = chest + Vector3(0, -0.05, 0)
+	pos = _off_prop(chest, pos)
 	pos = _outside_boy(chest, pos)
 	# The Camera3D stays at the rig origin. A leftover local offset is how the
 	# eye ended up inside the hat.
@@ -189,5 +202,66 @@ func _clear(chest: Vector3, desired: Vector3) -> Vector3:
 	var n := hit.normal as Vector3
 	if n.y > 0.65:
 		return desired
-	var pos: Vector3 = hit.position + n * Constants.CAM_CLEAR
+	var pos: Vector3 = hit.position + n * 0.85
 	return pos
+
+
+func _off_prop(chest: Vector3, pos: Vector3) -> Vector3:
+	# Sitting inside a trunk lets the near plane cut it into floating segments.
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return pos
+	var q := PhysicsRayQueryParameters3D.create(pos, chest)
+	q.collision_mask = Constants.LAYER_BLOCK | Constants.LAYER_PROP
+	if player != null:
+		q.exclude = [player.get_rid()]
+	var hit := space.intersect_ray(q)
+	if not hit.has("position"):
+		return pos
+	var at: Vector3 = hit.position
+	if pos.distance_to(at) > 0.75:
+		return pos
+	var n := hit.normal as Vector3
+	if n.length_squared() < 1e-6:
+		n = (pos - chest).normalized()
+	return at + n.normalized() * 0.9
+
+
+func _lie_yaw() -> float:
+	var along := _body_along()
+	if along.length_squared() < 0.04:
+		return player.face_yaw + PI * 0.5
+	# Camera sits to the side of the body, on the +Z side of that axis.
+	var side := Vector3(-along.z, 0, along.x).normalized()
+	if side.z < 0.0:
+		side = -side
+	return atan2(side.x, side.z)
+
+
+func _lie_look(chest: Vector3) -> Vector3:
+	var ends := _body_ends()
+	if ends.is_empty():
+		return chest
+	return ((ends[0] + ends[1]) * 0.5) + Vector3(0, 0.28, 0)
+
+
+func _body_along() -> Vector3:
+	var ends := _body_ends()
+	if ends.size() < 2:
+		return Vector3.ZERO
+	var flat: Vector3 = ends[1] - ends[0]
+	flat.y = 0.0
+	return flat
+
+
+func _body_ends() -> Array[Vector3]:
+	if player.boy == null or player.boy.skel == null:
+		return []
+	var skel: Skeleton3D = player.boy.skel
+	var head := skel.find_bone("mixamorig_Head")
+	var foot := skel.find_bone("mixamorig_LeftFoot")
+	if head < 0 or foot < 0:
+		return []
+	var h: Vector3 = (skel.global_transform * skel.get_bone_global_pose(head)).origin
+	var f: Vector3 = (skel.global_transform * skel.get_bone_global_pose(foot)).origin
+	return [h, f]

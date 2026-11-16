@@ -30,6 +30,7 @@ func _ready() -> void:
 	# Capsule bottom is this far above the body origin. The mesh feet sit on that contact.
 	model.position.y = Constants.CAPSULE_BOTTOM
 	_keep_full_lod(model)
+	_force_opaque(model)
 	add_child(model)
 	anim = _find_player(model)
 	skel = _find_skel(model)
@@ -75,6 +76,7 @@ func _process(_delta: float) -> void:
 	if pebble == null or arm == null:
 		return
 	pebble.visible = arm.playing and arm.phase < 0.52
+	pebble.scale = Vector3.ONE * (2.4 if pebble.visible else 1.0)
 	if not pebble.visible:
 		return
 	var cam := get_viewport().get_camera_3d()
@@ -210,6 +212,33 @@ static func pebble_mat(wet: bool = false) -> StandardMaterial3D:
 	mat.rim_tint = 1.0
 	mat.emission_enabled = true
 	return mat
+
+
+func _force_opaque(node: Node) -> void:
+	if node is GeometryInstance3D:
+		(node as GeometryInstance3D).transparency = 0.0
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		var mats: Array[Material] = []
+		if mi.material_override != null:
+			mats.append(mi.material_override)
+		for s in mi.get_surface_override_material_count():
+			var sm := mi.get_surface_override_material(s)
+			if sm != null:
+				mats.append(sm)
+		if mi.mesh != null:
+			for i in mi.mesh.get_surface_count():
+				var sm2 := mi.mesh.surface_get_material(i)
+				if sm2 != null:
+					mats.append(sm2)
+		for mat in mats:
+			var base := mat as BaseMaterial3D
+			if base == null:
+				continue
+			base.albedo_color.a = 1.0
+			base.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	for c in node.get_children():
+		_force_opaque(c)
 
 
 func _keep_full_lod(node: Node) -> void:
