@@ -324,6 +324,7 @@ func _bench(at: Vector3) -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
 	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var body := StaticBody3D.new()
 	body.collision_layer = Constants.LAYER_PROP
 	body.collision_mask = 0
@@ -1223,6 +1224,16 @@ func _place_multi(mesh: Mesh, spots: Array[Vector3], s0: float, s1: float) -> vo
 	mi.material_override = _mat(Color(1, 1, 1))
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+
+
+func lod_count() -> int:
+	return _lod_full.size()
+
+
+func lod_both_visible(i: int) -> bool:
+	if i < 0 or i >= _lod_full.size():
+		return false
+	return _lod_full[i].visible and _lod_far[i].visible
 
 
 func _process(_delta: float) -> void:

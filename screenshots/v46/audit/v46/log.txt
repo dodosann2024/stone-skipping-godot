@@ -1,0 +1,134 @@
+75	goto
+729	CON Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+898	CON OpenGL API OpenGL ES 3.0 (WebGL 2.0 (OpenGL ES 3.0 Chromium)) - Compatibility - Using Device: WebKit - WebKit WebGL
+1078	CON Build configuration: Emscripten 4.0.20, single-threaded, no GDExtension support.
+1396	CON --res://shaders/sea.gdshader--
+1396	CON   147 | 	col = ripple_at(ripple3, p, t, col);
+1396	CON   148 | 
+1396	CON E 149-> 	# Opaque past the shoreline so a terrain tile cannot show through as a hard rectangle.
+1396	CON   150 | 	float alpha = mix(0.8, 0.98, smoothstep(0.0, 1.4, max(d, 0.0)));
+1399	CON   151 | 	alpha = clamp(alpha + foam * 0.15, 0.0, 1.0);
+1399	CON SHADER ERROR: Tokenizer: Unknown character #35: '#'
+1399	CON    at: (null) (res://shaders/sea.gdshader:149)
+1399	CON ERROR: Shader compilation failed.
+1399	CON    at: set_code (drivers/gles3/storage/material_storage.cpp:3119)
+1541	CON BOY_CLIPS idle=idle walk=walk run=run n=19
+1548	CON CLIP_AUTHOR bench_lie lounger_lie throw_stand throw_crouch
+2855	loaded
+13670	CON MARK bench 3.20 2.20
+13670	CON MARK tee 0.15 -27.48
+15043	after_start_tap
+17310	CON NAV 0.00 -28.58 0.000 1.000 stick 0.00 0.00
+17898	CON PROFILE frame_ms=122.83 proc_ms=607.50 phys_ms=0.20 vis_dc=49 vis_prim=66808 sh_dc=0 sh_prim=4999
+22212	mem {"heap":43891164,"audio":true}
+22218	CON NAV 0.00 -28.58 0.000 1.000 stick 0.00 0.00
+25213	idle_done
+27083	CON NAV 0.00 -28.58 0.000 1.000 stick 0.00 0.00
+31443	walk_fwd
+32051	CON NAV 0.00 -28.58 0.000 1.000 stick 0.00 0.00
+36913	CON NAV 0.00 -28.25 0.000 1.000 stick 0.00 -0.57
+37515	CON PROFILE frame_ms=137.43 proc_ms=601.20 phys_ms=1.70 vis_dc=51 vis_prim=67854 sh_dc=0 sh_prim=4999
+42022	CON NAV -0.00 -28.03 0.000 1.000 stick 0.00 0.00
+43373	run_fwd
+47303	CON NAV -0.00 -27.59 0.000 1.000 stick 0.00 -1.00
+52766	CON NAV 0.00 -26.39 -0.000 1.000 stick 0.00 0.00
+54899	run_right
+58286	CON NAV -0.04 -26.32 -0.000 1.000 stick 1.00 0.00
+62675	CON NAV -0.13 -26.84 0.595 -0.804 stick 0.00 0.00
+65560	run_back
+66457	CON NAV -0.11 -26.86 0.595 -0.804 stick 0.00 0.00
+70290	CON NAV -0.06 -26.75 0.978 -0.207 stick 0.00 0.17
+74039	CON NAV -0.34 -26.83 -0.959 -0.285 stick 0.00 0.00
+74946	run_left
+77547	CON NAV -0.44 -26.70 -0.960 0.280 stick -1.00 0.00
+81572	CON NAV 0.04 -27.02 -0.171 -0.985 stick 0.00 0.00
+82049	CON PROFILE frame_ms=127.70 proc_ms=486.60 phys_ms=0.90 vis_dc=15 vis_prim=53398 sh_dc=0 sh_prim=4999
+84517	circle
+85457	CON NAV 0.02 -27.06 -0.171 -0.985 stick 0.00 0.00
+89412	CON NAV 0.02 -26.79 -0.442 0.897 stick 0.69 0.69
+93463	CON NAV 0.13 -26.83 0.992 0.130 stick -0.69 0.69
+97724	CON NAV 0.64 -26.73 1.000 -0.031 stick -0.90 -0.37
+101333	CON NAV 0.92 -28.91 0.197 -0.980 stick 0.37 -0.90
+105114	CON NAV 1.41 -28.57 -0.784 0.621 stick 0.14 0.00
+108660	CON NAV 1.21 -28.96 -0.482 -0.876 stick 0.00 0.00
+109981	orbit
+112195	CON NAV 1.21 -28.96 -0.898 0.440 stick 0.00 0.00
+116497	CON NAV 1.21 -28.96 -0.322 0.947 stick 0.00 0.00
+121217	CON NAV 1.21 -28.96 -0.289 0.957 stick 0.00 0.00
+126199	CON NAV 1.21 -28.96 -0.245 0.970 stick 0.00 0.00
+129469	seek_bench {"x":3.2,"z":2.2}
+131414	CON NAV 1.08 -28.90 -0.236 0.972 stick -0.05 -1.00
+136680	CON NAV 0.60 -27.10 -0.133 0.991 stick 0.01 -1.00
+142034	CON NAV 0.40 -25.04 -0.015 1.000 stick 0.03 -1.00
+147056	CON NAV 0.28 -22.68 -0.050 0.999 stick -0.00 -1.00
+152269	CON NAV 0.23 -20.64 -0.020 1.000 stick -0.00 -1.00
+157968	CON NAV 0.19 -18.41 -0.018 1.000 stick -0.01 -1.00
+163914	CON NAV 0.18 -16.20 -0.007 1.000 stick 0.00 -1.00
+169877	CON NAV 0.18 -14.14 0.003 1.000 stick -0.00 -1.00
+175939	CON NAV 0.18 -12.08 -0.003 1.000 stick 0.04 -1.00
+181969	CON NAV 0.08 -9.89 -0.040 0.999 stick 0.00 0.00
+187277	CON NAV -0.24 -7.93 -0.172 0.985 stick -0.03 -1.00
+191758	CON NAV -0.22 -6.01 0.055 0.998 stick 0.03 -1.00
+196222	CON NAV 0.14 -4.18 -0.011 1.000 stick -0.27 -0.96
+200463	CON NAV 0.68 -2.40 0.307 0.952 stick 0.04 -1.00
+204565	CON NAV 1.28 -0.64 0.332 0.943 stick 0.00 -1.00
+208549	CON NAV 2.08 1.12 0.424 0.906 stick 0.00 0.00
+212489	CON NAV 2.28 1.57 0.421 0.907 stick 0.00 0.00
+216390	CON NAV 2.28 1.57 0.421 0.907 stick 0.00 0.00
+220237	CON NAV 3.20 2.98 0.421 0.907 stick 0.00 0.00
+224006	CON NAV 3.20 2.98 0.421 0.907 stick 0.00 0.00
+227771	CON NAV 3.20 2.98 0.421 0.907 stick 0.00 0.00
+228704	CON SIT_READY
+228706	CON CAM_SWING
+228744	after_sit ready=true
+231270	CON CAM_FRONT
+231281	CON NAV 3.20 2.70 -0.000 -1.000 stick 0.00 0.00
+237982	CON NAV 3.20 2.70 -0.000 -1.000 stick 0.00 0.00
+244010	CON NAV 3.20 2.70 -0.000 -1.000 stick 0.00 0.00
+249975	CON NAV 3.20 2.70 -0.000 -1.000 stick 0.00 0.00
+256029	CON NAV 2.84 2.22 -0.000 -1.000 stick 0.00 0.00
+258827	after_lie
+261412	CON NAV 2.84 2.22 0.154 -0.988 stick 0.00 0.00
+266590	CON NAV 2.84 2.22 0.153 -0.988 stick 0.00 0.00
+271840	CON NAV 2.84 2.22 0.126 -0.992 stick 0.00 0.00
+277141	CON NAV 2.84 2.22 0.146 -0.989 stick 0.00 0.00
+279120	seek_pier {"x":0.15,"z":-27.48}
+282424	CON NAV 2.64 2.64 -0.309 -0.951 stick -0.06 -1.00
+287518	CON NAV 2.07 1.20 -0.187 -0.982 stick -0.26 -0.97
+292681	CON NAV 1.21 -0.52 -0.443 -0.896 stick 0.00 0.00
+297704	CON NAV 0.73 -1.77 -0.364 -0.932 stick -0.00 -1.00
+302590	CON NAV 0.20 -3.53 -0.268 -0.963 stick -0.00 -1.00
+307626	CON NAV -0.22 -5.12 -0.275 -0.961 stick 0.41 -0.91
+312795	CON NAV 0.05 -6.88 0.119 -0.993 stick 0.00 0.00
+318013	CON NAV 0.11 -8.30 0.048 -0.999 stick 0.00 -1.00
+323210	CON NAV 0.14 -10.23 0.009 -1.000 stick 0.00 -1.00
+328732	CON NAV 0.15 -12.20 0.002 -1.000 stick -0.00 -1.00
+334765	CON NAV 0.15 -14.09 0.002 -1.000 stick 0.00 0.00
+340620	CON NAV 0.15 -15.64 0.000 -1.000 stick -0.00 -1.00
+345726	CON NAV 0.15 -17.96 0.000 -1.000 stick 0.00 0.00
+350297	CON NAV 0.15 -19.72 -0.000 -1.000 stick -0.00 -1.00
+354433	CON NAV 0.15 -22.05 -0.000 -1.000 stick 0.00 0.00
+358240	CON NAV 0.15 -23.51 -0.000 -1.000 stick 0.00 -1.00
+362026	CON NAV 0.15 -25.89 -0.000 -1.000 stick 0.00 0.00
+365860	CON NAV 0.15 -27.51 -0.000 -1.000 stick 0.00 0.00
+369687	CON NAV 0.15 -27.77 0.000 -1.000 stick 0.00 0.00
+373615	CON NAV 0.15 -27.77 0.000 -1.000 stick 0.00 0.00
+374591	throw_0
+378249	CON NAV 0.15 -27.77 -0.276 -0.961 stick 0.00 0.00
+382420	throw_1
+382423	CON NAV 0.15 -27.77 -0.276 -0.961 stick 0.00 0.00
+386514	CON NAV 0.15 -27.77 -0.276 -0.961 stick 0.00 0.00
+390622	CON NAV 0.15 -27.77 -0.276 -0.961 stick 0.00 0.00
+392094	throw_2
+394807	CON NAV 0.15 -27.77 -0.276 -0.961 stick 0.00 0.00
+398962	CON NAV 0.15 -27.77 -0.276 -0.961 stick 0.00 0.00
+399608	rapid
+402821	CON NAV 0.01 -28.40 -0.242 -0.970 stick 0.00 -0.14
+406885	CON NAV -0.20 -28.36 -0.789 0.614 stick 0.00 0.00
+411085	CON NAV -1.41 -27.82 -0.881 0.474 stick 0.71 0.57
+414947	CON NAV -0.67 -27.36 0.684 0.729 stick 0.00 -1.00
+419242	CON NAV -0.43 -27.12 -0.806 -0.591 stick 0.10 0.08
+422858	CON NAV -0.13 -27.11 1.000 0.006 stick 0.00 0.00
+424289	RAF n=218 avg=451.0 p95=499.9 max=499.9
+424745	heap_end 40625716
+424745	FAILS 0

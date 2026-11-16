@@ -1,0 +1,31 @@
+437	goto
+882	CON Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+1001	CON OpenGL API OpenGL ES 3.0 (WebGL 2.0 (OpenGL ES 3.0 Chromium)) - Compatibility - Using Device: WebKit - WebKit WebGL
+1177	CON Build configuration: Emscripten 4.0.20, single-threaded, no GDExtension support.
+1868	CON GROUND_COLLISION tris=11886 deck_boxes=14
+2275	CON Island: hammock cloth remap max dist 0.0000 m
+2407	CON ISLAND forest_lamp post=(0.35, 4.152514, 6.45) body=(-0.127618, 5.182514, 6.402238)
+2706	CON FOOT_IK verts L=1773 R=1651 sole_offset=12.2cm path=skeleton_modifier_set_bone_pose
+3048	loaded
+19726	after_start_tap
+27747	mem {"heap":44437876,"audio":true}
+30748	idle_done
+37945	walk_fwd
+39302	CON SOLE_MESH gap_cm 0.40..0.54 sole_y 1.499 1.503 ankle0 1.592 body_y 1.493
+39976	CON SOLE_MESH gap_cm 0.40..0.54 sole_y 1.499 1.503 ankle0 1.592 body_y 1.493
+49456	run_fwd
+59774	run_right
+70334	run_back
+81001	run_left
+91705	circle
+124401	orbit
+140494	seek_bench
+158656	after_sit
+177838	after_lie
+187479	seek_pier
+200590	throw_0
+208349	throw_1
+217029	throw_2
+223543	rapid
+247057	RAF n=126 avg=435.7 p95=483.4 max=499.9
+247550	heap_end 54432371
