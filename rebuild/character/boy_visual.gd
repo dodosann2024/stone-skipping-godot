@@ -62,12 +62,8 @@ func _pebble(skel: Skeleton3D) -> void:
 	grip.bone_idx = skel.find_bone("mixamorig_RightHand")
 	skel.add_child(grip)
 	pebble = MeshInstance3D.new()
-	var mesh := SphereMesh.new()
-	mesh.radius = 0.028
-	mesh.height = 0.056
-	pebble.mesh = mesh
-	# 5–6 cm across, flat, sitting in the palm along the finger axis (+Y).
-	pebble.scale = Vector3(1.05, 0.38, 0.85)
+	pebble.mesh = PebbleMesh.mesh()
+	# The mesh is already about 6 cm. It sits in the palm along the finger axis (+Y).
 	pebble.position = Vector3(0.0, 0.042, 0.01)
 	pebble.material_override = pebble_mat()
 	pebble.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -193,20 +189,26 @@ func lay_flat(kind: String) -> void:
 		model.position = Vector3(0, 0.20, 0.02)
 
 
-static func pebble_mat() -> StandardMaterial3D:
+static func pebble_mat(wet: bool = false) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.90, 0.88, 0.82)
-	mat.roughness = 0.16
+	if wet:
+		mat.albedo_color = Color(0.34, 0.32, 0.29)
+		mat.roughness = 0.08
+		mat.emission = Color(0.08, 0.08, 0.07)
+		mat.emission_energy_multiplier = 0.25
+	else:
+		mat.albedo_color = Color(0.90, 0.88, 0.82)
+		mat.roughness = 0.18
+		mat.emission = Color(0.55, 0.52, 0.46)
+		mat.emission_energy_multiplier = 0.55
 	mat.metallic = 0.02
 	mat.clearcoat_enabled = true
-	mat.clearcoat = 0.9
-	mat.clearcoat_roughness = 0.05
+	mat.clearcoat = 0.95 if wet else 0.75
+	mat.clearcoat_roughness = 0.04 if wet else 0.12
 	mat.rim_enabled = true
-	mat.rim = 0.8
+	mat.rim = 0.85
 	mat.rim_tint = 1.0
 	mat.emission_enabled = true
-	mat.emission = Color(0.62, 0.58, 0.50)
-	mat.emission_energy_multiplier = 0.7
 	return mat
 
 

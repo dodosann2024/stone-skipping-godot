@@ -38,6 +38,7 @@ const vec3 C_SHALLOW = vec3(0.16, 0.42, 0.44);
 const vec3 C_MID = vec3(0.09, 0.30, 0.36);
 const vec3 C_DEEP = vec3(0.05, 0.18, 0.28);
 const vec3 C_ABYSS = vec3(0.03, 0.10, 0.18);
+uniform float cheap = 1.0;
 uniform vec4 ripple0 = vec4(0.0);
 uniform vec4 ripple1 = vec4(0.0);
 uniform vec4 ripple2 = vec4(0.0);
@@ -65,8 +66,8 @@ vec3 ripple_at(vec4 r, vec2 p, float t, vec3 col) {
 	float rad = 0.4 + age * 1.15;
 	float band = abs(dist - rad);
 	// Narrow white leading edge, then a wider soft shoulder that fades.
-	float edge = exp(-band * band / 0.02);
-	float soft = exp(-band * band / 0.09) * 0.8;
+	float edge = exp(-band * band / 0.07);
+	float soft = exp(-band * band / 0.18) * 0.85;
 	float fade = 1.0 - smoothstep(0.5, 1.35, age);
 	col = mix(col, vec3(0.78, 0.88, 0.9), soft * fade);
 	col = mix(col, vec3(1.0, 1.0, 1.0), clamp(edge * fade * 1.35, 0.0, 1.0));
@@ -97,12 +98,16 @@ void fragment() {
 	float crest = 0.5 + 0.5 * sin(dot(WK0, p) * 0.85 + t * 0.75);
 	crest += 0.35 * sin(dot(WK1, p) * 1.4 - t * 0.6);
 	col = mix(col * vec3(0.78, 0.86, 0.9), col, clamp(crest, 0.0, 1.0) * 0.45);
-	col *= 1.0 + (vnoise(p * 0.35 + vec2(t * 0.02, 0.0)) - 0.5) * 0.08;
+	if (cheap < 0.5) {
+		col *= 1.0 + (vnoise(p * 0.35 + vec2(t * 0.02, 0.0)) - 0.5) * 0.08;
+	}
 
 	vec2 g = WK0 * 1.6 * 0.055 * cos(dot(WK0, p) * 1.6 + t * 1.3);
 	g += WK1 * 2.3 * 0.04 * cos(dot(WK1, p) * 2.3 + t * 1.7);
-	g += WK2 * 3.7 * 0.022 * cos(dot(WK2, p) * 3.7 + t * 2.3);
-	g += WK3 * 5.9 * 0.012 * cos(dot(WK3, p) * 5.9 + t * 2.9);
+	if (cheap < 0.5) {
+		g += WK2 * 3.7 * 0.022 * cos(dot(WK2, p) * 3.7 + t * 2.3);
+		g += WK3 * 5.9 * 0.012 * cos(dot(WK3, p) * 5.9 + t * 2.9);
+	}
 	g *= mix(0.55, 1.0, smoothstep(0.0, 4.0, d));
 	vec3 nw = normalize(vec3(-g.x, 1.0, -g.y));
 	NORMAL = normalize((VIEW_MATRIX * vec4(nw, 0.0)).xyz);
@@ -113,21 +118,28 @@ void fragment() {
 	col = mix(col, sky, fres * 0.16);
 	col = mix(col, vec3(0.06, 0.12, 0.22), night_k * 0.72);
 
-	float cyc = fract(t * 0.105 + vnoise(p * 0.18) * 0.6 + atan(p.y, p.x));
-	float roll = smoothstep(0.45, 1.0, cyc);
-	float dl = mix(2.6, 0.05, roll);
-	float form = smoothstep(0.5, 0.68, cyc) * (1.0 - smoothstep(0.9, 1.0, cyc));
-	float band = exp(-pow((d - dl) / 0.22, 2.0)) * form;
-	vec2 rn = p * 3.6 + normalize(p + vec2(0.01)) * (roll * 6.0);
-	band *= 0.55 + 0.45 * lace(rn * 0.7, 0.0);
-	float spent = smoothstep(0.0, 0.06, cyc) * (1.0 - smoothstep(0.06, 0.55, cyc));
-	float drift = lace(p * 3.1 + vec2(t * 0.05, t * 0.03), mix(0.3, 0.9, 1.0 - spent));
-	drift *= (1.0 - smoothstep(0.1, 1.4, d)) * smoothstep(-0.3, 0.15, d) * (0.15 + 0.35 * spent);
-	float along = smoothstep(sea_end - 0.4, sea_end + 1.2, p.y) * (1.0 - smoothstep(shore - 0.5, shore + 1.5, p.y));
-	float beside = smoothstep(1.2, 1.55, abs(p.x)) * (1.0 - smoothstep(2.4, 3.4, abs(p.x)));
-	float pier = beside * along * lace(p * 2.2 + vec2(t * 0.04, 0.0), 0.4) * 0.22;
-	float open_lace = lace(p * 0.55 + vec2(t * 0.02, -t * 0.015), 0.7) * past * 0.2;
-	float foam = clamp(max(max(max(band, drift), pier), open_lace), 0.0, 1.0);
+	float foam = 0.0;
+	if (cheap > 0.5) {
+		float shore_band = exp(-pow((d - 0.12) / 0.32, 2.0));
+		shore_band *= 0.6 + 0.4 * sin(p.x * 1.5 + t * 0.7);
+		foam = clamp(shore_band * smoothstep(0.9, 0.05, abs(d)), 0.0, 1.0);
+	} else {
+		float cyc = fract(t * 0.105 + vnoise(p * 0.18) * 0.6 + atan(p.y, p.x));
+		float roll = smoothstep(0.45, 1.0, cyc);
+		float dl = mix(2.6, 0.05, roll);
+		float form = smoothstep(0.5, 0.68, cyc) * (1.0 - smoothstep(0.9, 1.0, cyc));
+		float band = exp(-pow((d - dl) / 0.22, 2.0)) * form;
+		vec2 rn = p * 3.6 + normalize(p + vec2(0.01)) * (roll * 6.0);
+		band *= 0.55 + 0.45 * lace(rn * 0.7, 0.0);
+		float spent = smoothstep(0.0, 0.06, cyc) * (1.0 - smoothstep(0.06, 0.55, cyc));
+		float drift = lace(p * 3.1 + vec2(t * 0.05, t * 0.03), mix(0.3, 0.9, 1.0 - spent));
+		drift *= (1.0 - smoothstep(0.1, 1.4, d)) * smoothstep(-0.3, 0.15, d) * (0.15 + 0.35 * spent);
+		float along = smoothstep(sea_end - 0.4, sea_end + 1.2, p.y) * (1.0 - smoothstep(shore - 0.5, shore + 1.5, p.y));
+		float beside = smoothstep(1.2, 1.55, abs(p.x)) * (1.0 - smoothstep(2.4, 3.4, abs(p.x)));
+		float pier = beside * along * lace(p * 2.2 + vec2(t * 0.04, 0.0), 0.4) * 0.22;
+		float open_lace = lace(p * 0.55 + vec2(t * 0.02, -t * 0.015), 0.7) * past * 0.2;
+		foam = clamp(max(max(max(band, drift), pier), open_lace), 0.0, 1.0);
+	}
 	vec3 foam_col = mix(vec3(0.97, 0.99, 1.0), vec3(0.28, 0.34, 0.44), night_k);
 	col = mix(col, foam_col, foam * mix(0.92, 0.4, night_k));
 

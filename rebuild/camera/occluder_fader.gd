@@ -7,14 +7,17 @@ var camera: Camera3D
 var player: PlayerBody
 var props: Props
 var enabled := true
+var _tick := 0
+var _points: Array[Vector3] = []
 
 
 func _process(delta: float) -> void:
 	if props == null:
 		return
-	for item in props.items:
-		item.set_target(1.0)
-	if enabled and camera != null and player != null:
+	_tick += 1
+	if enabled and camera != null and player != null and _tick % 2 == 0:
+		for item in props.items:
+			item.set_target(1.0)
 		_mark()
 		_near_camera()
 	for item in props.items:
@@ -27,15 +30,15 @@ func _mark() -> void:
 		return
 	var origin := camera.global_position
 	var feet := player.global_position
-	var points: Array[Vector3] = [
-		feet + Vector3(0, 1.25, 0),
-		feet + Vector3(0, 0.9, 0),
-		feet + Vector3(0, 0.55, 0),
-		feet + Vector3(-0.1, 0.05, 0),
-		feet + Vector3(0.1, 0.05, 0),
-	]
+	if _points.is_empty():
+		_points.resize(5)
+	_points[0] = feet + Vector3(0, 1.25, 0)
+	_points[1] = feet + Vector3(0, 0.9, 0)
+	_points[2] = feet + Vector3(0, 0.55, 0)
+	_points[3] = feet + Vector3(-0.1, 0.05, 0)
+	_points[4] = feet + Vector3(0.1, 0.05, 0)
 	var counts := {}
-	for p in points:
+	for p in _points:
 		var q := PhysicsRayQueryParameters3D.create(origin, p)
 		q.collision_mask = Constants.LAYER_BLOCK | Constants.LAYER_PROP
 		q.exclude = [player.get_rid()]
