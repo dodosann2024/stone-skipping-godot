@@ -71,7 +71,7 @@ func _ready() -> void:
 	_ground_cover(shore_z)
 
 
-func _palm(at: Vector3, height: float, lean: float = 0.0) -> void:
+func _palm(at: Vector3, height: float, lean: float = 0.0, frond_len: float = 1.7) -> void:
 	at.y = IslandData.height_at(at.x, at.z)
 	var root := Fadable.new()
 	var st := SurfaceTool.new()
@@ -89,7 +89,7 @@ func _palm(at: Vector3, height: float, lean: float = 0.0) -> void:
 		var ang := TAU * float(i) / 8.0 + 0.2
 		var dir := Vector3(cos(ang), 0.35, sin(ang))
 		var col := Color(0.14, 0.46, 0.16) if i % 2 == 0 else Color(0.30, 0.62, 0.22)
-		_frond(st, crown, dir, 1.7, col)
+		_frond(st, crown, dir, frond_len, col)
 	_sphere(st, crown + Vector3(0.15, -0.15, 0.1), 0.09, Color(0.45, 0.32, 0.16))
 	_sphere(st, crown + Vector3(-0.12, -0.2, -0.08), 0.08, Color(0.40, 0.28, 0.14))
 	st.generate_normals()
@@ -115,7 +115,9 @@ func _palm(at: Vector3, height: float, lean: float = 0.0) -> void:
 	body.add_child(cap)
 	root.setup(mi, body)
 	root.position = at
-	root.rotation.z = lean
+	# Lean the crown only. The capsule stays upright so a canopy does not block the path.
+	mi.rotation.z = lean
+	card.rotation.z = lean
 	add_child(root)
 	items.append(root)
 
@@ -659,7 +661,13 @@ func _wall_planks(st: SurfaceTool, origin: Vector3, along: Vector3, length: floa
 
 func _garden(ends: Vector2) -> void:
 	var shore := ends.x
+	# Trunks just off the dirt path, leaned so the crowns cross overhead.
+	# z stays off the route's shore+5 line, and x stays outside the walk capsule.
 	var spots: Array[Vector3] = [
+		Vector3(-1.15, 0, shore + 3.4), Vector3(1.2, 0, shore + 3.8),
+		Vector3(-1.2, 0, shore + 6.8), Vector3(1.15, 0, shore + 7.2),
+		Vector3(-1.1, 0, shore + 9.4), Vector3(1.25, 0, shore + 9.8),
+		Vector3(-1.25, 0, shore + 11.6), Vector3(1.18, 0, shore + 12.0),
 		Vector3(2.3, 0, shore - 1.6), Vector3(-2.5, 0, shore - 2.2),
 		Vector3(2.8, 0, shore + 1.4), Vector3(-3.0, 0, shore + 2.6),
 		Vector3(3.6, 0, shore + 4.2), Vector3(-3.4, 0, shore + 5.4),
@@ -668,9 +676,13 @@ func _garden(ends: Vector2) -> void:
 		Vector3(-5.4, 0, ends.y + 5.5), Vector3(-6.6, 0, ends.y + 8.0),
 		Vector3(4.6, 0, shore + 0.6),
 	]
-	var heights: Array[float] = [5.2, 4.4, 4.8, 5.6, 4.1, 4.7, 4.6, 5.1, 4.3, 4.9, 5.3, 4.5, 3.9]
+	var heights: Array[float] = [6.2, 5.8, 6.0, 5.6, 6.4, 5.9, 5.7, 6.1, 5.2, 4.4, 4.8, 5.6, 4.1, 4.7, 4.6, 5.1, 4.3, 4.9, 5.3, 4.5, 3.9]
+	# Negative z-rotation sends a left trunk's crown toward +X, over the path.
+	var leans: Array[float] = [-0.42, 0.4, -0.4, 0.42, -0.38, 0.4, -0.36, 0.38]
 	for i in spots.size():
-		_palm(spots[i], heights[i], 0.08 if i % 2 == 0 else -0.1)
+		var lean := leans[i] if i < leans.size() else (0.08 if i % 2 == 0 else -0.1)
+		var frond := 2.6 if i < leans.size() else 1.7
+		_palm(spots[i], heights[i], lean, frond)
 	var bushes: Array[Vector3] = [
 		Vector3(1.8, 0, shore + 0.8), Vector3(-1.9, 0, shore + 1.1),
 		Vector3(2.2, 0, shore + 3.2), Vector3(-2.1, 0, shore + 3.8),

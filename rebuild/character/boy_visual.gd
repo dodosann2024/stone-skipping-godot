@@ -69,14 +69,7 @@ func _pebble(skel: Skeleton3D) -> void:
 	# 5–6 cm across, flat, sitting in the palm along the finger axis (+Y).
 	pebble.scale = Vector3(1.05, 0.38, 0.85)
 	pebble.position = Vector3(0.0, 0.042, 0.01)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.52, 0.51, 0.48)
-	mat.roughness = 0.38
-	mat.metallic = 0.06
-	mat.clearcoat_enabled = true
-	mat.clearcoat = 0.45
-	mat.clearcoat_roughness = 0.22
-	pebble.material_override = mat
+	pebble.material_override = pebble_mat()
 	pebble.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	pebble.visible = false
 	grip.add_child(pebble)
@@ -183,9 +176,38 @@ func lay_flat(kind: String) -> void:
 	if kind == "lounger":
 		model.rotation = Vector3(deg_to_rad(-58.0), PI, 0)
 		model.position = Vector3(0, 0.34, -0.05)
+	elif kind == "bench":
+		# The sit clip folds him. The rest pose is the standing body; lay that on its back.
+		if anim != null:
+			anim.stop()
+		if skel != null:
+			skel.reset_bone_poses()
+		# Native +Z is the face; it points up. Native +Y (the head) points along +X.
+		var lie := Basis()
+		lie.x = Vector3(0, 0, 1)
+		lie.y = Vector3(1, 0, 0)
+		lie.z = Vector3(0, 1, 0)
+		model.transform = Transform3D(lie.scaled(Vector3.ONE * Constants.MODEL_SCALE), Vector3(0, 0.02, 0))
 	else:
 		model.rotation = Vector3(deg_to_rad(-80.0), PI, 0)
 		model.position = Vector3(0, 0.20, 0.02)
+
+
+static func pebble_mat() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.90, 0.88, 0.82)
+	mat.roughness = 0.16
+	mat.metallic = 0.02
+	mat.clearcoat_enabled = true
+	mat.clearcoat = 0.9
+	mat.clearcoat_roughness = 0.05
+	mat.rim_enabled = true
+	mat.rim = 0.8
+	mat.rim_tint = 1.0
+	mat.emission_enabled = true
+	mat.emission = Color(0.62, 0.58, 0.50)
+	mat.emission_energy_multiplier = 0.7
+	return mat
 
 
 func _keep_full_lod(node: Node) -> void:

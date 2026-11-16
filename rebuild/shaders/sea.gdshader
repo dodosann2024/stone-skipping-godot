@@ -58,15 +58,21 @@ vec3 ripple_at(vec4 r, vec2 p, float t, vec3 col) {
 		return col;
 	}
 	float age = t - r.z;
-	if (age < 0.0 || age > 1.45) {
+	if (age < 0.0 || age > 1.4) {
 		return col;
 	}
-	float rad = 0.08 + age * 1.55;
-	float band = abs(length(p - r.xy) - rad);
-	float thin = exp(-band * band / (0.012 + age * 0.012));
-	float soft = exp(-band * band / (0.06 + age * 0.05)) * 0.55;
-	float fade = 1.0 - smoothstep(0.3, 1.45, age);
-	return mix(col, vec3(0.9, 0.96, 0.98), (thin + soft) * fade);
+	float dist = length(p - r.xy);
+	float rad = 0.4 + age * 1.15;
+	float band = abs(dist - rad);
+	// Narrow white leading edge, then a wider soft shoulder that fades.
+	float edge = exp(-band * band / 0.02);
+	float soft = exp(-band * band / 0.09) * 0.8;
+	float fade = 1.0 - smoothstep(0.5, 1.35, age);
+	col = mix(col, vec3(0.78, 0.88, 0.9), soft * fade);
+	col = mix(col, vec3(1.0, 1.0, 1.0), clamp(edge * fade * 1.35, 0.0, 1.0));
+	// Foam patch holds about a second, then thins out.
+	float foam = exp(-dist * dist / (0.07 + age * 0.16)) * (1.0 - smoothstep(0.12, 1.05, age));
+	return mix(col, vec3(0.98, 0.99, 1.0), foam * 0.95);
 }
 
 void fragment() {
@@ -91,10 +97,6 @@ void fragment() {
 	float crest = 0.5 + 0.5 * sin(dot(WK0, p) * 0.85 + t * 0.75);
 	crest += 0.35 * sin(dot(WK1, p) * 1.4 - t * 0.6);
 	col = mix(col * vec3(0.78, 0.86, 0.9), col, clamp(crest, 0.0, 1.0) * 0.45);
-	col = ripple_at(ripple0, p, t, col);
-	col = ripple_at(ripple1, p, t, col);
-	col = ripple_at(ripple2, p, t, col);
-	col = ripple_at(ripple3, p, t, col);
 	col *= 1.0 + (vnoise(p * 0.35 + vec2(t * 0.02, 0.0)) - 0.5) * 0.08;
 
 	vec2 g = WK0 * 1.6 * 0.055 * cos(dot(WK0, p) * 1.6 + t * 1.3);
@@ -131,6 +133,11 @@ void fragment() {
 
 	float glint = pow(max(dot(nw, normalize(vec3(0.45, 0.62, -0.64))), 0.0), 18.0);
 	col += vec3(1.0, 0.95, 0.85) * glint * 0.18 * (1.0 - night_k) * (1.0 - foam);
+	// After the lighting, so the ring stays a bright edge instead of a tint.
+	col = ripple_at(ripple0, p, t, col);
+	col = ripple_at(ripple1, p, t, col);
+	col = ripple_at(ripple2, p, t, col);
+	col = ripple_at(ripple3, p, t, col);
 
 	float alpha = mix(0.62, 0.84, smoothstep(0.0, 1.2, depth));
 	alpha = mix(alpha, 0.96, smoothstep(2.0, 4.8, depth));

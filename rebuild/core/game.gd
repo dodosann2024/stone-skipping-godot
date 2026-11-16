@@ -322,6 +322,12 @@ func _begin_lie() -> void:
 		return
 	if player.boy.rest != null:
 		player.boy.rest.mode = ""
+	if rest_kind == "bench" and _rest_item != null:
+		_apply_bench_lie(_rest_item)
+		await get_tree().process_frame
+		_snap_bench(_rest_item.global_position)
+		rig.pivot_y = 0.4
+		return
 	var clip := "lounger_lie" if rest_kind == "lounger" else "bench_lie"
 	player.boy.play_clip(clip, 0.2)
 	rig.pivot_y = 0.55
@@ -725,11 +731,11 @@ func _pose_shot() -> void:
 		for _i in 6:
 			await get_tree().process_frame
 		var p := player.global_position
-		# Close 3/4 on his throwing side, low enough that the crouch and the stone read.
-		_cam(cam, p + Vector3(-1.85, 0.98, 2.15), p + Vector3(0.0, 0.5, -0.15))
+		# Wide enough that the hand and the first two skips share the frame.
+		_throw_view(cam, p)
 		if _query().contains("proxy=1"):
 			_show_proxy_only()
-		_show_flight(name)
+		_show_flight(cam, name)
 		print("SHOT_READY ", name)
 		return
 	if name.begins_with("skip_"):
@@ -738,19 +744,16 @@ func _pose_shot() -> void:
 		if player.boy.ik != null:
 			player.boy.ik.paused = false
 			player.boy.ik.both_down = true
+			player.boy.ik.contact_y = Constants.DECK_Y
 		player.boy.arm.playing = true
 		player.boy.arm.hold = true
-		player.boy.arm.phase = 0.7
+		var phases := [0.34, 0.56, 0.64, 0.70, 0.82, 0.96]
+		player.boy.arm.phase = float(phases[mini(step, 5)])
 		for _i in 4:
 			await get_tree().process_frame
 		var p := player.global_position
-		var hops := [0.6, 2.2, 4.4, 6.6]
-		var hop := float(hops[mini(step, 3)])
-		var at := p + Vector3(0.15, 0.06, -hop)
-		if step == 0:
-			at.y = p.y + 0.42
-		_skip_marker(at, step)
-		_cam(cam, p + Vector3(-3.4, 1.7, 0.4), at + Vector3(0, 0.15, 0))
+		_throw_view(cam, p)
+		_show_skip(cam, p, step)
 		print("SHOT_READY ", name)
 		return
 	if name.begins_with("bench_s") or name.begins_with("ham_s"):
@@ -787,8 +790,10 @@ func _pose_shot() -> void:
 			await get_tree().process_frame
 		var c := item.global_position
 		if bench and step == 2:
-			# Side of the slats, so the hat is not in the lens.
-			_cam(cam, c + Vector3(3.6, 1.45, 2.6), c + Vector3(0, 0.42, 0))
+			_apply_bench_lie(item)
+			for _k in 2:
+				await get_tree().process_frame
+			_frame_bench(cam, item.global_position)
 		else:
 			_cam(cam, c + Vector3(-2.8, 1.7, 2.6), c + Vector3(0, 0.7, 0))
 		print("SHOT_READY ", name)
@@ -919,19 +924,32 @@ func _show_throw_stone(shot: String) -> void:
 	stone.global_position = origin
 
 
-func _skip_marker(at: Vector3, step: int) -> void:
-	_place_pebble(at)
-	if step <= 0:
-		return
-	for i in step:
-		var back := float(step - 1 - i) * 1.7
-		var spot := Vector3(at.x, 0.05, at.z + back)
-		add_ripple_aged(spot, 0.28 + float(i) * 0.32)
-		if i == step - 1:
-			_spray(spot, 10 if step < 3 else 16)
+func _throw_view(cam: Camera3D, p: Vector3) -> void:
+	# Boy in the lower frame, open water above him, release and the first skips together.
+	_cam(cam, p + Vector3(-2.4, 1.55, 2.7), p + Vector3(0.15, 0.6, -0.7))
 
 
-func _show_flight(shot: String) -> void:
+func _sea_at(cam: Camera3D, sx: float, sy: float) -> Vector3:
+	var vp := get_viewport().get_visible_rect().size
+	var px := Vector2(vp.x * sx, vp.y * sy)
+	var origin := cam.project_ray_origin(px)
+	var dir := cam.project_ray_normal(px)
+	if absf(dir.y) < 0.0001:
+		return origin
+	var t := (0.08 - origin.y) / dir.y
+	return origin + dir * maxf(t, 0.05)
+
+
+func _grip_pos(p: Vector3) -> Vector3:
+	if player.boy == null or player.boy.skel == null:
+		return p + Vector3(0, 0.7, -0.2)
+	var grip := player.boy.skel.get_node_or_null("PebbleGrip") as Node3D
+	if grip != null:
+		return grip.global_position
+	return p + Vector3(0, 0.7, -0.2)
+
+
+func _show_flight(cam: Camera3D, shot: String) -> void:
 	var phase_map := {
 		"throw_s0": 0.18, "throw_s1": 0.30, "throw_s2": 0.40, "throw_s3": 0.50,
 		"throw_s4": 0.60, "throw_s5": 0.72, "throw_s6": 0.84, "throw_s7": 0.96,
@@ -941,28 +959,79 @@ func _show_flight(shot: String) -> void:
 		return
 	if player.boy.pebble != null:
 		player.boy.pebble.visible = false
-	var grip := player.boy.skel.get_node_or_null("PebbleGrip") as Node3D
-	var origin := player.global_position + Vector3(0, 0.55, -0.2)
-	if grip != null:
-		origin = grip.global_position
-	var flight := minf(phase - 0.52, 0.22)
-	var fwd := Vector3(-sin(player.face_yaw), 0.0, -cos(player.face_yaw))
-	var vel := fwd * 11.2 + Vector3.UP * 0.45
-	var pos := origin + vel * flight + Vector3.UP * (-4.9 * flight * flight)
-	var hit := pos.y < 0.08
-	if hit:
-		pos.y = 0.08
-		add_ripple_aged(pos, clampf(flight * 0.45, 0.05, 1.2))
-		_spray(pos, 8)
+	var hand := _grip_pos(player.global_position)
+	var skip_a := _sea_at(cam, 0.30, 0.48)
+	var skip_b := _sea_at(cam, 0.24, 0.40)
+	var pos := hand
+	if phase < 0.68:
+		var t := clampf((phase - 0.52) / 0.16, 0.0, 1.0)
+		pos = hand.lerp(skip_a, t)
+		pos.y = lerpf(hand.y, 0.22, t) + sin(t * PI) * 0.28
+	else:
+		var t2 := clampf((phase - 0.68) / 0.22, 0.0, 1.0)
+		pos = skip_a.lerp(skip_b, t2)
+		pos.y = 0.2 + sin(t2 * PI) * 0.22
+		if t2 < 0.15:
+			_impact(skip_a, 0.08, true, false)
 	_place_pebble(pos)
-	var step := vel.normalized()
-	for i in 4:
-		var crumb := _place_pebble(pos - step * (0.12 + float(i) * 0.1))
-		crumb.scale *= 0.45
+	_trail(hand, pos)
+
+
+func _show_skip(cam: Camera3D, p: Vector3, step: int) -> void:
+	var hand := _grip_pos(p)
+	var skip_a := _sea_at(cam, 0.30, 0.48)
+	var skip_b := _sea_at(cam, 0.24, 0.40)
+	if step <= 0:
+		return
+	if player.boy.pebble != null and step >= 1:
+		player.boy.pebble.visible = false
+	if step == 1:
+		var pos := hand.lerp(skip_a, 0.72)
+		pos.y = 0.34
+		_place_pebble(pos)
+		_trail(hand, pos)
+		return
+	if step == 2:
+		_place_pebble(skip_a + Vector3(0, 0.2, 0))
+		_impact(skip_a, 0.06, true, false)
+		_trail(hand, skip_a)
+	elif step == 3:
+		var mid := skip_a.lerp(skip_b, 0.45)
+		mid.y = 0.28
+		_place_pebble(mid)
+		_trail(skip_a, mid)
+		_impact(skip_a, 0.42, false, true)
+	elif step == 4:
+		_place_pebble(skip_b + Vector3(0, 0.2, 0))
+		_impact(skip_b, 0.06, true, false)
+		_impact(skip_a, 0.72, false, true)
+		_trail(skip_a, skip_b)
+	else:
+		var onward := skip_b + (skip_b - skip_a).normalized() * 0.7
+		onward.y = 0.16
+		_place_pebble(onward)
+		_impact(skip_b, 0.95, false, true)
+		_impact(skip_a, 1.15, false, false)
+
+
+func _impact(at: Vector3, age: float, crown: bool, foam_on: bool) -> void:
+	add_ripple_aged(at, age)
+	if age < 0.35:
+		_contact_shadow(at, lerpf(0.75, 0.25, age / 0.35))
+	if crown:
+		_spray(at)
+	if foam_on and age < 1.05:
+		var grow := clampf(age / 0.5, 0.35, 1.0)
+		_foam(at, (1.0 - smoothstep(0.15, 1.05, age)) * 0.62, 0.4 + grow * 0.3)
+
+
+func _trail(a: Vector3, b: Vector3) -> void:
+	for i in 12:
+		var t := float(i + 1) / 13.0
+		var crumb := _soft_crumb(b.lerp(a, t))
 		var mat := crumb.material_override as StandardMaterial3D
 		if mat != null:
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			mat.albedo_color.a = 0.35 - float(i) * 0.06
+			mat.albedo_color.a = 0.5 * (1.0 - t)
 
 
 func _place_pebble(at: Vector3) -> MeshInstance3D:
@@ -974,38 +1043,139 @@ func _place_pebble(at: Vector3) -> MeshInstance3D:
 	mesh.rings = 6
 	stone.mesh = mesh
 	stone.scale = Vector3(1.1, 0.36, 0.9)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.52, 0.51, 0.48)
-	mat.roughness = 0.38
-	mat.metallic = 0.06
-	mat.clearcoat_enabled = true
-	mat.clearcoat = 0.45
-	mat.clearcoat_roughness = 0.22
-	stone.material_override = mat
+	stone.material_override = BoyVisual.pebble_mat()
 	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(stone)
 	stone.global_position = at
 	return stone
 
 
-func _spray(at: Vector3, n: int) -> void:
-	for i in n:
+func _soft_crumb(at: Vector3) -> MeshInstance3D:
+	var bit := MeshInstance3D.new()
+	var mesh := SphereMesh.new()
+	mesh.radius = 0.032
+	mesh.height = 0.064
+	mesh.radial_segments = 6
+	mesh.rings = 3
+	bit.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.96, 0.95, 0.9, 0.5)
+	bit.material_override = mat
+	bit.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(bit)
+	bit.global_position = at
+	return bit
+
+
+func _contact_shadow(at: Vector3, alpha: float) -> void:
+	var disc := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.11
+	mesh.bottom_radius = 0.11
+	mesh.height = 0.006
+	mesh.radial_segments = 12
+	disc.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.02, 0.04, 0.06, alpha)
+	disc.material_override = mat
+	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(disc)
+	disc.global_position = Vector3(at.x, 0.11, at.z)
+
+
+func _foam(at: Vector3, alpha: float, radius: float) -> void:
+	var disc := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	mesh.height = 0.008
+	mesh.radial_segments = 16
+	disc.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.97, 0.99, 1.0, alpha)
+	disc.material_override = mat
+	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(disc)
+	disc.global_position = Vector3(at.x, 0.125, at.z)
+
+
+func _spray(at: Vector3) -> void:
+	for i in 14:
 		var drop := MeshInstance3D.new()
 		var mesh := SphereMesh.new()
-		mesh.radius = 0.01
-		mesh.height = 0.02
+		mesh.radius = 0.055 if i < 10 else 0.04
+		mesh.height = mesh.radius * 2.0
 		mesh.radial_segments = 6
 		mesh.rings = 3
 		drop.mesh = mesh
 		var mat := StandardMaterial3D.new()
-		mat.albedo_color = Color(0.82, 0.9, 0.92, 0.8)
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		mat.roughness = 0.15
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = Color(1, 1, 1)
 		drop.material_override = mat
 		drop.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(drop)
-		var ang := float(i) * TAU / float(n)
-		drop.global_position = at + Vector3(cos(ang) * 0.16, 0.08 + float(i % 4) * 0.05, sin(ang) * 0.16)
+		var ang := TAU * float(i) / 10.0
+		if i < 10:
+			drop.global_position = at + Vector3(cos(ang) * 0.62, 0.38 + float(i % 3) * 0.08, sin(ang) * 0.62)
+		else:
+			var a2 := TAU * float(i) / 4.0
+			drop.global_position = at + Vector3(cos(a2) * 0.18, 0.72, sin(a2) * 0.18)
+
+
+func _bone_world(bone_name: String) -> Vector3:
+	var skel: Skeleton3D = player.boy.skel
+	var i := skel.find_bone(bone_name)
+	if i < 0:
+		return player.global_position
+	return (skel.global_transform * skel.get_bone_global_pose(i)).origin
+
+
+func _apply_bench_lie(item: Fadable) -> void:
+	player.face_yaw = 0.0
+	player.rotation.y = 0.0
+	player.locked = true
+	if player.boy.ik != null:
+		player.boy.ik.paused = true
+	player.boy.lay_flat("bench")
+	var c := item.global_position
+	player.global_position = c + Vector3(0.0, 0.7, 0.04)
+
+
+func _snap_bench(c: Vector3) -> void:
+	var head := _bone_world("mixamorig_Head")
+	var hips := _bone_world("mixamorig_Hips")
+	# Head bone near the +X end. Hips sit just above the slats so the back touches.
+	var dx := (c.x + 0.55) - head.x
+	var dy := (c.y + 0.52) - hips.y
+	var dz := (c.z + 0.02) - hips.z
+	player.global_position += Vector3(dx, dy, dz)
+	player.anchor = player.global_position
+	player.use_anchor = true
+
+
+func _frame_bench(cam: Camera3D, c: Vector3) -> void:
+	_snap_bench(c)
+	var head := _bone_world("mixamorig_Head")
+	var foot := _bone_world("mixamorig_LeftFoot")
+	var hips := _bone_world("mixamorig_Hips")
+	print("LIE head=", head, " hips=", hips, " foot=", foot, " bench=", c)
+	var mid := (head + foot) * 0.5
+	var along := foot - head
+	along.y = 0.0
+	if along.length() < 0.2:
+		along = Vector3(1, 0, 0)
+	var side := Vector3(-along.z, 0.0, along.x).normalized()
+	if side.z < 0.0:
+		side = -side
+	var dist := along.length() / (2.0 * tan(deg_to_rad(12.0))) * 1.35
+	dist = clampf(dist, 3.4, 8.5)
+	_cam(cam, mid + side * dist + Vector3(0, 0.9, 0), mid + Vector3(0, 0.05, 0))
 
 
 func _shot_ring(at: Vector3, radius: float) -> void:

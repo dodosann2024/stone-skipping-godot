@@ -35,16 +35,23 @@ Sit and stand strips: `bench_s0`–`bench_s3` and `ham_s0`–`ham_s3`. The overv
 | Sit / stand | Bench: stand, sit, lie, stand. Hammock: stand, sleep, sleep, stand. | `bench_strip.jpg`, `ham_strip.jpg` |
 | Overview | v40 spawn offset `(-5.5, 5.2, -7.5)`. | `spawn.png` |
 
-## Pebble, ripples, grass, bench
+## Pebble, skip, bench, canopy
 
-The grip is a 5–6 cm flat grey pebble on `mixamorig_RightHand`, fingers bent around it, clearcoat on the rim. It stays in the fist until the low sidearm release. Flight frames add a short trail. Skips write expanding bands into the sea shader (gone by about 1.4 s) plus a spray of droplets; the sink adds a second band. Inland grass is olive, the path is dirt, and tufts sit beside it. The bench lie is framed from the side of the slats. Water beside the pier deepens as it leaves the posts.
+Same export, 390×844. The grip is still a 5–6 cm pebble on `mixamorig_RightHand`. It is a lighter stone with a rim highlight. `throw_s2` shows it in the fingers (66,267 prims, 126.7 ms). `throw_s4` shows it at the head of a thin soft trail over the water.
 
-This export reads throw **66,257**, release **62,871**, inland run **74,209**, orbit **66,871**. Route: 3966 samples, 100% within 1 cm, shin 1.00.
+The skip strip is the same throw camera. `skip_2` puts a white droplet crown on the water, a small dark contact mark under it, and the trail back toward the hand (63,603 prims, 125.0 ms). `skip_3` leaves a white foam patch. `skip_4` shows the next crown further out while that foam is still there. The foam fades over about a second.
+
+The bench lie is the standing rest pose turned onto its back. In `bench_s2` the body runs along the slats, the head and hat are at the right-hand end, the hands rest on the stomach, and the feet are on the slats (74,203 prims, 139.2 ms). `ham_s1` is the same check on the hammock: the body is in the cloth, the head is supported, the arms are crossed on the chest (77,471 prims, 119.5 ms).
+
+`loc_4` looks up the dirt path under two palms that lean in from either side, with fronds in the upper frame. The far palms still swap to the existing card. 78,627 prims, frame 127.2 ms, walk p95 144.9 ms.
+
+Route after those palms moved: **4338** stance samples, **100%** inside ±1 cm, skate max **0.25 cm**, walk skate **0.00 cm**, `shin_min=1.00`.
 
 ## Still not at the bar
 
-- SwiftShader is still about **125–145 ms**. Not 60 fps, and not an iPhone.
-- `throw_s0` still hides the pebble inside the closed fist. It shows in the loaded crouch (`throw_s2`) and just off the hand (`throw_s4`). The trail is a few dots.
-- In `skip_2` the spray reads more clearly than the shader ring. There is no sheet of foam.
-- `loc_4` is a dirt path with tufts, flowers and bushes. It is not v40's palm canopy. `orbit_2` is a deeper blue than the old cyan field; the patch beside the dock is still a fairly even surface.
-- The bench lie is on the slats in the side frame. A small gap under the back can remain from the lie clip.
+- SwiftShader on these frames is about **120–145 ms**. That is not 60 fps, and it is not an iPhone.
+- The 6 cm pebble is readable in the hand and at the head of the flight trail. At the skip, the crown and the dark contact mark read; the stone itself is still only a few pixels and is easy to lose in the splash.
+- The droplet crown, the trail, and the foam patch are visible at this phone size. The shader ring is in the sea shader and only a faint brighter band around the foam. It is not a crisp leading edge.
+- The bench lie is a straight rest pose on the slats, not a crumpled sit. It is not a tailored sleep clip, and the hat sits at the end of the bench rather than on a pillow.
+- `loc_4` has trunks and fronds over the path. The two nearest palms lean across the portrait frame, so the crown is partly cut off at the top. It is not the v40 colonnade.
+- The sea depth and the inland colours from the previous pass are unchanged. Prims on the frames above stay under 93k.

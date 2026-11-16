@@ -13,15 +13,19 @@ static func build(player: AnimationPlayer) -> void:
 		return
 	var sit_anim := player.get_animation(sit)
 	var idle_anim := player.get_animation(idle)
+	# One hip tilt lays the seated torso back onto the slats. Extra spine
+	# bends were folding him into a crunch.
 	_add(player, "bench_lie", _offset(sit_anim, {
-		"mixamorig_Spine": 68.0,
-		"mixamorig_Spine1": 30.0,
-		"mixamorig_Spine2": 14.0,
-		"mixamorig_LeftUpLeg": -58.0,
-		"mixamorig_RightUpLeg": -52.0,
-		"mixamorig_LeftLeg": 6.0,
-		"mixamorig_RightLeg": 6.0,
-		"mixamorig_Head": -16.0,
+		"mixamorig_Hips": 72.0,
+		"mixamorig_Spine": 12.0,
+		"mixamorig_Spine1": 4.0,
+		"mixamorig_LeftUpLeg": -28.0,
+		"mixamorig_RightUpLeg": -28.0,
+		"mixamorig_LeftLeg": -48.0,
+		"mixamorig_RightLeg": -48.0,
+		"mixamorig_LeftArm": 18.0,
+		"mixamorig_RightArm": 18.0,
+		"mixamorig_Head": -18.0,
 	}))
 	_add(player, "lounger_lie", _offset(sit_anim, {
 		"mixamorig_Spine": 46.0,

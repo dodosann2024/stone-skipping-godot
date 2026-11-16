@@ -6,6 +6,8 @@
 
 The pebble is parented to the right-hand bone at about 6 cm. Skip rings are bands in the sea shader, not meshes. Inland grass is olive with a dirt path.
 
+The throw camera keeps the hand and the near water in one frame. The pebble stays at real scale, with a light tone and a rim. Flight leaves a thin soft trail. Each skip places a white droplet crown, a dark contact mark, and a foam patch that fades over about a second. The bench lie is the standing rest pose turned onto its back along the slats. Palms along the dirt path lean inward on the mesh only, and the far card LOD is unchanged.
+
 ## Audit
 
 Read as one loop: stick value, root speed, clip, camera, then the seated and throw states that borrow the same root.
