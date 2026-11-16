@@ -690,6 +690,7 @@ func _garden(ends: Vector2) -> void:
 	_rope(fence[1] + Vector3(0, 0.55, 0), fence[2] + Vector3(0, 0.62, 0))
 	_rope(fence[3] + Vector3(0, 0.6, 0), fence[4] + Vector3(0, 0.55, 0))
 	_blooms(shore)
+	_tufts(shore)
 
 
 func _blooms(shore_z: float) -> void:
@@ -715,6 +716,38 @@ func _blooms(shore_z: float) -> void:
 	mm.instance_count = spots.size()
 	for i in spots.size():
 		var b := Basis(Vector3.UP, float(i)).scaled(Vector3.ONE * rng.randf_range(0.8, 1.4))
+		mm.set_instance_transform(i, Transform3D(b, spots[i]))
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
+func _tufts(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var blade := Color(0.18, 0.34, 0.14)
+	_face(st, Vector3(-0.015, 0, 0), Vector3(0.015, 0, 0), Vector3(-0.01, 0.22, 0.02), Vector3(0.012, 0.2, -0.01), blade)
+	_face(st, Vector3(0, 0, -0.015), Vector3(0, 0, 0.015), Vector3(0.02, 0.18, 0), Vector3(-0.01, 0.16, 0.01), blade.lightened(0.08))
+	st.generate_normals()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = st.commit()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 23
+	var spots: Array[Vector3] = []
+	for i in 70:
+		var p := Vector3(rng.randf_range(-3.2, 3.2), 0, shore_z + rng.randf_range(-0.2, 12.0))
+		if absf(p.x) < 0.7:
+			continue
+		p.y = IslandData.height_at(p.x, p.z)
+		if p.y < 0.04:
+			continue
+		spots.append(p)
+	mm.instance_count = spots.size()
+	for i in spots.size():
+		var b := Basis(Vector3.UP, float(i) * 0.7).scaled(Vector3.ONE * rng.randf_range(0.7, 1.5))
 		mm.set_instance_transform(i, Transform3D(b, spots[i]))
 	var mi := MultiMeshInstance3D.new()
 	mi.multimesh = mm

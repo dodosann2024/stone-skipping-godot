@@ -35,6 +35,7 @@ func _ready() -> void:
 	skel = _find_skel(model)
 	_shadow_proxy()
 	if skel != null:
+		_pebble(skel)
 		ik = FootIK.new()
 		ik.name = "FootIK"
 		skel.add_child(ik)
@@ -49,6 +50,53 @@ func _ready() -> void:
 		_pick_names()
 		_ClipAuthor.build(anim)
 		anim.play(clip_idle)
+
+
+var pebble: MeshInstance3D
+
+
+func _pebble(skel: Skeleton3D) -> void:
+	var grip := BoneAttachment3D.new()
+	grip.name = "PebbleGrip"
+	grip.bone_name = "mixamorig_RightHand"
+	grip.bone_idx = skel.find_bone("mixamorig_RightHand")
+	skel.add_child(grip)
+	pebble = MeshInstance3D.new()
+	var mesh := SphereMesh.new()
+	mesh.radius = 0.028
+	mesh.height = 0.056
+	pebble.mesh = mesh
+	# 5–6 cm across, flat, sitting in the palm along the finger axis (+Y).
+	pebble.scale = Vector3(1.05, 0.38, 0.85)
+	pebble.position = Vector3(0.0, 0.042, 0.01)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.52, 0.51, 0.48)
+	mat.roughness = 0.38
+	mat.metallic = 0.06
+	mat.clearcoat_enabled = true
+	mat.clearcoat = 0.45
+	mat.clearcoat_roughness = 0.22
+	pebble.material_override = mat
+	pebble.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	pebble.visible = false
+	grip.add_child(pebble)
+
+
+func _process(_delta: float) -> void:
+	if pebble == null or arm == null:
+		return
+	pebble.visible = arm.playing and arm.phase < 0.52
+	if not pebble.visible:
+		return
+	var cam := get_viewport().get_camera_3d()
+	var grip := pebble.get_parent() as Node3D
+	if cam == null or grip == null:
+		return
+	var to_cam := (grip.global_transform.affine_inverse() * cam.global_position)
+	if to_cam.length_squared() < 1e-6:
+		return
+	# A centimetre and a half toward the lens, so the pebble shows between the fingers.
+	pebble.position = Vector3(0.0, 0.04, 0.012) + to_cam.normalized() * 0.015
 
 
 func bind_ground(ground: Ground) -> void:

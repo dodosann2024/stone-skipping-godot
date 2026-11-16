@@ -4,18 +4,18 @@ BOY_CLIPS idle=idle walk=walk run=run n=19
 CLIP_AUTHOR bench_lie lounger_lie throw_stand throw_crouch
 ROUTE_POS f=300 m=9.2 y=0.78 spd=1.96 w=0.00/1.00 gap=10.3/0.0 scored=206
 ROUTE_POS f=600 m=18.8 y=1.38 spd=1.87 w=0.00/1.00 gap=10.3/0.0 scored=506
-ROUTE_POS f=900 m=28.7 y=3.55 spd=2.24 w=0.00/1.00 gap=10.3/0.0 scored=806
-ROUTE_POS f=1200 m=39.7 y=4.14 spd=2.30 w=0.00/1.00 gap=5.9/0.0 scored=1106
-ROUTE_POS f=1500 m=50.8 y=1.48 spd=2.30 w=0.00/1.00 gap=5.9/0.0 scored=1406
-ROUTE_POS f=1800 m=53.9 y=1.59 spd=2.29 w=0.00/1.00 gap=5.9/-0.0 scored=1706
-ROUTE_POS f=2100 m=61.5 y=2.87 spd=2.30 w=0.00/1.00 gap=5.9/0.0 scored=2006
-ROUTE_POS f=2400 m=71.8 y=1.48 spd=2.27 w=0.00/1.00 gap=5.9/0.0 scored=2306
-ROUTE_POS f=2700 m=73.1 y=1.59 spd=2.28 w=0.00/1.00 gap=5.9/0.0 scored=2606
+ROUTE_POS f=900 m=28.7 y=3.55 spd=2.24 w=0.00/1.00 gap=10.3/-0.0 scored=806
+ROUTE_POS f=1200 m=39.7 y=4.14 spd=2.30 w=0.00/1.00 gap=5.6/-0.0 scored=1106
+ROUTE_POS f=1500 m=50.8 y=1.48 spd=2.30 w=0.00/1.00 gap=5.6/0.0 scored=1406
+ROUTE_POS f=1800 m=53.9 y=1.59 spd=2.29 w=0.00/1.00 gap=5.6/0.0 scored=1706
+ROUTE_POS f=2100 m=61.5 y=2.87 spd=2.30 w=0.00/1.00 gap=5.6/-0.0 scored=2006
+ROUTE_POS f=2400 m=71.8 y=1.48 spd=2.27 w=0.00/1.00 gap=5.6/0.0 scored=2306
+ROUTE_POS f=2700 m=73.1 y=1.59 spd=2.28 w=0.00/1.00 gap=5.6/-0.0 scored=2606
 ROUTE_POS f=3000 m=83.7 y=2.43 spd=2.26 w=0.00/1.00 gap=4.3/0.0 scored=2906
 ROUTE_POS f=3300 m=91.3 y=1.38 spd=2.30 w=0.00/1.00 gap=4.3/0.0 scored=3206
-ROUTE_POS f=3600 m=95.2 y=2.01 spd=2.30 w=0.00/1.00 gap=4.3/0.0 scored=3506
+ROUTE_POS f=3600 m=95.2 y=2.01 spd=2.30 w=0.00/1.00 gap=4.3/-0.0 scored=3506
 ROUTE_POS f=3900 m=106.2 y=1.74 spd=2.30 w=0.00/1.00 gap=4.3/0.0 scored=3806
-ROUTE_HIST -1:1180 0:2786 
+ROUTE_HIST -1:1154 0:2812 
 ROUTE_DONE m=110.0 stance=3966 in_1cm=100.0 skate_max_cm=0.00 walk_skate_cm=0.00 shin_min=1.00
 WARNING: 8 ObjectDB instances were leaked at exit (run with `--verbose` for details).
    at: cleanup (core/object/object.cpp:2536)

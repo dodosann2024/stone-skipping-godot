@@ -34,10 +34,14 @@ const vec2 WK0 = vec2(0.82, 0.57);
 const vec2 WK1 = vec2(-0.45, 0.89);
 const vec2 WK2 = vec2(0.97, -0.24);
 const vec2 WK3 = vec2(-0.71, -0.70);
-const vec3 C_SHALLOW = vec3(0.42, 0.80, 0.70);
-const vec3 C_MID = vec3(0.24, 0.66, 0.60);
-const vec3 C_DEEP = vec3(0.13, 0.50, 0.52);
-const vec3 C_ABYSS = vec3(0.09, 0.37, 0.45);
+const vec3 C_SHALLOW = vec3(0.16, 0.42, 0.44);
+const vec3 C_MID = vec3(0.09, 0.30, 0.36);
+const vec3 C_DEEP = vec3(0.05, 0.18, 0.28);
+const vec3 C_ABYSS = vec3(0.03, 0.10, 0.18);
+uniform vec4 ripple0 = vec4(0.0);
+uniform vec4 ripple1 = vec4(0.0);
+uniform vec4 ripple2 = vec4(0.0);
+uniform vec4 ripple3 = vec4(0.0);
 
 void vertex() {
 	vec3 v = VERTEX;
@@ -47,6 +51,22 @@ void vertex() {
 	v.y += sin(dot(WK2, VERTEX.xz) * 0.32 - t * 0.7) * 0.035;
 	wpos = (MODEL_MATRIX * vec4(v, 1.0)).xyz;
 	VERTEX = v;
+}
+
+vec3 ripple_at(vec4 r, vec2 p, float t, vec3 col) {
+	if (r.w < 0.5) {
+		return col;
+	}
+	float age = t - r.z;
+	if (age < 0.0 || age > 1.45) {
+		return col;
+	}
+	float rad = 0.08 + age * 1.55;
+	float band = abs(length(p - r.xy) - rad);
+	float thin = exp(-band * band / (0.012 + age * 0.012));
+	float soft = exp(-band * band / (0.06 + age * 0.05)) * 0.55;
+	float fade = 1.0 - smoothstep(0.3, 1.45, age);
+	return mix(col, vec3(0.9, 0.96, 0.98), (thin + soft) * fade);
 }
 
 void fragment() {
@@ -61,6 +81,8 @@ void fragment() {
 	float past = clamp((sea_end - p.y) / 16.0, 0.0, 1.0);
 	float depth = clamp(max(d, 0.0) * 0.22, 0.0, 6.0);
 	depth = max(depth, past * 5.2);
+	// Water beside the pier deepens as it leaves the posts, so a down view is not one cyan field.
+	depth = max(depth, smoothstep(1.05, 6.5, abs(p.x)) * 3.4);
 	vec3 col = mix(C_SHALLOW, C_MID, smoothstep(0.05, 1.3, depth));
 	col = mix(col, C_DEEP, smoothstep(1.6, 3.6, depth));
 	col = mix(col, C_ABYSS, smoothstep(3.8, 5.6, depth));
@@ -68,7 +90,11 @@ void fragment() {
 	col = mix(col, vec3(0.55, 0.72, 0.58), lip * 0.62);
 	float crest = 0.5 + 0.5 * sin(dot(WK0, p) * 0.85 + t * 0.75);
 	crest += 0.35 * sin(dot(WK1, p) * 1.4 - t * 0.6);
-	col = mix(col * vec3(0.42, 0.58, 0.66), col * vec3(1.18, 1.22, 1.08), clamp(crest, 0.0, 1.0));
+	col = mix(col * vec3(0.78, 0.86, 0.9), col, clamp(crest, 0.0, 1.0) * 0.45);
+	col = ripple_at(ripple0, p, t, col);
+	col = ripple_at(ripple1, p, t, col);
+	col = ripple_at(ripple2, p, t, col);
+	col = ripple_at(ripple3, p, t, col);
 	col *= 1.0 + (vnoise(p * 0.35 + vec2(t * 0.02, 0.0)) - 0.5) * 0.08;
 
 	vec2 g = WK0 * 1.6 * 0.055 * cos(dot(WK0, p) * 1.6 + t * 1.3);

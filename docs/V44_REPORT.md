@@ -35,11 +35,16 @@ Sit and stand strips: `bench_s0`–`bench_s3` and `ham_s0`–`ham_s3`. The overv
 | Sit / stand | Bench: stand, sit, lie, stand. Hammock: stand, sleep, sleep, stand. | `bench_strip.jpg`, `ham_strip.jpg` |
 | Overview | v40 spawn offset `(-5.5, 5.2, -7.5)`. | `spawn.png` |
 
+## Pebble, ripples, grass, bench
+
+The grip is a 5–6 cm flat grey pebble on `mixamorig_RightHand`, fingers bent around it, clearcoat on the rim. It stays in the fist until the low sidearm release. Flight frames add a short trail. Skips write expanding bands into the sea shader (gone by about 1.4 s) plus a spray of droplets; the sink adds a second band. Inland grass is olive, the path is dirt, and tufts sit beside it. The bench lie is framed from the side of the slats. Water beside the pier deepens as it leaves the posts.
+
+This export reads throw **66,257**, release **62,871**, inland run **74,209**, orbit **66,871**. Route: 3966 samples, 100% within 1 cm, shin 1.00.
+
 ## Still not at the bar
 
-- SwiftShader frame time is still about **120–145 ms**. That is not 60 fps and not an iPhone.
-- The stone is a flat unshaded disc. It is readable in the hand and on the water. It is not a textured rock, and the rings are plain tori.
-- `orbit_2` still looks down on a mostly cyan patch beside the dock. The skip view shows the wave bands. That steep dock view does not yet have v40's water.
-- `loc_4` has flowers, bushes and the dock behind him. It does not have v40's palm canopy or dirt-path density. `spawn.png` is the same camera offset as v40 and still a thinner shore: the portrait frame does not hold the palms that sit outside its narrow cone.
-- Plank wear is a shader term on the existing board photo. From the follow camera the boards still read cleaner than worn timber.
-- The route's skate max of 0.00 cm is inside the gate. It is a short sample of planted feet on this path, not a claim that every surface was stressed.
+- SwiftShader is still about **125–145 ms**. Not 60 fps, and not an iPhone.
+- `throw_s0` still hides the pebble inside the closed fist. It shows in the loaded crouch (`throw_s2`) and just off the hand (`throw_s4`). The trail is a few dots.
+- In `skip_2` the spray reads more clearly than the shader ring. There is no sheet of foam.
+- `loc_4` is a dirt path with tufts, flowers and bushes. It is not v40's palm canopy. `orbit_2` is a deeper blue than the old cyan field; the patch beside the dock is still a fairly even surface.
+- The bench lie is on the slats in the side frame. A small gap under the back can remain from the lie clip.

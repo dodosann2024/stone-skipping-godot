@@ -173,6 +173,7 @@ func _process(delta: float) -> void:
 	if water_mat != null:
 		water_mat.set_shader_parameter("game_time", t)
 		water_mat.set_shader_parameter("night_k", nk)
+		_push_ripples(t)
 	var gmat := _ground_mat()
 	if gmat != null:
 		gmat.set_shader_parameter("game_time", t)
@@ -450,6 +451,37 @@ func _on_release(origin: Vector3, velocity: Vector3) -> void:
 	call_deferred("_spawn_stone", origin, velocity)
 
 
+var _ripples: Array[Vector4] = []
+
+
+func add_ripple(at: Vector3) -> void:
+	add_ripple_aged(at, 0.0)
+
+
+func add_ripple_aged(at: Vector3, age: float) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	_ripples.append(Vector4(at.x, at.z, now - age, 1.0))
+	while _ripples.size() > 4:
+		_ripples.pop_front()
+	_push_ripples(now)
+
+
+func _push_ripples(now: float) -> void:
+	if water_mat == null:
+		return
+	var live: Array[Vector4] = []
+	for r in _ripples:
+		if now - r.z < 1.5:
+			live.append(r)
+	_ripples = live
+	var slots := ["ripple0", "ripple1", "ripple2", "ripple3"]
+	for i in 4:
+		var v := Vector4(0, 0, 0, 0)
+		if i < _ripples.size():
+			v = _ripples[i]
+		water_mat.set_shader_parameter(slots[i], v)
+
+
 func _spawn_stone(origin: Vector3, velocity: Vector3) -> void:
 	var stone := SkipStone.new()
 	add_child(stone)
@@ -697,7 +729,7 @@ func _pose_shot() -> void:
 		_cam(cam, p + Vector3(-1.85, 0.98, 2.15), p + Vector3(0.0, 0.5, -0.15))
 		if _query().contains("proxy=1"):
 			_show_proxy_only()
-		_show_throw_stone(name)
+		_show_flight(name)
 		print("SHOT_READY ", name)
 		return
 	if name.begins_with("skip_"):
@@ -754,7 +786,11 @@ func _pose_shot() -> void:
 		for _i in 4:
 			await get_tree().process_frame
 		var c := item.global_position
-		_cam(cam, c + Vector3(-2.8, 1.7, 2.6), c + Vector3(0, 0.7, 0))
+		if bench and step == 2:
+			# Side of the slats, so the hat is not in the lens.
+			_cam(cam, c + Vector3(3.6, 1.45, 2.6), c + Vector3(0, 0.42, 0))
+		else:
+			_cam(cam, c + Vector3(-2.8, 1.7, 2.6), c + Vector3(0, 0.7, 0))
 		print("SHOT_READY ", name)
 		return
 	if name == "bench_lie" or name == "lounger" or name == "hammock_rest":
@@ -884,24 +920,92 @@ func _show_throw_stone(shot: String) -> void:
 
 
 func _skip_marker(at: Vector3, step: int) -> void:
-	var stone := MeshInstance3D.new()
-	var mesh := SphereMesh.new()
-	mesh.radius = 0.12
-	mesh.height = 0.24
-	stone.mesh = mesh
-	stone.scale = Vector3(1.3, 0.26, 1.05)
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(0.15, 0.14, 0.13)
-	stone.material_override = mat
-	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(stone)
-	stone.global_position = at
+	_place_pebble(at)
 	if step <= 0:
 		return
 	for i in step:
 		var back := float(step - 1 - i) * 1.7
-		_shot_ring(Vector3(at.x, 0.16, at.z + back), 0.55 + float(i) * 0.38)
+		var spot := Vector3(at.x, 0.05, at.z + back)
+		add_ripple_aged(spot, 0.28 + float(i) * 0.32)
+		if i == step - 1:
+			_spray(spot, 10 if step < 3 else 16)
+
+
+func _show_flight(shot: String) -> void:
+	var phase_map := {
+		"throw_s0": 0.18, "throw_s1": 0.30, "throw_s2": 0.40, "throw_s3": 0.50,
+		"throw_s4": 0.60, "throw_s5": 0.72, "throw_s6": 0.84, "throw_s7": 0.96,
+	}
+	var phase := float(phase_map.get(shot, 0.3))
+	if phase < 0.52 or player.boy == null:
+		return
+	if player.boy.pebble != null:
+		player.boy.pebble.visible = false
+	var grip := player.boy.skel.get_node_or_null("PebbleGrip") as Node3D
+	var origin := player.global_position + Vector3(0, 0.55, -0.2)
+	if grip != null:
+		origin = grip.global_position
+	var flight := minf(phase - 0.52, 0.22)
+	var fwd := Vector3(-sin(player.face_yaw), 0.0, -cos(player.face_yaw))
+	var vel := fwd * 11.2 + Vector3.UP * 0.45
+	var pos := origin + vel * flight + Vector3.UP * (-4.9 * flight * flight)
+	var hit := pos.y < 0.08
+	if hit:
+		pos.y = 0.08
+		add_ripple_aged(pos, clampf(flight * 0.45, 0.05, 1.2))
+		_spray(pos, 8)
+	_place_pebble(pos)
+	var step := vel.normalized()
+	for i in 4:
+		var crumb := _place_pebble(pos - step * (0.12 + float(i) * 0.1))
+		crumb.scale *= 0.45
+		var mat := crumb.material_override as StandardMaterial3D
+		if mat != null:
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			mat.albedo_color.a = 0.35 - float(i) * 0.06
+
+
+func _place_pebble(at: Vector3) -> MeshInstance3D:
+	var stone := MeshInstance3D.new()
+	var mesh := SphereMesh.new()
+	mesh.radius = 0.028
+	mesh.height = 0.056
+	mesh.radial_segments = 12
+	mesh.rings = 6
+	stone.mesh = mesh
+	stone.scale = Vector3(1.1, 0.36, 0.9)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.52, 0.51, 0.48)
+	mat.roughness = 0.38
+	mat.metallic = 0.06
+	mat.clearcoat_enabled = true
+	mat.clearcoat = 0.45
+	mat.clearcoat_roughness = 0.22
+	stone.material_override = mat
+	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(stone)
+	stone.global_position = at
+	return stone
+
+
+func _spray(at: Vector3, n: int) -> void:
+	for i in n:
+		var drop := MeshInstance3D.new()
+		var mesh := SphereMesh.new()
+		mesh.radius = 0.01
+		mesh.height = 0.02
+		mesh.radial_segments = 6
+		mesh.rings = 3
+		drop.mesh = mesh
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.82, 0.9, 0.92, 0.8)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.roughness = 0.15
+		drop.material_override = mat
+		drop.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(drop)
+		var ang := float(i) * TAU / float(n)
+		drop.global_position = at + Vector3(cos(ang) * 0.16, 0.08 + float(i % 4) * 0.05, sin(ang) * 0.16)
 
 
 func _shot_ring(at: Vector3, radius: float) -> void:

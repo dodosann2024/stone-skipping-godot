@@ -97,6 +97,10 @@ func _process_modification_with_delta(delta: float) -> void:
 		var hb := skel.get_bone_pose(_bi[2])
 		hb.basis = hb.basis * Basis(Vector3.RIGHT, -snap * 1.35)
 		skel.set_bone_pose(_bi[2], hb)
+	if s < 0.52:
+		_curl_fingers(skel, 1.0)
+	else:
+		_curl_fingers(skel, clampf(1.0 - (s - 0.52) / 0.12, 0.0, 1.0))
 	var lsh := _world(skel, _bi[3])
 	var aim := lsh - fwd * 0.2 - right * 0.15 + Vector3.DOWN * 0.05
 	if s > 0.45:
@@ -104,13 +108,38 @@ func _process_modification_with_delta(delta: float) -> void:
 	_solve(skel, _bi[3], _bi[4], _bi[5], aim, -right + Vector3.DOWN * 0.4)
 	if not hold and not _fired and phase >= 0.52:
 		_fired = true
-		var origin := _world(skel, _bi[2]) + fwd * 0.28
+		var origin := _world(skel, _bi[2])
+		var grip := skel.get_node_or_null("PebbleGrip")
+		if grip != null:
+			origin = grip.global_position
 		var speed := 10.4 if crouch else 11.2
-		var lift := 0.45 if crouch else 0.7
+		var lift := 0.35 if crouch else 0.45
 		emit_signal("released", origin, fwd * speed + Vector3.UP * lift)
 	if u >= 1.0:
 		playing = false
 		emit_signal("finished")
+
+
+func _curl_fingers(skel: Skeleton3D, amount: float) -> void:
+	if amount < 0.02:
+		return
+	var digits := ["Index", "Middle", "Ring", "Pinky"]
+	for digit in digits:
+		_bend(skel, "mixamorig_RightHand%s1" % digit, 0.85 * amount)
+		_bend(skel, "mixamorig_RightHand%s2" % digit, 1.05 * amount)
+		_bend(skel, "mixamorig_RightHand%s3" % digit, 0.75 * amount)
+	_bend(skel, "mixamorig_RightHandThumb1", -0.7 * amount)
+	_bend(skel, "mixamorig_RightHandThumb2", -0.9 * amount)
+	_bend(skel, "mixamorig_RightHandThumb3", -0.6 * amount)
+
+
+func _bend(skel: Skeleton3D, bone_name: String, ang: float) -> void:
+	var i := skel.find_bone(bone_name)
+	if i < 0:
+		return
+	var pose := skel.get_bone_pose(i)
+	pose.basis = pose.basis * Basis(Vector3.RIGHT, ang)
+	skel.set_bone_pose(i, pose)
 
 
 func _bind(skel: Skeleton3D) -> void:

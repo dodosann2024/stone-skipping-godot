@@ -4,6 +4,8 @@
 
 「耐玩度要达到3A制作水准，操作细节和画面要细到离谱。新的版本做完要把这个要求放到下一个版本的要求中。直到达到这个水准。」
 
+The pebble is parented to the right-hand bone at about 6 cm. Skip rings are bands in the sea shader, not meshes. Inland grass is olive with a dirt path.
+
 ## Audit
 
 Read as one loop: stick value, root speed, clip, camera, then the seated and throw states that borrow the same root.
