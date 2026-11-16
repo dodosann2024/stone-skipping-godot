@@ -57,11 +57,11 @@ func _ready() -> void:
 	up_btn = _button("起来", Vector2(250, 444))
 	up_btn.visible = false
 	up_btn.pressed.connect(_on_btn.bind("起来"))
-	banner = _label("", Vector2(16, 120), 18)
+	banner = _label("", Vector2(16, 196), 18)
 	sound_tip = _label("若无声，请关闭侧面静音开关", Vector2(16, 92), 13)
 	sound_tip.visible = false
-	banner.size = Vector2(360, 28)
-	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	banner.size = Vector2(210, 28)
+	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 
 
 func _with_cjk(font: Font) -> Font:

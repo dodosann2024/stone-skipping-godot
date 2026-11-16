@@ -70,7 +70,7 @@ func _world() -> void:
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.72, 0.78, 0.74)
-	env.ambient_light_energy = 0.55
+	env.ambient_light_energy = 0.38
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	envn.environment = env
 	add_child(envn)
@@ -80,8 +80,12 @@ func _world() -> void:
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	sun.shadow_enabled = true
 	sun.shadow_blur = 0.8
-	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	sun.directional_shadow_max_distance = 14.0
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.directional_shadow_max_distance = 42.0
+	sun.directional_shadow_fade_start = 0.85
+	sun.directional_shadow_blend_splits = true
+	sun.shadow_bias = 0.06
+	sun.shadow_normal_bias = 1.2
 	add_child(sun)
 	ground = Ground.new()
 	add_child(ground)
@@ -90,6 +94,7 @@ func _world() -> void:
 		gmat.set_shader_parameter("cheap", 0.0)
 	props = Props.new()
 	add_child(props)
+	_silence_prop_shadows(props)
 	var water := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(90, 90)
@@ -114,6 +119,15 @@ func _player() -> void:
 	player.rotation.y = PI
 	player.cam_basis = Basis(Vector3.UP, PI)
 	add_child(player)
+	var fill := OmniLight3D.new()
+	fill.name = "FaceFill"
+	fill.light_color = Color(1.0, 0.86, 0.72)
+	fill.light_energy = 0.65
+	fill.omni_range = 1.3
+	fill.shadow_enabled = false
+	# Local -Z is the face. A small warm fill keeps the eyes under the brim.
+	fill.position = Vector3(0.0, 1.22, -0.38)
+	player.add_child(fill)
 	player.ground = ground
 	await get_tree().process_frame
 	if player.boy != null:
@@ -234,6 +248,7 @@ func _process(delta: float) -> void:
 		_plant_on_seat(_sit_weight())
 	if dbg != null and dbg.on and Engine.get_process_frames() % 45 == 0:
 		_fade_audit()
+		_near_audit()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -392,11 +407,15 @@ func _begin_rest(item: Fadable) -> void:
 	var pos := _seat_pos(item)
 	if rest_kind == "bench":
 		# Stand just in front of the seat, back toward the backrest, then sit down onto it.
-		yaw = PI
+		yaw = 0.0
 		pos = item.global_transform * Vector3(0.0, 0.0, 0.78)
 		pos.y = item.global_position.y + 0.02
-		rig.framing = "seat"
-		rig.pivot_y = 0.48
+		var open := item.global_transform.basis.z
+		open.y = 0.0
+		if open.length_squared() < 0.01:
+			open = Vector3(0, 0, 1)
+		open = open.normalized()
+		rig.aim_yaw = atan2(open.x, open.z)
 	else:
 		rig.framing = "front"
 		rig.pivot_y = 0.45 if rest_kind == "towel" or rest_kind == "lounger" or rest_kind == "hammock" else 0.7
@@ -415,6 +434,11 @@ func _begin_rest(item: Fadable) -> void:
 	else:
 		player.boy.play_clip("sit", 0.2)
 	_plant_on_seat(1.0)
+	if rest_kind == "bench":
+		# Swing to the open side once the sit pose is on, not while he is still walking up.
+		rig.framing = "seat"
+		rig.pivot_y = 0.72
+		rig.start_swing(rig.aim_yaw)
 
 
 func _begin_lie() -> void:
@@ -429,7 +453,9 @@ func _begin_lie() -> void:
 		await get_tree().process_frame
 		_snap_bench(_rest_item.global_position)
 		rig.framing = "lie"
-		rig.pivot_y = 0.35
+		rig.pivot_y = 0.4
+		if absf(angle_difference(rig.yaw, rig.aim_yaw)) > 0.35:
+			rig.start_swing(rig.aim_yaw)
 		return
 	var clip := "lounger_lie" if rest_kind == "lounger" else "bench_lie"
 	player.boy.play_clip(clip, 0.2)
@@ -500,8 +526,9 @@ func _plant_on_seat(weight: float) -> void:
 	player.global_position += delta
 	player.anchor = player.global_position
 	player.use_anchor = true
-	player.face_yaw = PI
-	player.rotation.y = PI
+	# Face the open side of the bench so the camera there sees his face, not the hat.
+	player.face_yaw = 0.0
+	player.rotation.y = 0.0
 	var hip2: Vector3 = hip + delta
 	var cur := ""
 	if player.boy.anim != null:
@@ -529,6 +556,38 @@ func _fade_audit() -> void:
 	if bad.is_empty():
 		return
 	print("FADE_FAIL %s" % " ".join(bad))
+
+
+func _silence_prop_shadows(node: Node) -> void:
+	if node is GeometryInstance3D:
+		(node as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for c in node.get_children():
+		_silence_prop_shadows(c)
+
+
+func _near_audit() -> void:
+	if rig == null:
+		return
+	var origin := rig.global_position
+	var bad: Array[String] = []
+	if origin.y < 1.22:
+		bad.append("water %.2f" % origin.y)
+	var space := player.get_world_3d().direct_space_state if player != null else null
+	if space != null:
+		var sphere := SphereShape3D.new()
+		sphere.radius = 1.2
+		var q := PhysicsShapeQueryParameters3D.new()
+		q.shape = sphere
+		q.transform = Transform3D(Basis(), origin)
+		q.collision_mask = Constants.LAYER_BLOCK | Constants.LAYER_PROP
+		if player != null:
+			q.exclude = [player.get_rid()]
+		for hit in space.intersect_shape(q, 6):
+			var body := hit.collider as Node
+			bad.append(body.name if body != null else "prop")
+	if bad.is_empty():
+		return
+	print("NEAR_FAIL %s" % " ".join(bad))
 
 
 func _scan_prop_fade(node: Node, bad: Array[String]) -> void:

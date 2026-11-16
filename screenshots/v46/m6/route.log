@@ -1,22 +1,38 @@
 Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
 
+--Main Shader--
+  147 | 	col = ripple_at(ripple3, p, t, col);
+  148 | 
+E 149-> 	# Opaque past the shoreline so a terrain tile cannot show through as a hard rectangle.
+  150 | 	float alpha = mix(0.8, 0.98, smoothstep(0.0, 1.4, max(d, 0.0)));
+  151 | 	alpha = clamp(alpha + foam * 0.15, 0.0, 1.0);
+SHADER ERROR: Tokenizer: Unknown character #35: '#'
+          at: (null) (:149)
+          GDScript backtrace (most recent call first):
+              [0] _world (res://core/game.gd:105)
+              [1] _ready (res://core/game.gd:38)
+ERROR: Shader compilation failed.
+   at: shader_set_code (servers/rendering/dummy/storage/material_storage.cpp:192)
+   GDScript backtrace (most recent call first):
+       [0] _world (res://core/game.gd:105)
+       [1] _ready (res://core/game.gd:38)
 BOY_CLIPS idle=idle walk=walk run=run n=19
 CLIP_AUTHOR bench_lie lounger_lie throw_stand throw_crouch
 ROUTE_POS f=300 m=9.2 y=0.78 spd=1.96 w=0.00/1.00 gap=10.3/0.0 scored=205
 ROUTE_POS f=600 m=18.8 y=1.38 spd=1.87 w=0.00/1.00 gap=10.3/0.0 scored=505
-ROUTE_POS f=900 m=28.7 y=3.55 spd=2.24 w=0.00/1.00 gap=10.3/0.0 scored=805
-ROUTE_POS f=1200 m=39.7 y=4.14 spd=2.30 w=0.00/1.00 gap=5.5/-0.0 scored=1105
-ROUTE_POS f=1500 m=50.8 y=1.48 spd=2.30 w=0.00/1.00 gap=5.5/0.0 scored=1405
-ROUTE_POS f=1800 m=53.9 y=1.58 spd=2.29 w=0.00/1.00 gap=5.5/-0.0 scored=1705
-ROUTE_POS f=2100 m=61.5 y=2.86 spd=2.30 w=0.00/1.00 gap=5.5/0.0 scored=2005
-ROUTE_POS f=2400 m=71.8 y=1.48 spd=2.25 w=0.00/1.00 gap=5.5/0.0 scored=2305
-ROUTE_POS f=2700 m=73.2 y=1.58 spd=2.28 w=0.00/1.00 gap=5.5/0.0 scored=2605
-ROUTE_POS f=3000 m=83.8 y=2.45 spd=2.26 w=0.00/1.00 gap=5.5/0.0 scored=2905
-ROUTE_POS f=3300 m=91.5 y=1.38 spd=2.29 w=0.00/1.00 gap=5.5/0.0 scored=3205
-ROUTE_POS f=3600 m=95.3 y=1.98 spd=2.30 w=0.00/1.00 gap=5.5/0.0 scored=3505
-ROUTE_POS f=3900 m=106.3 y=1.79 spd=2.30 w=0.00/1.00 gap=5.5/0.0 scored=3805
-ROUTE_HIST -1:1151 0:2755 
-ROUTE_DONE m=110.0 stance=3906 in_1cm=100.0 skate_max_cm=0.29 walk_skate_cm=0.00 shin_min=1.00
+ROUTE_POS f=900 m=28.7 y=3.55 spd=2.24 w=0.00/1.00 gap=10.3/-0.0 scored=805
+ROUTE_POS f=1200 m=39.7 y=4.14 spd=2.30 w=0.00/1.00 gap=5.9/0.0 scored=1105
+ROUTE_POS f=1500 m=50.8 y=1.48 spd=2.30 w=0.00/1.00 gap=5.9/0.0 scored=1405
+ROUTE_POS f=1800 m=53.9 y=1.58 spd=2.29 w=0.00/1.00 gap=5.9/-0.0 scored=1705
+ROUTE_POS f=2100 m=61.5 y=2.86 spd=2.30 w=0.00/1.00 gap=5.9/-0.0 scored=2005
+ROUTE_POS f=2400 m=71.8 y=1.48 spd=2.25 w=0.00/1.00 gap=5.9/0.0 scored=2305
+ROUTE_POS f=2700 m=73.2 y=1.58 spd=2.28 w=0.00/1.00 gap=5.9/-0.0 scored=2605
+ROUTE_POS f=3000 m=83.8 y=2.45 spd=2.26 w=0.00/1.00 gap=5.9/0.0 scored=2905
+ROUTE_POS f=3300 m=91.5 y=1.38 spd=2.29 w=0.00/1.00 gap=5.9/0.0 scored=3205
+ROUTE_POS f=3600 m=95.3 y=1.98 spd=2.30 w=0.00/1.00 gap=5.9/-0.0 scored=3505
+ROUTE_POS f=3900 m=106.3 y=1.79 spd=2.30 w=0.00/1.00 gap=5.9/0.0 scored=3805
+ROUTE_HIST -1:1193 0:2713 
+ROUTE_DONE m=110.0 stance=3906 in_1cm=100.0 skate_max_cm=0.35 walk_skate_cm=0.00 shin_min=1.00
 WARNING: 8 ObjectDB instances were leaked at exit (run with `--verbose` for details).
    at: cleanup (core/object/object.cpp:2536)
 ERROR: 4 resources still in use at exit (run with --verbose for details).

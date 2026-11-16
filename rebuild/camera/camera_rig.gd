@@ -16,6 +16,14 @@ var _was_looking := false
 var _drag_ms := 0
 var _ahead_for := 0.0
 var tight := false
+var aim_yaw := 0.0
+var _swing_on := false
+var _swing_from := 0.0
+var _swing_to := 0.0
+var _swing_dist_from := 6.0
+var _swing_t := 1.0
+var _swung_flip := false
+var _near_sphere: SphereShape3D
 
 
 func _ready() -> void:
@@ -62,17 +70,23 @@ func _process(delta: float) -> void:
 		want = 5.2
 		yaw = lerp_angle(yaw, player.face_yaw + PI * 0.5, 1.0 - exp(-delta * 5.0))
 	elif framing == "throw":
-		# Far enough around to see the right hand, still looking out over the water.
-		want = 4.8
-		yaw = lerp_angle(yaw, player.face_yaw + 0.55, 1.0 - exp(-delta * 8.0))
-	elif framing == "seat":
-		# In front of the seated boy, so the lap, the slats and the feet share the frame.
-		want = 3.3 if tight else 4.6
-		yaw = lerp_angle(yaw, player.face_yaw + PI, 1.0 - exp(-delta * 5.0))
-	elif framing == "lie":
-		# Portrait is narrow. A long body needs the camera far enough that the head stays in frame.
-		want = 8.4
-		yaw = lerp_angle(yaw, _lie_yaw(), 1.0 - exp(-delta * 5.0))
+		# In front of his face, on the dock centerline, high enough to clear the posts.
+		want = 4.4
+		yaw = lerp_angle(yaw, player.face_yaw, 1.0 - exp(-delta * 8.0))
+	elif framing == "seat" or framing == "lie":
+		# Open side of the bench, never through the backrest. 3–4 m, 35° down.
+		var goal := 4.0 if framing == "lie" else (2.5 if tight else 3.6)
+		if _swing_on:
+			_swing_t = minf(_swing_t + delta / 0.7, 1.0)
+			var e := _swing_t * _swing_t * (3.0 - 2.0 * _swing_t)
+			yaw = lerp_angle(_swing_from, _swing_to, e)
+			want = lerpf(_swing_dist_from, goal, e)
+			if _swing_t >= 1.0:
+				_swing_on = false
+				print("CAM_FRONT")
+		else:
+			want = goal
+			yaw = aim_yaw
 	elif ahead:
 		yaw = lerp_angle(yaw, _ahead_yaw(), 1.0 - exp(-delta * 5.5))
 	elif follow and not looking and player.speed > 0.25:
@@ -87,12 +101,16 @@ func _process(delta: float) -> void:
 	pitch = clampf(pitch, deg_to_rad(30.0), deg_to_rad(40.0))
 	var chest := _chest()
 	var arm := _arm_dir()
+	var rest_view := framing == "seat" or framing == "lie"
 	var desired := chest + arm * want
-	var cleared := _clear(chest, desired)
-	var want_dist := maxf(chest.distance_to(cleared), Constants.CAM_MIN_DIST)
+	var want_dist := want
+	if not rest_view:
+		var cleared := _clear(chest, desired)
+		want_dist = maxf(chest.distance_to(cleared), Constants.CAM_MIN_DIST)
 	var tau := 0.12 if want_dist < dist - 0.05 else 0.22
 	dist = lerpf(dist, want_dist, 1.0 - exp(-delta / tau))
-	dist = maxf(dist, Constants.CAM_MIN_DIST)
+	if not rest_view:
+		dist = maxf(dist, Constants.CAM_MIN_DIST)
 	var pos := chest + arm * dist
 	var space := get_world_3d().direct_space_state
 	if space != null:
@@ -112,9 +130,14 @@ func _process(delta: float) -> void:
 	elif framing == "lie":
 		look = _lie_look(chest)
 	elif framing == "seat":
-		look = chest + Vector3(0, -0.05, 0)
-	pos = _off_prop(chest, pos)
-	pos = _outside_boy(chest, pos)
+		look = chest + Vector3(0, 0.22 if tight else 0.08, 0)
+	if rest_view:
+		# Stay on the open side. A blocker pushes the camera out, not back through the seat.
+		pos = _keep_clear(chest, pos)
+	else:
+		pos = _off_prop(chest, pos)
+		pos = _keep_clear(chest, pos)
+		pos = _outside_boy(chest, pos)
 	# The Camera3D stays at the rig origin. A leftover local offset is how the
 	# eye ended up inside the hat.
 	cam.position = Vector3.ZERO
@@ -159,6 +182,81 @@ func _path_look(chest: Vector3) -> Vector3:
 		return chest
 	var p := player.global_position
 	return Vector3(lerpf(chest.x, 0.0, 0.7), chest.y, p.z + 2.2)
+
+
+func start_swing(target_yaw: float) -> void:
+	aim_yaw = target_yaw
+	_swing_from = yaw
+	_swing_to = target_yaw
+	_swing_dist_from = dist
+	_swing_t = 0.0
+	_swing_on = true
+	_swung_flip = false
+	print("CAM_SWING")
+
+
+func _bench_between(pos: Vector3, chest: Vector3) -> bool:
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return false
+	var q := PhysicsRayQueryParameters3D.create(pos, chest)
+	q.collision_mask = Constants.LAYER_BLOCK | Constants.LAYER_PROP
+	if player != null:
+		q.exclude = [player.get_rid()]
+	var hit := space.intersect_ray(q)
+	return hit.has("collider")
+
+
+func _keep_clear(chest: Vector3, pos: Vector3) -> Vector3:
+	# Nothing but the ground and the boy may sit inside 1.2 m of the lens.
+	if pos.y < 1.22:
+		pos.y = 1.22
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return pos
+	var point := PhysicsPointQueryParameters3D.new()
+	point.position = pos
+	point.collision_mask = Constants.LAYER_BLOCK | Constants.LAYER_PROP
+	if player != null:
+		point.exclude = [player.get_rid()]
+	if not space.intersect_point(point, 1).is_empty():
+		var back := pos - chest
+		if back.length_squared() < 0.04:
+			back = Vector3(sin(yaw), 0.4, cos(yaw))
+		pos = chest + back.normalized() * (back.length() + 1.6)
+		pos.y = maxf(pos.y, 1.22)
+	for _step in 4:
+		var moved := false
+		var origin := pos
+		var dirs: Array[Vector3] = [chest - origin, Vector3.DOWN, Vector3.UP]
+		for i in 8:
+			var a := TAU * float(i) / 8.0
+			dirs.append(Vector3(cos(a), -0.25, sin(a)))
+		for d in dirs:
+			if d.length_squared() < 1e-6:
+				continue
+			var q := PhysicsRayQueryParameters3D.create(origin, origin + d.normalized() * 1.2)
+			q.collision_mask = Constants.LAYER_BLOCK | Constants.LAYER_PROP
+			if player != null:
+				q.exclude = [player.get_rid()]
+			var hit := space.intersect_ray(q)
+			if not hit.has("position"):
+				continue
+			var at: Vector3 = hit.position
+			var gap := origin.distance_to(at)
+			if gap >= 1.15:
+				continue
+			var n: Vector3 = hit.normal
+			if n.length_squared() < 1e-6:
+				n = -d.normalized()
+			pos = at + n.normalized() * 1.25
+			moved = true
+			break
+		if pos.y < 1.22:
+			pos.y = 1.22
+		if not moved:
+			break
+	return pos
 
 
 func _outside_boy(chest: Vector3, pos: Vector3) -> Vector3:

@@ -324,6 +324,7 @@ func _bench(at: Vector3) -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
 	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var body := StaticBody3D.new()
 	body.collision_layer = Constants.LAYER_PROP
 	body.collision_mask = 0

@@ -88,8 +88,6 @@ void fragment() {
 	float past = clamp((sea_end - p.y) / 16.0, 0.0, 1.0);
 	float depth = clamp(max(d, 0.0) * 0.22, 0.0, 6.0);
 	depth = max(depth, past * 5.2);
-	// Water beside the pier deepens as it leaves the posts, so a down view is not one cyan field.
-	depth = max(depth, smoothstep(1.05, 6.5, abs(p.x)) * 3.4);
 	vec3 col = mix(C_SHALLOW, C_MID, smoothstep(0.05, 1.3, depth));
 	col = mix(col, C_DEEP, smoothstep(1.6, 3.6, depth));
 	col = mix(col, C_ABYSS, smoothstep(3.8, 5.6, depth));
@@ -134,11 +132,8 @@ void fragment() {
 		float spent = smoothstep(0.0, 0.06, cyc) * (1.0 - smoothstep(0.06, 0.55, cyc));
 		float drift = lace(p * 3.1 + vec2(t * 0.05, t * 0.03), mix(0.3, 0.9, 1.0 - spent));
 		drift *= (1.0 - smoothstep(0.1, 1.4, d)) * smoothstep(-0.3, 0.15, d) * (0.15 + 0.35 * spent);
-		float along = smoothstep(sea_end - 0.4, sea_end + 1.2, p.y) * (1.0 - smoothstep(shore - 0.5, shore + 1.5, p.y));
-		float beside = smoothstep(1.2, 1.55, abs(p.x)) * (1.0 - smoothstep(2.4, 3.4, abs(p.x)));
-		float pier = beside * along * lace(p * 2.2 + vec2(t * 0.04, 0.0), 0.4) * 0.22;
 		float open_lace = lace(p * 0.55 + vec2(t * 0.02, -t * 0.015), 0.7) * past * 0.2;
-		foam = clamp(max(max(max(band, drift), pier), open_lace), 0.0, 1.0);
+		foam = clamp(max(max(band, drift), open_lace), 0.0, 1.0);
 	}
 	vec3 foam_col = mix(vec3(0.97, 0.99, 1.0), vec3(0.28, 0.34, 0.44), night_k);
 	col = mix(col, foam_col, foam * mix(0.92, 0.4, night_k));
@@ -151,9 +146,9 @@ void fragment() {
 	col = ripple_at(ripple2, p, t, col);
 	col = ripple_at(ripple3, p, t, col);
 
-	float alpha = mix(0.62, 0.84, smoothstep(0.0, 1.2, depth));
-	alpha = mix(alpha, 0.96, smoothstep(2.0, 4.8, depth));
-	alpha = clamp(alpha + fres * 0.1 + foam * 0.4, 0.0, 1.0);
+	# Opaque past the shoreline so a terrain tile cannot show through as a hard rectangle.
+	float alpha = mix(0.8, 0.98, smoothstep(0.0, 1.4, max(d, 0.0)));
+	alpha = clamp(alpha + foam * 0.15, 0.0, 1.0);
 	ALBEDO = col;
 	ALPHA = alpha;
 	ROUGHNESS = mix(0.12, 0.62, foam);
