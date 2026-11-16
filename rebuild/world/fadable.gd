@@ -23,6 +23,8 @@ func set_target(next: float) -> void:
 
 
 func tick(delta: float) -> void:
+	if absf(alpha - target) < 0.004:
+		return
 	var tau := 0.20 if target < alpha else 0.35
 	alpha = lerpf(alpha, target, 1.0 - exp(-delta / tau))
 	if mesh != null:

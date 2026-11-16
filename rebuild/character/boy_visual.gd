@@ -35,6 +35,7 @@ func _ready() -> void:
 	skel = _find_skel(model)
 	_shadow_proxy()
 	if skel != null:
+		_pebble(skel)
 		ik = FootIK.new()
 		ik.name = "FootIK"
 		skel.add_child(ik)
@@ -49,6 +50,42 @@ func _ready() -> void:
 		_pick_names()
 		_ClipAuthor.build(anim)
 		anim.play(clip_idle)
+
+
+var pebble: MeshInstance3D
+
+
+func _pebble(skel: Skeleton3D) -> void:
+	var grip := BoneAttachment3D.new()
+	grip.name = "PebbleGrip"
+	grip.bone_name = "mixamorig_RightHand"
+	grip.bone_idx = skel.find_bone("mixamorig_RightHand")
+	skel.add_child(grip)
+	pebble = MeshInstance3D.new()
+	pebble.mesh = PebbleMesh.mesh()
+	# The mesh is already about 6 cm. It sits in the palm along the finger axis (+Y).
+	pebble.position = Vector3(0.0, 0.042, 0.01)
+	pebble.material_override = pebble_mat()
+	pebble.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	pebble.visible = false
+	grip.add_child(pebble)
+
+
+func _process(_delta: float) -> void:
+	if pebble == null or arm == null:
+		return
+	pebble.visible = arm.playing and arm.phase < 0.52
+	if not pebble.visible:
+		return
+	var cam := get_viewport().get_camera_3d()
+	var grip := pebble.get_parent() as Node3D
+	if cam == null or grip == null:
+		return
+	var to_cam := (grip.global_transform.affine_inverse() * cam.global_position)
+	if to_cam.length_squared() < 1e-6:
+		return
+	# A centimetre and a half toward the lens, so the pebble shows between the fingers.
+	pebble.position = Vector3(0.0, 0.04, 0.012) + to_cam.normalized() * 0.015
 
 
 func bind_ground(ground: Ground) -> void:
@@ -67,12 +104,13 @@ func set_speed(speed: float) -> void:
 	var scale := 1.0
 	if speed > 1.35:
 		clip = clip_run
-		scale = clampf(speed / Constants.RUN_CLIP, 0.85, 1.15)
+		scale = clampf(speed / Constants.RUN_CLIP, 0.7, 1.15)
 	elif speed > 0.08:
 		clip = clip_walk
-		scale = clampf(speed / Constants.WALK_CLIP, 0.85, 1.15)
+		scale = clampf(speed / Constants.WALK_CLIP, 0.62, 1.15)
 	if clip != _clip:
-		anim.play(clip)
+		var blend := 0.2 if clip == clip_idle or _clip == clip_idle else 0.16
+		anim.play(clip, blend)
 		_clip = clip
 	anim.speed_scale = scale
 
@@ -134,9 +172,44 @@ func lay_flat(kind: String) -> void:
 	if kind == "lounger":
 		model.rotation = Vector3(deg_to_rad(-58.0), PI, 0)
 		model.position = Vector3(0, 0.34, -0.05)
+	elif kind == "bench":
+		# The sit clip folds him. The rest pose is the standing body; lay that on its back.
+		if anim != null:
+			anim.stop()
+		if skel != null:
+			skel.reset_bone_poses()
+		# Native +Z is the face; it points up. Native +Y (the head) points along +X.
+		var lie := Basis()
+		lie.x = Vector3(0, 0, 1)
+		lie.y = Vector3(1, 0, 0)
+		lie.z = Vector3(0, 1, 0)
+		model.transform = Transform3D(lie.scaled(Vector3.ONE * Constants.MODEL_SCALE), Vector3(0, 0.02, 0))
 	else:
 		model.rotation = Vector3(deg_to_rad(-80.0), PI, 0)
 		model.position = Vector3(0, 0.20, 0.02)
+
+
+static func pebble_mat(wet: bool = false) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	if wet:
+		mat.albedo_color = Color(0.34, 0.32, 0.29)
+		mat.roughness = 0.08
+		mat.emission = Color(0.08, 0.08, 0.07)
+		mat.emission_energy_multiplier = 0.25
+	else:
+		mat.albedo_color = Color(0.90, 0.88, 0.82)
+		mat.roughness = 0.18
+		mat.emission = Color(0.55, 0.52, 0.46)
+		mat.emission_energy_multiplier = 0.55
+	mat.metallic = 0.02
+	mat.clearcoat_enabled = true
+	mat.clearcoat = 0.95 if wet else 0.75
+	mat.clearcoat_roughness = 0.04 if wet else 0.12
+	mat.rim_enabled = true
+	mat.rim = 0.85
+	mat.rim_tint = 1.0
+	mat.emission_enabled = true
+	return mat
 
 
 func _keep_full_lod(node: Node) -> void:

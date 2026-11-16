@@ -73,12 +73,16 @@ func _world() -> void:
 	sun.light_energy = 1.25
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	sun.shadow_enabled = true
-	sun.shadow_blur = 0.8
+	sun.shadow_blur = 0.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	sun.directional_shadow_max_distance = 14.0
+	sun.directional_shadow_max_distance = 9.0
+	sun.directional_shadow_fade_start = 0.75
 	add_child(sun)
 	ground = Ground.new()
 	add_child(ground)
+	var gmat := _ground_mat()
+	if gmat != null:
+		gmat.set_shader_parameter("cheap", 1.0)
 	props = Props.new()
 	add_child(props)
 	var water := MeshInstance3D.new()
@@ -91,6 +95,8 @@ func _world() -> void:
 	water_mat.shader = load("res://shaders/sea.gdshader")
 	water.material_override = water_mat
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# The web build is what the phone runs. The lace path stays in the shader behind cheap=0.
+	water_mat.set_shader_parameter("cheap", 1.0)
 	water.position.y = 0.02
 	add_child(water)
 
@@ -173,6 +179,7 @@ func _process(delta: float) -> void:
 	if water_mat != null:
 		water_mat.set_shader_parameter("game_time", t)
 		water_mat.set_shader_parameter("night_k", nk)
+		_push_ripples(t)
 	var gmat := _ground_mat()
 	if gmat != null:
 		gmat.set_shader_parameter("game_time", t)
@@ -197,13 +204,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			_orbit = touch.index
 		elif touch.index == _orbit:
 			_orbit = -1
+			rig.looking = false
 	elif event is InputEventScreenDrag:
 		var drag := event as InputEventScreenDrag
 		if joy.drag(drag):
 			player.stick = joy.value
 			return
 		if drag.index == _orbit:
+			rig.looking = true
 			rig.yaw -= drag.relative.x * 0.006
+			var pitch_add := drag.relative.y * 0.004
+			rig.pitch = clampf(rig.pitch + pitch_add, deg_to_rad(30.0), deg_to_rad(40.0))
 	elif event is InputEventKey and event.pressed:
 		var k := event as InputEventKey
 		if k.keycode == KEY_W:
@@ -256,9 +267,14 @@ func _on_action(name: String) -> void:
 	elif name == "半蹲" or name == "站立":
 		_crouch = not _crouch
 	elif name == "观景":
-		rig.pitch = deg_to_rad(50.0)
+		rig.hold_pitch = not rig.hold_pitch
 	elif name == "固定视角":
-		pass
+		rig.follow = not rig.follow
+	elif name == "帧时间":
+		dbg.on = not dbg.on
+		dbg.visible = dbg.on
+		if dbg.copy_btn != null:
+			dbg.copy_btn.visible = dbg.on
 	elif name == "坐下" or name == "睡觉" or name == "晒太阳":
 		var seat := _nearest_seat()
 		if seat != null:
@@ -297,7 +313,7 @@ func _begin_rest(item: Fadable) -> void:
 	rig.framing = "front"
 	rig.yaw = yaw + PI
 	rig.pivot_y = 0.45 if rest_kind == "towel" or rest_kind == "lounger" or rest_kind == "hammock" else 0.7
-	await _glide(pos, yaw)
+	await _glide(pos, yaw, true)
 	if rest_kind == "lounger" or rest_kind == "towel":
 		player.boy.play_clip("lounger_lie", 0.2)
 		return
@@ -317,6 +333,12 @@ func _begin_lie() -> void:
 		return
 	if player.boy.rest != null:
 		player.boy.rest.mode = ""
+	if rest_kind == "bench" and _rest_item != null:
+		_apply_bench_lie(_rest_item)
+		await get_tree().process_frame
+		_snap_bench(_rest_item.global_position)
+		rig.pivot_y = 0.4
+		return
 	var clip := "lounger_lie" if rest_kind == "lounger" else "bench_lie"
 	player.boy.play_clip(clip, 0.2)
 	rig.pivot_y = 0.55
@@ -333,12 +355,12 @@ func _end_rest() -> void:
 		if exit_name != "" and player.boy != null:
 			player.boy.play_clip(exit_name, 0.15)
 			await _wait_clip(8.0 if kind != "hammock" else 12.0)
-	if player.boy != null:
-		player.boy.clear_hold()
 	var back := player.global_position
 	var yaw := player.face_yaw
 	var step := Vector3(-sin(yaw), 0, -cos(yaw)) * -0.55
-	await _glide(back + step, yaw)
+	await _glide(back + step, yaw, true)
+	if player.boy != null:
+		player.boy.clear_hold()
 	_sitting = false
 	rest_kind = ""
 	_rest_item = null
@@ -359,18 +381,24 @@ func _clip_for(kind: String, phase: String) -> String:
 	return str(table[kind][phase])
 
 
-func _glide(pos: Vector3, yaw: float) -> void:
+func _glide(pos: Vector3, yaw: float, stepping: bool = false) -> void:
 	player.locked = true
 	player.use_anchor = true
 	var from := player.global_position
 	var from_yaw := player.face_yaw
+	var dist := from.distance_to(pos)
+	var dur := clampf(dist / 0.85, 0.4, 0.9) if stepping else 0.45
+	if stepping and player.boy != null:
+		player.boy.play_clip("walk", 0.12)
+		if player.boy.anim != null and dur > 0.05:
+			player.boy.anim.speed_scale = clampf((dist / dur) / Constants.WALK_CLIP, 0.75, 1.25)
 	var t := 0.0
-	while t < 0.45:
+	while t < dur:
 		var dt := get_process_delta_time()
 		if dt <= 0.0:
 			dt = 1.0 / 30.0
 		t += dt
-		var k := smoothstep(0.0, 1.0, clampf(t / 0.45, 0.0, 1.0))
+		var k := smoothstep(0.0, 1.0, clampf(t / dur, 0.0, 1.0))
 		player.anchor = from.lerp(pos, k)
 		player.face_yaw = lerp_angle(from_yaw, yaw, k)
 		player.rotation.y = player.face_yaw
@@ -438,6 +466,38 @@ func _throw_release() -> void:
 
 func _on_release(origin: Vector3, velocity: Vector3) -> void:
 	call_deferred("_spawn_stone", origin, velocity)
+
+
+var _ripples: Array[Vector4] = []
+
+
+func add_ripple(at: Vector3) -> void:
+	add_ripple_aged(at, 0.0)
+
+
+func add_ripple_aged(at: Vector3, age: float) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	_ripples.append(Vector4(at.x, at.z, now - age, 1.0))
+	while _ripples.size() > 4:
+		_ripples.pop_front()
+	_push_ripples(now)
+
+
+func _push_ripples(now: float) -> void:
+	if water_mat == null:
+		return
+	var i := 0
+	while i < _ripples.size():
+		if now - _ripples[i].z >= 1.5:
+			_ripples.remove_at(i)
+		else:
+			i += 1
+	var slots := ["ripple0", "ripple1", "ripple2", "ripple3"]
+	for s in 4:
+		var v := Vector4(0, 0, 0, 0)
+		if s < _ripples.size():
+			v = _ripples[s]
+		water_mat.set_shader_parameter(slots[s], v)
 
 
 func _spawn_stone(origin: Vector3, velocity: Vector3) -> void:
@@ -594,6 +654,26 @@ func _pose_shot() -> void:
 			await get_tree().process_frame
 		print("SHOT_READY ", name)
 		return
+	if name == "pace":
+		dbg.on = true
+		dbg.visible = true
+		dbg.log_pace = true
+		_put(Vector3(0.15, Constants.DECK_Y, ends.y + 7.5), PI)
+		player.locked = false
+		if player.boy.ik != null:
+			player.boy.ik.paused = false
+		rig.follow = true
+		rig.yaw = PI
+		rig.pitch = Constants.CAM_PITCH
+		rig.dist = Constants.CAM_DIST
+		rig.set_process(true)
+		joy.value = Vector2(0, -1)
+		player.stick = joy.value
+		for _i in 120:
+			await get_tree().process_frame
+		print("PACE_DONE n=%d" % dbg.walk_ms.size())
+		print("SHOT_READY pace")
+		return
 	if name == "walk":
 		_put(Vector3(0.15, Constants.DECK_Y, ends.y + 3.2), 0.0)
 		player.locked = false
@@ -603,6 +683,67 @@ func _pose_shot() -> void:
 		player.boy.set_speed(0.64)
 		rig.set_process(true)
 		print("SHOT_READY walk")
+		return
+	if name.begins_with("loc_"):
+		var step := int(name.substr(4))
+		# Mid-dock, facing inland, so a run stays on the planks.
+		_put(Vector3(0.15, Constants.DECK_Y, ends.y + 7.5), PI)
+		player.locked = false
+		if player.boy.ik != null:
+			player.boy.ik.paused = false
+			player.boy.ik.both_down = false
+		rig.follow = true
+		rig.looking = false
+		rig.hold_pitch = false
+		rig.yaw = PI
+		rig.pitch = Constants.CAM_PITCH
+		rig.dist = Constants.CAM_DIST
+		rig.set_process(true)
+		var mag := 0.0
+		var frames := 8
+		if step == 1:
+			mag = 0.55
+			frames = 14
+		elif step == 2:
+			mag = 0.55
+			frames = 48
+		elif step == 3:
+			mag = 1.0
+			frames = 24
+		elif step == 4:
+			mag = 1.0
+			frames = 36
+		elif step == 5:
+			joy.value = Vector2(0, -1)
+			player.stick = joy.value
+			for _i in 40:
+				await get_tree().process_frame
+			joy.value = Vector2.ZERO
+			player.stick = Vector2.ZERO
+			for _i in 16:
+				await get_tree().process_frame
+			print("SHOT_READY ", name)
+			return
+		joy.value = Vector2(0, -mag)
+		player.stick = joy.value
+		for _i in frames:
+			await get_tree().process_frame
+		print("SHOT_READY ", name)
+		return
+	if name.begins_with("orbit_"):
+		var step := int(name.substr(6))
+		_put(tee, 0.0)
+		player.locked = true
+		rig.follow = false
+		rig.looking = false
+		rig.hold_pitch = false
+		rig.yaw = float(step) * TAU / 4.0
+		rig.pitch = Constants.CAM_PITCH
+		rig.dist = Constants.CAM_DIST
+		rig.set_process(true)
+		for _i in 8:
+			await get_tree().process_frame
+		print("SHOT_READY ", name)
 		return
 	if name.begins_with("throw_"):
 		_put(tee, 0.0)
@@ -622,11 +763,71 @@ func _pose_shot() -> void:
 		for _i in 6:
 			await get_tree().process_frame
 		var p := player.global_position
-		# Close 3/4 on his throwing side, low enough that the crouch and the stone read.
-		_cam(cam, p + Vector3(-1.85, 0.98, 2.15), p + Vector3(0.0, 0.5, -0.15))
+		# Wide enough that the hand and the first two skips share the frame.
+		_throw_view(cam, p)
 		if _query().contains("proxy=1"):
 			_show_proxy_only()
-		_show_throw_stone(name)
+		_show_flight(cam, name)
+		print("SHOT_READY ", name)
+		return
+	if name.begins_with("skip_"):
+		var step := int(name.substr(5))
+		_put(tee, 0.0)
+		if player.boy.ik != null:
+			player.boy.ik.paused = false
+			player.boy.ik.both_down = true
+			player.boy.ik.contact_y = Constants.DECK_Y
+		player.boy.arm.playing = true
+		player.boy.arm.hold = true
+		var phases := [0.34, 0.56, 0.64, 0.70, 0.82, 0.96]
+		player.boy.arm.phase = float(phases[mini(step, 5)])
+		for _i in 4:
+			await get_tree().process_frame
+		var p := player.global_position
+		_throw_view(cam, p)
+		_show_skip(cam, p, step)
+		print("SHOT_READY ", name)
+		return
+	if name.begins_with("bench_s") or name.begins_with("ham_s"):
+		var bench := name.begins_with("bench_s")
+		var step := int(name.substr(7 if bench else 5))
+		var seat := "Bench" if bench else "Hammock"
+		var item := _seat_named(seat)
+		if item == null:
+			print("SHOT_READY ", name)
+			return
+		var clips: Array[String] = []
+		if bench:
+			clips = ["", "bench_sit_idle", "bench_lie", ""]
+		else:
+			clips = ["", "hammock_sleep", "hammock_sleep", ""]
+		if step == 0 or step == 3:
+			var beside := item.global_position + Vector3(-1.1, 0, 1.2)
+			var gy: float = ground.height(beside.x, beside.z)
+			if gy > -1.5:
+				beside.y = gy
+			_put(beside, float(item.get_meta("yaw", 0.0)))
+			if player.boy.ik != null:
+				player.boy.ik.paused = false
+			player.boy.clear_hold()
+		else:
+			_put_on_seat(seat)
+			if player.boy.ik != null:
+				player.boy.ik.paused = true
+			player.boy.play_clip(clips[step], 0.0)
+			if player.boy.anim != null:
+				player.boy.anim.seek(0.35 if step == 1 else 0.7, true)
+				player.boy.anim.pause()
+		for _i in 4:
+			await get_tree().process_frame
+		var c := item.global_position
+		if bench and step == 2:
+			_apply_bench_lie(item)
+			for _k in 2:
+				await get_tree().process_frame
+			_frame_bench(cam, item.global_position)
+		else:
+			_cam(cam, c + Vector3(-2.8, 1.7, 2.6), c + Vector3(0, 0.7, 0))
 		print("SHOT_READY ", name)
 		return
 	if name == "bench_lie" or name == "lounger" or name == "hammock_rest":
@@ -724,8 +925,8 @@ func _show_throw_stone(shot: String) -> void:
 		palm = origin - ep
 		if palm.length_squared() > 1e-6:
 			origin += palm.normalized() * 0.12
-	# Pull the stone toward the camera so it sits outside the hand, not inside the mesh.
-	origin += Vector3(-0.62, 0.2, 0.72).normalized() * 0.09
+	# The throw camera sits on -X/+Z. Push the stone out of the fist toward that camera.
+	origin += Vector3(-1.85, 0.35, 2.15).normalized() * 0.2
 	var fwd := Vector3(-sin(player.face_yaw), 0.0, -cos(player.face_yaw))
 	var phase := 0.0
 	var phase_map := {
@@ -742,17 +943,309 @@ func _show_throw_stone(shot: String) -> void:
 		origin.y = player.global_position.y + 0.40
 	var stone := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
-	mesh.radius = 0.078
-	mesh.height = 0.156
+	mesh.radius = 0.11
+	mesh.height = 0.22
 	stone.mesh = mesh
-	stone.scale = Vector3(1.25, 0.32, 1.0)
+	stone.scale = Vector3(1.25, 0.28, 1.05)
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(0.86, 0.88, 0.90)
+	mat.albedo_color = Color(0.16, 0.15, 0.14)
 	stone.material_override = mat
 	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(stone)
 	stone.global_position = origin
+
+
+func _throw_view(cam: Camera3D, p: Vector3) -> void:
+	# Boy in the lower frame, open water above him, release and the first skips together.
+	_cam(cam, p + Vector3(-2.4, 1.55, 2.7), p + Vector3(0.15, 0.6, -0.7))
+
+
+func _skip_spot(p: Vector3, ahead: float, side: float) -> Vector3:
+	var yaw := player.face_yaw
+	var fwd := Vector3(-sin(yaw), 0.0, -cos(yaw))
+	var right := Vector3(fwd.z, 0.0, -fwd.x)
+	return p + fwd * ahead + right * side + Vector3(0, 0.12, 0)
+
+
+func _sea_at(cam: Camera3D, sx: float, sy: float) -> Vector3:
+	var vp := get_viewport().get_visible_rect().size
+	var px := Vector2(vp.x * sx, vp.y * sy)
+	var origin := cam.project_ray_origin(px)
+	var dir := cam.project_ray_normal(px)
+	if absf(dir.y) < 0.0001:
+		return origin
+	var t := (0.08 - origin.y) / dir.y
+	return origin + dir * maxf(t, 0.05)
+
+
+func _grip_pos(p: Vector3) -> Vector3:
+	if player.boy == null or player.boy.skel == null:
+		return p + Vector3(0, 0.7, -0.2)
+	var grip := player.boy.skel.get_node_or_null("PebbleGrip") as Node3D
+	if grip != null:
+		return grip.global_position
+	return p + Vector3(0, 0.7, -0.2)
+
+
+func _show_flight(cam: Camera3D, shot: String) -> void:
+	var phase_map := {
+		"throw_s0": 0.18, "throw_s1": 0.30, "throw_s2": 0.40, "throw_s3": 0.50,
+		"throw_s4": 0.60, "throw_s5": 0.72, "throw_s6": 0.84, "throw_s7": 0.96,
+	}
+	var phase := float(phase_map.get(shot, 0.3))
+	if phase < 0.52 or player.boy == null:
+		return
+	if player.boy.pebble != null:
+		player.boy.pebble.visible = false
+	var hand := _grip_pos(player.global_position)
+	var skip_a := _skip_spot(player.global_position, 2.8, -1.3)
+	var skip_b := _skip_spot(player.global_position, 3.7, -0.9)
+	var pos := hand
+	if phase < 0.68:
+		var t := clampf((phase - 0.52) / 0.16, 0.0, 1.0)
+		pos = hand.lerp(skip_a, t)
+		pos.y = lerpf(hand.y, 0.22, t) + sin(t * PI) * 0.28
+	else:
+		var t2 := clampf((phase - 0.68) / 0.22, 0.0, 1.0)
+		pos = skip_a.lerp(skip_b, t2)
+		pos.y = 0.2 + sin(t2 * PI) * 0.22
+		if t2 < 0.15:
+			_impact(skip_a, 0.08, true, false)
+	_place_pebble(pos, phase >= 0.7)
+	_trail(hand, pos)
+
+
+func _show_skip(cam: Camera3D, p: Vector3, step: int) -> void:
+	var hand := _grip_pos(p)
+	var skip_a := _skip_spot(p, 2.8, -1.3)
+	var skip_b := _skip_spot(p, 3.7, -0.9)
+	if step <= 0:
+		return
+	if player.boy.pebble != null and step >= 1:
+		player.boy.pebble.visible = false
+	if step == 1:
+		var pos := hand.lerp(skip_a, 0.72)
+		pos.y = 0.34
+		_place_pebble(pos)
+		_trail(hand, pos)
+		return
+	if step == 2:
+		_place_pebble(skip_a + Vector3(0, 0.2, 0))
+		_impact(skip_a, 0.06, true, false)
+		_trail(hand, skip_a)
+	elif step == 3:
+		var mid := skip_a.lerp(skip_b, 0.45)
+		mid.y = 0.28
+		_place_pebble(mid, true)
+		_trail(skip_a, mid)
+		_impact(skip_a, 0.42, false, true)
+	elif step == 4:
+		_place_pebble(skip_b + Vector3(0, 0.2, 0), true)
+		_impact(skip_b, 0.06, true, false)
+		_impact(skip_a, 0.72, false, true)
+		_trail(skip_a, skip_b)
+	else:
+		var onward := skip_b + (skip_b - skip_a).normalized() * 0.35
+		onward.y = 0.12
+		_place_pebble(onward, true)
+		_column(skip_b)
+		_impact(skip_b, 0.08, true, true)
+		_impact(skip_a, 0.9, false, true)
+
+
+func _impact(at: Vector3, age: float, crown: bool, foam_on: bool) -> void:
+	add_ripple_aged(at, age)
+	if age < 0.35:
+		_contact_shadow(at, lerpf(0.75, 0.25, age / 0.35))
+	if crown:
+		_spray(at)
+	if foam_on and age < 1.05:
+		var grow := clampf(age / 0.5, 0.35, 1.0)
+		_foam(at, (1.0 - smoothstep(0.15, 1.05, age)) * 0.62, 0.4 + grow * 0.3)
+
+
+func _trail(a: Vector3, b: Vector3) -> void:
+	for i in 12:
+		var t := float(i + 1) / 13.0
+		var crumb := _soft_crumb(b.lerp(a, t))
+		var mat := crumb.material_override as StandardMaterial3D
+		if mat != null:
+			mat.albedo_color.a = 0.5 * (1.0 - t)
+
+
+func _place_pebble(at: Vector3, wet: bool = false) -> MeshInstance3D:
+	var stone := MeshInstance3D.new()
+	stone.mesh = PebbleMesh.mesh()
+	stone.material_override = BoyVisual.pebble_mat(wet)
+	stone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(stone)
+	stone.global_position = at
+	return stone
+
+
+func _soft_crumb(at: Vector3) -> MeshInstance3D:
+	var bit := MeshInstance3D.new()
+	var mesh := SphereMesh.new()
+	mesh.radius = 0.032
+	mesh.height = 0.064
+	mesh.radial_segments = 6
+	mesh.rings = 3
+	bit.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.96, 0.95, 0.9, 0.5)
+	bit.material_override = mat
+	bit.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(bit)
+	bit.global_position = at
+	return bit
+
+
+func _contact_shadow(at: Vector3, alpha: float) -> void:
+	var disc := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.11
+	mesh.bottom_radius = 0.11
+	mesh.height = 0.006
+	mesh.radial_segments = 12
+	disc.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.02, 0.04, 0.06, alpha)
+	disc.material_override = mat
+	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(disc)
+	disc.global_position = Vector3(at.x, 0.11, at.z)
+
+
+func _foam(at: Vector3, alpha: float, radius: float) -> void:
+	var disc := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	mesh.height = 0.008
+	mesh.radial_segments = 16
+	disc.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.97, 0.99, 1.0, alpha)
+	disc.material_override = mat
+	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(disc)
+	disc.global_position = Vector3(at.x, 0.125, at.z)
+
+
+func _column(at: Vector3) -> void:
+	var col := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.02
+	mesh.bottom_radius = 0.08
+	mesh.height = 0.7
+	mesh.radial_segments = 8
+	col.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.96, 0.98, 1.0, 0.8)
+	col.material_override = mat
+	col.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(col)
+	col.global_position = Vector3(at.x, 0.4, at.z)
+
+
+func _spray(at: Vector3) -> void:
+	for i in 14:
+		var drop := MeshInstance3D.new()
+		var mesh := SphereMesh.new()
+		mesh.radius = 0.055 if i < 10 else 0.04
+		mesh.height = mesh.radius * 2.0
+		mesh.radial_segments = 6
+		mesh.rings = 3
+		drop.mesh = mesh
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = Color(1, 1, 1)
+		drop.material_override = mat
+		drop.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(drop)
+		var ang := TAU * float(i) / 10.0
+		if i < 10:
+			drop.global_position = at + Vector3(cos(ang) * 0.62, 0.38 + float(i % 3) * 0.08, sin(ang) * 0.62)
+		else:
+			var a2 := TAU * float(i) / 4.0
+			drop.global_position = at + Vector3(cos(a2) * 0.18, 0.72, sin(a2) * 0.18)
+
+
+func _bone_world(bone_name: String) -> Vector3:
+	var skel: Skeleton3D = player.boy.skel
+	var i := skel.find_bone(bone_name)
+	if i < 0:
+		return player.global_position
+	return (skel.global_transform * skel.get_bone_global_pose(i)).origin
+
+
+func _apply_bench_lie(item: Fadable) -> void:
+	player.face_yaw = 0.0
+	player.rotation.y = 0.0
+	player.locked = true
+	if player.boy.ik != null:
+		player.boy.ik.paused = true
+	player.boy.lay_flat("bench")
+	var c := item.global_position
+	player.global_position = c + Vector3(0.0, 0.7, 0.04)
+
+
+func _snap_bench(c: Vector3) -> void:
+	var head := _bone_world("mixamorig_Head")
+	var hips := _bone_world("mixamorig_Hips")
+	# Head bone near the +X end. Hips sit just above the slats so the back touches.
+	var dx := (c.x + 0.55) - head.x
+	var dy := (c.y + 0.52) - hips.y
+	var dz := (c.z + 0.02) - hips.z
+	player.global_position += Vector3(dx, dy, dz)
+	player.anchor = player.global_position
+	player.use_anchor = true
+
+
+func _frame_bench(cam: Camera3D, c: Vector3) -> void:
+	_snap_bench(c)
+	var head := _bone_world("mixamorig_Head")
+	var foot := _bone_world("mixamorig_LeftFoot")
+	var hips := _bone_world("mixamorig_Hips")
+	print("LIE head=", head, " hips=", hips, " foot=", foot, " bench=", c)
+	var mid := (head + foot) * 0.5
+	var along := foot - head
+	along.y = 0.0
+	if along.length() < 0.2:
+		along = Vector3(1, 0, 0)
+	var side := Vector3(-along.z, 0.0, along.x).normalized()
+	if side.z < 0.0:
+		side = -side
+	var dist := along.length() / (2.0 * tan(deg_to_rad(12.0))) * 1.35
+	dist = clampf(dist, 3.4, 8.5)
+	_cam(cam, mid + side * dist + Vector3(0, 0.9, 0), mid + Vector3(0, 0.05, 0))
+
+
+func _shot_ring(at: Vector3, radius: float) -> void:
+	var ring := MeshInstance3D.new()
+	var mesh := TorusMesh.new()
+	mesh.inner_radius = radius * 0.72
+	mesh.outer_radius = radius
+	mesh.rings = 10
+	mesh.ring_segments = 8
+	ring.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.97, 0.99, 1.0, 0.95)
+	ring.material_override = mat
+	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(ring)
+	ring.global_position = at
 
 
 func _seat_pos(item: Fadable) -> Vector3:
@@ -784,6 +1277,7 @@ func _put(spot: Vector3, yaw: float) -> void:
 	player.use_anchor = true
 	player.face_yaw = yaw
 	player.rotation.y = yaw
+	player.reset_physics_interpolation()
 
 
 func _cam(cam: Camera3D, eye: Vector3, at: Vector3) -> void:

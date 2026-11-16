@@ -6,6 +6,7 @@ var items: Array[Fadable] = []
 var _lod_full: Array[MeshInstance3D] = []
 var _lod_far: Array[MeshInstance3D] = []
 var _lod_distance: Array[float] = []
+var _flames: Array[MeshInstance3D] = []
 
 
 func _ready() -> void:
@@ -51,16 +52,32 @@ func _ready() -> void:
 	_palm(Vector3(-1.15, 0.0, shore_z + 4.7), 5.5, 0.06)
 	_palm(Vector3(-1.65, 0.0, shore_z + 3.3), 4.7, -0.1)
 	_palm(Vector3(-2.05, 0.0, shore_z + 2.0), 4.1, 0.12)
+	# Farther crowns. The card LOD keeps the close view on the near trunks.
+	_palm(Vector3(8.4, 0.0, shore_z + 1.4), 5.2, 0.08)
+	_palm(Vector3(-8.2, 0.0, shore_z + 1.8), 4.6, -0.12)
+	_palm(Vector3(6.8, 0.0, shore_z + 8.6), 4.4, 0.1)
+	_palm(Vector3(-7.6, 0.0, 2.4), 5.0, -0.06)
+	_palm(Vector3(9.2, 0.0, -1.6), 4.0, 0.14)
+	_palm(Vector3(-2.8, 0.0, 9.2), 4.8, 0.05)
+	_barrel(Vector3(3.4, 0.0, shore_z + 1.6))
+	_barrel(Vector3(4.8, 0.0, shore_z + 3.4))
+	_barrel(Vector3(1.25, 0.0, shore_z - 0.35))
+	_barrel(Vector3(-1.35, 0.0, shore_z + 0.45))
+	_rope(Vector3(2.35, 0.32, ends.y + 0.4), Vector3(1.05, 0.55, ends.y + 5.4))
 	_reeds(shore_z)
-	_rope(Vector3(1.15, 0.95, ends.y + 1.15), Vector3(2.15, 0.42, ends.y + 0.7))
-	_rope(Vector3(-1.15, 0.95, ends.y + 1.15), Vector3(-1.9, 0.35, ends.y + 0.2))
+	_garden(ends)
 	_grass(Vector3(1.8, 0.0, shore_z + 3.2))
 	_shells(Vector3(-1.4, 0.0, shore_z + 2.4))
 	_pier_rail(ends)
 	_ground_cover(shore_z)
+	_beach(shore_z)
+	for item in items:
+		var flame := item.get_node_or_null("Flame") as MeshInstance3D
+		if flame != null:
+			_flames.append(flame)
 
 
-func _palm(at: Vector3, height: float, lean: float = 0.0) -> void:
+func _palm(at: Vector3, height: float, lean: float = 0.0, frond_len: float = 1.7) -> void:
 	at.y = IslandData.height_at(at.x, at.z)
 	var root := Fadable.new()
 	var st := SurfaceTool.new()
@@ -78,7 +95,7 @@ func _palm(at: Vector3, height: float, lean: float = 0.0) -> void:
 		var ang := TAU * float(i) / 8.0 + 0.2
 		var dir := Vector3(cos(ang), 0.35, sin(ang))
 		var col := Color(0.14, 0.46, 0.16) if i % 2 == 0 else Color(0.30, 0.62, 0.22)
-		_frond(st, crown, dir, 1.7, col)
+		_frond(st, crown, dir, frond_len, col)
 	_sphere(st, crown + Vector3(0.15, -0.15, 0.1), 0.09, Color(0.45, 0.32, 0.16))
 	_sphere(st, crown + Vector3(-0.12, -0.2, -0.08), 0.08, Color(0.40, 0.28, 0.14))
 	st.generate_normals()
@@ -104,7 +121,9 @@ func _palm(at: Vector3, height: float, lean: float = 0.0) -> void:
 	body.add_child(cap)
 	root.setup(mi, body)
 	root.position = at
-	root.rotation.z = lean
+	# Lean the crown only. The capsule stays upright so a canopy does not block the path.
+	mi.rotation.z = lean
+	card.rotation.z = lean
 	add_child(root)
 	items.append(root)
 
@@ -156,6 +175,8 @@ func _hut(at: Vector3) -> void:
 	for px in [-1.45, 1.45]:
 		_cylinder(st, Vector3(px, floor_y + 0.4, 2.15), 0.05, 0.8, trim, 5)
 	_box(st, Vector3(0, floor_y + 0.78, 2.15), Vector3(2.8, 0.05, 0.05), wood)
+	_box(st, Vector3(0, floor_y * 0.45, 2.55), Vector3(1.1, floor_y * 0.9, 0.42), plank)
+	_box(st, Vector3(0.85, floor_y + 0.42, -0.2), Vector3(0.32, 0.55, 0.32), trim)
 	# Sign board and a lantern.
 	_box(st, Vector3(0, floor_y + 1.85, 1.35), Vector3(1.15, 0.32, 0.06), Color(0.93, 0.88, 0.7))
 	_box(st, Vector3(1.15, floor_y + 1.55, 2.05), Vector3(0.16, 0.22, 0.16), Color(1.0, 0.72, 0.28))
@@ -232,7 +253,10 @@ func _barrel(at: Vector3) -> void:
 	var root := Fadable.new()
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_cylinder(st, Vector3(0, 0.4, 0), 0.28, 0.8, Color(0.48, 0.32, 0.18), 8)
+	_cylinder(st, Vector3(0, 0.4, 0), 0.28, 0.8, Color(0.48, 0.32, 0.18), 10)
+	for hoop_y in [0.16, 0.4, 0.64]:
+		_cylinder(st, Vector3(0, hoop_y, 0), 0.305, 0.045, Color(0.22, 0.16, 0.1), 10)
+	_box(st, Vector3(0, 0.82, 0), Vector3(0.5, 0.04, 0.5), Color(0.62, 0.46, 0.28))
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
@@ -641,6 +665,117 @@ func _wall_planks(st: SurfaceTool, origin: Vector3, along: Vector3, length: floa
 		_box(st, origin + dir * u + Vector3(0, height * 0.5, 0), size, tone)
 
 
+func _garden(ends: Vector2) -> void:
+	var shore := ends.x
+	# Trunks just off the dirt path, leaned so the crowns cross overhead.
+	# z stays off the route's shore+5 line, and x stays outside the walk capsule.
+	# Far enough off the path that the trunks sit at the sides of the portrait,
+	# not across the top of the frame. The route's shore+5 line stays clear.
+	var spots: Array[Vector3] = [
+		Vector3(-2.25, 0, shore + 2.2), Vector3(2.35, 0, shore + 2.8),
+		Vector3(-2.15, 0, shore + 6.6), Vector3(2.3, 0, shore + 7.4),
+		Vector3(-2.4, 0, shore + 9.6), Vector3(2.2, 0, shore + 10.2),
+		Vector3(-2.3, 0, shore + 12.2), Vector3(2.45, 0, shore + 12.6),
+		Vector3(2.3, 0, shore - 1.6), Vector3(-2.5, 0, shore - 2.2),
+		Vector3(2.8, 0, shore + 1.4), Vector3(-3.0, 0, shore + 2.6),
+		Vector3(3.6, 0, shore + 4.2), Vector3(-3.4, 0, shore + 5.4),
+		Vector3(2.4, 0, shore + 8.0), Vector3(-2.6, 0, shore + 9.5),
+		Vector3(3.2, 0, shore + 12.0), Vector3(-3.8, 0, shore + 11.0),
+		Vector3(-5.4, 0, ends.y + 5.5), Vector3(-6.6, 0, ends.y + 8.0),
+		Vector3(4.6, 0, shore + 0.6),
+	]
+	var heights: Array[float] = [6.2, 5.8, 6.0, 5.6, 6.4, 5.9, 5.7, 6.1, 5.2, 4.4, 4.8, 5.6, 4.1, 4.7, 4.6, 5.1, 4.3, 4.9, 5.3, 4.5, 3.9]
+	# Negative z-rotation sends a left trunk's crown toward +X, over the path.
+	var leans: Array[float] = [-0.12, 0.1, -0.1, 0.12, -0.08, 0.1, -0.1, 0.08]
+	for i in spots.size():
+		var lean := leans[i] if i < leans.size() else (0.08 if i % 2 == 0 else -0.1)
+		var frond := 1.8 if i < leans.size() else 1.7
+		_palm(spots[i], heights[i], lean, frond)
+	var bushes: Array[Vector3] = [
+		Vector3(1.8, 0, shore + 0.8), Vector3(-1.9, 0, shore + 1.1),
+		Vector3(2.2, 0, shore + 3.2), Vector3(-2.1, 0, shore + 3.8),
+		Vector3(1.4, 0, shore + 5.6), Vector3(-1.6, 0, shore + 6.2),
+		Vector3(1.6, 0, shore + 8.8), Vector3(-1.5, 0, shore + 10.5),
+		Vector3(3.8, 0, shore - 0.6),
+	]
+	for b in bushes:
+		_bush(b)
+	var fence := [Vector3(1.7, 0, shore + 0.4), Vector3(1.85, 0, shore + 3.2), Vector3(1.7, 0, shore + 6.0), Vector3(-1.7, 0, shore + 0.5), Vector3(-1.8, 0, shore + 3.4)]
+	for i in fence.size():
+		var p: Vector3 = fence[i]
+		p.y = IslandData.height_at(p.x, p.z)
+		_post(p)
+		fence[i] = p
+	_rope(fence[0] + Vector3(0, 0.62, 0), fence[1] + Vector3(0, 0.55, 0))
+	_rope(fence[1] + Vector3(0, 0.55, 0), fence[2] + Vector3(0, 0.62, 0))
+	_rope(fence[3] + Vector3(0, 0.6, 0), fence[4] + Vector3(0, 0.55, 0))
+	_blooms(shore)
+	_tufts(shore)
+
+
+func _blooms(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_sphere(st, Vector3(0, 0.16, 0), 0.05, Color(0.92, 0.45, 0.42))
+	_face(st, Vector3(-0.02, 0, 0), Vector3(0.02, 0, 0), Vector3(0, 0.16, 0), Vector3(0.01, 0.14, 0.02), Color(0.3, 0.55, 0.24))
+	st.generate_normals()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = st.commit()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 19
+	var spots: Array[Vector3] = []
+	for i in 36:
+		var p := Vector3(rng.randf_range(-4.5, 4.5), 0, shore_z + rng.randf_range(-0.4, 7.0))
+		if absf(p.x) < 1.15:
+			p.x += 1.4 if p.x >= 0.0 else -1.4
+		p.y = IslandData.height_at(p.x, p.z)
+		if p.y < 0.02:
+			continue
+		spots.append(p)
+	mm.instance_count = spots.size()
+	for i in spots.size():
+		var b := Basis(Vector3.UP, float(i)).scaled(Vector3.ONE * rng.randf_range(0.8, 1.4))
+		mm.set_instance_transform(i, Transform3D(b, spots[i]))
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
+func _tufts(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var blade := Color(0.18, 0.34, 0.14)
+	_face(st, Vector3(-0.015, 0, 0), Vector3(0.015, 0, 0), Vector3(-0.01, 0.22, 0.02), Vector3(0.012, 0.2, -0.01), blade)
+	_face(st, Vector3(0, 0, -0.015), Vector3(0, 0, 0.015), Vector3(0.02, 0.18, 0), Vector3(-0.01, 0.16, 0.01), blade.lightened(0.08))
+	st.generate_normals()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = st.commit()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 23
+	var spots: Array[Vector3] = []
+	for i in 70:
+		var p := Vector3(rng.randf_range(-3.2, 3.2), 0, shore_z + rng.randf_range(-0.2, 12.0))
+		if absf(p.x) < 0.7:
+			continue
+		p.y = IslandData.height_at(p.x, p.z)
+		if p.y < 0.04:
+			continue
+		spots.append(p)
+	mm.instance_count = spots.size()
+	for i in spots.size():
+		var b := Basis(Vector3.UP, float(i) * 0.7).scaled(Vector3.ONE * rng.randf_range(0.7, 1.5))
+		mm.set_instance_transform(i, Transform3D(b, spots[i]))
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
 func _pier_rail(ends: Vector2) -> void:
 	var z := ends.y + 1.2
 	while z < ends.x - 0.4:
@@ -648,8 +783,10 @@ func _pier_rail(ends: Vector2) -> void:
 			var p := Vector3(side * 1.05, Constants.DECK_Y, z)
 			_post(p)
 		z += 2.4
-	_rope(Vector3(1.05, Constants.DECK_Y + 0.72, ends.y + 1.2), Vector3(1.05, Constants.DECK_Y + 0.72, ends.x - 0.6))
-	_rope(Vector3(-1.05, Constants.DECK_Y + 0.72, ends.y + 1.2), Vector3(-1.05, Constants.DECK_Y + 0.72, ends.x - 0.6))
+	# The sea end is the throw. Ropes start inland of that stance.
+	var rope_z := ends.y + 5.2
+	_rope(Vector3(1.05, Constants.DECK_Y + 0.72, rope_z), Vector3(1.05, Constants.DECK_Y + 0.72, ends.x - 0.6))
+	_rope(Vector3(-1.05, Constants.DECK_Y + 0.72, rope_z), Vector3(-1.05, Constants.DECK_Y + 0.72, ends.x - 0.6))
 
 
 func _post(at: Vector3) -> void:
@@ -895,6 +1032,10 @@ func _boat(at: Vector3, yaw: float = 0.2) -> void:
 	_box(st, Vector3(0, 0.16, -0.35), Vector3(0.55, 0.05, 0.28), Color(0.4, 0.26, 0.14))
 	_box(st, Vector3(0, 0.16, 0.4), Vector3(0.55, 0.05, 0.28), Color(0.4, 0.26, 0.14))
 	_box(st, Vector3(0.42, 0.2, 0.85), Vector3(0.9, 0.04, 0.08), Color(0.45, 0.3, 0.16))
+	_box(st, Vector3(0.48, 0.28, 0.0), Vector3(0.06, 0.06, 2.2), Color(0.36, 0.24, 0.14))
+	_box(st, Vector3(-0.48, 0.28, 0.0), Vector3(0.06, 0.06, 2.2), Color(0.36, 0.24, 0.14))
+	_cylinder(st, Vector3(0.72, 0.16, 0.2), 0.025, 1.15, Color(0.55, 0.4, 0.22), 5)
+	_box(st, Vector3(0.95, 0.12, 0.55), Vector3(0.28, 0.02, 0.12), Color(0.72, 0.58, 0.36))
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
@@ -1005,6 +1146,85 @@ func _bush_card() -> MeshInstance3D:
 	return mi
 
 
+func _beach(shore_z: float) -> void:
+	_scatter_rocks(shore_z)
+	_scatter_wood(shore_z)
+	_scatter_shells(shore_z)
+	_scatter_grass(shore_z)
+
+
+func _beach_points(shore_z: float, count: int, seed_n: int, x0: float, x1: float, z0: float, z1: float) -> Array[Vector3]:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_n
+	var spots: Array[Vector3] = []
+	var guard := 0
+	while spots.size() < count and guard < count * 8:
+		guard += 1
+		var p := Vector3(rng.randf_range(x0, x1), 0, shore_z + rng.randf_range(z0, z1))
+		if absf(p.x) < 1.7:
+			continue
+		p.y = maxf(IslandData.height_at(p.x, p.z), 0.05)
+		spots.append(p)
+	return spots
+
+
+func _scatter_rocks(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_sphere(st, Vector3(0, 0.08, 0), 0.16, Color(0.55, 0.52, 0.48))
+	_sphere(st, Vector3(0.1, 0.05, 0.06), 0.1, Color(0.42, 0.4, 0.38))
+	st.generate_normals()
+	_place_multi(st.commit(), _beach_points(shore_z, 26, 31, -9.0, 9.0, -1.6, 2.4), 0.8, 1.6)
+
+
+func _scatter_wood(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_box(st, Vector3(0, 0.06, 0), Vector3(0.9, 0.08, 0.1), Color(0.45, 0.32, 0.18))
+	_box(st, Vector3(0.15, 0.08, 0.08), Vector3(0.4, 0.06, 0.08), Color(0.36, 0.24, 0.14))
+	st.generate_normals()
+	_place_multi(st.commit(), _beach_points(shore_z, 8, 37, -7.0, 7.0, -0.6, 1.6), 0.8, 1.3)
+
+
+func _scatter_shells(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_sphere(st, Vector3(0, 0.03, 0), 0.05, Color(0.93, 0.86, 0.72))
+	_sphere(st, Vector3(0.06, 0.02, 0.02), 0.03, Color(0.95, 0.55, 0.48))
+	st.generate_normals()
+	_place_multi(st.commit(), _beach_points(shore_z, 28, 41, -7.5, 7.5, -0.8, 1.8), 0.6, 1.2)
+
+
+func _scatter_grass(shore_z: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var blade := Color(0.22, 0.42, 0.16)
+	_face(st, Vector3(-0.02, 0, 0), Vector3(0.02, 0, 0), Vector3(-0.01, 0.28, 0.02), Vector3(0.015, 0.26, -0.01), blade)
+	_face(st, Vector3(0, 0, -0.02), Vector3(0, 0, 0.02), Vector3(0.02, 0.22, 0), Vector3(-0.01, 0.2, 0.01), blade.lightened(0.1))
+	st.generate_normals()
+	_place_multi(st.commit(), _beach_points(shore_z, 70, 43, -8.0, 8.0, -0.4, 2.8), 0.6, 1.5)
+
+
+func _place_multi(mesh: Mesh, spots: Array[Vector3], s0: float, s1: float) -> void:
+	if spots.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = spots.size()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = spots.size() * 17 + 3
+	for i in spots.size():
+		var s := rng.randf_range(s0, s1)
+		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s)
+		mm.set_instance_transform(i, Transform3D(b, spots[i]))
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.material_override = _mat(Color(1, 1, 1))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
 func _process(_delta: float) -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam != null:
@@ -1014,9 +1234,6 @@ func _process(_delta: float) -> void:
 			_lod_full[i].visible = not far
 			_lod_far[i].visible = far
 	var t := Time.get_ticks_msec() / 1000.0
-	for item in items:
-		var flame := item.get_node_or_null("Flame") as MeshInstance3D
-		if flame == null:
-			continue
+	for flame in _flames:
 		var s := 0.85 + 0.2 * sin(t * 11.0) + 0.08 * sin(t * 23.0)
 		flame.scale = Vector3(s, 0.75 + 0.35 * sin(t * 9.0 + 1.0), s)

@@ -48,6 +48,7 @@ func _ready() -> void:
 	add_child(cs)
 	boy = BoyVisual.new()
 	add_child(boy)
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	rotation.y = face_yaw
 	route = OS.get_environment("R42_ROUTE") == "1"
 
@@ -89,30 +90,35 @@ func _physics_process(delta: float) -> void:
 
 func _move(inp: Vector2, delta: float) -> void:
 	var mag := inp.length()
-	if mag >= Constants.RUN_ON or (running and mag >= Constants.RUN_OFF):
-		running = mag >= Constants.RUN_OFF
-	else:
-		running = false
-	var wish := Vector3.ZERO
+	var target := 0.0
 	if mag > Constants.DEADZONE:
-		var m := (mag - Constants.DEADZONE) / (1.0 - Constants.DEADZONE)
-		m = pow(clampf(m, 0.0, 1.0), 0.85)
+		var m := clampf((mag - Constants.DEADZONE) / (1.0 - Constants.DEADZONE), 0.0, 1.0)
+		# Inner travel stays a walk. The outer ring eases into the run.
+		var walk_k := smoothstep(0.0, 0.62, m)
+		var run_k := smoothstep(0.55, 0.96, m)
+		running = run_k > 0.45
+		target = lerpf(Constants.WALK_SPEED * walk_k, Constants.RUN_SPEED, run_k)
 		var fwd := -cam_basis.z
 		fwd.y = 0.0
 		fwd = Vector3(0, 0, 1) if fwd.length_squared() < 1e-6 else fwd.normalized()
 		var right := cam_basis.x
 		right.y = 0.0
 		right = right.normalized()
-		wish = (right * inp.x + fwd * (-inp.y)).normalized()
-		var target_yaw := atan2(-wish.x, -wish.z)
-		face_yaw = lerp_angle(face_yaw, target_yaw, 1.0 - exp(-delta * Constants.TURN_RATE))
-		wish = Vector3(-sin(face_yaw), 0, -cos(face_yaw)) * m
-	var target := wish.length() * (Constants.RUN_SPEED if running else Constants.WALK_SPEED)
-	var smooth := Constants.BRAKE_S
-	if target > speed:
-		smooth = Constants.FIRST_STEP_S if speed < 0.50 else Constants.ACCEL_S
+		var wish := (right * inp.x + fwd * (-inp.y))
+		if wish.length_squared() > 1e-8:
+			wish = wish.normalized()
+			var target_yaw := atan2(-wish.x, -wish.z)
+			var err := absf(angle_difference(face_yaw, target_yaw))
+			face_yaw = lerp_angle(face_yaw, target_yaw, 1.0 - exp(-delta * Constants.TURN_RATE))
+			# Full speed while still facing the old way is a slide.
+			target *= lerpf(0.28, 1.0, clampf(1.0 - err / PI, 0.0, 1.0))
+	else:
+		running = false
+	var smooth := Constants.STOP_S
+	if target > speed + 0.04:
+		smooth = Constants.FIRST_STEP_S if speed < 0.45 else Constants.ACCEL_S
 	speed = lerpf(speed, target, 1.0 - exp(-delta / smooth))
-	if target < 0.02 and speed < 0.04:
+	if target < 0.02 and speed < 0.035:
 		speed = 0.0
 	var dir := Vector3(-sin(face_yaw), 0, -cos(face_yaw))
 	velocity.x = dir.x * speed

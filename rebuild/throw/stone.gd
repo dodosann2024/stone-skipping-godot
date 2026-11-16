@@ -10,7 +10,10 @@ var _from := Vector3.ZERO
 var _alive := 0.0
 var _sinking := false
 var _splashes: Array[MeshInstance3D] = []
+var _crumbs: Array[MeshInstance3D] = []
+var _next_crumb := 0.0
 var _amb: Ambience
+var _view: MeshInstance3D
 const WATER_Y := 0.04
 
 
@@ -19,22 +22,16 @@ func launch(from: Vector3, velocity_in: Vector3, amb: Ambience = null) -> void:
 	_amb = amb
 	velocity = velocity_in
 	global_position = from
-	var mesh := SphereMesh.new()
-	mesh.radius = 0.055
-	mesh.height = 0.11
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.scale = Vector3(1.35, 0.36, 1.05)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.84, 0.86, 0.88)
-	mat.roughness = 0.42
-	mi.material_override = mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(mi)
+	_view = MeshInstance3D.new()
+	_view.mesh = PebbleMesh.mesh()
+	_view.material_override = BoyVisual.pebble_mat(false)
+	_view.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_view)
 
 
 func _process(delta: float) -> void:
 	_alive += delta
+	_crumb(delta)
 	rotate_x(velocity.length() * delta * 3.0)
 	var next := global_position + velocity * delta
 	velocity.y -= 9.8 * delta
@@ -43,29 +40,43 @@ func _process(delta: float) -> void:
 		var incidence := absf(velocity.y) / maxf(flat, 0.2)
 		if incidence < 0.62 and flat > 2.4 and skips < 12:
 			skips += 1
-			next.y = WATER_Y + 0.01
-			velocity.y = absf(velocity.y) * 0.38 + 0.55
+			next.y = WATER_Y + 0.02
+			velocity.y = absf(velocity.y) * 0.38 + 0.45
 			velocity.x *= 0.90
 			velocity.z *= 0.90
-			_splash(Vector3(next.x, WATER_Y, next.z))
+			if skips >= 1 and _view != null:
+				_view.material_override = BoyVisual.pebble_mat(true)
+			_skip_fx(Vector3(next.x, WATER_Y, next.z), false)
 		else:
 			_sinking = true
-			_splash(Vector3(next.x, WATER_Y, next.z))
+			_skip_fx(Vector3(next.x, WATER_Y, next.z), true)
 	global_position = next
 	var keep: Array[MeshInstance3D] = []
-	for ring in _splashes:
-		if not is_instance_valid(ring):
+	for drop in _splashes:
+		if not is_instance_valid(drop):
 			continue
-		ring.scale += Vector3.ONE * delta * 2.4
-		var mat := ring.material_override as StandardMaterial3D
-		if mat != null:
-			var c := mat.albedo_color
-			c.a = maxf(c.a - delta * 0.8, 0.0)
-			mat.albedo_color = c
-			if c.a <= 0.02:
-				ring.queue_free()
+		var life := float(drop.get_meta("life", 0.4)) - delta
+		drop.set_meta("life", life)
+		var born := float(drop.get_meta("born", 0.4))
+		if bool(drop.get_meta("pin", false)):
+			var mat := drop.material_override as StandardMaterial3D
+			if mat != null and born > 0.0:
+				var c := mat.albedo_color
+				c.a = clampf(life / born, 0.0, 1.0) * float(drop.get_meta("peak", 0.7))
+				mat.albedo_color = c
+			if life <= 0.0:
+				drop.queue_free()
 				continue
-		keep.append(ring)
+			keep.append(drop)
+			continue
+		var vel: Vector3 = drop.get_meta("vel", Vector3.ZERO)
+		vel.y -= 9.8 * delta
+		drop.set_meta("vel", vel)
+		drop.global_position += vel * delta
+		if life <= 0.0 or drop.global_position.y < WATER_Y - 0.02:
+			drop.queue_free()
+			continue
+		keep.append(drop)
 	_splashes = keep
 	if _alive > 7.0 or global_position.y < -1.2:
 		var dist := Vector2(global_position.x - _from.x, global_position.z - _from.z).length()
@@ -73,24 +84,125 @@ func _process(delta: float) -> void:
 		queue_free()
 
 
-func _splash(at: Vector3) -> void:
+func _pebble_mat() -> StandardMaterial3D:
+	return BoyVisual.pebble_mat()
+
+
+func _crumb(delta: float) -> void:
+	_next_crumb -= delta
+	if not _sinking and _alive < 2.0 and _next_crumb <= 0.0:
+		_next_crumb = 0.02
+		var bit := MeshInstance3D.new()
+		var mesh := SphereMesh.new()
+		mesh.radius = 0.012
+		mesh.height = 0.024
+		mesh.radial_segments = 6
+		mesh.rings = 3
+		bit.mesh = mesh
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color = Color(0.95, 0.94, 0.90, 0.42)
+		bit.material_override = mat
+		bit.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		bit.top_level = true
+		add_child(bit)
+		bit.global_position = global_position
+		_crumbs.append(bit)
+	var keep: Array[MeshInstance3D] = []
+	for bit in _crumbs:
+		if not is_instance_valid(bit):
+			continue
+		var mat := bit.material_override as StandardMaterial3D
+		if mat != null:
+			var c := mat.albedo_color
+			c.a = maxf(c.a - delta * 1.15, 0.0)
+			mat.albedo_color = c
+			bit.scale = bit.scale * (1.0 - delta * 0.6)
+			if c.a <= 0.02:
+				bit.queue_free()
+				continue
+		keep.append(bit)
+	_crumbs = keep
+
+
+func _skip_fx(at: Vector3, plunk: bool) -> void:
 	if _amb != null:
 		_amb.splash()
-	var ring := MeshInstance3D.new()
-	var mesh := TorusMesh.new()
-	mesh.inner_radius = 0.08
-	mesh.outer_radius = 0.16
-	mesh.rings = 8
-	mesh.ring_segments = 6
-	ring.mesh = mesh
+	var host := get_parent()
+	if host != null and host.has_method("add_ripple"):
+		host.add_ripple(at)
+		if plunk:
+			host.add_ripple(at + Vector3(0.05, 0, 0.04))
+	var n := 12
+	var parent := host if host != null else self
+	for i in n:
+		var drop := MeshInstance3D.new()
+		var mesh := SphereMesh.new()
+		mesh.radius = 0.02
+		mesh.height = 0.04
+		mesh.radial_segments = 6
+		mesh.rings = 3
+		drop.mesh = mesh
+		var dmat := StandardMaterial3D.new()
+		dmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		dmat.albedo_color = Color(1, 1, 1)
+		drop.material_override = dmat
+		drop.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var ang := TAU * float(i) / float(n)
+		var ring := 0.16 if i < 8 else 0.08
+		var rise := 1.6 if i < 8 else 2.4
+		drop.set_meta("life", 0.55)
+		drop.set_meta("vel", Vector3(cos(ang) * ring * 3.2, rise, sin(ang) * ring * 3.2))
+		parent.add_child(drop)
+		drop.global_position = at + Vector3(cos(ang) * ring, 0.12, sin(ang) * ring)
+		_splashes.append(drop)
+	_pin_disc(parent, at, 0.08, 0.008, Color(0.02, 0.04, 0.06, 0.7), 0.45)
+	if plunk:
+		_column(parent, at)
+	else:
+		_pin_disc(parent, at, 0.26, 0.01, Color(0.97, 0.99, 1.0, 0.62), 1.05)
+
+
+func _column(parent: Node, at: Vector3) -> void:
+	var col := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.015
+	mesh.bottom_radius = 0.07
+	mesh.height = 0.72
+	mesh.radial_segments = 7
+	col.mesh = mesh
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.95, 0.98, 0.98, 0.7)
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	ring.material_override = mat
-	var parent := get_parent()
-	if parent == null:
-		return
-	parent.add_child(ring)
-	ring.global_position = at
-	_splashes.append(ring)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.97, 0.99, 1.0, 0.85)
+	col.material_override = mat
+	col.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	col.set_meta("life", 0.55)
+	col.set_meta("vel", Vector3(0, 0.35, 0))
+	parent.add_child(col)
+	col.global_position = at + Vector3(0, 0.36, 0)
+	_splashes.append(col)
+
+
+func _pin_disc(parent: Node, at: Vector3, radius: float, height: float, col: Color, life: float) -> void:
+	var disc := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	mesh.height = height
+	mesh.radial_segments = 14
+	disc.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = col
+	disc.material_override = mat
+	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	disc.set_meta("pin", true)
+	disc.set_meta("life", life)
+	disc.set_meta("born", life)
+	disc.set_meta("peak", col.a)
+	parent.add_child(disc)
+	disc.global_position = Vector3(at.x, WATER_Y + 0.08, at.z)
+	_splashes.append(disc)

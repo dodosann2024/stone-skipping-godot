@@ -4,6 +4,7 @@ render_mode cull_back, diffuse_lambert, specular_disabled;
 
 uniform float game_time = 0.0;
 uniform float night_k = 0.0;
+uniform float cheap = 1.0;
 uniform sampler2D wood_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 varying vec3 wpos;
 
@@ -51,29 +52,43 @@ void fragment() {
 		// the gaps from turning into a checker when the pier is far away.
 		vec2 uv = vec2(wpos.x * 0.42, wpos.z * 1.15);
 		c = texture(wood_tex, uv).rgb;
-		rough = 0.7;
+		float wear = vnoise(vec2(wpos.x * 1.8, wpos.z * 0.35));
+		c = mix(c, c * vec3(1.18, 1.08, 0.92), smoothstep(0.58, 0.86, wear) * 0.42);
+		c = mix(c, c * vec3(0.72, 0.66, 0.58), smoothstep(0.78, 0.95, vnoise(vec2(wpos.z * 0.9, wpos.x * 2.4))) * 0.35);
+		rough = mix(0.78, 0.55, wear);
 	} else {
 		float d = shore_d(p);
 		float sand = smoothstep(0.28, 1.05, wpos.y) * smoothstep(-0.8, -6.5, d);
-		vec3 sand_c = vec3(0.93, 0.80, 0.50);
-		sand_c = mix(sand_c, vec3(0.78, 0.64, 0.38), vnoise(p * 1.6));
-		sand_c = mix(sand_c, vec3(0.86, 0.74, 0.46), vnoise(p * 0.22));
-		vec3 grass_c = vec3(0.36, 0.58, 0.26);
-		grass_c = mix(grass_c, vec3(0.58, 0.72, 0.32), vnoise(p * 0.35));
-		grass_c = mix(grass_c, vec3(0.28, 0.48, 0.22), vnoise(p * 2.4));
+		vec3 sand_c = vec3(0.72, 0.62, 0.42);
+		sand_c = mix(sand_c, vec3(0.58, 0.48, 0.32), vnoise(p * 1.6));
+		sand_c = mix(sand_c, vec3(0.78, 0.70, 0.50), vnoise(p * 0.22));
+		vec3 grass_c = vec3(0.16, 0.30, 0.12);
+		grass_c = mix(grass_c, vec3(0.26, 0.40, 0.16), vnoise(p * 0.35));
+		grass_c = mix(grass_c, vec3(0.11, 0.22, 0.09), vnoise(p * 2.4));
 		c = mix(sand_c, grass_c, sand);
-		float fq = fwidth(p.x * 48.0);
-		float grain = (hash12(floor(p * 48.0)) - 0.5) * (1.0 - smoothstep(0.35, 1.4, fq));
-		c *= 1.0 + grain * 0.22 + (vnoise(p * 8.0) - 0.5) * 0.10;
+		float shore_line = -(island_r(-1.5707963) - 3.2);
+		float path = (1.0 - smoothstep(0.4, 2.1, abs(p.x))) * smoothstep(shore_line - 0.4, shore_line + 0.6, p.y) * (1.0 - smoothstep(shore_line + 8.0, shore_line + 14.0, p.y));
+		vec3 dirt = vec3(0.40, 0.30, 0.16);
+		dirt = mix(dirt, vec3(0.32, 0.24, 0.13), vnoise(p * 1.3));
+		c = mix(c, dirt, path);
+		float clump = smoothstep(0.45, 0.8, vnoise(p * 0.7));
+		c = mix(c, c * vec3(0.82, 0.9, 0.78), clump * sand * 0.35);
 		float sea = sea_y(p, t);
 		float hab = wpos.y - sea;
-		float wet = (1.0 - smoothstep(0.0, 0.18, hab)) * smoothstep(-2.0, 0.4, d + 1.0);
-		c *= mix(vec3(1.0), vec3(0.62, 0.66, 0.64), clamp(wet, 0.0, 1.0));
-		float cyc = fract(t * 0.105 + vnoise(p * 0.18) * 0.6);
-		float rim = exp(-pow(hab / 0.08, 2.0)) * (1.0 - smoothstep(0.2, 0.55, cyc));
-		rim *= lace(p * 3.5 + vec2(t * 0.05, 0.0), 0.15);
-		c = mix(c, vec3(0.95, 0.97, 0.96), clamp(rim, 0.0, 1.0) * smoothstep(-0.5, 0.2, d));
-		rough = mix(0.94, 0.35, clamp(wet, 0.0, 1.0));
+		float wet = (1.0 - smoothstep(0.0, 0.22, hab)) * smoothstep(-1.4, 0.2, d);
+		c = mix(c, vec3(0.42, 0.38, 0.28), clamp(wet, 0.0, 1.0) * 0.8);
+		if (cheap < 0.5) {
+			float fq = fwidth(p.x * 48.0);
+			float grain = (hash12(floor(p * 48.0)) - 0.5) * (1.0 - smoothstep(0.35, 1.4, fq));
+			c *= 1.0 + grain * 0.22 + (vnoise(p * 8.0) - 0.5) * 0.10;
+			float cyc = fract(t * 0.105 + vnoise(p * 0.18) * 0.6);
+			float rim = exp(-pow(hab / 0.08, 2.0)) * (1.0 - smoothstep(0.2, 0.55, cyc));
+			rim *= lace(p * 3.5 + vec2(t * 0.05, 0.0), 0.15);
+			c = mix(c, vec3(0.95, 0.97, 0.96), clamp(rim, 0.0, 1.0) * smoothstep(-0.5, 0.2, d));
+		} else {
+			c = mix(c, vec3(0.93, 0.95, 0.94), clamp(1.0 - smoothstep(0.0, 0.12, abs(hab)), 0.0, 1.0) * smoothstep(-0.4, 0.15, d) * 0.55);
+		}
+		rough = mix(0.94, 0.32, clamp(wet, 0.0, 1.0));
 	}
 	c = mix(c, vec3(0.09, 0.14, 0.16), night_k);
 	ALBEDO = c;

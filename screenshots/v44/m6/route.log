@@ -1,0 +1,20 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+BOY_CLIPS idle=idle walk=walk run=run n=19
+CLIP_AUTHOR bench_lie lounger_lie throw_stand throw_crouch
+ROUTE_POS f=300 m=9.2 y=0.78 spd=1.96 w=0.00/1.00 gap=10.3/0.0 scored=206
+ROUTE_POS f=600 m=18.8 y=1.38 spd=1.87 w=0.00/1.00 gap=10.3/-0.0 scored=506
+ROUTE_POS f=900 m=24.1 y=2.48 spd=1.96 w=0.00/1.00 gap=10.3/0.0 scored=806
+ROUTE_POS f=1200 m=34.3 y=4.88 spd=2.22 w=0.00/1.00 gap=10.3/-0.0 scored=1106
+ROUTE_POS f=1500 m=45.4 y=2.24 spd=2.30 w=0.00/1.00 gap=5.9/0.0 scored=1406
+ROUTE_POS f=1800 m=51.1 y=1.38 spd=2.30 w=0.00/1.00 gap=5.9/0.0 scored=1706
+ROUTE_POS f=2100 m=56.1 y=2.25 spd=2.30 w=0.00/1.00 gap=5.9/-0.0 scored=2006
+ROUTE_POS f=2400 m=67.0 y=1.57 spd=2.30 w=0.00/1.00 gap=5.9/0.0 scored=2306
+ROUTE_POS f=2700 m=71.1 y=1.58 spd=2.29 w=0.00/1.00 gap=5.9/0.0 scored=2606
+ROUTE_POS f=3000 m=78.7 y=2.86 spd=2.30 w=0.00/1.00 gap=5.9/0.0 scored=2906
+ROUTE_POS f=3300 m=89.1 y=1.48 spd=2.25 w=0.00/1.00 gap=5.9/0.0 scored=3206
+ROUTE_POS f=3600 m=90.4 y=1.58 spd=2.28 w=0.00/1.00 gap=5.9/-0.0 scored=3506
+ROUTE_POS f=3900 m=101.0 y=2.45 spd=2.26 w=0.00/1.00 gap=5.9/0.0 scored=3806
+ROUTE_POS f=4200 m=108.7 y=1.38 spd=2.29 w=0.00/1.00 gap=5.9/0.0 scored=4106
+ROUTE_HIST -1:1366 0:2972 
+ROUTE_DONE m=110.0 stance=4338 in_1cm=100.0 skate_max_cm=0.25 walk_skate_cm=0.00 shin_min=1.00
