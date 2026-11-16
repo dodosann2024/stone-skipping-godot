@@ -22,6 +22,7 @@ var _orbit := -1
 var _best_skips := 0
 var _best_dist := 0.0
 var _sitting := false
+var _audit_still := 0.0
 var _crouch := false
 var _throwing := false
 var rest_kind := ""
@@ -172,6 +173,12 @@ func _begin() -> void:
 	amb.start()
 	if OS.has_feature("web") and hud != null and hud.sound_tip != null:
 		hud.sound_tip.visible = true
+	if dbg != null and dbg.on:
+		var ends := IslandData.dock_ends()
+		var bench := _seat_named("Bench")
+		if bench != null:
+			print("MARK bench %.2f %.2f" % [bench.global_position.x, bench.global_position.z])
+		print("MARK tee %.2f %.2f" % [0.15, ends.y + 2.4])
 
 
 func _process(delta: float) -> void:
@@ -188,11 +195,34 @@ func _process(delta: float) -> void:
 	if not live:
 		return
 	player.stick = joy.value
+	var auto := _audit_stick()
+	if auto.length() > 0.02:
+		if player.speed < 0.08:
+			_audit_still += delta
+		else:
+			_audit_still = 0.0
+		# A trunk in the wish direction stalls the walk. Step sideways until it clears.
+		# Sidestep only on the island. On the pier a sideways shove walks off the
+		# planks and the lip snap puts him back, so he never reaches the tee.
+		if _audit_still > 0.45 and player.global_position.z > IslandData.dock_ends().x - 1.2:
+			var side := 1.0 if int(_audit_still / 0.55) % 2 == 0 else -1.0
+			auto = Vector2(side, -0.35).limit_length(1.0)
+		player.stick = auto
+	else:
+		_audit_still = 0.0
 	if hud != null and hud.sound_tip != null and hud.sound_tip.visible and joy.value.length() > 0.2:
 		hud.sound_tip.visible = false
 	_prompts()
 	if dbg != null:
 		dbg.note(delta, player.speed > 0.12)
+		if dbg.on and Engine.get_process_frames() % 8 == 0:
+			var fwd := -player.cam_basis.z
+			fwd.y = 0.0
+			if fwd.length_squared() < 1e-8:
+				fwd = Vector3(0, 0, 1)
+			else:
+				fwd = fwd.normalized()
+			print("NAV %.2f %.2f %.3f %.3f" % [player.global_position.x, player.global_position.z, fwd.x, fwd.z])
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -214,7 +244,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			player.stick = joy.value
 			return
 		if drag.index == _orbit:
-			rig.looking = true
+			rig.note_drag()
 			rig.yaw -= drag.relative.x * 0.006
 			var pitch_add := drag.relative.y * 0.004
 			rig.pitch = clampf(rig.pitch + pitch_add, deg_to_rad(30.0), deg_to_rad(40.0))
@@ -226,13 +256,44 @@ func _unhandled_input(event: InputEvent) -> void:
 			joy.value = Vector2(0, 1)
 
 
+func _audit_stick() -> Vector2:
+	# The touch harness sets window.__gx/__gz. The same camera-relative stick
+	# the route uses then walks there every physics frame. A finger still wins
+	# once the page clears the goal.
+	if not Engine.has_singleton("JavaScriptBridge"):
+		return Vector2.ZERO
+	var js: Object = Engine.get_singleton("JavaScriptBridge")
+	var raw = js.call("eval", "(window.__gx==null?'':(''+window.__gx+','+window.__gz))", true)
+	var s := str(raw)
+	if s == "" or not s.contains(","):
+		return Vector2.ZERO
+	var parts := s.split(",")
+	if parts.size() < 2:
+		return Vector2.ZERO
+	var goal := Vector2(float(parts[0]), float(parts[1]))
+	var here := Vector2(player.global_position.x, player.global_position.z)
+	var dir := goal - here
+	if dir.length() < 0.35:
+		return Vector2.ZERO
+	dir = dir.normalized()
+	var fwd := -player.cam_basis.z
+	fwd.y = 0.0
+	fwd = Vector3(0, 0, 1) if fwd.length_squared() < 1e-6 else fwd.normalized()
+	var right := player.cam_basis.x
+	right.y = 0.0
+	right = right.normalized()
+	var world := Vector3(dir.x, 0.0, dir.y)
+	return Vector2(world.dot(right), -world.dot(fwd)).limit_length(1.0)
+
+
 func _prompts() -> void:
 	var p := player.global_position
 	var ends := IslandData.dock_ends()
 	var on_tee := absf(p.x) < 3.2 and p.z < ends.y + 4.2 and p.z > ends.y - 1.0
 	var busy := _sitting or _throwing
-	hud.throw_btn.visible = on_tee and not busy
-	hud.pose_btn.visible = on_tee and not busy
+	# Stay on screen through the throw. v43 kept 打水漂 and 半蹲 up while the stone flew.
+	hud.throw_btn.visible = on_tee and not _sitting
+	hud.pose_btn.visible = on_tee and not _sitting
 	hud.pose_btn.text = "站立" if _crouch else "半蹲"
 	var near := _nearest_seat()
 	var kind := ""
@@ -443,7 +504,7 @@ func _throw() -> void:
 		player.boy.ik.both_down = true
 		player.boy.ik.contact_y = Constants.DECK_Y
 	player.boy.holding = true
-	rig.framing = "side"
+	rig.framing = "throw"
 	var sea := Vector3(0, 0, -1)
 	player.face_yaw = atan2(-sea.x, -sea.z)
 	player.rotation.y = player.face_yaw

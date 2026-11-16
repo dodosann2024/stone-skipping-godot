@@ -21,7 +21,7 @@ func _ready() -> void:
 	visible = on
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_font = load("res://assets/ui.otf") as Font
+	_font = _with_cjk(load("res://assets/ui.otf") as Font)
 	label = Label.new()
 	label.position = Vector2(12, 96)
 	label.add_theme_font_size_override("font_size", 12)
@@ -58,7 +58,7 @@ func note(delta: float, walking: bool) -> void:
 	var p95 := _pct(0.95)
 	label.text = "v46\n帧 %.1f ms\nwalk p95 %.1f ms  n=%d\n图元 %d  绘制 %d+%d" % [ms, p95, walk_ms.size(), vis_pr, vis_dc, sh_dc]
 	_log_n += 1
-	if _log_n == 8 or _log_n == 40:
+	if _log_n == 8 or _log_n == 40 or _log_n == 120:
 		print("PROFILE frame_ms=%.2f proc_ms=%.2f phys_ms=%.2f vis_dc=%d vis_prim=%d sh_dc=%d sh_prim=%d" % [ms, proc, phys, vis_dc, vis_pr, sh_dc, sh_pr])
 	if log_pace and walking:
 		print("PACE %.2f" % ms)
@@ -75,6 +75,18 @@ func _pct(q: float) -> float:
 	_p95 = float(s[i])
 	_p95_at = walk_ms.size()
 	return _p95
+
+
+func _with_cjk(font: Font) -> Font:
+	if font == null or not (font is FontFile):
+		return font
+	var fb := load("res://assets/cjk_fallback.ttf") as Font
+	if fb == null:
+		return font
+	var ff := font as FontFile
+	if not ff.fallbacks.has(fb):
+		ff.fallbacks.append(fb)
+	return ff
 
 
 func _copy() -> void:

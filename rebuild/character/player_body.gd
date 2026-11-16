@@ -134,8 +134,21 @@ func _move(inp: Vector2, delta: float) -> void:
 	contact_y = global_position.y + Constants.CAPSULE_BOTTOM
 	if boy != null and boy.ik != null:
 		boy.ik.contact_y = contact_y
-	if is_on_floor() and global_position.y > -0.15:
+	if _should_return_to_deck():
+		# Stepped off the flat pier onto the beach beside it. That gap has
+		# no way back up, so put him on the boards, a step in from the lip.
+		var spot := _nearest_inset(global_position.x, global_position.z)
+		global_position = Vector3(spot.x, Constants.DECK_Y + 0.05, spot.y)
+		velocity = Vector3.ZERO
+		speed = 0.0
 		_safe = global_position
+		_safe_ok = true
+		reset_physics_interpolation()
+	elif is_on_floor() and global_position.y > -0.15:
+		# Remember a point a step in from the lip. The lip itself is not a
+		# place he can stand: the next tick falls, and snapping back to it
+		# leaves him hanging over the water.
+		_safe = _pull_deck(global_position)
 		_safe_ok = true
 	elif not is_on_floor() and ground != null:
 		var h := ground.height(global_position.x, global_position.z)
@@ -163,6 +176,50 @@ func _move(inp: Vector2, delta: float) -> void:
 			_step_cd = 0.34 if speed < 1.5 else 0.24
 			var kind := IslandData.surface_kind(global_position.x, global_position.z, global_position.y)
 			emit_signal("stepped", kind)
+
+
+func _should_return_to_deck() -> bool:
+	if locked:
+		return false
+	var ends := IslandData.dock_ends()
+	var z := global_position.z
+	# The shore ramp is the way onto the island. Only the flat pier pulls back.
+	if z > ends.x - 1.8 or z < ends.y + 0.3:
+		return false
+	if global_position.y > Constants.DECK_Y - 0.22:
+		return false
+	var spot := _nearest_inset(global_position.x, global_position.z)
+	if spot.x < -900.0:
+		return false
+	return Vector2(global_position.x, global_position.z).distance_to(spot) < 1.3
+
+
+func _pull_deck(p: Vector3) -> Vector3:
+	var spot := _nearest_inset(p.x, p.z)
+	if spot.x < -900.0:
+		return p
+	var d := Vector2(p.x, p.z).distance_to(spot)
+	if d < 0.08 or d > 1.35:
+		return p
+	return Vector3(spot.x, p.y, spot.y)
+
+
+func _nearest_inset(x: float, z: float) -> Vector2:
+	var ends := IslandData.dock_ends()
+	var z_sea := ends.y
+	var z_shore := ends.x
+	var margin := 0.38
+	var here := Vector2(x, z)
+	var main := Vector2(
+		clampf(x, -1.15 + margin, 1.15 - margin),
+		clampf(z, z_sea + 0.45, z_shore + 1.6))
+	var tee := Vector2(
+		clampf(x, -3.1 + margin, 3.1 - margin),
+		clampf(z, z_sea + 0.15, z_sea + 3.02))
+	var best := main if here.distance_to(main) <= here.distance_to(tee) else tee
+	if here.distance_to(best) > 2.2:
+		return Vector2(-999.0, -999.0)
+	return best
 
 
 func _route_stick() -> Vector2:

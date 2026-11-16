@@ -40,4 +40,12 @@ Route: **3,907** samples, **100%** inside ±1 cm, skate max **0.27 cm**, walk sk
 
 ## Not verified on an iPhone
 
-60 fps, the silent switch, and whether the 50 ms of interpolation lag is pleasant at 120 Hz. SwiftShader here is still about **140 ms** on the walk. That is not 60 fps.
+60 fps, the silent switch, and whether the interpolation lag is pleasant at 120 Hz. SwiftShader here is still about **120–146 ms** on the walk. That is not 60 fps.
+
+## Re-test after the review
+
+The same 390×844 session was run again. The boy walks the dock to the bench: `10_inland` shows 坐下, `13_lie` shows him on the slats, `14_pier` shows 打水漂 and 半蹲 with his feet on the planks, `15_throw_0` shows the throw pose and 出手, `16_rapid` shows 5连跳 and a record of 7 skips / 41.5 m with the camera outside the body. `09_orbit` looks down the dock at the path. 帧时间, 图元 and 绘制 use the game font. Route after the deck correction: **3,906** samples, **100%** within 1 cm, skate max **0.30 cm**, shin **1.00**. `route.log` has no interpolated-camera warning.
+
+`11_sit` has 躺下 and 起来, so the sit was accepted, but the body still reads upright in front of the bench in that still. The lie is the frame that shows him on the wood.
+
+`TIME_PROCESS` is not script time. props, the camera and the occluder were each about **0.10 ms** (105 props). Physics was **0.2–0.5 ms**. The frame delta stayed **119–146 ms**. See `docs/V47_SPEC.md`.

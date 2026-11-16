@@ -21,7 +21,7 @@ var _font: Font
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_font = load("res://assets/ui.otf") as Font
+	_font = _with_cjk(load("res://assets/ui.otf") as Font)
 	title = _label("海岛打水漂", Vector2(16, 12), 22)
 	var frame_btn := _button("帧时间", Vector2(250, 620))
 	frame_btn.custom_minimum_size = Vector2(124, 36)
@@ -62,6 +62,18 @@ func _ready() -> void:
 	sound_tip.visible = false
 	banner.size = Vector2(360, 28)
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+
+func _with_cjk(font: Font) -> Font:
+	if font == null or not (font is FontFile):
+		return font
+	var fb := load("res://assets/cjk_fallback.ttf") as Font
+	if fb == null:
+		return font
+	var ff := font as FontFile
+	if not ff.fallbacks.has(fb):
+		ff.fallbacks.append(fb)
+	return ff
 
 
 func _on_btn(name: String) -> void:
